@@ -18,7 +18,7 @@ async function retry(): Promise<void> {
   const focusFellToBody =
     document.activeElement === null || document.activeElement === document.body
   if (triggerUnmounted && focusFellToBody) {
-    document.getElementById('main-content')?.focus()
+    document.getElementById('main-content')?.focus({ preventScroll: true })
   }
 }
 </script>

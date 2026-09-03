@@ -24,15 +24,15 @@ function makeRec(overrides: Partial<RecommendationResponse> = {}): Recommendatio
 }
 
 describe('RecScoreDetails', () => {
-  it('takes off the points the variety penalty cost, not the fraction it is', () => {
+  it('states the variety penalty as the share of the match it took off', () => {
     const wrapper = mount(RecScoreDetails, {
       props: { rec: makeRec({ variety_penalty: 0.25 }), open: true },
     })
     const penaltyRow = wrapper.find('.score-row-penalty')
     expect(penaltyRow.exists()).toBe(true)
     expect(penaltyRow.text()).toContain('Variety penalty')
-    // Minus sign (U+2212): a quarter off the 80 points the one scorer put in.
-    expect(penaltyRow.text()).toContain('−20%')
+    // Minus sign (U+2212).
+    expect(penaltyRow.text()).toContain('−25%')
   })
 
   it('omits the variety penalty row when there is no penalty', () => {
@@ -61,15 +61,44 @@ describe('RecScoreDetails', () => {
       },
     })
     expect(wrapper.get('.score-value').text()).toBe('88%')
-    expect(wrapper.text()).toContain('How 88% was reached')
     expect(wrapper.text()).not.toContain('0.88')
   })
 
-  it('weights each signal the way the run did, and accounts for the total it names', () => {
+  it('shows a maxed-out signal at 100%, not at the slice of the total its weight allows', () => {
     const wrapper = mount(RecScoreDetails, {
       props: {
         rec: makeRec({
-          score: 0.7,
+          score: 0.57,
+          score_breakdown: { series_order: 1, genre_match: 0.25 },
+          scorer_weights: { series_order: 1.5, genre_match: 2 },
+        }),
+        open: true,
+      },
+    })
+
+    expect(wrapper.findAll('.score-value').map((cell) => cell.text())).toEqual(['25%', '100%'])
+    expect(wrapper.findAll('.score-bar-fill').map((bar) => bar.attributes('style'))).toEqual([
+      'width: 25%;',
+      'width: 100%;',
+    ])
+  })
+
+  it('never claims the rows add up to the match, which per-signal values do not', () => {
+    const wrapper = mount(RecScoreDetails, {
+      props: {
+        rec: makeRec({ score: 0.7, score_breakdown: { tag_overlap: 0.9, continuation: 0.6 } }),
+        open: true,
+      },
+    })
+
+    expect(wrapper.findAll('.score-value').map((cell) => cell.text())).toEqual(['90%', '60%'])
+    expect(wrapper.text()).not.toContain('70')
+  })
+
+  it('orders the signals by the weight the run gave them, not by how well the item did', () => {
+    const wrapper = mount(RecScoreDetails, {
+      props: {
+        rec: makeRec({
           score_breakdown: { tag_overlap: 0.9, continuation: 0.6 },
           scorer_weights: { tag_overlap: 1, continuation: 2 },
         }),
@@ -77,12 +106,33 @@ describe('RecScoreDetails', () => {
       },
     })
 
-    expect(wrapper.text()).toContain('How 70% was reached')
     expect(wrapper.findAll('.score-label').map((cell) => cell.text())).toEqual([
       'Continuation',
       'Tag Overlap',
     ])
-    expect(wrapper.findAll('.score-value').map((cell) => cell.text())).toEqual(['40%', '30%'])
+    expect(wrapper.findAll('.score-value').map((cell) => cell.text())).toEqual(['60%', '90%'])
+  })
+
+  it('reads a scorer weighted to zero as off, never as the strength it would have had', () => {
+    const wrapper = mount(RecScoreDetails, {
+      props: {
+        rec: makeRec({
+          score_breakdown: { tag_overlap: 0.9, genre_match: 0.4 },
+          scorer_weights: { tag_overlap: 0, genre_match: 1 },
+        }),
+        open: true,
+      },
+    })
+
+    expect(wrapper.findAll('.score-label').map((cell) => cell.text())).toEqual([
+      'Genre Match',
+      'Tag Overlap',
+    ])
+    expect(wrapper.findAll('.score-value').map((cell) => cell.text())).toEqual(['40%', 'Off'])
+    expect(wrapper.findAll('.score-bar-fill').map((bar) => bar.attributes('style'))).toEqual([
+      'width: 40%;',
+      'width: 0%;',
+    ])
   })
 
   it('is hidden from everyone, not just from sight, while collapsed', () => {

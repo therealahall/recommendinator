@@ -170,7 +170,7 @@ function onFloatBlur(event: Event): void {
       <label :for="inputId" class="source-form-label">{{ setting.label }}</label>
       <select
         :id="inputId"
-        class="field setting-select"
+        class="field"
         :value="modelValue as string"
         :disabled="disabled"
         :aria-invalid="invalid || undefined"
@@ -227,7 +227,7 @@ function onFloatBlur(event: Event): void {
         :data-testid="`overridden-badge-${setting.key}`"
       >Overridden<span class="sr-only"> — differs from the built-in default</span></span>
       <button
-        v-if="setting.db_overridden"
+        v-if="setting.has_stored_value"
         type="button"
         class="btn btn-secondary btn-small"
         :aria-disabled="disabled || resetting || undefined"
@@ -252,13 +252,17 @@ function onFloatBlur(event: Event): void {
   border-bottom: none;
 }
 
-.setting-select {
+/* How long the value can run is what picks a width here, never which widget the
+   registry rendered it with, so the column has one right edge and not six. */
+.setting-control > input.field,
+.setting-control > select.field,
+.setting-control > .tag-input {
   align-self: flex-start;
+  width: min(var(--field-w), 100%);
 }
 
-.setting-control input.field {
-  align-self: flex-start;
-  min-width: 14rem;
+.setting-control > input[type='number'].field {
+  width: min(var(--field-num-w), 100%);
 }
 
 .setting-row-meta {

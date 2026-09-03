@@ -133,11 +133,10 @@ const announcement = computed<string>(() => {
   font-variant-numeric: tabular-nums;
 }
 
+/* Clipped, this hid which item the run was on; breaking beats widening (1.4.10). */
 .source-progress-item {
-  max-width: 220px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-style: italic;
 }
 </style>

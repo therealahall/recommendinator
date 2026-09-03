@@ -166,16 +166,11 @@ async function onRetry(): Promise<void> {
 </template>
 
 <style scoped>
-/* Sticky, because the sections above it run past a screen and the control that
-   commits them must not be a scroll away from the one being changed. */
 .pref-actions {
-  position: sticky;
-  bottom: var(--space-4);
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: var(--space-3);
-  box-shadow: var(--elevation-2);
 }
 
 .save-status {
@@ -191,9 +186,9 @@ async function onRetry(): Promise<void> {
 }
 
 @media (max-width: 768px) {
-  /* The tab bar is fixed over the bottom edge and outranks this. */
-  .pref-actions {
-    bottom: calc(var(--tabbar-h) + var(--space-4));
+  .pref-actions .btn {
+    flex: 1 1 100%;
+    min-height: 44px;
   }
 }
 </style>

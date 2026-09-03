@@ -55,6 +55,7 @@ function textSetting(key: string, value: string, extra: Partial<SettingView> = {
     sensitive: false,
     value,
     db_overridden: false,
+    has_stored_value: false,
     ...extra,
   } as SettingView
 }
@@ -183,7 +184,12 @@ describe('SettingsSection', () => {
     mockDelete.mockResolvedValue({ sections: [] })
     const section: SettingsSectionType = {
       section: 'enrichment',
-      settings: [textSetting('enrichment.providers.tmdb.language', 'en-US', { db_overridden: true })],
+      settings: [
+        textSetting('enrichment.providers.tmdb.language', 'en-US', {
+          db_overridden: true,
+          has_stored_value: true,
+        }),
+      ],
     }
     const wrapper = mountSection(section)
 
@@ -199,10 +205,12 @@ describe('SettingsSection', () => {
     const overridden = reactive(
       textSetting('enrichment.providers.tmdb.language', 'en-US', {
         db_overridden: true,
+        has_stored_value: true,
       }) as SettingViewValue,
     )
     mockDelete.mockImplementation(async () => {
       overridden.db_overridden = false
+      overridden.has_stored_value = false
       return { sections: [] }
     })
     const wrapper = mountSection({ section: 'enrichment', settings: [overridden] })
@@ -284,6 +292,7 @@ describe('SettingsSection', () => {
       settings: [
         textSetting('enrichment.providers.tmdb.language', 'en-US', {
           db_overridden: true,
+          has_stored_value: true,
         }),
       ],
     }

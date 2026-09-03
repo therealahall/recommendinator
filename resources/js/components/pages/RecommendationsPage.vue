@@ -8,6 +8,7 @@ import { formatContentType } from '@/utils/format'
 import type { ItemEditRequest } from '@/types/api'
 import AppIcon from '@/components/atoms/AppIcon.vue'
 import RecControls from '@/components/organisms/RecControls.vue'
+import LoadingRows from '@/components/molecules/LoadingRows.vue'
 import RecCard from '@/components/molecules/RecCard.vue'
 import RecSetAside from '@/components/molecules/RecSetAside.vue'
 import EditModal from '@/components/molecules/EditModal.vue'
@@ -25,12 +26,14 @@ const runScope = computed(() => formatContentType(recs.ranType).toLowerCase())
 
 const emptyTitle = computed(() => {
   if (recs.items.length > 0) return `No ${filterLabel.value} in this run`
-  if (!recs.hasRun) return 'Nothing ranked yet'
-  return runScope.value ? `No ${runScope.value} left to rank` : 'Nothing left to rank'
+  if (!recs.hasRun) return 'Nothing recommended yet'
+  return runScope.value
+    ? `No ${runScope.value} left to recommend`
+    : 'Nothing left to recommend'
 })
 
 /** A run has landed and is not being replaced: what the run line may speak of. */
-const ranked = computed(() => recs.hasRun && !recs.loading && !recs.error)
+const landed = computed(() => recs.hasRun && !recs.loading && !recs.error)
 
 // Both empty-state actions destroy the block that holds them, so the keyboard
 // lands on the heading rather than <body> (WCAG 2.4.3).
@@ -118,7 +121,7 @@ async function setIgnored(dbId: number, title: string, value: boolean) {
 </script>
 
 <template>
-  <div>
+  <div class="rec-page">
     <div class="page-header">
       <h2 ref="heading" tabindex="-1">Recommendations</h2>
       <p class="page-description">Get personalized recommendations based on your library and preferences.</p>
@@ -130,10 +133,6 @@ async function setIgnored(dbId: number, title: string, value: boolean) {
       Failed to load recommendations: {{ recs.error }}
     </div>
 
-    <div v-if="recs.loading && recs.items.length === 0" class="state state--loading">
-      <span class="spinner" /> Loading recommendations…
-    </div>
-
     <div
       v-if="recs.visibleItems.length === 0 && !recs.loading && !recs.error"
       class="state state--empty"
@@ -143,13 +142,13 @@ async function setIgnored(dbId: number, title: string, value: boolean) {
       <p class="state-title">{{ emptyTitle }}</p>
       <p class="state-hint">
         <template v-if="recs.items.length > 0">
-          The run ranked {{ recs.items.length }} across the other types.
+          The run recommended {{ recs.items.length }} across the other types.
         </template>
         <template v-else-if="recs.hasRun">
           Every {{ runScope || 'item' }} in the pool is finished, in progress or
           set aside. Recommendations come from what you have not consumed yet, so
           syncing a source or adding items is what gives the next run something
-          to rank.
+          to recommend.
         </template>
         <template v-else>
           A run scores the items you have not consumed against the library you
@@ -171,7 +170,7 @@ async function setIgnored(dbId: number, title: string, value: boolean) {
             data-testid="recs-empty-run"
             :aria-disabled="recs.loading || undefined"
             @click="onRun"
-          >{{ recs.hasRun ? 'Rank again' : 'Rank my library' }}</button>
+          >{{ recs.hasRun ? 'Recommend again' : 'Recommend' }}</button>
           <RouterLink v-if="recs.hasRun" class="btn btn-secondary" :to="{ name: 'data' }">
             Sync a source
           </RouterLink>
@@ -179,15 +178,21 @@ async function setIgnored(dbId: number, title: string, value: boolean) {
       </div>
     </div>
 
+    <!-- The one region that speaks for a run, mounted whether or not it has
+         anything to say: inserted populated, it is read as content (4.1.3). -->
     <p class="run-line" role="status" aria-live="polite">
-      <span v-if="ranked && recs.contentType">
-        <b>{{ recs.visibleItems.length }}</b> of <b>{{ recs.items.length }}</b> ranked · {{ filterLabel }}
+      <span v-if="recs.loading" class="run-working">
+        <span class="spinner" aria-hidden="true" />Recommending…
       </span>
-      <span v-else-if="ranked"><b>{{ recs.items.length }}</b> ranked · {{ runScope || 'all types' }}</span>
+      <span v-else-if="landed && recs.contentType">
+        <b>{{ recs.visibleItems.length }}</b> of <b>{{ recs.items.length }}</b> recommended · {{ filterLabel }}
+      </span>
+      <span v-else-if="landed"><b>{{ recs.items.length }}</b> recommended · {{ runScope || 'all types' }}</span>
     </p>
 
+    <LoadingRows v-if="recs.loading && recs.items.length === 0" />
+
     <div v-if="recs.visibleItems.length > 0" ref="recList">
-      <!-- Mounted while silent: inserted populated they read as content (4.1.3). -->
       <p
         id="rec-ignore-error"
         class="state state--error rec-ignore-error focus-fallback"
@@ -210,7 +215,6 @@ async function setIgnored(dbId: number, title: string, value: boolean) {
             v-if="rec.db_id && recs.ignored.has(rec.db_id)"
             :db-id="rec.db_id"
             :title="rec.title"
-            :rank="rank"
             @undo="setIgnored($event, rec.title, false)"
           />
           <RecCard
@@ -249,6 +253,12 @@ async function setIgnored(dbId: number, title: string, value: boolean) {
 
 .run-line:not(:empty) {
   margin-bottom: var(--space-4);
+}
+
+.run-working {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 .run-line b {

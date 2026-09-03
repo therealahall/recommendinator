@@ -201,4 +201,17 @@ describe('preferences load-failure regression', () => {
     expect(store.loadError).toBe('Network error')
   })
 
+  it('sends nothing from a store that never loaded, whichever Save was pressed', async () => {
+    const store = usePreferencesStore()
+
+    await store.save()
+    expect(mockPut).not.toHaveBeenCalled()
+
+    mockGet.mockRejectedValue(new Error('Network error'))
+    await store.load()
+    await store.save()
+
+    expect(mockPut).not.toHaveBeenCalled()
+    expect(store.saveError).toBe('Preferences have not loaded yet.')
+  })
 })

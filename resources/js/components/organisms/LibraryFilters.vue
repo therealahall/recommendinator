@@ -87,7 +87,7 @@ onUnmounted(() => {
 
 <template>
   <div class="card">
-    <div class="library-toolbar">
+    <div class="toolbar">
       <SearchInput
         class="lib-search"
         :model-value="searchQuery"
@@ -191,13 +191,6 @@ onUnmounted(() => {
   color: var(--text-secondary);
 }
 
-.library-toolbar {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  flex-wrap: wrap;
-}
-
 .lib-search {
   flex: 1 1 100%;
   order: -1;
@@ -223,14 +216,6 @@ onUnmounted(() => {
 }
 
 @media (max-width: 640px) {
-  /* Under the top strip, not at the viewport edge: the strip is sticky too and
-     wins the stacking order, so top: 0 would park these filters behind it. */
-  .card {
-    position: sticky;
-    top: var(--topbar-h);
-    z-index: var(--z-sticky);
-  }
-
   .lib-pills,
   .toolbar-divider {
     display: none;

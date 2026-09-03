@@ -108,7 +108,7 @@ describe('DuplicatePair', () => {
 
     const marked = wrapper
       .findAll('.dup-side')
-      .filter((side) => side.text().includes('suggested to keep'))
+      .filter((side) => side.text().toLowerCase().includes('suggested'))
 
     expect(wrapper.findAll('.dup-side')).toHaveLength(3)
     expect(marked.map((side) => side.text().includes('Deadhouse Gates'))).toEqual([true])
@@ -130,9 +130,7 @@ describe('DuplicatePair', () => {
     const names = wrapper.findAll('button').map((one) => one.text())
 
     expect(new Set(names).size).toBe(6)
-    expect(names).toContain(
-      'Merge, keeping “Dune” from calibre, row 3, suggested to keep',
-    )
+    expect(names).toContain('Merge, keeping “Dune” from calibre, row 3, suggested to keep')
     expect(names).toContain('“Dune” from goodreads_rss, row 5 is not the same work')
   })
 

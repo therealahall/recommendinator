@@ -135,6 +135,6 @@ watch(
    .secret-status-row/.secret-edit-row are shared primitives in base.css. */
 .secret-edit-row .field {
   flex: 1;
-  min-width: 12rem;
+  min-width: min(12rem, 100%);
 }
 </style>

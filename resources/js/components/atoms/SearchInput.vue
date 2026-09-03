@@ -137,7 +137,7 @@ function onEscape(e: KeyboardEvent) {
   border: none;
   background: transparent;
   color: var(--text-primary);
-  font-size: var(--text-base);
+  font-size: var(--control-text);
   font-family: inherit;
 }
 
@@ -162,7 +162,8 @@ function onEscape(e: KeyboardEvent) {
   flex-shrink: 0;
 }
 
-.search-input-clear {
+/* Qualified by the field so it outranks the 44px floor a toolbar row sets. */
+.search-input .search-input-clear {
   display: inline-flex;
   align-items: center;
   justify-content: center;

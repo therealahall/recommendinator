@@ -130,6 +130,8 @@
     --text-xl: 1.125rem;
     --text-2xl: 1.375rem;
 
+    --control-text: var(--text-sm);
+
     --leading-none: 1;
     --leading-tight: 1.2;
     --leading-snug: 1.45;
@@ -153,10 +155,12 @@
        chrome's own units: a text-only zoom slides it under a px constant. The
        tab bar's fixed part is padding, a 20px icon and its gap. */
     --tabbar-h: max(4.25rem, calc(3 * var(--space-1) + 2 * var(--space-2) + 20px + 2 * var(--text-xs) * 1.2));
-    --topbar-h: max(3.5rem, calc(2 * var(--space-4) + var(--text-xl) * 1.5));
+    --topbar-h: calc(2 * var(--space-4) + max(44px, var(--text-xl) * 1.5));
     --measure: 940px;
+    --field-w: 22rem;
+    --field-num-w: 9rem;
+    --cover-height: 132px;
 
-    --z-sticky: 20;
     --z-chrome: 30;
     --z-dropdown: 50;
     --z-tooltip: 100;
@@ -164,6 +168,21 @@
     --z-panel: 910;
     --z-skip-link: 930;
     --z-modal: 1000;
+  }
+}
+
+/* Mobile Safari zooms the page when a focused control computes under 16px, and
+   the viewport-meta cure kills pinch-zoom with it (WCAG 1.4.4). Keyed on the
+   pointer, not a width: a phone in landscape zooms just the same. */
+@media (hover: none) and (pointer: coarse) {
+  :root {
+    --control-text: 1rem;
+  }
+
+  input,
+  select,
+  textarea {
+    font-size: var(--control-text);
   }
 }
 
@@ -229,6 +248,12 @@ textarea:focus:not(:focus-visible) {
      visible content (e.g. an activation code) never pulls in hidden labels. */
   -webkit-user-select: none;
   user-select: none;
+}
+
+/* On body alone the viewport ignored it, and a drag past the top reloaded the SPA. */
+html,
+body {
+  overscroll-behavior-y: contain;
 }
 
 body {
@@ -419,6 +444,8 @@ input[type="checkbox"] {
   min-width: 0;
 }
 
+/* Sticky only where there is height to spare. On a phone the strip costs a row
+   a page's own sticky header then has to clear, and the name is not worth it. */
 .app-topbar {
   display: flex;
   align-items: center;
@@ -567,7 +594,7 @@ input[type="checkbox"] {
   border-radius: var(--radius-md);
   color: var(--text-primary);
   font-family: inherit;
-  font-size: var(--text-sm);
+  font-size: var(--control-text);
 }
 
 select.field {
@@ -847,8 +874,8 @@ button.btn[aria-disabled='true'] {
   flex-wrap: wrap;
 }
 
-/* The edge stays --border-default in every tone, so it clears 3:1 on any
-   surface from the token already measured for that (WCAG 1.4.11). */
+/* Every tone re-colours this edge, and each is measured to 3:1 on all four
+   surfaces a badge lands on (WCAG 1.4.11). */
 .badge {
   display: inline-flex;
   align-items: center;
@@ -865,25 +892,29 @@ button.btn[aria-disabled='true'] {
   white-space: nowrap;
 }
 
-/* A tone moves the fill and the label only; every consumer says what it means
-   in words as well, so hue never carries it alone (WCAG 1.4.1). */
+/* A tint this thin composites to near-grey over a dark surface, and thickening
+   it costs the label 4.5:1, so the edge is what carries the hue (WCAG 1.4.3). */
 .badge[data-tone='accent'] {
   background: color-mix(in srgb, var(--accent) 15%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 65%, var(--text-primary));
   color: var(--text-primary);
 }
 
 .badge[data-tone='success'] {
   background: color-mix(in srgb, var(--color-success) 20%, transparent);
+  border-color: color-mix(in srgb, var(--color-success) 65%, var(--text-primary));
   color: var(--text-primary);
 }
 
 .badge[data-tone='warning'] {
   background: color-mix(in srgb, var(--color-warning) 20%, transparent);
+  border-color: color-mix(in srgb, var(--color-warning) 65%, var(--text-primary));
   color: var(--text-primary);
 }
 
 .badge[data-tone='error'] {
   background: color-mix(in srgb, var(--color-error) 20%, transparent);
+  border-color: color-mix(in srgb, var(--color-error) 65%, var(--text-primary));
   color: var(--text-primary);
 }
 
@@ -892,7 +923,7 @@ button.btn[aria-disabled='true'] {
   white-space: normal;
 }
 
-/* The pill says "inferred" in words too, so this is never the only carrier. */
+/* "Inferred" is said only in the pill's sr-only relation, so this edge is the whole sighted channel — style rather than hue, which alone would fail 1.4.1. */
 .badge--inferred {
   border-style: dashed;
 }
@@ -920,6 +951,14 @@ button.badge[aria-checked='true'] {
 button.badge[aria-checked='true']:hover {
   background: var(--accent-light);
   border-color: var(--accent-light);
+}
+
+.type-pills {
+  gap: var(--space-2);
+}
+
+.type-pill {
+  padding-inline: var(--space-4);
 }
 
 .toggle-switch {
@@ -1002,6 +1041,18 @@ button.badge[aria-checked='true']:hover {
 .dropdown-menu-item:hover {
   background: var(--bg-hover);
   color: var(--text-primary);
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.toolbar .btn,
+.toolbar .field {
+  min-height: 44px;
 }
 
 .toolbar-divider {
@@ -1245,11 +1296,15 @@ button.badge[aria-checked='true']:hover {
   flex: 1;
 }
 
+/* A <span>: inline it drops both dimensions, so blockified by a flex parent it
+   only looked sized. max-width bounds it if a dimension is ever lost again. */
 .cover-art {
+  display: block;
   position: relative;
   flex: 0 0 auto;
-  width: 46px;
-  height: 69px;
+  width: calc(var(--cover-height) / 1.5);
+  height: var(--cover-height);
+  max-width: 100%;
   overflow: hidden;
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
@@ -1274,24 +1329,18 @@ button.badge[aria-checked='true']:hover {
   box-shadow: var(--elevation-0);
 }
 
-.kind-line {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  font-size: var(--text-xs);
-  font-weight: var(--weight-semibold);
-  letter-spacing: var(--tracking-widest);
-  text-transform: uppercase;
-  color: var(--text-muted);
-}
-
 .rec-list {
   list-style: none;
 }
 
+/* On the page, not the card, so the loading skeleton is drawn the same size. */
+.rec-page {
+  --cover-height: 168px;
+}
+
 .rec-card {
   display: grid;
-  grid-template-columns: 78px minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr);
   background: var(--bg-card);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
@@ -1309,20 +1358,8 @@ button.badge[aria-checked='true']:hover {
   border-color: var(--border-default);
 }
 
-/* Rank above the art, not beside it: two gutters cost 130px of the measure. */
 .rec-gutter {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-5) 0 var(--space-5) var(--space-4);
-}
-
-.rec-rank {
-  font-family: var(--font-display);
-  font-size: var(--text-md);
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
+  padding: var(--space-5);
 }
 
 .rec-body {
@@ -1333,11 +1370,11 @@ button.badge[aria-checked='true']:hover {
 .rec-header {
   display: flex;
   align-items: flex-start;
-  gap: var(--space-5);
+  gap: var(--space-4);
 }
 
-.rec-heading {
-  flex: 1;
+.rec-identity {
+  flex: 1 1 auto;
   min-width: 0;
 }
 
@@ -1348,7 +1385,16 @@ button.badge[aria-checked='true']:hover {
   line-height: var(--leading-tight);
   letter-spacing: var(--tracking-tight);
   color: var(--text-primary);
-  margin-top: var(--space-1);
+  overflow-wrap: anywhere;
+}
+
+/* Inline against the base `svg { display: block }`, which gives it its own line. */
+.type-glyph {
+  display: inline-block;
+  vertical-align: baseline;
+  width: 0.8em;
+  height: 0.8em;
+  margin-right: var(--space-2);
 }
 
 .rec-series,
@@ -1359,19 +1405,19 @@ button.badge[aria-checked='true']:hover {
 }
 
 .rec-score {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   flex: 0 0 auto;
-  display: grid;
-  justify-items: end;
-  gap: var(--space-1);
-  min-width: 112px;
   min-height: 44px;
-  padding: var(--space-1) var(--space-2) var(--space-2);
+  /* Taller than the line it sits on, so flush tops centre the number below it. */
+  margin-top: calc((var(--text-2xl) * var(--leading-tight) - 44px) / 2);
+  padding: var(--space-1) var(--space-2);
   border: 1px solid transparent;
   border-radius: var(--radius-md);
   background: none;
   color: var(--text-primary);
   font-family: inherit;
-  text-align: right;
   transition: background var(--transition-fast), border-color var(--transition-fast);
 }
 
@@ -1396,7 +1442,7 @@ button.rec-score {
 }
 
 .rec-score-number b {
-  font-size: var(--text-2xl);
+  font-size: var(--text-xl);
   font-weight: var(--weight-semibold);
   line-height: var(--leading-none);
   font-variant-numeric: tabular-nums;
@@ -1464,7 +1510,14 @@ button.rec-score {
   color: var(--text-primary);
   margin-top: var(--space-4);
   max-width: 60ch;
-  white-space: pre-line;
+}
+
+.rec-citations {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+  margin-top: var(--space-4);
 }
 
 .rec-evidence {
@@ -1472,13 +1525,23 @@ button.rec-score {
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
-  margin-top: var(--space-4);
   list-style: none;
 }
 
-.rec-evidence-more {
+.rec-evidence-legend {
+  margin-top: var(--space-2);
   font-size: var(--text-xs);
   color: var(--text-muted);
+}
+
+/* A row of its own under the list, never its last cell: as a cell it landed
+   wherever the titles above happened to wrap, so no two cards agreed. */
+.rec-evidence-toggle {
+  min-height: 44px;
+}
+
+.rec-evidence-toggle[aria-expanded='true'] .icon {
+  transform: rotate(180deg);
 }
 
 .rec-actions {
@@ -1495,18 +1558,11 @@ button.rec-score {
   flex: 1;
 }
 
-/* Keeps its rank so the list never silently renumbers under the undo. */
+/* Holds the position so the list never silently renumbers under the undo. */
 .rec-aside {
-  display: grid;
-  grid-template-columns: 78px minmax(0, 1fr);
-  align-items: center;
   margin-bottom: var(--space-4);
   border: 1px dashed var(--border-default);
   border-radius: var(--radius-lg);
-}
-
-.rec-aside .rec-gutter {
-  padding: var(--space-3) 0 var(--space-3) var(--space-4);
 }
 
 .rec-aside-body {
@@ -1584,6 +1640,11 @@ button.rec-score {
 
 .score-row-penalty .score-value {
   color: var(--color-warning-text);
+}
+
+.score-row-off .score-label,
+.score-row-off .score-value {
+  color: var(--text-muted);
 }
 
 .score-value {
@@ -1664,10 +1725,6 @@ button.rec-score {
   align-items: center;
   gap: var(--space-2);
   margin-bottom: var(--space-1);
-}
-
-.library-meta-secondary .badge {
-  margin-left: auto;
 }
 
 /* Rating is a plain value (no badge chrome): filled/outlined stars convey the
@@ -1943,12 +2000,6 @@ button.rec-score {
   outline: none;
 }
 
-.profile-summary { font-size: var(--text-sm); }
-.profile-section { margin-bottom: var(--space-3); }
-.profile-section h4 { font-size: var(--text-xs); font-weight: var(--weight-semibold); margin: 0 0 var(--space-2) 0; color: var(--text-muted); text-transform: uppercase; letter-spacing: var(--tracking-wider); }
-.profile-tags { display: flex; flex-wrap: wrap; gap: var(--space-1); }
-.profile-status { margin-top: var(--space-2); font-size: var(--text-sm); color: var(--text-secondary); }
-.profile-status.failed { color: var(--color-error-text); }
 .sync-plugin-name { font-size: var(--text-xs); color: var(--text-muted); margin-bottom: var(--space-3); }
 .sync-status-message { padding: var(--space-3) var(--space-4); border-radius: var(--radius-md); margin-bottom: var(--space-3); font-size: var(--text-sm); }
 .sync-status-info { background: color-mix(in srgb, var(--color-info) 10%, transparent); color: var(--color-info-text); border: 1px solid color-mix(in srgb, var(--color-info) 30%, transparent); }
@@ -1968,6 +2019,10 @@ button.rec-score {
   .app-shell {
     grid-template-columns: minmax(0, 1fr);
     padding-bottom: var(--tabbar-h);
+  }
+
+  .app-topbar {
+    position: static;
   }
 
   /* Fixed rather than sticky, so a tab is one thumb away at any scroll depth;
@@ -2018,8 +2073,8 @@ button.rec-score {
     padding: var(--space-4) var(--space-4) var(--space-8);
   }
 
-  /* The wider desktop label column would crush the sliders on narrow screens,
-     so let slider rows wrap and give the label and control their own line. */
+  /* The desktop label column would crush the control beside it on a narrow
+     screen, so these rows wrap and the label takes a line of its own. */
   .slider-row {
     flex-wrap: wrap;
   }
@@ -2033,44 +2088,77 @@ button.rec-score {
     flex: 1 1 100%;
     width: 100%;
   }
+
+  .dropdown-row {
+    flex-wrap: wrap;
+  }
+
+  .dropdown-label {
+    width: 100%;
+  }
+
+  /* A select cannot shrink past its widest option (WCAG 1.4.10). */
+  .dropdown-row .field {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
 }
 
 /* 640px, not 768px: the controls above these cards (RecControls) already
    restack there, so the whole recommendations page turns over at one width. */
 @media (max-width: 640px) {
-  /* A 78px column is a quarter of a 390px screen, so the gutter lies down. */
+  /* Shorter than the desktop box: the identity column still owes the title a
+     width it can wrap in at 320px. */
+  :root {
+    --cover-height: 96px;
+  }
+
+  .rec-page {
+    --cover-height: 120px;
+  }
+
   .rec-card {
-    grid-template-columns: minmax(0, 1fr);
+    column-gap: var(--space-4);
+    padding: var(--space-4) var(--space-4) 0;
   }
 
   .rec-gutter {
-    flex-direction: row;
-    justify-content: flex-start;
-    gap: var(--space-3);
-    padding: var(--space-4) var(--space-4) 0;
-  }
-
-  .rec-aside {
-    grid-template-columns: minmax(0, 1fr);
+    padding: 0;
   }
 
   .rec-body {
-    padding: var(--space-4) var(--space-4) 0;
+    display: contents;
   }
 
+  .rec-reasoning,
+  .rec-citations,
+  .score-details,
+  .rec-actions {
+    grid-column: 1 / -1;
+  }
+
+  /* Beside a cover there is no width for two columns here. */
   .rec-header {
-    flex-wrap: wrap;
+    flex-direction: column;
+    align-items: flex-start;
     gap: var(--space-3);
-  }
-
-  .rec-heading {
-    flex: 1 1 100%;
+    min-width: 0;
   }
 
   .rec-score {
-    width: 100%;
-    justify-items: start;
-    text-align: left;
+    margin-top: 0;
+  }
+
+  .rec-spine,
+  .rec-score-cue-label {
+    display: none;
+  }
+
+  /* One a row: a long title takes the whole row here anyway, so packing the
+     short ones two-up reads as an accident rather than a list. */
+  .rec-evidence {
+    flex-direction: column;
+    align-items: flex-start;
   }
 
   .rec-actions {

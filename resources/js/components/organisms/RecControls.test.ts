@@ -51,7 +51,7 @@ describe('RecControls', () => {
     expect(recs.count).toBe(10)
   })
 
-  it('runs a ranking when the primary action is pressed', async () => {
+  it('runs a recommendation when the primary action is pressed', async () => {
     const recs = useRecommendationsStore()
     recs.fetch = vi.fn()
 

@@ -54,11 +54,16 @@ const router = createRouter({
       component: () => import('@/components/pages/SettingsPage.vue'),
     },
   ],
+  // Where a page starts is owned here, so the focus call below need not decide.
+  scrollBehavior(_to, _from, savedPosition) {
+    return savedPosition ?? { top: 0 }
+  },
 })
 
+// Focusing a <main> taller than the viewport scrolls its top edge up to meet it.
 router.afterEach(() => {
   nextTick(() => {
-    document.getElementById('main-content')?.focus()
+    document.getElementById('main-content')?.focus({ preventScroll: true })
   })
 })
 

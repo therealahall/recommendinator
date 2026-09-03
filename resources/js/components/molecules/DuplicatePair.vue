@@ -52,6 +52,7 @@ function view(side: DuplicateSide) {
     label:
       props.merging && chosen.value === side.db_id
         ? 'Merging…'
+        // The Suggested badge is sighted-only, so without this the two names differ by row id alone (4.1.2).
         : `Merge, keeping ${named}${proposed ? ', suggested to keep' : ''}`,
     apart:
       props.declining && chosen.value === side.db_id
@@ -90,6 +91,11 @@ function onDecline(copyId: number, otherIds: number[]): void {
     <div class="dup-pair-sides">
       <div v-for="side in sides" :key="side.keepId" class="dup-side">
         <p class="dup-side-title">{{ side.title }}</p>
+        <span
+          v-if="side.proposed"
+          class="badge dup-side-proposed"
+          data-tone="accent"
+        >Suggested</span>
         <p class="dup-side-meta">
           <span>{{ side.creator }}</span>
           <span aria-hidden="true">·</span>
@@ -100,10 +106,6 @@ function onDecline(copyId: number, otherIds: number[]): void {
           </template>
           <span aria-hidden="true">·</span>
           <span>row {{ side.keepId }}</span>
-          <template v-if="side.proposed">
-            <span aria-hidden="true">·</span>
-            <span class="dup-side-proposed">suggested to keep</span>
-          </template>
         </p>
         <p v-if="side.elsewhere" class="dup-side-elsewhere">{{ side.elsewhere }}</p>
         <button
@@ -185,7 +187,7 @@ function onDecline(copyId: number, otherIds: number[]): void {
 }
 
 .dup-side-proposed {
-  color: var(--text-primary);
+  align-self: flex-start;
 }
 
 .dup-side-elsewhere {

@@ -115,7 +115,7 @@ describe('RecCard', () => {
     expect(pills[1].text()).toContain('contributed directly')
   })
 
-  it('says an inferred citation is inferred in words, not by its edge alone', () => {
+  it('names an inferred citation as inferred for a screen reader', () => {
     const wrapper = mount(RecCard, {
       props: {
         rec: makeRec({ adaptations: [related({ title: 'Dune, the novel' })] }),
@@ -141,23 +141,64 @@ describe('RecCard', () => {
     expect(wrapper.findAll('.rec-evidence .badge')).toHaveLength(1)
   })
 
-  it('still shows the inferred citation when direct ones would fill the row', () => {
+  it('leads the citation with the sentence that introduces it', () => {
     const wrapper = mount(RecCard, {
       props: {
         rec: makeRec({
-          content_type: 'movie',
-          contributing_items: [
-            related({ db_id: 1, title: 'Ancillary Justice' }),
-            related({ db_id: 2, title: 'Hyperion' }),
-            related({ db_id: 3, title: 'Neuromancer' }),
-          ],
-          adaptations: [related({ db_id: 4, title: 'Dune' })],
+          reasoning: 'Recommended because you liked related items',
+          contributing_items: [related({ title: 'Hyperion' })],
         }),
         rank: 1,
       },
     })
 
-    expect(wrapper.get('.rec-evidence').text()).toContain('Dune')
+    expect(wrapper.get('.rec-reasoning').text()).toContain('because you liked')
+    expect(wrapper.get('.rec-evidence').text()).toContain('Hyperion')
+  })
+
+  it('counts the citations it holds back and reaches them all when opened', async () => {
+    // A silently truncated citation reads as the whole reason for the pick.
+    const titles = ['Ancillary Justice', 'Hyperion', 'Neuromancer', 'Blindsight', 'Ubik']
+    const wrapper = mount(RecCard, {
+      props: {
+        rec: makeRec({
+          content_type: 'movie',
+          contributing_items: titles.map((title, index) => related({ db_id: index + 1, title })),
+          adaptations: [related({ db_id: 9, title: 'Dune' })],
+        }),
+        rank: 1,
+      },
+    })
+    const cited = () => wrapper.get('.rec-evidence').text()
+
+    const toggle = wrapper.get('.rec-evidence-toggle')
+    expect(toggle.text()).toContain('+2 more')
+    expect(toggle.attributes('aria-expanded')).toBe('false')
+    expect(toggle.attributes('aria-controls')).toBe(wrapper.get('.rec-evidence').attributes('id'))
+    expect(cited()).not.toContain('Ubik')
+
+    await toggle.trigger('click')
+
+    expect(wrapper.get('.rec-evidence-toggle').attributes('aria-expanded')).toBe('true')
+    for (const title of [...titles, 'Dune']) {
+      expect(cited().includes(title), title).toBe(true)
+    }
+  })
+
+  it('leaves the disclosure out of the list it opens, so it is not announced as a citation', () => {
+    const wrapper = mount(RecCard, {
+      props: {
+        rec: makeRec({
+          contributing_items: ['A', 'B', 'C', 'D', 'E'].map((title, index) =>
+            related({ db_id: index + 1, title }),
+          ),
+        }),
+        rank: 1,
+      },
+    })
+
+    expect(wrapper.get('.rec-evidence-toggle').text()).toContain('+1 more')
+    expect(wrapper.findAll('.rec-evidence button')).toHaveLength(0)
   })
 
   it('opens the breakdown from the collapsed score, which is the only control for it', async () => {

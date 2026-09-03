@@ -213,6 +213,19 @@ describe('the stale-bundle banner', () => {
   })
 })
 
+describe('the item a sync is working on', () => {
+  it('runs to the whole title rather than clipping it, and never widens the page', () => {
+    const source = readFileSync(
+      `${process.cwd()}/resources/js/components/molecules/SourceSyncProgress.vue`,
+      'utf8',
+    )
+    const rule = ruleBlock(source, '.source-progress-item')
+
+    expect(rule).not.toMatch(/text-overflow:\s*ellipsis/)
+    expect(declaration(rule, 'overflow-wrap')).toBe('anywhere')
+  })
+})
+
 describe('library card divider (issue #108)', () => {
   // margin-top:auto is zero on a content-height card, so on a one-column grid
   // the divider touched the badges — but looked right whenever the card was
@@ -238,27 +251,45 @@ describe('the one cover box', () => {
 
   // Slicing to a box off the poster ratio crops the art every source ships,
   // rather than only the wider key art it is there for.
-  it('holds the 2:3 the covers themselves are, at whatever size', () => {
-    const box = ruleBlock(readBase(), '.cover-art')
-    const px = (property: string): number => parseFloat(declaration(box, property))
+  it('holds the 2:3 the covers themselves are, at every size it is set to', () => {
+    const source = readBase()
+    const box = ruleBlock(source, '.cover-art')
+    const ratio = parseFloat(
+      /calc\(\s*var\(--cover-height\)\s*\/\s*([\d.]+)\s*\)/.exec(declaration(box, 'width'))?.[1] ??
+        'NaN',
+    )
 
-    expect(px('height')).toBeCloseTo(px('width') * 1.5)
+    expect(declaration(box, 'height')).toBe('var(--cover-height)')
+    expect(ratio).toBeCloseTo(1.5)
+  })
+
+  // A <span> is inline, where width and height do not apply, so the box was only
+  // ever sized by a flex parent blockifying it.
+  it('carries its own box rather than the layout its parent happens to use', () => {
+    const box = ruleBlock(readBase(), '.cover-art')
+
+    expect(declaration(box, 'display')).not.toBe('inline')
+    expect(declaration(box, 'max-width')).toBe('100%')
   })
 })
 
 describe('recommendation card header (issue #98)', () => {
-  // 1.4.10: at 375px the score and the 78px rank column squeezed the title
-  // until the card scrolled sideways. Every fixed-width neighbour of the
-  // heading has to give up its column.
-  it('gives the heading its own row before the score crowds it', () => {
-    const mobile = mediaBlock(readBase(), '640px')
+  // 1.4.10: at 375px the score and the rank column squeezed the title until the
+  // card scrolled sideways, so nothing sharing the identity line holds a width.
+  it('drops the score below the title before it can crowd it', () => {
+    const base = readBase()
+    const mobile = mediaBlock(base, '640px')
 
-    expect(declaration(ruleBlock(mobile, '.rec-card'), 'grid-template-columns')).toBe(
+    expect(declaration(ruleBlock(base, '.rec-card'), 'grid-template-columns')).toContain(
       'minmax(0, 1fr)',
     )
-    expect(declaration(ruleBlock(mobile, '.rec-header'), 'flex-wrap')).toBe('wrap')
-    expect(declaration(ruleBlock(mobile, '.rec-heading'), 'flex')).toBe('1 1 100%')
-    expect(declaration(ruleBlock(mobile, '.rec-score'), 'width')).toBe('100%')
+    expect(declaration(ruleBlock(mobile, '.rec-header'), 'flex-direction')).toBe('column')
+    expect(declaration(ruleBlock(mobile, '.rec-header'), 'min-width')).toBe('0')
+    expect(declaration(ruleBlock(base, '.rec-identity'), 'min-width')).toBe('0')
+  })
+
+  it('breaks a long title rather than widening the card holding it', () => {
+    expect(declaration(ruleBlock(readBase(), '.rec-title'), 'overflow-wrap')).toBe('anywhere')
   })
 })
 
@@ -278,12 +309,106 @@ describe('one-handed reach on a phone', () => {
     expect(ruleBlock(source, '.badge')).not.toMatch(/min-height:/)
   })
 
+  it('gives every control standing in a filter row the same thumb target', () => {
+    // The pills were 44px and the stepper, the selects and the buttons beside
+    // them 35, so one row disagreed with itself about what a target is.
+    const row = readBase().match(/\.toolbar \.btn,\s*\.toolbar \.field\s*\{([^}]*)\}/)
+    if (!row) throw new Error('no shared toolbar control height in base.css')
+    const stepper = readFileSync(
+      `${process.cwd()}/resources/js/components/atoms/NumberStepper.vue`,
+      'utf8',
+    )
+
+    expect(declaration(row[1], 'min-height')).toBe('44px')
+    expect(declaration(ruleBlock(stepper, '.number-stepper'), 'min-height')).toBe('44px')
+  })
+
+  it('keeps the profile panel action a thumb target, small variant or not', () => {
+    const source = readFileSync(
+      `${process.cwd()}/resources/js/components/organisms/ProfilePanel.vue`,
+      'utf8',
+    )
+
+    expect(declaration(ruleBlock(source, '.pref-section > .btn'), 'min-height')).toBe('44px')
+  })
+
+  it('gives the preferences commit buttons a thumb target where the page has no pointer', () => {
+    const mobile = mediaBlock(
+      readFileSync(`${process.cwd()}/resources/js/components/pages/PreferencesPage.vue`, 'utf8'),
+      '768px',
+    )
+
+    expect(declaration(ruleBlock(mobile, '.pref-actions .btn'), 'min-height')).toBe('44px')
+  })
+
+  it('keeps a drag past the top off the browser reload, from the root the viewport reads', () => {
+    const contained = [...readBase().matchAll(/([^{}]*)\{([^{}]*)\}/g)].flatMap(
+      ([, selector, body]) =>
+        /overscroll-behavior-y:\s*(?:contain|none)/.test(body) ? [selector.trim()] : [],
+    )
+
+    expect(contained.length).toBeGreaterThan(0)
+    expect(contained.some((selector) => /(?:^|,)\s*html\s*(?:,|$)/m.test(selector))).toBe(true)
+  })
+
   it('sizes the standalone screens to the visible viewport, not the tallest one', () => {
     // 100vh alone strands the submit button under a collapsing mobile toolbar.
     const match = readBase().match(/\.auth-screen\s*\{([^}]*)\}/)
     if (!match) throw new Error('.auth-screen rule not found in base.css')
 
     expect(match[1]).toMatch(/min-height:\s*100dvh/)
+  })
+})
+
+function coarsePointerBlock(source: string): string {
+  const match = source.match(/@media \(hover: none\) and \(pointer: coarse\) \{([\s\S]*?)\n\}/)
+  if (!match) throw new Error('coarse-pointer media block not found in base.css')
+  return match[1]
+}
+
+describe('typing into the app on a phone', () => {
+  it('never sizes a control below the 16px mobile Safari zooms the page at', () => {
+    const touch = coarsePointerBlock(readBase())
+
+    expect(declaration(ruleBlock(touch, ':root'), '--control-text')).toBe('1rem')
+    // The element rule, for a control carrying no class of its own.
+    expect(declaration(touch, 'font-size')).toBe('var(--control-text)')
+  })
+
+  it('sizes every text-entry control off that one token, missing none of them', () => {
+    const componentRule = (path: string, selector: string) =>
+      declaration(ruleBlock(readFileSync(`${process.cwd()}/${path}`, 'utf8'), selector), 'font-size')
+
+    expect(declaration(ruleBlock(readBase(), '.field'), 'font-size')).toBe('var(--control-text)')
+    expect(
+      componentRule('resources/js/components/atoms/NumberStepper.vue', '.stepper-input'),
+    ).toBe('var(--control-text)')
+    expect(
+      componentRule('resources/js/components/atoms/SearchInput.vue', '.search-input-field'),
+    ).toBe('var(--control-text)')
+  })
+
+  it('leaves pinch-zoom alone, which is the other way to stop that zoom', () => {
+    // Barring it would take the reader's own zoom with it (WCAG 1.4.4).
+    const html = readFileSync(`${process.cwd()}/index.html`, 'utf8')
+
+    expect(html).not.toMatch(/maximum-scale|user-scalable/)
+  })
+})
+
+describe('the items a recommendation cites', () => {
+  it('lists them one to a row on a phone, however long the titles run', () => {
+    const mobile = mediaBlock(readBase(), '640px')
+
+    expect(declaration(ruleBlock(mobile, '.rec-evidence'), 'flex-direction')).toBe('column')
+    expect(declaration(ruleBlock(mobile, '.rec-evidence'), 'align-items')).toBe('flex-start')
+  })
+
+  it('wraps a long title rather than clipping it to fit', () => {
+    const badge = ruleBlock(readBase(), '.badge--wrap')
+
+    expect(declaration(badge, 'white-space')).toBe('normal')
+    expect(badge).not.toMatch(/text-overflow:/)
   })
 })
 
@@ -309,6 +434,18 @@ describe('full-bleed controls inside a bordered field', () => {
     for (const selector of ['.stepper-btn:focus-visible', '.stepper-input:focus-visible']) {
       expect(declaration(ruleBlock(source, selector), 'outline-offset')).toMatch(/^-/)
     }
+  })
+
+  it('sizes the stepper to the number it holds, never to the column of fields', () => {
+    const width = declaration(
+      ruleBlock(
+        readFileSync(`${process.cwd()}/resources/js/components/atoms/NumberStepper.vue`, 'utf8'),
+        '.number-stepper',
+      ),
+      'width',
+    )
+
+    expect(width).toMatch(/^min\(.*100%\)$/)
   })
 })
 
@@ -529,15 +666,20 @@ describe('the elevation ladder', () => {
 })
 
 describe('motion the reader asked not to see', () => {
-  it('stops every animation and transition in the stylesheet, the spinner included', () => {
-    // Per-rule opt-outs are what rot: the next transition added is covered by
-    // this or by nobody (WCAG 2.3.3).
+  it('stops every animation in the app, wherever it is declared (WCAG 2.3.3)', () => {
+    // Per-rule opt-outs are what rot: the next animation added — a spinner, a
+    // skeleton — is covered by this one block or by nobody.
     const block = readBase().match(
       /@media \(prefers-reduced-motion: reduce\)\s*\{([\s\S]*?)\n\}/,
     )
     if (!block) throw new Error('no prefers-reduced-motion block in base.css')
+    const animated = styledFiles('resources').flatMap((path) => [
+      ...readFileSync(`${process.cwd()}/${path}`, 'utf8').matchAll(
+        /(?<![-\w])animation:\s*([^;]+);/g,
+      ),
+    ])
 
-    expect(declaration(ruleBlock(readBase(), '.spinner'), 'animation')).toContain('spin')
+    expect(animated.length).toBeGreaterThan(1)
     expect(block[1]).toMatch(/^\s*\*,/m)
     expect(block[1]).toMatch(/animation-duration:[^;]*!important/)
     expect(block[1]).toMatch(/transition-duration:[^;]*!important/)
@@ -601,7 +743,7 @@ describe('the token contract', () => {
     const root = readBase().match(/:root\s*\{([\s\S]*?)\n\s*\}/)
     if (!root) throw new Error('no :root block in base.css')
     const unbranded = [...root[1].matchAll(/(--[\w-]+):\s*([^;]+);/g)]
-      .filter(([, , value]) => !value.includes('var(--') && /#[0-9a-f]{6}|rgba?\(/i.test(value))
+      .filter(([, , value]) => /#[0-9a-f]{3,8}\b|rgba?\(/i.test(value))
       .map(([, name]) => name)
 
     expect(unbranded.length).toBeGreaterThan(0)
@@ -612,25 +754,9 @@ describe('the token contract', () => {
   })
 })
 
-describe('a page sticking a row of its own under the chrome', () => {
-  // The top strip is sticky and outranks it, so a filter row parked at the
-  // viewport edge is a control the phone user cannot see or reach.
-  it('clears the strip by the height the strip is held to', () => {
-    const source = readBase()
-    const filters = readFileSync(
-      `${process.cwd()}/resources/js/components/organisms/LibraryFilters.vue`,
-      'utf8',
-    )
-    const offset = declaration(ruleBlock(mediaBlock(filters, '640px'), '.card'), 'top')
-
-    expect(offset).toBe(declaration(ruleBlock(source, '.app-topbar'), 'min-height'))
-    expect(step(scale(source), declaration(ruleBlock(source, '.app-topbar'), 'z-index'))).toBeGreaterThan(
-      step(scale(source), declaration(ruleBlock(filters, '.card'), 'z-index')),
-    )
-  })
-
+describe('the heights the chrome reserves', () => {
   // A px constant does not move when the chrome itself grows with the text, and
-  // both reservations are read by a page parking a row against that chrome.
+  // the shell lays every page out inside what these two reserve.
   it('grows every reserved chrome height with the text in it (WCAG 1.4.4)', () => {
     const reserved = [...readBase().matchAll(/(--[\w-]+-h):\s*([^;]+);/g)]
 
@@ -641,18 +767,36 @@ describe('a page sticking a row of its own under the chrome', () => {
   })
 })
 
-describe('a page sticking a row of its own over the tab bar', () => {
-  // The tab bar is fixed there and outranks the page: it eats the clicks.
-  it('clears the tab bar by the height the tab bar is held to', () => {
-    const page = readFileSync(
-      `${process.cwd()}/resources/js/components/pages/PreferencesPage.vue`,
+describe('the settings column', () => {
+  it('caps every control it renders at the card, whatever type the leaf is', () => {
+    const source = readFileSync(
+      `${process.cwd()}/resources/js/components/molecules/SettingControl.vue`,
       'utf8',
+    ).replace(/\/\*[\s\S]*?\*\//g, '')
+    const widths = [...source.matchAll(/(?<![-\w])width:\s*([^;]+);/g)].map(([, value]) =>
+      value.trim(),
     )
-    const parked = declaration(ruleBlock(page, '.pref-actions'), 'bottom')
-    const cleared = declaration(ruleBlock(mediaBlock(page, '768px'), '.pref-actions'), 'bottom')
 
-    expect(cleared).toContain('var(--tabbar-h)')
-    expect(cleared).not.toBe(parked)
+    expect(widths.length).toBeGreaterThan(0)
+    expect(widths.filter((width) => !width.includes('100%'))).toEqual([])
+  })
+})
+
+describe('a control with a floor measured in rem', () => {
+  it('caps that floor at the column holding it, so a text zoom cannot widen the page', () => {
+    const scanned = styledFiles('resources')
+    const uncapped = scanned.flatMap((path) =>
+      [
+        ...readFileSync(`${process.cwd()}/${path}`, 'utf8')
+          .replace(/\/\*[\s\S]*?\*\//g, '')
+          .matchAll(/(?<![-\w])min-width:\s*([^;]+);/g),
+      ].flatMap(([, value]) =>
+        /[\d.]rem\b/.test(value) && !value.includes('min(') ? [`${path}: ${value.trim()}`] : [],
+      ),
+    )
+
+    expect(scanned.length).toBeGreaterThan(0)
+    expect(uncapped).toEqual([])
   })
 })
 

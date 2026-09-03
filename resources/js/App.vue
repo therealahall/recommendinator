@@ -105,7 +105,7 @@ watch(
     // The sign-in screen took the focused input with it, so focus would sit on
     // <body> and the next Tab would restart from the nav.
     await nextTick()
-    mainContent.value?.focus()
+    mainContent.value?.focus({ preventScroll: true })
   },
 )
 </script>

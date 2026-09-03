@@ -57,14 +57,14 @@ function onKeydown(e: KeyboardEvent) {
 </script>
 
 <template>
-  <div class="badge-group" role="radiogroup" :aria-label="ariaLabel" @keydown="onKeydown">
+  <div class="badge-group type-pills" role="radiogroup" :aria-label="ariaLabel" @keydown="onKeydown">
     <button
       v-for="(opt, i) in visibleOptions"
       :key="opt.value"
       ref="pills"
       type="button"
       role="radio"
-      class="badge"
+      class="badge type-pill"
       :aria-checked="modelValue === opt.value"
       :tabindex="i === tabStop ? 0 : -1"
       @click="emit('update:modelValue', opt.value)"

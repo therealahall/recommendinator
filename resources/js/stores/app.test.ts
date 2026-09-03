@@ -68,7 +68,7 @@ describe('useAppStore', () => {
     expect(store.status).toBe('ready')
     expect(store.statusMessage).toBe('')
     expect(store.version).toBe('1.2.3')
-    expect(store.recommendationsConfig.default_count).toBe(10)
+    expect(store.recommendationsConfig?.default_count).toBe(10)
   })
 
   it('fetchStatus sets initializing message when not ready', async () => {
@@ -89,6 +89,7 @@ describe('useAppStore', () => {
 
     expect(store.status).toBe('error')
     expect(store.statusMessage).toBe('Failed to connect to server')
+    expect(store.recommendationsConfig).toBeNull()
   })
 
   it('asks for no user list, because there is nobody to switch to', async () => {

@@ -88,7 +88,7 @@ const missed = computed(() => props.result.skipped + props.result.failed)
 .import-count {
   display: flex;
   flex-direction: column-reverse;
-  min-width: 4.5rem;
+  min-width: min(4.5rem, 100%);
 }
 
 .import-count dt {

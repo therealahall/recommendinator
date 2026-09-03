@@ -11,7 +11,19 @@ export const useRecommendationsStore = defineStore('recommendations', () => {
   const loading = ref(false)
   const error = ref('')
   const contentType = ref('')
-  const count = ref(5)
+  const chosenCount = ref<number | null>(null)
+  // Null until /status answers, so the run omits it and gets the count the CLI does. Capped otherwise, as the server caps it.
+  const count = computed<number | null>({
+    get() {
+      if (chosenCount.value !== null) return chosenCount.value
+      const configured = useAppStore().recommendationsConfig
+      if (configured === null) return null
+      return Math.min(configured.default_count, configured.max_count)
+    },
+    set(value) {
+      chosenCount.value = value
+    },
+  })
   // Kept per item rather than dropping the row: the undo has to sit where the
   // card was, and a re-inserted row would come back at the wrong rank.
   const ignored = ref<Set<number>>(new Set())
@@ -43,7 +55,7 @@ export const useRecommendationsStore = defineStore('recommendations', () => {
     try {
       const result = await api.get<RecommendationResponse[]>('/recommendations', {
         type: contentType.value || undefined,
-        count: count.value,
+        count: count.value ?? undefined,
         user_id: app.currentUserId,
       })
       items.value = result

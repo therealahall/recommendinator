@@ -4,6 +4,7 @@ import { createTestingPinia } from '@pinia/testing'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import LibraryPage from './LibraryPage.vue'
 import EditModal from '@/components/molecules/EditModal.vue'
+import LoadingRows from '@/components/molecules/LoadingRows.vue'
 import { useLibraryStore } from '@/stores/library'
 import { useDataStore } from '@/stores/data'
 
@@ -58,6 +59,16 @@ describe('LibraryPage search behaviour', () => {
     expect(entry?.attributes('href')).toBe('/library/duplicates')
   })
 
+  it('fills the page with placeholders while it loads, and flags itself busy', async () => {
+    const { wrapper } = mountPage({ items: [], loading: true })
+    await wrapper.vm.$nextTick()
+
+    const placeholders = wrapper.findComponent(LoadingRows)
+    expect(placeholders.exists()).toBe(true)
+    expect(placeholders.attributes('aria-hidden')).toBe('true')
+    expect(wrapper.attributes('aria-busy')).toBe('true')
+  })
+
   it('names the query that matched nothing, so the way out is on screen', async () => {
     const { wrapper } = mountPage({ items: [], loading: false, searchQuery: 'dune' })
     await wrapper.vm.$nextTick()
@@ -77,13 +88,36 @@ describe('LibraryPage search behaviour', () => {
   })
 
   it('reflects searchAnnouncement in the polite live region', async () => {
-    const { wrapper } = mountPage({ searchAnnouncement: '2 items match “dune”' })
+    const { wrapper } = mountPage({
+      items: [
+        { db_id: 1, title: 'Dune', content_type: 'book', status: 'unread' },
+        { db_id: 2, title: 'Dune Messiah', content_type: 'book', status: 'unread' },
+      ],
+      searchAnnouncement: '2 items match “dune”',
+    })
     await wrapper.vm.$nextTick()
 
     const region = wrapper.find('[role="status"]')
     expect(region.exists()).toBe(true)
     expect(region.attributes('aria-live')).toBe('polite')
     expect(region.text()).toBe('2 items match “dune”')
+  })
+
+  it('speaks the load and the count that landed, with no query to describe', async () => {
+    const { wrapper, lib } = mountPage({ items: [], loading: true })
+    await wrapper.vm.$nextTick()
+    const region = () => wrapper.get('[role="status"]')
+
+    expect(region().text()).toBe('Loading library…')
+
+    Object.assign(lib, {
+      loading: false,
+      hasMore: false,
+      items: [{ db_id: 1, title: 'Dune', content_type: 'book', status: 'unread' }],
+    })
+    await wrapper.vm.$nextTick()
+
+    expect(region().text()).toBe('All 1 item loaded')
   })
 
   it('hands a refused save to the dialog, and never to the load banner', async () => {

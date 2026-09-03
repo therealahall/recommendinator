@@ -6,6 +6,7 @@ import { useDataStore } from '@/stores/data'
 import { rescueFocus } from '@/utils/focus'
 import LibraryFilters from '@/components/organisms/LibraryFilters.vue'
 import LibraryCard from '@/components/molecules/LibraryCard.vue'
+import LoadingRows from '@/components/molecules/LoadingRows.vue'
 import EditModal from '@/components/molecules/EditModal.vue'
 import AppIcon from '@/components/atoms/AppIcon.vue'
 
@@ -19,6 +20,18 @@ const heading = ref<HTMLElement | null>(null)
 const filtered = computed(() =>
   Boolean(lib.typeFilter || lib.statusFilter || lib.enrichmentFilter),
 )
+
+const counted = computed(() =>
+  lib.items.length === 1 ? '1 item' : `${lib.items.length} items`,
+)
+
+// The skeleton is aria-hidden and the empty states carry their own words, so without this a load and every filter change are silent.
+const loadAnnouncement = computed(() => {
+  if (lib.loading) return 'Loading library…'
+  if (lib.items.length === 0) return ''
+  if (lib.searchAnnouncement) return lib.searchAnnouncement
+  return lib.hasMore ? `${counted.value} loaded` : `All ${counted.value} loaded`
+})
 
 const emptyTitle = computed(() => {
   if (lib.needsRating) return 'Nothing needs a rating'
@@ -96,7 +109,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div>
+  <div :aria-busy="lib.loading || undefined">
     <div class="page-header library-header">
       <div class="library-heading">
         <h2 ref="heading" tabindex="-1">Library</h2>
@@ -121,7 +134,7 @@ onUnmounted(() => {
       @export="lib.exportLibrary"
     />
 
-    <p class="sr-only" role="status" aria-live="polite">{{ lib.searchAnnouncement }}</p>
+    <p class="sr-only" role="status" aria-live="polite">{{ loadAnnouncement }}</p>
 
     <div v-if="lib.error" class="status-bar error" role="alert" style="display: block">
       Failed to load library: {{ lib.error }}
@@ -180,8 +193,8 @@ onUnmounted(() => {
       />
     </div>
 
-    <div v-if="lib.loading" class="state state--loading">
-      <span class="spinner" /> Loading…
+    <div v-if="lib.loading" class="library-grid">
+      <LoadingRows :rows="lib.items.length > 0 ? 2 : 6" />
     </div>
 
     <div v-if="!lib.hasMore && lib.items.length > 0" class="library-end">
