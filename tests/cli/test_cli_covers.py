@@ -39,6 +39,21 @@ def test_backfill_reports_the_run_with_the_web_actions_keys(
     assert mock_start.call_args.kwargs["user_id"] == 1
 
 
+def test_backfill_names_the_remedy_for_the_items_it_cannot_fetch(
+    cli_runner: CliRunner,
+) -> None:
+    finished = CoverBackfillRecord(completed=True, without_cover=7)
+
+    with patch("src.cli.commands._covers.start_backfill", return_value=finished):
+        result = _invoke_with_mocks(
+            cli_runner, ["covers", "backfill"], _storage_reading(finished)
+        )
+
+    assert result.exit_code == 0
+    assert "Items with no cover art to fetch: 7" in result.output
+    assert "'enrichment reset' then 'enrichment start'" in result.output
+
+
 def test_backfill_refuses_to_start_beside_the_one_the_web_started(
     cli_runner: CliRunner,
 ) -> None:

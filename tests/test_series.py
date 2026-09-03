@@ -2,7 +2,12 @@ from datetime import date
 
 import pytest
 
-from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.models.content import (
+    ConsumptionStatus,
+    ContentItem,
+    ContentType,
+    ExternalId,
+)
 from src.utils.series import (
     MAX_SEASONS,
     _extract_series_from_title,
@@ -20,7 +25,6 @@ from src.utils.series import (
     latest_season_watched_date,
     should_recommend_item,
     split_series_from_title,
-    strip_series_suffix_from_title,
 )
 
 
@@ -430,6 +434,51 @@ class TestExpandTvShowsSkipsWatchedSeasons:
         assert len(expanded) == 3
 
 
+class TestSeasonItemsCarryTheShow:
+    def _show(self) -> ContentItem:
+        return ContentItem(
+            user_id=7,
+            id="show1",
+            db_id=42,
+            title="The Show",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            author="A Network",
+            rating=4,
+            review="Worth it",
+            date_completed=date(2026, 1, 2),
+            cover_url="https://example.test/show.jpg",
+            source="trakt",
+            external_ids=[ExternalId(source="trakt", external_id="show1")],
+            enriched=True,
+            manually_enriched=True,
+            ignored=False,
+            metadata={"total_seasons": 2},
+        )
+
+    def test_season_item_keeps_the_shows_cover_art(self) -> None:
+        seasons = expand_tv_shows_to_seasons([self._show()])
+        assert [item.cover_url for item in seasons] == [
+            "https://example.test/show.jpg"
+        ] * 2
+
+    def test_season_item_differs_from_the_show_only_in_season_identity(self) -> None:
+        show = self._show()
+        per_season = {"id", "title", "parent_id", "metadata"}
+
+        season = expand_tv_shows_to_seasons([show])[0]
+
+        assert season.model_dump(exclude=per_season) == show.model_dump(
+            exclude=per_season
+        )
+        assert (season.id, season.parent_id, season.title) == (
+            "show1:s1",
+            "show1",
+            "The Show (Season 1)",
+        )
+        assert season.metadata["season"] == 1
+
+
 class TestInjectSeasonsWatchedTracking:
     def test_does_not_mutate_original(self) -> None:
         items = [
@@ -659,23 +708,6 @@ class TestSplitSeriesFromTitle:
         self, title: str
     ) -> None:
         assert split_series_from_title(title) == (title, {})
-
-
-class TestStripSeriesSuffixFromTitle:
-    def test_strips_hash_number_suffix(self) -> None:
-        result = strip_series_suffix_from_title(
-            "Words of Radiance (The Stormlight Archive, #2)"
-        )
-        assert result == "Words of Radiance"
-
-    def test_non_series_parens_preserved(self) -> None:
-        assert strip_series_suffix_from_title("Portal 2 (Game)") == "Portal 2 (Game)"
-
-    def test_multiple_parens_only_strips_series(self) -> None:
-        result = strip_series_suffix_from_title(
-            "The Way of Kings (Cosmere) (The Stormlight Archive, #1)"
-        )
-        assert result == "The Way of Kings (Cosmere)"
 
 
 class TestDecimalSeriesOrderingRegression:

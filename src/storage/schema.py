@@ -502,6 +502,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
             items_cached INTEGER NOT NULL DEFAULT 0,
             items_cleared INTEGER NOT NULL DEFAULT 0,
             items_failed INTEGER NOT NULL DEFAULT 0,
+            items_without_cover INTEGER NOT NULL DEFAULT 0,
             stop_requested INTEGER NOT NULL DEFAULT 0,
             current_item TEXT NOT NULL DEFAULT '',
             errors_json TEXT NOT NULL DEFAULT '[]',
@@ -514,6 +515,12 @@ def create_schema(conn: sqlite3.Connection) -> None:
     )
     _add_column_if_not_exists(
         cursor, "cover_backfill_job", "cancelled", "INTEGER NOT NULL DEFAULT 0"
+    )
+    _add_column_if_not_exists(
+        cursor,
+        "cover_backfill_job",
+        "items_without_cover",
+        "INTEGER NOT NULL DEFAULT 0",
     )
 
     # Nothing is seeded here on boot; a stored leaf wins over YAML and the

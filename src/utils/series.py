@@ -377,19 +377,17 @@ def expand_tv_shows_to_seasons(items: list[ContentItem]) -> list[ContentItem]:
             season_metadata["season"] = season_num
             season_metadata["season_number"] = season_num
 
+            # Copied from the show rather than rebuilt field by field: a season
+            # carries everything the show has, so a field added to ContentItem
+            # reaches recommendations without a line here.
             expanded.append(
-                ContentItem(
-                    id=season_id,
-                    db_id=item.db_id,
-                    title=season_title,
-                    author=item.author,
-                    content_type=ContentType.TV_SHOW,
-                    rating=item.rating,
-                    status=item.status,
-                    ignored=item.ignored,
-                    parent_id=item.id,
-                    metadata=season_metadata,
-                    source=item.source,
+                item.model_copy(
+                    update={
+                        "id": season_id,
+                        "title": season_title,
+                        "parent_id": item.id,
+                        "metadata": season_metadata,
+                    }
                 )
             )
 
@@ -547,9 +545,3 @@ def split_series_from_title(title: str) -> tuple[str, SeriesFields]:
     if not bare or not series:
         return title, {}
     return bare, {"series": series, "series_index": float(match.group(2))}
-
-
-def strip_series_suffix_from_title(title: str) -> str:
-    cleaned = re.sub(r"\s*\([^)]*#\d+[^)]*\)\s*$", "", title)
-    cleaned = re.sub(r"\s*\([^)]*Book\s+\d+[^)]*\)\s*$", "", cleaned, flags=re.I)
-    return cleaned.strip()

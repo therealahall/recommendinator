@@ -343,6 +343,36 @@ class TestBackfill:
 
         assert second.total == 1, "the cover cached by the first run was refetched"
 
+    def test_it_counts_the_items_a_settled_enrichment_left_with_no_cover_url(
+        self, library: tuple[StorageManager, dict[str, Any]]
+    ) -> None:
+        storage, config = library
+        artless = storage.save_content_item(make_item(title="Poster-less"))
+        storage.enrichment.mark_complete(artless, "tmdb", "high")
+        storage.save_content_item(make_item(title="Never enriched"))
+
+        record = backfill_covers(storage, config)
+
+        assert (record.total, record.without_cover) == (
+            0,
+            1,
+        ), "an item still queued for enrichment needs no reset to reach it"
+
+    def test_it_never_counts_a_dead_url_or_an_item_settled_as_not_found(
+        self, library: tuple[StorageManager, dict[str, Any]]
+    ) -> None:
+        storage, config = library
+        dead = save(storage, REMOTE, title="Dead url")
+        not_found = storage.save_content_item(make_item(title="Unknown"))
+        storage.enrichment.mark_complete(not_found, "none", "not_found")
+
+        with patch("src.covers.fetch.requests.get", return_value=FakeResponse(404)):
+            backfill_covers(storage, config)
+        storage.enrichment.mark_complete(dead, "rawg", "high")
+
+        assert stored_cover(storage, dead) is None
+        assert backfill_covers(storage, config).without_cover == 0
+
     def test_both_interfaces_report_a_run_with_the_same_keys(self) -> None:
         assert set(CoverBackfillRecord().payload()) == set(
             CoverBackfillResponse.model_fields
