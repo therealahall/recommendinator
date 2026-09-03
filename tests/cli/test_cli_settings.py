@@ -47,6 +47,17 @@ class TestSettingsList:
         assert _INT_KEY in result.output
         assert "enrichment.enabled" not in result.output
 
+    def test_list_flags_a_stored_row_whose_value_equals_the_default(
+        self, cli_runner: CliRunner, storage: StorageManager
+    ) -> None:
+        storage.settings.set(_INT_KEY, default_of(_INT_KEY))
+
+        result = _invoke_with_mocks(cli_runner, ["settings", "list"], storage)
+
+        assert result.exit_code == 0
+        assert "stored" in result.output
+        assert "overridden" not in result.output
+
     def test_list_json_matches_service_view_shape(
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
@@ -72,8 +83,9 @@ class TestSettingsList:
             "sensitive",
             "value",
             "db_overridden",
+            "has_stored_value",
         }
-        assert setting["value"] == 5
+        assert setting["value"] == default_of(_INT_KEY)
         assert setting["db_overridden"] is False
 
     def test_list_json_masks_secret(
@@ -116,8 +128,30 @@ class TestSettingsGet:
         assert result.exit_code == 0
         body = json.loads(result.output)
         assert body["key"] == _INT_KEY
-        assert body["value"] == 5
+        assert body["value"] == default_of(_INT_KEY)
         assert body["db_overridden"] is False
+
+    def test_get_flags_a_stored_row_whose_value_equals_the_default(
+        self, cli_runner: CliRunner, storage: StorageManager
+    ) -> None:
+        storage.settings.set(_INT_KEY, default_of(_INT_KEY))
+
+        result = _invoke_with_mocks(cli_runner, ["settings", "get", _INT_KEY], storage)
+
+        assert result.exit_code == 0
+        assert "stored" in result.output
+        assert "overridden" not in result.output
+
+    def test_get_flags_a_differing_row_as_both_stored_and_overridden(
+        self, cli_runner: CliRunner, storage: StorageManager
+    ) -> None:
+        storage.settings.set(_INT_KEY, default_of(_INT_KEY) + 1)
+
+        result = _invoke_with_mocks(cli_runner, ["settings", "get", _INT_KEY], storage)
+
+        assert result.exit_code == 0
+        assert "stored" in result.output
+        assert "overridden" in result.output
 
     def test_get_secret_shows_presence_only(
         self, cli_runner: CliRunner, storage: StorageManager

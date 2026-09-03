@@ -5,6 +5,7 @@ import json
 import click
 
 from src import __version__ as APP_VERSION
+from src.settings.service import effective_value
 from src.utils.dependencies import dependency_drift
 
 
@@ -30,10 +31,9 @@ def status(ctx: click.Context, output_format: str) -> None:
         "storage": ctx.obj.get("storage") is not None,
     }
 
-    rec_config = config.get("recommendations", {})
     recommendations_config = {
-        "max_count": rec_config.get("max_count", 20),
-        "default_count": rec_config.get("default_count", 5),
+        "max_count": effective_value(config, "recommendations.max_count"),
+        "default_count": effective_value(config, "recommendations.default_count"),
     }
 
     all_ready = all(components.values())

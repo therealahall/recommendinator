@@ -4,6 +4,8 @@ from typing import Annotated, Any
 from fastapi import Path as PathParam  # this module's ``Path`` is pathlib's
 from pydantic import AfterValidator, BaseModel
 
+from src.settings.metadata import default_of
+from src.settings.service import effective_value
 from src.storage.accounts import AccountNameError, normalize_account_name
 from src.storage.manager import StorageManager
 from src.storage.schema import UserDict
@@ -63,18 +65,12 @@ def as_user_response(storage: StorageManager, user: UserDict) -> UserResponse:
 
 
 class RecommendationsConfig(BaseModel):
-    """Defaults mirror config/example.yaml recommendations section."""
-
-    max_count: int = 20
-    default_count: int = 5
+    max_count: int = default_of("recommendations.max_count")
+    default_count: int = default_of("recommendations.default_count")
 
 
 def _get_recommendations_config(config: dict[str, Any] | None) -> RecommendationsConfig:
-    rec_section = config.get("recommendations", {}) if config else {}
     return RecommendationsConfig(
-        **{
-            k: rec_section[k]
-            for k in ("max_count", "default_count")
-            if k in rec_section
-        }
+        max_count=effective_value(config or {}, "recommendations.max_count"),
+        default_count=effective_value(config or {}, "recommendations.default_count"),
     )

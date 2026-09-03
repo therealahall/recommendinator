@@ -48,17 +48,26 @@ def get_recommendations(
         None,
         description=(
             "Content type (book, movie, tv_show, video_game). "
-            "Omit to rank all four together."
+            "Omit to recommend all four together."
         ),
     ),
-    count: int = Query(5, ge=1, description="Number of recommendations"),
+    count: int | None = Query(
+        None,
+        ge=1,
+        description=(
+            "Number of recommendations. Omit for the "
+            "recommendations.default_count setting."
+        ),
+    ),
     user_id: int = Query(1, ge=1, description="User ID for personalized preferences"),
 ) -> list[RecommendationResponse]:
     storage = get_storage()
     config = get_config()
 
-    max_count = _get_recommendations_config(config).max_count
-    if count > max_count:
+    counts = _get_recommendations_config(config)
+    if count is None:
+        count = min(counts.default_count, counts.max_count)
+    elif count > counts.max_count:
         raise HTTPException(
             status_code=400,
             detail="Requested count exceeds the maximum allowed",

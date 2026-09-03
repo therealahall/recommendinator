@@ -72,8 +72,14 @@ def setting_view(
     if entry.sensitive:
         view["has_secret"] = storage.secrets.has(entry.key)
     else:
-        view["value"] = _effective_value(config, entry)
-        view["db_overridden"] = storage.settings.get(entry.key) is not None
+        view["value"] = effective_value(config, entry.key)
+        stored = storage.settings.get(entry.key)
+        # A row equal to the const default still shadows the YAML layer, so
+        # resetting is offered off the row's existence, not off the comparison.
+        view["has_stored_value"] = stored is not None
+        # default_of, not entry.default: a tuple default comes back out of the
+        # database as a list, and would compare unequal to itself forever.
+        view["db_overridden"] = stored is not None and stored != default_of(entry.key)
     return view
 
 
@@ -255,11 +261,14 @@ def _validation_view(validation: Validation | None) -> dict[str, Any] | None:
     }
 
 
-def _effective_value(config: dict[str, Any], entry: SettingMetadata) -> Any:
-    """``default_of`` rather than ``entry.default``: this value is serialised into
+def effective_value(config: dict[str, Any], key: str) -> Any:
+    """The value *key* resolves to in the running config, which both interfaces
+    read their defaults from.
+
+    ``default_of`` rather than ``entry.default``: this value is serialised into
     API/CLI responses, and must never be the registry's own container.
     """
-    return get_leaf(config, tuple(entry.key.split(".")), default_of(entry.key))
+    return get_leaf(config, tuple(key.split(".")), default_of(key))
 
 
 def _apply_live(config: dict[str, Any], updates: Sequence[tuple[str, Any]]) -> None:

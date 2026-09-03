@@ -9,6 +9,7 @@ import pytest
 from src.settings.metadata import (
     SettingMetadata,
     Validation,
+    default_of,
     get_entry,
 )
 from src.settings.service import (
@@ -73,7 +74,44 @@ class TestBuildSettingsView:
         }
         assert setting["value"] == 5
         assert setting["db_overridden"] is False
+        assert setting["has_stored_value"] is False
         assert "has_secret" not in setting
+
+    def test_a_row_holding_the_default_is_not_an_override(
+        self, storage: StorageManager, config: dict[str, Any]
+    ) -> None:
+        storage.settings.set(_INT_KEY, default_of(_INT_KEY))
+
+        setting = _find(build_settings_view(config, storage), _INT_KEY)
+
+        assert setting["db_overridden"] is False
+
+    def test_a_row_holding_the_default_is_still_a_row_that_can_be_deleted(
+        self, storage: StorageManager, config: dict[str, Any]
+    ) -> None:
+        storage.settings.set(_INT_KEY, default_of(_INT_KEY))
+
+        setting = _find(build_settings_view(config, storage), _INT_KEY)
+
+        assert setting["has_stored_value"] is True
+
+    def test_a_list_row_matching_the_tuple_default_is_not_an_override(
+        self, storage: StorageManager, config: dict[str, Any]
+    ) -> None:
+        storage.settings.set(_ORIGINS_KEY, default_of(_ORIGINS_KEY))
+
+        setting = _find(build_settings_view(config, storage), _ORIGINS_KEY)
+
+        assert setting["db_overridden"] is False
+
+    def test_a_row_differing_from_the_default_is_an_override(
+        self, storage: StorageManager, config: dict[str, Any]
+    ) -> None:
+        storage.settings.set(_INT_KEY, default_of(_INT_KEY) + 1)
+
+        setting = _find(build_settings_view(config, storage), _INT_KEY)
+
+        assert setting["db_overridden"] is True
 
     def test_sensitive_setting_masks_value(
         self, storage: StorageManager, config: dict[str, Any]
@@ -84,6 +122,7 @@ class TestBuildSettingsView:
         assert setting["has_secret"] is False
         assert "value" not in setting
         assert "db_overridden" not in setting
+        assert "has_stored_value" not in setting
 
     def test_sensitive_has_secret_true_after_set(
         self, storage: StorageManager, config: dict[str, Any]
@@ -330,7 +369,7 @@ class TestResetSetting:
         reset_setting(config, storage, _INT_KEY)
 
         assert storage.settings.get(_INT_KEY) is None
-        assert config["recommendations"]["default_count"] == 5
+        assert config["recommendations"]["default_count"] == default_of(_INT_KEY)
 
     def test_reset_restart_required_drops_row_without_live_apply(
         self, storage: StorageManager, config: dict[str, Any]

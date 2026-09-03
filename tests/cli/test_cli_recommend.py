@@ -1,6 +1,7 @@
 import json
 from unittest.mock import MagicMock
 
+import pytest
 from click.testing import CliRunner
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
@@ -27,7 +28,7 @@ class TestRecommendEmptyResultsRegression:
         assert result.exit_code == 0
         assert "have not consumed yet" in result.output
         assert "add more consumed content" not in result.output
-        assert "No video game left to rank" in result.output
+        assert "No video game left" in result.output
 
 
 class TestRecommendCrossTypeRun:
@@ -78,8 +79,34 @@ class TestRecommendCrossTypeRun:
         )
 
         assert result.exit_code == 0
-        assert "Nothing left to rank" in result.output
+        assert "Nothing left" in result.output
         assert "Every item in the pool" in result.output
+
+
+class TestRecommendDefaultCount:
+    @pytest.mark.parametrize(
+        ("settings", "expected"),
+        [
+            ({"default_count": 7}, 7),
+            ({"default_count": 30, "max_count": 10}, 10),
+        ],
+    )
+    def test_no_count_flag_takes_the_setting_capped_by_the_maximum(
+        self, cli_runner: CliRunner, settings: dict, expected: int
+    ) -> None:
+        mock_engine = _engine_returning()
+
+        result = _invoke_recommend_with_engine(
+            cli_runner,
+            ["recommend"],
+            mock_engine,
+            config={"recommendations": settings},
+        )
+
+        assert result.exit_code == 0
+        assert (
+            mock_engine.generate_recommendations.call_args.kwargs["count"] == expected
+        )
 
 
 class TestRecommendCountMaxEnforcement:

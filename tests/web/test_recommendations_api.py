@@ -2,6 +2,8 @@ import re
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 from src.models.content import ContentType
 from src.recommendations.engine import RecommendationEngine
 from src.recommendations.record import Recommendation, RecommendationPayload
@@ -75,6 +77,32 @@ class TestCrossTypeRequest:
         assert [rec["content_type"] for rec in response.json()] == ["video_game"]
         call = mock_engine.generate_recommendations.call_args
         assert call.kwargs["content_type"] is None
+
+
+class TestDefaultCount:
+    @pytest.mark.parametrize(
+        ("settings", "expected"),
+        [
+            ({"default_count": 7}, 7),
+            ({"default_count": 30, "max_count": 10}, 10),
+        ],
+    )
+    def test_no_count_param_takes_the_setting_capped_by_the_maximum(
+        self, settings: dict, expected: int
+    ) -> None:
+        mock_engine = MagicMock(spec=RecommendationEngine)
+        mock_engine.generate_recommendations.return_value = []
+        mock_storage = make_storage_mock()
+        mock_storage.get_user_preference_config.return_value = None
+
+        with booted_web_app(mock_storage, {"recommendations": settings}) as app:
+            app_state.engine = mock_engine
+            response = authenticated_client(app).get("/api/recommendations")
+
+        assert response.status_code == 200
+        assert (
+            mock_engine.generate_recommendations.call_args.kwargs["count"] == expected
+        )
 
 
 class TestRecommendationEvidence:
