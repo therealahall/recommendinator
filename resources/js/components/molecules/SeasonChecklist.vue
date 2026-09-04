@@ -9,17 +9,22 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'update:modelValue': [value: number[]]
+  reset: []
 }>()
 
 const watchedSet = computed(() => new Set(props.modelValue))
+
+const renderedWatched = computed(
+  () => props.modelValue.filter((season) => season <= props.totalSeasons).length,
+)
 
 // Select All, Deselect All and a status change in the parent all rewrite the
 // whole checklist, and this counter is the only thing that reports the result —
 // so it announces rather than merely displays (WCAG 4.1.3).
 const watchedLabel = computed(() => {
   const noun = props.totalSeasons === 1 ? 'season' : 'seasons'
-  if (props.modelValue.length === 0) return `No ${noun} watched`
-  return `${props.modelValue.length} of ${props.totalSeasons} ${noun} watched`
+  if (renderedWatched.value === 0) return `No ${noun} watched`
+  return `${renderedWatched.value} of ${props.totalSeasons} ${noun} watched`
 })
 
 function toggle(season: number) {
@@ -49,6 +54,7 @@ function deselectAll() {
     <div class="season-controls">
       <button class="btn btn-small btn-secondary" type="button" @click="selectAll">Select All</button>
       <button class="btn btn-small btn-secondary" type="button" @click="deselectAll">Deselect All</button>
+      <button class="btn btn-small btn-secondary" type="button" @click="emit('reset')">Reset to synced</button>
       <span
         class="season-counter"
         role="status"
