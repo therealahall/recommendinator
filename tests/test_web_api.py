@@ -1735,7 +1735,7 @@ def test_edit_clears_the_seasons_and_the_overrides_the_way_the_cli_flag_does(
 
     assert response.status_code == 200
     kwargs = mock_components["storage"].update_item_from_ui.call_args.kwargs
-    assert (kwargs["seasons_watched"], kwargs["clear_seasons"]) == ([], True)
+    assert (kwargs["seasons_watched"], kwargs["clear_seasons"]) == (None, True)
 
     both = client.patch(
         "/api/items/42?user_id=1",

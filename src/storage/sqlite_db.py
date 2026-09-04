@@ -75,6 +75,7 @@ from src.utils.series import (
     cleared_hand_overrides,
     hand_overrides,
     reconcile_seasons,
+    same_seasons,
     seasons_watched_for_completed,
     status_for_seasons_watched,
 )
@@ -850,8 +851,10 @@ class SQLiteDB:
             return DetailWrite(
                 changed=True,
                 seasons_moved="seasons" in changed
-                or existing_remaining.get("seasons_watched")
-                != merged_remaining.get("seasons_watched"),
+                or not same_seasons(
+                    existing_remaining.get("seasons_watched"),
+                    merged_remaining.get("seasons_watched"),
+                ),
             )
 
         placeholders = ", ".join("?" for _ in values)
@@ -1303,6 +1306,22 @@ class SQLiteDB:
                 )
                 tv_row = cursor.fetchone()
                 total_seasons = tv_row["seasons"] if tv_row else None
+                existing_metadata: dict[str, Any] = {}
+                if tv_row and tv_row["metadata"]:
+                    try:
+                        parsed = json.loads(tv_row["metadata"])
+                        if isinstance(parsed, dict):
+                            existing_metadata = parsed
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
+                if clear_seasons:
+                    existing_metadata.update(cleared_hand_overrides())
+                    existing_metadata.pop("seasons_watched", None)
+                    seasons_watched = reconcile_seasons(existing_metadata, {}).get(
+                        "seasons_watched", []
+                    )
+
                 if tv_row:
                     if seasons_watched is None:
                         if status == "completed":
@@ -1315,14 +1334,6 @@ class SQLiteDB:
                         ).value
 
                 if tv_row and seasons_watched is not None:
-                    existing_metadata: dict[str, Any] = {}
-                    if tv_row["metadata"]:
-                        try:
-                            parsed = json.loads(tv_row["metadata"])
-                            if isinstance(parsed, dict):
-                                existing_metadata = parsed
-                        except (json.JSONDecodeError, TypeError):
-                            pass
                     now_iso = utc_now().isoformat()
                     existing_dates = existing_metadata.get("seasons_watched_dates")
                     if not isinstance(existing_dates, dict):
@@ -1339,13 +1350,12 @@ class SQLiteDB:
                             new_dates[key] = existing_dates[key]
                         elif season not in previously_watched:
                             new_dates[key] = now_iso
-                    existing_metadata.update(
-                        cleared_hand_overrides()
-                        if clear_seasons
-                        else hand_overrides(
-                            existing_metadata, seasons_watched, total_seasons
+                    if not clear_seasons:
+                        existing_metadata.update(
+                            hand_overrides(
+                                existing_metadata, seasons_watched, total_seasons
+                            )
                         )
-                    )
                     existing_metadata["seasons_watched"] = seasons_watched
                     existing_metadata["seasons_watched_dates"] = new_dates
                     cursor.execute(
