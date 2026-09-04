@@ -46,18 +46,18 @@ class SonarrPlugin(ArrPlugin):
         return _build_sonarr_metadata(item)
 
 
-def _aired_episodes_per_season(series: dict[str, Any]) -> dict[str, int]:
-    """``episodeCount`` counts aired *and monitored* episodes, so it is the aired
-    count only for a fully monitored season, and this payload cannot show
-    per-episode monitoring. ``totalEpisodeCount`` counts unaired episodes too.
+def _episodes_per_season(series: dict[str, Any]) -> dict[str, int]:
+    """Every episode Sonarr knows of, announced or not: ``episodeCount`` counts
+    only the aired and monitored ones, and a season size that is too small ticks
+    a season for good.
     """
     counts: dict[str, int] = {}
     for season in series.get("seasons") or []:
         number = season.get("seasonNumber")
-        aired = (season.get("statistics") or {}).get("episodeCount")
+        episodes = (season.get("statistics") or {}).get("totalEpisodeCount")
         # Season 0 is the specials, and its falsy number drops out here.
-        if number and aired and season.get("monitored"):
-            counts[str(number)] = aired
+        if number and episodes:
+            counts[str(number)] = episodes
     return counts
 
 
@@ -89,7 +89,7 @@ def _build_sonarr_metadata(series: dict[str, Any]) -> dict[str, Any]:
         if statistics.get("episodeFileCount"):
             metadata["downloaded_episodes"] = statistics["episodeFileCount"]
 
-    season_counts = _aired_episodes_per_season(series)
+    season_counts = _episodes_per_season(series)
     if season_counts:
         metadata["season_episode_counts"] = season_counts
 

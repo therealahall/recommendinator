@@ -36,9 +36,7 @@ Moving Tautulli to another host takes the steps in
 
 ## When a season counts as watched
 
-A season is finished only when every episode of it has been watched, counted against the best episode count available for that season.
-
-With TMDB configured, or Sonarr where the season is monitored, that is the number of episodes that have aired. Sonarr states no count for an unmonitored season, because there it counts the files on disk rather than the episodes that aired. Where no aired count is available, the number of episodes Plex holds stands in, which finishes a season early on an incomplete library. With neither, the season is never ticked and nothing is guessed.
+A season is finished only when every episode of it has been watched, counted against the largest size any source states: every episode Sonarr or TMDB knows the season has, announced or not, or the number Plex holds. The largest wins because too small a count ticks a season early and nothing un-ticks one, while too large only delays the tick. A season no source counts is never ticked.
 
 **A show no longer in the Plex library imports with no seasons ticked.** Its watch history still arrives, but there is no season size left to measure against.
 

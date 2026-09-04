@@ -155,7 +155,7 @@ class TestSonarrSeasonEpisodeCounts:
     downstream can tell a finished season from a merely caught-up one."""
 
     @patch("src.ingestion.sources.arr_base.requests.get")
-    def test_each_season_keeps_its_aired_count_without_specials_or_unaired(
+    def test_each_season_states_every_episode_announced_not_only_those_aired(
         self,
         mock_get: Mock,
         plugin: SonarrPlugin,
@@ -168,17 +168,14 @@ class TestSonarrSeasonEpisodeCounts:
                     "seasons": [
                         {
                             "seasonNumber": 0,
-                            "monitored": True,
-                            "statistics": {"episodeCount": 3},
+                            "statistics": {"episodeCount": 3, "totalEpisodeCount": 3},
                         },
                         {
                             "seasonNumber": 1,
-                            "monitored": True,
                             "statistics": {"episodeCount": 9, "totalEpisodeCount": 9},
                         },
                         {
                             "seasonNumber": 2,
-                            "monitored": True,
                             "statistics": {"episodeCount": 8, "totalEpisodeCount": 10},
                         },
                         {"seasonNumber": 3, "monitored": True},
@@ -189,10 +186,10 @@ class TestSonarrSeasonEpisodeCounts:
 
         items = list(plugin.fetch({"url": "http://localhost:8989", "api_key": "key"}))
 
-        assert items[0].metadata["season_episode_counts"] == {"1": 9, "2": 8}
+        assert items[0].metadata["season_episode_counts"] == {"1": 9, "2": 10}
 
     @patch("src.ingestion.sources.arr_base.requests.get")
-    def test_an_unmonitored_season_states_no_count_because_sonarr_counts_files(
+    def test_an_unmonitored_season_of_3_files_states_the_22_episodes_announced(
         self,
         mock_get: Mock,
         plugin: SonarrPlugin,
@@ -206,7 +203,7 @@ class TestSonarrSeasonEpisodeCounts:
                         {
                             "seasonNumber": 1,
                             "monitored": False,
-                            "statistics": {"episodeCount": 3, "totalEpisodeCount": 10},
+                            "statistics": {"episodeCount": 3, "totalEpisodeCount": 22},
                         },
                     ],
                 }
@@ -215,7 +212,7 @@ class TestSonarrSeasonEpisodeCounts:
 
         items = list(plugin.fetch({"url": "http://localhost:8989", "api_key": "key"}))
 
-        assert "season_episode_counts" not in items[0].metadata
+        assert items[0].metadata["season_episode_counts"] == {"1": 22}
 
     @patch("src.ingestion.sources.arr_base.requests.get")
     def test_a_series_with_no_countable_season_writes_no_counts_key(
