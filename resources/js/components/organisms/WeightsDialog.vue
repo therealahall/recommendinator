@@ -239,7 +239,7 @@ onUnmounted(revert)
   right: var(--space-2);
   transform: translateX(50%);
   border-top-color: transparent;
-  border-bottom-color: var(--bg-elevated);
+  border-bottom-color: var(--border-default);
 }
 
 .weights-body :deep(.scorer-tooltip-wrap:hover .scorer-tooltip-text),
