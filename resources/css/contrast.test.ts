@@ -657,6 +657,15 @@ const CONTROL_BOUNDARIES: [string, string, string, string, string][] = [
     'var(--bg-card)',
   ],
   ['the box a cover sits in', BASE, '.cover-art', 'border', 'var(--bg-card)'],
+  ['a scorer tooltip', BASE, '.scorer-tooltip-text', 'border', 'var(--bg-card)'],
+  ['a scorer tooltip tail', BASE, '.scorer-tooltip-text::after', 'border-top-color', 'var(--bg-card)'],
+  [
+    'a weights tooltip tail',
+    WEIGHTS,
+    '.weights-body :deep(.scorer-tooltip-text::after)',
+    'border-bottom-color',
+    'var(--bg-card)',
+  ],
 ]
 
 function invalidEdges(source: string): string[] {
