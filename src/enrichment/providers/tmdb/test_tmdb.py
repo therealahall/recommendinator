@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-from src.enrichment.provider_base import ProviderError
+from src.enrichment.provider_base import EnrichmentResult, ProviderError
 from src.enrichment.providers.tmdb.tmdb import (
     TMDBProvider,
     clean_media_title_for_search,
@@ -389,6 +389,64 @@ class TestTMDBProviderTVShowEnrichment:
         assert result.extra_metadata.get("network") == "AMC"
         assert "Vince Gilligan" in result.extra_metadata.get("creators", "")
         assert result.cover_url == "https://image.tmdb.org/t/p/w500/bb.jpg"
+
+
+class TestTMDBSeasonEpisodeCounts:
+    """Without a count per season every season looks the same size, so nothing
+    downstream can tell a finished season from a merely caught-up one."""
+
+    def _enrich(self, show: dict[str, Any]) -> EnrichmentResult:
+        item = ContentItem(
+            id="show123",
+            title="Breaking Bad",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"tmdb_id": show["id"]},
+        )
+
+        with patch("src.enrichment.providers.tmdb.tmdb.requests.get") as mock_get:
+            mock_get.return_value = MagicMock(
+                spec=requests.Response, status_code=200, json=lambda: show
+            )
+            result = TMDBProvider().enrich(
+                item, {"api_key": "test-api-key", "include_keywords": False}
+            )
+
+        assert result is not None
+        return result
+
+    def test_each_season_keeps_its_episode_count_without_specials(self) -> None:
+        result = self._enrich(
+            {
+                "id": 1396,
+                "name": "Breaking Bad",
+                "number_of_seasons": 5,
+                "number_of_episodes": 62,
+                "seasons": [
+                    {"season_number": 0, "episode_count": 5},
+                    {"season_number": 1, "episode_count": 7},
+                    {"season_number": 2, "episode_count": 13},
+                ],
+            }
+        )
+
+        assert result.extra_metadata["season_episode_counts"] == {1: 7, 2: 13}
+        assert result.extra_metadata["seasons"] == 5
+        assert result.extra_metadata["episodes"] == 62
+
+    def test_a_show_with_no_countable_season_writes_no_counts_key(self) -> None:
+        result = self._enrich(
+            {
+                "id": 1396,
+                "name": "Breaking Bad",
+                "seasons": [
+                    {"season_number": 0, "episode_count": 5},
+                    {"season_number": 3, "episode_count": 0},
+                ],
+            }
+        )
+
+        assert "season_episode_counts" not in result.extra_metadata
 
 
 class TestTMDBProviderKeywords:
