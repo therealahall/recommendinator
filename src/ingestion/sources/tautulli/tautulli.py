@@ -10,7 +10,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urljoin
 
 import requests
 
@@ -20,7 +20,14 @@ from src.ingestion.plugin_base import (
     SourceError,
     SourcePlugin,
 )
-from src.ingestion.urls import UrlOrigin, source_url_error, url_origin
+from src.ingestion.urls import (
+    MAX_SAME_ORIGIN_REDIRECTS,
+    REDIRECT_STATUSES,
+    REQUEST_TIMEOUT,
+    redirect_refusal,
+    same_origin,
+    source_url_error,
+)
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.utils.request_errors import scrub_request_error
 from src.utils.text import exception_for_log, sanitize_for_log
@@ -32,13 +39,7 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_URL = "http://localhost:8181"
 
-_REQUEST_TIMEOUT = 30
-
 _HISTORY_PAGE_SIZE = 1000
-
-_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
-
-_MAX_SAME_ORIGIN_REDIRECTS = 5
 
 # Plex files specials as season 0; they are not part of a show's run, so no
 # mapping this plugin emits counts them.
@@ -58,26 +59,6 @@ class _WatchedShow:
     rating_key: int | None = None
     episodes: dict[int, set[str]] = field(default_factory=dict)
     last_played: dict[int, datetime] = field(default_factory=dict)
-
-
-def _same_origin(url: str, target: str) -> bool:
-    origin = url_origin(url)
-    return isinstance(origin, UrlOrigin) and url_origin(target) == origin
-
-
-def _redirect_refusal(url: str, target: str) -> str:
-    """``Location`` is server text and the refusal is logged on one line
-    (CWE-117), so the target is escaped like any other header value.
-    """
-    origin = urlsplit(url)
-    safe_target = sanitize_for_log(target)
-    return (
-        f"Refused a redirect from {url} to {safe_target}. It leaves the configured "
-        f"origin {origin.scheme}://{origin.netloc}, and the api key travels in the "
-        "query string, so it only goes where the source url points. If Tautulli "
-        f"really is at {safe_target}, set the source url to it (and verify_ssl to "
-        "false if its certificate is not publicly trusted)."
-    )
 
 
 def _result_data(plugin_name: str, payload: Any, command: str) -> Any:
@@ -130,8 +111,9 @@ def _live_rating_key(raw: Any) -> int | None:
 
 
 def _stable_id(kind: str, title: str, year: int | None) -> str:
-    """Keyed on the title the row carries: the ``rating_key`` an id could use is
-    missing from most rows and dies when the file does.
+    """Keyed on the title alone: ``rating_key`` dies with the file, and an
+    episode row's ``year`` is the episode's on some Tautulli versions, so keying
+    on it splits a show. Two same-titled shows therefore collapse into one.
     """
     suffix = f":{year}" if year is not None else ""
     return f"tautulli:{kind}:{title.strip().casefold()}{suffix}"
@@ -450,17 +432,17 @@ class TautulliPlugin(SourcePlugin):
         endpoint = f"{base_url}/api/v2"
 
         current = endpoint
-        for _ in range(_MAX_SAME_ORIGIN_REDIRECTS):
+        for _ in range(MAX_SAME_ORIGIN_REDIRECTS):
             try:
                 response = requests.get(
                     current,
                     params=query,
-                    timeout=_REQUEST_TIMEOUT,
+                    timeout=REQUEST_TIMEOUT,
                     verify=verify_ssl,
                     allow_redirects=False,
                 )
                 location = response.headers.get("Location")
-                if response.status_code not in _REDIRECT_STATUSES or not location:
+                if response.status_code not in REDIRECT_STATUSES or not location:
                     response.raise_for_status()
                     return _result_data(self.name, response.json(), command)
             except requests.RequestException as error:
@@ -471,12 +453,14 @@ class TautulliPlugin(SourcePlugin):
                 ) from None
 
             target = urljoin(current, location)
-            if not _same_origin(endpoint, target):
-                raise SourceError(self.name, _redirect_refusal(endpoint, target))
+            if not same_origin(endpoint, target):
+                raise SourceError(
+                    self.name, redirect_refusal(endpoint, target, self.display_name)
+                )
             current = target
 
         raise SourceError(
             self.name,
             f"Tautulli redirected {endpoint} more than "
-            f"{_MAX_SAME_ORIGIN_REDIRECTS} times.",
+            f"{MAX_SAME_ORIGIN_REDIRECTS} times.",
         )

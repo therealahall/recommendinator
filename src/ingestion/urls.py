@@ -6,7 +6,15 @@ from enum import Enum
 from typing import NamedTuple
 from urllib.parse import urlsplit
 
+from src.utils.text import sanitize_for_log
+
 _ALLOWED_SCHEMES = frozenset({"http", "https"})
+
+REQUEST_TIMEOUT = 30
+
+REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+
+MAX_SAME_ORIGIN_REDIRECTS = 5
 
 _DEFAULT_PORTS = {"http": 80, "https": 443}
 
@@ -45,6 +53,23 @@ def url_origin(value: str) -> UrlOrigin | NoOrigin:
     if not hostname:
         return NoOrigin.ADDRESSES_NOBODY
     return UrlOrigin(parts.scheme, hostname, _non_default_port(parts.scheme, port))
+
+
+def same_origin(url: str, target: str) -> bool:
+    origin = url_origin(url)
+    return isinstance(origin, UrlOrigin) and url_origin(target) == origin
+
+
+def redirect_refusal(url: str, target: str, service: str) -> str:
+    origin = urlsplit(url)
+    safe_target = sanitize_for_log(target)
+    return (
+        f"Refused a redirect from {url} to {safe_target}. It leaves the configured "
+        f"origin {origin.scheme}://{origin.netloc}, and the api key only goes where "
+        f"the source url points. If {service} really is at {safe_target}, set the "
+        "source url to it (and verify_ssl to false if its certificate is not "
+        "publicly trusted)."
+    )
 
 
 def source_url_error(value: str) -> str | None:
