@@ -363,7 +363,7 @@ def library_show(
 @click.option(
     "--clear-seasons",
     is_flag=True,
-    help="Drop the manual season edits and take what the synced counts say",
+    help="Remove every watched season",
 )
 @click.option(
     "--genre",
@@ -508,7 +508,7 @@ def library_edit(
         click.echo(f"Error: Item {item_id} not found.", err=True)
         raise click.Abort()
 
-    parsed_seasons: list[int] | None = None
+    parsed_seasons: list[int] | None = [] if clear_seasons else None
     if seasons_watched is not None:
         try:
             parsed_seasons = [
@@ -575,7 +575,6 @@ def library_edit(
             rating=None if clear_rating else unset_if_none(rating),
             review=None if clear_review else unset_if_none(review),
             seasons_watched=parsed_seasons,
-            clear_seasons=clear_seasons,
             genres=genre_list,
             tags=tag_list,
             description=description,

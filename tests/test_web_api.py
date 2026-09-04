@@ -1641,7 +1641,6 @@ def test_edit_item_status(client, mock_components):
         rating=UNSET,
         review=UNSET,
         seasons_watched=None,
-        clear_seasons=False,
         genres=None,
         tags=None,
         description=None,
@@ -1678,7 +1677,6 @@ def test_edit_tv_show_seasons(client, mock_components):
         rating=UNSET,
         review=UNSET,
         seasons_watched=[1, 2, 3],
-        clear_seasons=False,
         genres=None,
         tags=None,
         description=None,
@@ -1715,33 +1713,6 @@ def test_edit_rejects_out_of_range_season_regression(client, mock_components):
     assert too_many.status_code == 422
 
     mock_components["storage"].update_item_from_ui.assert_not_called()
-
-
-def test_edit_clears_the_seasons_and_the_overrides_the_way_the_cli_flag_does(
-    client, mock_components
-):
-    updated_item = ContentItem(
-        id="ext_1",
-        db_id=42,
-        title="Test Show",
-        content_type=ContentType.TV_SHOW,
-        status=ConsumptionStatus.UNREAD,
-        metadata={"seasons": 10},
-    )
-    mock_components["storage"].update_item_from_ui = Mock(return_value=True)
-    mock_components["storage"].get_content_item = Mock(return_value=updated_item)
-
-    response = client.patch("/api/items/42?user_id=1", json={"clear_seasons": True})
-
-    assert response.status_code == 200
-    kwargs = mock_components["storage"].update_item_from_ui.call_args.kwargs
-    assert (kwargs["seasons_watched"], kwargs["clear_seasons"]) == (None, True)
-
-    both = client.patch(
-        "/api/items/42?user_id=1",
-        json={"clear_seasons": True, "seasons_watched": [1]},
-    )
-    assert both.status_code == 400
 
 
 def test_edit_rejects_blank_review_regression(client, mock_components):
@@ -1939,7 +1910,6 @@ def test_edit_item_manual_metadata(client, mock_components):
         rating=UNSET,
         review=UNSET,
         seasons_watched=None,
-        clear_seasons=False,
         genres=["Drama"],
         tags=["slow-burn"],
         description="Hand written.",

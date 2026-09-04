@@ -541,20 +541,16 @@ class TestLibraryEdit:
         mock_storage.update_item_from_ui.assert_not_called()
 
     @pytest.mark.parametrize(
-        ("flags", "sent", "cleared"),
+        ("flags", "sent"),
         [
-            (["--seasons-watched", "1, 2 ,3"], [1, 2, 3], False),
-            (["--clear-seasons"], None, True),
-            (["--status", "unread"], None, False),
+            (["--seasons-watched", "1, 2 ,3"], [1, 2, 3]),
+            (["--clear-seasons"], []),
+            (["--status", "unread"], None),
         ],
         ids=["parsed", "cleared", "unmentioned"],
     )
     def test_edit_sends_the_seasons_its_flags_name(
-        self,
-        cli_runner: CliRunner,
-        flags: list[str],
-        sent: list[int] | None,
-        cleared: bool,
+        self, cli_runner: CliRunner, flags: list[str], sent: list[int] | None
     ) -> None:
         item = _make_item(db_id=1, title="Show", content_type=ContentType.TV_SHOW)
         mock_storage = make_storage_mock()
@@ -568,7 +564,6 @@ class TestLibraryEdit:
         assert result.exit_code == 0
         call_kwargs = mock_storage.update_item_from_ui.call_args[1]
         assert call_kwargs["seasons_watched"] == sent
-        assert call_kwargs["clear_seasons"] is cleared
 
     def test_edit_genres_tags_description(self, cli_runner: CliRunner) -> None:
         item = _make_item(db_id=1, title="Book One")

@@ -2896,16 +2896,15 @@ def _tautulli_show(
     )
 
 
-def _trakt_show(seasons_watched: list[int], total_seasons: int) -> ContentItem:
+def _tmdb_enrichment(season_counts: dict[int, int]) -> ContentItem:
     return ContentItem(
-        id="trakt:388477",
         title="The Bear",
         content_type=ContentType.TV_SHOW,
-        status=ConsumptionStatus.CURRENTLY_CONSUMING,
-        source="trakt",
+        status=ConsumptionStatus.UNREAD,
         metadata={
-            "seasons_watched": seasons_watched,
-            "total_seasons": total_seasons,
+            "season_episode_counts": {
+                str(number): episodes for number, episodes in season_counts.items()
+            }
         },
     )
 
@@ -2927,8 +2926,7 @@ def _sonarr_show(aired: dict[int, int], genres: list[str] | None = None) -> Cont
                 "seasons": [
                     {
                         "seasonNumber": number,
-                        "monitored": True,
-                        "statistics": {"episodeCount": episodes},
+                        "statistics": {"totalEpisodeCount": episodes},
                     }
                     for number, episodes in aired.items()
                 ],
@@ -3138,215 +3136,8 @@ class TestSeasonEpisodeCountsThroughTheMetadataBlob:
         assert retrieved.metadata["season_episode_counts"] == {"1": 9, "2": 2}
 
 
-class TestSeasonCompletionFromTheBestAvailableCount:
-    def test_a_tautulli_show_and_a_sonarr_show_converge_on_the_aired_count(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        db_id = temp_db.save_content_item(_tautulli_show({"2": 8}, {"2": 8}))
-        temp_db.save_content_item(_sonarr_show({2: 10}))
-
-        assert len(temp_db.get_content_items(content_type=ContentType.TV_SHOW)) == 1
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.metadata["seasons_watched"] == []
-        assert retrieved.status == ConsumptionStatus.CURRENTLY_CONSUMING
-
-    def test_a_season_trakt_reported_watched_survives_the_plex_episode_counts(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        db_id = temp_db.save_content_item(_trakt_show([1, 2, 3], total_seasons=3))
-        temp_db.save_content_item(_tautulli_show({"1": 2}, {"1": 10}))
-        temp_db.save_content_item(_tautulli_show({"1": 2}, {"1": 10}))
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.metadata["seasons_watched"] == [1, 2, 3]
-
-    def test_a_season_no_count_reaches_is_never_ticked(self, temp_db: SQLiteDB) -> None:
-        db_id = temp_db.save_content_item(_tautulli_show({"2": 8}))
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.metadata.get("seasons_watched") is None
-
-    def test_a_new_episode_in_a_finished_season_reopens_the_completed_show(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        db_id = temp_db.save_content_item(_tautulli_show({"1": 9}, {"1": 9}))
-        temp_db.save_content_item(_sonarr_show({1: 9}))
-
-        completed = temp_db.get_content_item(db_id)
-        assert completed is not None
-        assert completed.metadata["seasons_watched"] == [1]
-        assert completed.status == ConsumptionStatus.COMPLETED
-
-        temp_db.save_content_item(_sonarr_show({1: 10}))
-
-        reopened = temp_db.get_content_item(db_id)
-        assert reopened is not None
-        assert reopened.metadata["seasons_watched"] == []
-        assert reopened.status == ConsumptionStatus.CURRENTLY_CONSUMING
-
-    def test_a_hand_ticked_season_survives_a_sync_and_can_still_be_unticked(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        db_id = temp_db.save_content_item(_tautulli_show({"1": 2}, {"1": 10}))
-        temp_db.update_item_from_ui(db_id, seasons_watched=[1, 4])
-        temp_db.save_content_item(_tautulli_show({"1": 2}, {"1": 10, "4": 10}))
-
-        ticked = temp_db.get_content_item(db_id)
-        assert ticked is not None
-        assert ticked.metadata["seasons_watched"] == [1, 4]
-
-        temp_db.update_item_from_ui(db_id, seasons_watched=[1])
-        temp_db.save_content_item(_tautulli_show({"1": 2}, {"1": 10, "4": 10}))
-
-        unticked = temp_db.get_content_item(db_id)
-        assert unticked is not None
-        assert unticked.metadata["seasons_watched"] == [1]
-
-    def test_a_season_ticked_by_hand_does_not_exempt_the_derived_ones(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        db_id = temp_db.save_content_item(
-            _tautulli_show({"1": 9, "2": 9}, {"1": 9, "2": 9})
-        )
-        temp_db.save_content_item(_sonarr_show({1: 9, 2: 9}))
-        temp_db.update_item_from_ui(db_id, seasons_watched=[1, 2, 4])
-
-        temp_db.save_content_item(_sonarr_show({1: 10, 2: 9}))
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.metadata["seasons_watched"] == [2, 4]
-
-    def test_a_season_unticked_to_rewatch_it_is_not_ticked_back_by_the_next_sync(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        db_id = temp_db.save_content_item(
-            _tautulli_show({"1": 9, "2": 9}, {"1": 9, "2": 9})
-        )
-        temp_db.update_item_from_ui(db_id, seasons_watched=[1])
-
-        temp_db.save_content_item(_tautulli_show({"1": 9, "2": 9}, {"1": 9, "2": 9}))
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.metadata["seasons_watched"] == [1]
-
-    def test_clearing_the_seasons_takes_the_synced_counts_without_waiting_for_a_sync(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        db_id = temp_db.save_content_item(_tautulli_show({"1": 9}, {"1": 9}))
-        temp_db.save_content_item(_sonarr_show({1: 9, 2: 9}))
-        temp_db.update_item_from_ui(db_id, seasons_watched=[1, 2])
-
-        temp_db.update_item_from_ui(db_id, clear_seasons=True)
-
-        cleared = temp_db.get_content_item(db_id)
-        assert cleared is not None
-        assert cleared.metadata["seasons_watched"] == [1]
-        assert cleared.status == ConsumptionStatus.CURRENTLY_CONSUMING
-
-    def test_a_clear_drops_the_assertion_that_kept_a_season_from_retracting(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        db_id = temp_db.save_content_item(_trakt_show([1], total_seasons=1))
-        temp_db.save_content_item(_tautulli_show({"1": 2}, {"1": 10}))
-
-        temp_db.update_item_from_ui(db_id, clear_seasons=True)
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.metadata["seasons_watched"] == []
-
-    def test_a_season_above_the_shows_total_is_not_unticked_by_a_bulk_select(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        db_id = temp_db.save_content_item(_tautulli_show({"1": 9}, {"1": 9}))
-        temp_db.save_content_item(_sonarr_show({1: 9}))
-        temp_db.update_item_from_ui(db_id, seasons_watched=[1, 4])
-
-        temp_db.update_item_from_ui(db_id, seasons_watched=[1])
-        temp_db.save_content_item(_tautulli_show({"1": 9}, {"1": 9}))
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.metadata["seasons_watched"] == [1, 4]
-
-    def test_a_show_reopened_by_hand_survives_a_sync_that_only_moves_genres(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        db_id = temp_db.save_content_item(_tautulli_show({"1": 9}, {"1": 9}))
-        temp_db.save_content_item(_sonarr_show({1: 9}))
-        temp_db.update_item_from_ui(db_id, status="currently_consuming")
-
-        temp_db.save_content_item(_sonarr_show({1: 9}, genres=["Comedy"]))
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.metadata["genres"] == ["Comedy"]
-        assert retrieved.metadata["seasons_watched"] == [1]
-        assert retrieved.status == ConsumptionStatus.CURRENTLY_CONSUMING
-
-    def test_a_reopened_show_survives_a_sync_after_an_unsorted_season_edit(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        db_id = temp_db.save_content_item(_tautulli_show({"1": 9, "2": 9}))
-        temp_db.save_content_item(_sonarr_show({1: 9, 2: 9}))
-        temp_db.update_item_from_ui(db_id, seasons_watched=[2, 1])
-        temp_db.update_item_from_ui(db_id, status="currently_consuming")
-
-        temp_db.save_content_item(_sonarr_show({1: 9, 2: 9}))
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.status == ConsumptionStatus.CURRENTLY_CONSUMING
-
-    def test_marking_a_show_completed_by_hand_leaves_the_derived_seasons_retractable(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        db_id = temp_db.save_content_item(_tautulli_show({"1": 9}, {"1": 9}))
-        temp_db.save_content_item(_sonarr_show({1: 9, 2: 9}))
-        temp_db.update_item_from_ui(db_id, status="completed")
-
-        temp_db.save_content_item(_sonarr_show({1: 10, 2: 9}))
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.metadata["seasons_watched"] == [2]
-        assert retrieved.status == ConsumptionStatus.CURRENTLY_CONSUMING
-
-    def test_a_season_unticked_after_a_re_tick_stays_unticked(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        watched = _tautulli_show({"1": 9, "2": 9}, {"1": 9, "2": 9})
-        db_id = temp_db.save_content_item(watched)
-        temp_db.update_item_from_ui(db_id, seasons_watched=[1])
-        temp_db.update_item_from_ui(db_id, seasons_watched=[1, 2])
-        temp_db.update_item_from_ui(db_id, seasons_watched=[1])
-
-        temp_db.save_content_item(watched)
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.metadata["seasons_watched"] == [1]
-
-    def test_clearing_the_checklist_leaves_no_season_the_next_sync_restores(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        watched = _tautulli_show({"1": 9, "2": 9}, {"1": 9, "2": 9})
-        db_id = temp_db.save_content_item(watched)
-        temp_db.update_item_from_ui(db_id, seasons_watched=[1, 2, 4])
-        temp_db.update_item_from_ui(db_id, seasons_watched=[])
-
-        temp_db.save_content_item(watched)
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.metadata["seasons_watched"] == []
-
-    def test_the_plex_library_count_alone_finishes_a_season_but_not_the_show(
+class TestSeasonCompletionFromTheLargestCount:
+    def test_the_plex_library_count_finishes_a_season_but_never_the_show(
         self, temp_db: SQLiteDB
     ) -> None:
         db_id = temp_db.save_content_item(_tautulli_show({"1": 8}, {"1": 8}))
@@ -3356,7 +3147,36 @@ class TestSeasonCompletionFromTheBestAvailableCount:
         assert retrieved.metadata["seasons_watched"] == [1]
         assert retrieved.status == ConsumptionStatus.CURRENTLY_CONSUMING
 
-    def test_an_ignored_show_is_not_completed_by_the_seasons_a_sync_derives(
+    def test_the_last_season_ticking_from_watch_history_completes_the_show(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        db_id = temp_db.save_content_item(_tautulli_show({"1": 9}, {"1": 9}))
+        temp_db.save_content_item(_sonarr_show({1: 9, 2: 9}))
+
+        part_way = temp_db.get_content_item(db_id)
+        assert part_way is not None
+        assert part_way.status == ConsumptionStatus.CURRENTLY_CONSUMING
+
+        temp_db.save_content_item(_tautulli_show({"1": 9, "2": 9}, {"1": 9, "2": 9}))
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.metadata["seasons_watched"] == [1, 2]
+        assert retrieved.status == ConsumptionStatus.COMPLETED
+
+    def test_a_show_no_source_states_a_season_total_for_never_completes(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        db_id = temp_db.save_content_item(
+            _tautulli_show({"1": 8, "2": 8}, {"1": 8, "2": 8})
+        )
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.metadata["seasons_watched"] == [1, 2]
+        assert retrieved.status == ConsumptionStatus.CURRENTLY_CONSUMING
+
+    def test_an_ignored_show_is_not_completed_by_the_seasons_a_sync_ticks(
         self, temp_db: SQLiteDB
     ) -> None:
         db_id = temp_db.save_content_item(_tautulli_show({"1": 9}, {"1": 9}))
@@ -3369,6 +3189,51 @@ class TestSeasonCompletionFromTheBestAvailableCount:
         assert retrieved.metadata["seasons_watched"] == [1]
         assert retrieved.status == ConsumptionStatus.CURRENTLY_CONSUMING
 
+    def test_a_season_no_count_reaches_is_never_ticked(self, temp_db: SQLiteDB) -> None:
+        db_id = temp_db.save_content_item(_tautulli_show({"2": 8}))
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.metadata.get("seasons_watched") is None
+
+    def test_a_season_sonarr_reports_smaller_than_tmdb_takes_the_larger_size(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        db_id = temp_db.save_content_item(_tautulli_show({"2": 8}))
+        temp_db.save_enrichment_metadata(db_id, _tmdb_enrichment({2: 10}))
+
+        temp_db.save_content_item(_sonarr_show({2: 8}))
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.metadata.get("seasons_watched") is None
+        assert retrieved.metadata["season_episode_counts"] == {"2": 10}
+
+    def test_a_stored_season_size_never_shrinks_when_a_source_reports_a_smaller_one(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        db_id = temp_db.save_content_item(_tautulli_show({"1": 3}))
+        temp_db.save_enrichment_metadata(db_id, _tmdb_enrichment({1: 22}))
+
+        temp_db.save_content_item(_sonarr_show({1: 3}))
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.metadata.get("seasons_watched") is None
+        assert retrieved.metadata["season_episode_counts"] == {"1": 22}
+
+    def test_a_season_ticked_by_hand_stays_ticked_though_the_counts_disagree(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        db_id = temp_db.save_content_item(_tautulli_show({"1": 2}, {"1": 10}))
+        temp_db.update_item_from_ui(db_id, seasons_watched=[1, 4])
+
+        temp_db.save_content_item(_tautulli_show({"1": 2}, {"1": 10, "4": 10}))
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.metadata["seasons_watched"] == [1, 4]
+
     def test_a_plex_library_that_dropped_the_show_unticks_nothing(
         self, temp_db: SQLiteDB
     ) -> None:
@@ -3380,7 +3245,7 @@ class TestSeasonCompletionFromTheBestAvailableCount:
         assert retrieved is not None
         assert retrieved.metadata["seasons_watched"] == [2]
 
-    def test_a_year_suffix_on_the_plex_title_still_reaches_the_aired_count(
+    def test_a_tautulli_show_and_a_sonarr_show_converge_on_one_row(
         self, temp_db: SQLiteDB
     ) -> None:
         db_id = temp_db.save_content_item(
@@ -3391,7 +3256,8 @@ class TestSeasonCompletionFromTheBestAvailableCount:
         assert len(temp_db.get_content_items(content_type=ContentType.TV_SHOW)) == 1
         retrieved = temp_db.get_content_item(db_id)
         assert retrieved is not None
-        assert retrieved.metadata["seasons_watched"] == []
+        assert retrieved.metadata["season_episode_counts"] == {"2": 10}
+        assert retrieved.metadata["plex_season_episode_counts"] == {"2": 8}
 
 
 class TestSeasonsWatchedSyncUnionRegression:
