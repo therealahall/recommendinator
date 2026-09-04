@@ -319,6 +319,7 @@ _SOURCE_REPORTED_SEASON_COUNTS: tuple[str, ...] = (
 
 _MANUAL_ADDITIONS = "seasons_manually_added"
 _MANUAL_REMOVALS = "seasons_manually_removed"
+_SOURCE_ASSERTED = "seasons_source_asserted"
 
 
 class SeasonCompletion(NamedTuple):
@@ -388,16 +389,33 @@ def reconcile_seasons(
         fields.get("season_episode_counts"),
         fields.get("plex_season_episode_counts"),
     )
+    asserted = _asserted_seasons(existing) | _season_set(
+        incoming.get("seasons_watched")
+    )
     hand_added = _season_set(existing.get(_MANUAL_ADDITIONS))
     hand_removed = _season_set(existing.get(_MANUAL_REMOVALS))
     watched = (
         (set(reported or ()) | completion.finished)
-        - completion.unfinished
+        - (completion.unfinished - asserted)
         - hand_removed
     ) | hand_added
+    if asserted:
+        fields[_SOURCE_ASSERTED] = sorted(asserted)
     if reported is not None or watched:
         fields["seasons_watched"] = sorted(watched)
     return fields
+
+
+def _asserted_seasons(existing: Mapping[str, Any]) -> set[int]:
+    stored = existing.get(_SOURCE_ASSERTED)
+    if stored is not None:
+        return _season_set(stored)
+    written_before_any_count_arrived = not any(
+        key in existing for key in _SOURCE_REPORTED_SEASON_COUNTS
+    )
+    if written_before_any_count_arrived:
+        return _season_set(existing.get("seasons_watched"))
+    return set()
 
 
 def cleared_hand_overrides() -> dict[str, list[int]]:
