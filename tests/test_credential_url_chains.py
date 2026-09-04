@@ -33,6 +33,7 @@ _CREDENTIAL_URL_FUNCTIONS = (
     ("src/ingestion/sources/gog/gog.py", "refresh_access_token"),
     ("src/ingestion/sources/steam/steam.py", "get_owned_games"),
     ("src/ingestion/sources/steam/steam.py", "get_steam_id_from_vanity_url"),
+    ("src/ingestion/sources/tautulli/tautulli.py", "_api_get"),
 )
 
 _CREDENTIAL_PARAM_NAMES = frozenset(

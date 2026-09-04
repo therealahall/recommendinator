@@ -20,6 +20,7 @@ from src.ingestion.sources.calibre_web.calibre_web import CalibreWebPlugin
 from src.ingestion.sources.radarr.radarr import RadarrPlugin
 from src.ingestion.sources.roms.roms import RomScannerPlugin
 from src.ingestion.sources.sonarr.sonarr import SonarrPlugin
+from src.ingestion.sources.tautulli.tautulli import TautulliPlugin
 from src.models.config_field import ConfigField
 from src.settings.metadata import get_entry
 from src.storage.manager import StorageManager
@@ -83,7 +84,9 @@ def _params(plugins: list[SourcePlugin]) -> list[Any]:
     return [pytest.param(plugin, id=plugin.name) for plugin in plugins]
 
 
-_URL_PLUGINS = _params([CalibreWebPlugin(), RadarrPlugin(), SonarrPlugin()])
+_URL_PLUGINS = _params(
+    [CalibreWebPlugin(), RadarrPlugin(), SonarrPlugin(), TautulliPlugin()]
+)
 
 
 def _discovered_plugins() -> dict[str, SourcePlugin]:
