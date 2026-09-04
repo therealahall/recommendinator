@@ -62,11 +62,13 @@ def same_origin(url: str, target: str) -> bool:
 
 def redirect_refusal(url: str, target: str, service: str) -> str:
     origin = urlsplit(url)
+    safe_url = sanitize_for_log(url)
+    safe_origin = sanitize_for_log(f"{origin.scheme}://{origin.netloc}")
     safe_target = sanitize_for_log(target)
     return (
-        f"Refused a redirect from {url} to {safe_target}. It leaves the configured "
-        f"origin {origin.scheme}://{origin.netloc}, and the api key only goes where "
-        f"the source url points. If {service} really is at {safe_target}, set the "
+        f"Refused a redirect from {safe_url} to {safe_target}. It leaves the "
+        f"configured origin {safe_origin}, and the api key only goes where the "
+        f"source url points. If {service} really is at {safe_target}, set the "
         "source url to it (and verify_ssl to false if its certificate is not "
         "publicly trusted)."
     )

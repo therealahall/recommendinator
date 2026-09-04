@@ -294,6 +294,20 @@ class TestSonarrTls:
 
         assert "\x1b" not in str(raised.value)
 
+    def test_the_url_a_followed_hop_became_cannot_rewrite_the_log(
+        self,
+        plugin: SonarrPlugin,
+    ) -> None:
+        self.mock_get.side_effect = [
+            _redirect_response("https://sonarr.lan/api/v3/series/\x1b[2Kforged"),
+            _redirect_response("https://elsewhere.example/x"),
+        ]
+
+        with pytest.raises(SourceError) as raised:
+            list(plugin.fetch({"url": "https://sonarr.lan", "api_key": "key"}))
+
+        assert "\x1b" not in str(raised.value)
+
     def test_a_same_origin_redirect_is_still_followed(
         self,
         plugin: SonarrPlugin,
