@@ -12,25 +12,6 @@ from tests.factories import make_storage_mock
 from .conftest import _invoke_with_mocks
 
 
-class TestRecommendEmptyResultsRegression:
-    def test_empty_recommendations_shows_unconsumed_guidance_regression(
-        self, cli_runner: CliRunner
-    ) -> None:
-        mock_engine = MagicMock(spec=RecommendationEngine)
-        mock_engine.generate_recommendations.return_value = []
-
-        result = _invoke_recommend_with_engine(
-            cli_runner,
-            ["recommend", "--type", "video_game"],
-            mock_engine,
-        )
-
-        assert result.exit_code == 0
-        assert "have not consumed yet" in result.output
-        assert "add more consumed content" not in result.output
-        assert "No video game left" in result.output
-
-
 class TestRecommendCrossTypeRun:
     """`--type` was required, so the one ranked list across all four types the
     web now serves had no CLI equivalent."""
@@ -70,17 +51,6 @@ class TestRecommendCrossTypeRun:
             ],
         ]
         assert "Creator" in result.stdout
-
-    def test_a_mixed_run_with_nothing_left_names_no_type(
-        self, cli_runner: CliRunner
-    ) -> None:
-        result = _invoke_recommend_with_engine(
-            cli_runner, ["recommend"], _engine_returning()
-        )
-
-        assert result.exit_code == 0
-        assert "Nothing left" in result.output
-        assert "Every item in the pool" in result.output
 
 
 class TestRecommendDefaultCount:

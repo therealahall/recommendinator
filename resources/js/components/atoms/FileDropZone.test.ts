@@ -15,9 +15,6 @@ function mountZone(file: File | null = null) {
 }
 
 describe('FileDropZone', () => {
-  /** The zone must not be drag-only: a pointer is the one input device a
-   *  keyboard user does not have, so the native input is the primary control
-   *  and the drop target is the enhancement over it (WCAG 2.1.1). */
   it('gives the native file input a label pointing at it', () => {
     const wrapper = mountZone()
 
@@ -42,8 +39,6 @@ describe('FileDropZone', () => {
     wrapper.unmount()
   })
 
-  /** The flag is how the panel tells the two apart: only a drop needs
-   *  announcing, the input speaks its own value. */
   it('emits the dropped file, so a drop and a keyboard pick agree', async () => {
     const wrapper = mountZone()
     const dropped = exportFile()
@@ -65,8 +60,6 @@ describe('FileDropZone', () => {
     wrapper.unmount()
   })
 
-  /** A drop never reaches the input's own value, so without this line a screen
-   *  reader is told "no file chosen" over a file that is about to be sent. */
   it('names the chosen file in the description the input points at', () => {
     const wrapper = mountZone(exportFile())
 
@@ -83,7 +76,6 @@ describe('FileDropZone', () => {
     const zone = wrapper.get('.drop-zone')
 
     await zone.trigger('dragenter')
-    // Entering the label fires dragenter again before the zone's dragleave.
     await zone.trigger('dragenter')
     await zone.trigger('dragleave')
 

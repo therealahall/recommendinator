@@ -146,8 +146,6 @@ class TestParseGoodreadsUserId:
         [
             ("", "empty"),
             ("https://www.goodreads.com/book/show/999-some-book", "Could not extract"),
-            # A recognised marker with no digit run after it must still raise,
-            # exercising the ``if match:`` false branch inside the loop.
             ("https://www.goodreads.com/user/show/jane-doe", "Could not extract"),
         ],
     )
@@ -255,7 +253,6 @@ class TestGoodreadsRssPluginFetch:
         assert item.metadata["average_rating"] == "4.25"
         assert item.metadata["description"] == "A desert planet."
         assert item.metadata["shelf"] == "read"
-        # RSS cannot supply these, so the keys are omitted entirely.
         assert "isbn13" not in item.metadata
         assert "publisher" not in item.metadata
 
@@ -332,9 +329,6 @@ class TestGoodreadsRssPluginFetch:
         assert {item.title for item in items} == {
             f"Book {index}" for index in range(count)
         }
-        # The loop must fetch one page beyond the last populated page to see
-        # the empty terminator: ceil(count / PER_PAGE) + 1 requests (and a bare
-        # 1 request when there are no items at all).
         expected_pages = math.ceil(count / goodreads_rss.PER_PAGE) + 1
         assert len(calls) == expected_pages
         assert [call["page"] for call in calls] == list(range(1, expected_pages + 1))
@@ -377,7 +371,6 @@ class TestGoodreadsRssPluginFetch:
         )
         monkeypatch.setattr(goodreads_rss.requests, "get", fake_get)
 
-        # to-read is fetched first, then read upgrades the status.
         items = list(plugin.fetch({"user_id": "12345", "shelves": ["to-read", "read"]}))
 
         assert len(items) == 1
@@ -502,18 +495,13 @@ class TestGoodreadsRssUserAgentRegression:
 
         headers = sent[0]
         assert headers is not None
-        # Honest, not a browser: a block must be a decision about this app.
         assert headers["User-Agent"].startswith(f"Recommendinator/{APP_VERSION}")
         assert "python-requests" not in headers["User-Agent"]
         assert "Mozilla" not in headers["User-Agent"]
         assert "rss" in headers["Accept"]
-        # Naming only RSS and XML is what got the 406.
         assert "*/*" in headers["Accept"]
 
 
-# Head of the real sign-in page a live sync got on 2026-08-14, Amazon's session
-# ids replaced. The ``&&`` is verbatim: the first bare ``&`` in that page, at
-# the line 20 column 1140 the error named.
 _SIGN_IN_PAGE = """<!DOCTYPE html>
 <html>
 <head>
@@ -670,7 +658,6 @@ class TestGoodreadsRssPluginSecurity:
             list(plugin.fetch({"user_id": "12345", "shelves": ["read"]}))
 
         message = str(exc_info.value)
-        # Positive assertion so a blank/broken message cannot satisfy the test.
         assert "Malformed or unsafe RSS" in message
         assert "lol" not in message
         assert "ENTITY" not in message

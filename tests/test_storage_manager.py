@@ -226,8 +226,5 @@ class TestGetConsumptionItemsRegression:
         signal = {item.title for item in temp_storage_manager.get_signal_items()}
 
         assert signal == {"Rated Book"}
-        # Proper subset: widening must add to the signal set, never trade an
-        # item away, which "signal == {...} and consumption - signal == {...}"
-        # alone would not catch.
         assert signal < consumption
         assert consumption - signal == {"Unrated Book", "In Progress"}

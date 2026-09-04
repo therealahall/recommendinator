@@ -188,7 +188,6 @@ class TestSonarrTls:
         message = str(raised.value)
         assert "http://sonarr.lan/api/v3/series" in message
         assert "https://sonarr.lan/api/v3/series" in message
-        # Refused, not followed: the redirect target was never requested.
         self.mock_get.assert_called_once()
 
     def test_a_redirect_target_cannot_rewrite_the_log(

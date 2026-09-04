@@ -10,9 +10,6 @@ describe('NumberStepper', () => {
   }
 
   describe('when max is omitted', () => {
-    // Regression: `max` defaulted to 100, so every min-only leaf
-    // (enrichment.batch_size, sync.max_workers) clamped there — a larger value
-    // snapped back silently, announcing a maximum the registry never declared.
     function mountUnbounded(props = {}) {
       return mount(NumberStepper, {
         props: { modelValue: 0, min: 0, step: 1, ...props },
@@ -28,10 +25,6 @@ describe('NumberStepper', () => {
     })
 
     it('leaves the increment button operable above the old default cap', () => {
-      // Asserts aria-disabled, not disabled. Bound state moved to aria-disabled,
-      // so a `disabled`-only assertion here would be unconditionally undefined
-      // (native disabled binds solely to props.disabled, which this never sets)
-      // and would still pass with `max: 100` reinstated — testing nothing.
       const button = mountUnbounded({ modelValue: 8192 }).find('.stepper-increment')
       expect(button.attributes('aria-disabled')).toBeUndefined()
       expect(button.attributes('disabled')).toBeUndefined()
@@ -53,8 +46,6 @@ describe('NumberStepper', () => {
     expect(wrapper.emitted('update:modelValue')![0]).toEqual([6])
   })
 
-  // The bound buttons are aria-disabled, not natively disabled, so the browser
-  // still delivers the click — these prove the handler guards drop it.
   it('does not emit above max when the increment button is at the max bound', async () => {
     const wrapper = mountStepper({ modelValue: 20, max: 20 })
     await wrapper.find('.stepper-increment').trigger('click')
@@ -62,9 +53,6 @@ describe('NumberStepper', () => {
   })
 
   describe('when min is omitted', () => {
-    // The mirror of the max case: `withDefaults` dropped BOTH bounds, so a
-    // reintroduced `min: 1` default would break a leaf declaring min 0, such as
-    // recommendations.scorer_weights.genre_match, with the suite green.
     function mountNoBounds(props = {}) {
       return mount(NumberStepper, { props: { modelValue: 0, step: 1, ...props } })
     }

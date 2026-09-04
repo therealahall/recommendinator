@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from click.testing import CliRunner
 
+from src.cli.commands import enrichment
 from src.covers.fetch import CoverUnavailable
 from src.storage.cover_jobs import CoverBackfillRecord
 from tests.factories import make_item, make_storage_mock
@@ -39,7 +40,7 @@ def test_backfill_reports_the_run_with_the_web_actions_keys(
     assert mock_start.call_args.kwargs["user_id"] == 1
 
 
-def test_backfill_names_the_remedy_for_the_items_it_cannot_fetch(
+def test_backfill_counts_the_items_it_cannot_fetch_and_names_the_way_to_them(
     cli_runner: CliRunner,
 ) -> None:
     finished = CoverBackfillRecord(completed=True, without_cover=7)
@@ -50,8 +51,9 @@ def test_backfill_names_the_remedy_for_the_items_it_cannot_fetch(
         )
 
     assert result.exit_code == 0
-    assert "Items with no cover art to fetch: 7" in result.output
-    assert "'enrichment reset' then 'enrichment start'" in result.output
+    assert str(finished.without_cover) in result.output
+    for step in ("reset", "start"):
+        assert f"{enrichment.name} {enrichment.commands[step].name}" in result.output
 
 
 def test_backfill_refuses_to_start_beside_the_one_the_web_started(

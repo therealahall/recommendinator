@@ -13,7 +13,6 @@ const PROFILE = {
   generated_at: '2026-01-01T00:00:00+00:00',
 }
 
-/** A fresh response each call: the store keeps the collections it is handed. */
 function preferences(customRules: string[] = []) {
   return {
     scorer_weights: {},
@@ -39,7 +38,6 @@ vi.mock('@/composables/useApi', () => ({
   }),
 }))
 
-/** The page inside a router, which is what makes its leave guard run. */
 async function mountPage(attachTo?: HTMLElement) {
   const router = createRouter({
     history: createMemoryHistory(),
@@ -72,7 +70,6 @@ describe('PreferencesPage', () => {
     mockDelete.mockReset()
     mockPreferencesGet.mockReset()
     mockPreferencesGet.mockImplementation(() => Promise.resolve(preferences()))
-    // A theme applied here outlives the test that applied it.
     localStorage.clear()
     document.getElementById('theme-stylesheet')?.remove()
   })
@@ -81,8 +78,6 @@ describe('PreferencesPage', () => {
     vi.restoreAllMocks()
   })
 
-  // The CLI keeps `profile show` and `profile regenerate`, so the web has to
-  // reach both or the interfaces have drifted.
   it('shows the preference profile and regenerates it', async () => {
     const { wrapper } = await mountPage()
 
@@ -138,7 +133,6 @@ describe('PreferencesPage', () => {
     expect(router.currentRoute.value.path).toBe('/library')
   })
 
-  // Parity with `preferences reset`, which also confirms first.
   it('confirms a reset, then shows the defaults it stored', async () => {
     mockPreferencesGet.mockImplementation(() =>
       Promise.resolve(preferences(['prefer westerns'])),
@@ -170,8 +164,6 @@ describe('PreferencesPage', () => {
     expect(String(confirm.mock.calls[0][0])).not.toMatch(/theme/i)
   })
 
-  // A button disabled mid-request is blurred by the browser, dropping the
-  // keyboard user to <body> for the rest of the flight (WCAG 2.4.3).
   it('keeps Reset to defaults focusable while the reset is in flight', async () => {
     const { wrapper } = await mountPage(document.body)
     vi.spyOn(window, 'confirm').mockReturnValue(true)

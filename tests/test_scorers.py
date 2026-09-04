@@ -47,7 +47,6 @@ class TestExtractGenres:
     def test_both_genre_and_genres(self) -> None:
         item = make_item(metadata={"genre": "Sci-Fi", "genres": ["Action"]})
         result = extract_genres(item)
-        # "sci-fi" is normalized to "science fiction"
         assert "science fiction" in result
         assert "action" in result
 
@@ -63,7 +62,6 @@ class TestExtractGenres:
     def test_tags_list_as_string(self) -> None:
         item = make_item(metadata={"tags": "sci-fi, space opera"})
         result = extract_genres(item)
-        # "sci-fi" is normalized to "science fiction"
         assert "science fiction" in result
         assert "space opera" in result
 
@@ -157,7 +155,6 @@ class TestTagOverlapScorer:
         )
         scorer = TagOverlapScorer()
         score = scorer.score(candidate, context)
-        # No direct overlap, but cluster match should give > 0.0
         assert score > 0.0
 
 
@@ -219,7 +216,6 @@ class TestSeriesOrderScorer:
         )
         scorer = SeriesOrderScorer()
         score = scorer.score(candidate, context)
-        # Average rating is 4.0, so should score 1.0
         assert score == 1.0
 
     def test_first_in_unstarted_series(self) -> None:
@@ -277,8 +273,8 @@ class TestSeriesOrderFractionalPositions:
             title="Gods of Risk (The Expanse, #2.5)", status=ConsumptionStatus.UNREAD
         )
         score = SeriesOrderScorer().score(novella, context)
-        assert score == 1.0  # 5-star series average
-        assert score > 0.3  # beats the "too far ahead" bucket
+        assert score == 1.0
+        assert score > 0.3
 
     def test_scorer_agrees_with_should_recommend_item_regression(self) -> None:
         consumed = self._consumed()
@@ -440,7 +436,6 @@ class TestRatingPatternScorer:
         )
         scorer = RatingPatternScorer()
         score = scorer.score(candidate, context)
-        # average=5 => (5-1)/4 = 1.0
         assert score == 1.0
 
     def test_no_matching_genre_neutral(self) -> None:
@@ -522,7 +517,7 @@ class TestCustomPreferenceScorer:
         context = _build_context(consumed=[])
         scorer = CustomPreferenceScorer(genre_boosts={"mystery": 0.5})
         score = scorer.score(candidate, context)
-        assert score == 0.75  # 0.5 + (0.5 * 0.5)
+        assert score == 0.75
 
     def test_no_matching_rules_returns_neutral(self) -> None:
         candidate = make_item(
@@ -730,7 +725,6 @@ class TestSeriesAffinityScorer:
         )
         context = _build_context(consumed=consumed)
         scorer = SeriesAffinityScorer()
-        # Only the rated entry (5) counts; average is 5.0 >= 4.0 -> 1.0
         assert scorer.score(candidate, context) == 1.0
 
 

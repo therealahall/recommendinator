@@ -73,7 +73,6 @@ class TestOpenLibraryProviderISBNLookup:
         assert result is not None
         assert result.external_id == "openlibrary:OL5678W"
         assert "Dystopia" in result.genres
-        # Tags should also be populated for cross-content-type matching
         assert result.tags is not None
         assert "Dystopia" in result.tags
         assert "dystopian" in result.description.lower()
@@ -240,7 +239,7 @@ class TestOpenLibraryProviderSubjectFiltering:
             "Fiction",
             "Mystery",
             "Some very long subject that should be filtered out because it's too long",
-            "Romance -- 20th century -- United States",  # Subdivided, skip
+            "Romance -- 20th century -- United States",
             "Thriller",
         ]
 

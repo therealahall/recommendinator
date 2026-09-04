@@ -64,8 +64,6 @@ describe('DuplicateQueue', () => {
   beforeEach(() => setActivePinia(createPinia()))
 
   it('leaves focus on the pair that took the decided one’s place, not above it', async () => {
-    // Every decision removes its own card, so skipping is the only way past a
-    // pair — focus going back to the top re-walks everything already skipped.
     const store = useDuplicatesStore()
     store.suggestions = [
       suggestion('Alpha', 10),
@@ -99,8 +97,6 @@ describe('DuplicateQueue', () => {
   })
 
   it('lands on the block that moved up, when the decision removed two of them', async () => {
-    // A veto splits one work into overlapping blocks, so a decision on the copy
-    // they share drops both at once and the decided one's index overshoots.
     const store = useDuplicatesStore()
     store.suggestions = ['Alpha', 'Beta', 'Gamma', 'Delta', 'Epsilon'].map(
       (title, position) => suggestion(title, 10 * (position + 1)),
@@ -121,8 +117,6 @@ describe('DuplicateQueue', () => {
   })
 
   it('stays on the block a part-way merge left behind, not the next work', async () => {
-    // One POST per absorbed copy: the second is refused, the reload re-keys the
-    // block, and the key the click could name is not the key that survived.
     const store = useDuplicatesStore()
     store.suggestions = [suggestion('Alpha', 10, 3), suggestion('Beta', 20)]
     vi.spyOn(store, 'merge').mockImplementation(async () => {

@@ -21,8 +21,6 @@ from src.ingestion.importers.service import decode_import_text
 from src.models.content import ContentType
 from src.models.templates import COMMON_COLUMNS, CONTENT_TYPE_COLUMNS
 
-# An importer that could open a file would be a second way to read the disk,
-# reached from an upload that never gave it a path.
 FILESYSTEM_NAMES = {"open", "os", "pathlib", "Path", "shutil", "glob", "tempfile"}
 
 

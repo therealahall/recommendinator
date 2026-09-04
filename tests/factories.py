@@ -19,8 +19,6 @@ from src.web.app import create_app
 from src.web.auth import SESSION_COOKIE
 from src.web.state import AppState, app_state
 
-# The one session token a mocked StorageManager recognises. Real storage mints
-# its own, so nothing outside this module may assume the value.
 _MOCK_SESSION_TOKEN = "test-session-000102030405060708090a0b"
 
 SESSION_USER: UserDict = {
@@ -31,9 +29,6 @@ SESSION_USER: UserDict = {
     "settings": None,
 }
 
-# Source ids both interfaces must refuse. `^…$` is end-of-line in Python's
-# ``re``, not end-of-string, so a trailing newline is the payload that
-# separates a full-match check from a search.
 MALFORMED_IDS = ["Not An Id", "gog\n", "1gog", "../gog", "gog work", "gög", ""]
 
 
@@ -77,7 +72,6 @@ def back_mock_session_store(storage: Any) -> None:
         storage.accounts.lookup_session.side_effect = lambda token: (
             SESSION_USER if token == _MOCK_SESSION_TOKEN else None
         )
-        # A count, because boot logs it with ``%d``.
         _default_return(storage.accounts.purge_expired_sessions, 0)
 
 
@@ -128,10 +122,6 @@ def back_mock_settings_store(storage: Any) -> dict[str, Any]:
     storage.settings.get.side_effect = lambda key: store.get(key)
     storage.settings.set.side_effect = store.__setitem__
     storage.settings.list.side_effect = store.copy
-    # An unstubbed method on a spec'd Mock returns a truthy Mock, which reads
-    # as "already stored" — the opposite of an empty database. For
-    # ``sources.get`` that means the sweep discards every sensitive field
-    # the test's config declared.
     _default_return(storage.credentials.get, None)
     _default_return(storage.credentials.exists, False)
     _default_return(storage.secrets.has, False)
@@ -170,16 +160,12 @@ def booted_web_app(
     back_mock_settings_store(storage)
     back_mock_session_store(storage)
     defaults = AppState()
-    # Stubbed by default so a test's config keeps the secrets it declared; a
-    # test about what startup does to a file-held one asks for the real pass.
     credential_migration: Any = (
         nullcontext()
         if migrate_credentials
         else patch("src.web.app.migrate_config_credentials")
     )
     try:
-        # Field by field, never a rebind: the singleton is imported by name in
-        # a dozen modules, all of which must keep seeing the current state.
         for field in fields(defaults):
             setattr(app_state, field.name, getattr(defaults, field.name))
         with (
@@ -187,10 +173,6 @@ def booted_web_app(
             patch("src.web.app.create_storage_manager", return_value=storage),
             patch("src.web.app.create_recommendation_engine", return_value=engine),
             credential_migration,
-            # Resolved independently of the patched loader, so unpatched this
-            # binds the path of whatever config file the machine has — which a
-            # reload would then read for real. The raise takes create_app's own
-            # not-found branch, landing on config/example.yaml.
             patch("src.web.app.resolve_config_path", side_effect=FileNotFoundError),
         ):
             app = create_app()

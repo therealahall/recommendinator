@@ -46,7 +46,6 @@ describe('Accordion', () => {
 
     const action = wrapper.find('[data-testid="action"]')
     expect(action.exists()).toBe(true)
-    // The action button must NOT be nested inside the accordion trigger button.
     const trigger = wrapper.find('button.accordion-trigger').element
     expect(trigger.contains(action.element)).toBe(false)
   })

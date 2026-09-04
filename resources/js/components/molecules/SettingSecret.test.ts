@@ -5,7 +5,6 @@ import type { SettingViewSecret } from '@/types/api'
 
 function secret(overrides: Partial<SettingViewSecret> = {}): SettingViewSecret {
   return {
-    // A real registry secret leaf, so the fixture matches what the API serves.
     key: 'enrichment.providers.tmdb.api_key',
     section: 'enrichment',
     label: 'TMDB API key',

@@ -3,8 +3,6 @@ import { mount, type VueWrapper } from '@vue/test-utils'
 import PasswordChangeForm from './PasswordChangeForm.vue'
 import { PASSWORD_MIN_LENGTH } from '@/constants/auth'
 
-// Long enough to clear the length rule, so a test about anything else is not
-// answered by it.
 const LONG = 'hunter3-hunter3'
 const OTHER = 'hunter4-hunter4'
 
@@ -36,8 +34,6 @@ describe('PasswordChangeForm', () => {
   })
 
   it('states and enforces the floor it was handed, not one of its own', async () => {
-    // Regression: the floor was compiled into the bundle, so a server enforcing
-    // another one had this form inviting a password it would then refuse.
     const server = PASSWORD_MIN_LENGTH + 4
     const between = 'x'.repeat(server - 1)
     const wrapper = mount(PasswordChangeForm, { props: { minPasswordLength: server } })

@@ -47,7 +47,6 @@ describe('LibraryCard', () => {
   })
 
   it.each([false, true])('names the item in every action, ignored: %s', (ignored) => {
-    // Fifty cards offered a hundred buttons with two names between them (2.4.6).
     const wrapper = mount(LibraryCard, { props: { item: { ...baseItem, ignored } } })
 
     const labels = wrapper
@@ -81,8 +80,6 @@ describe('LibraryCard', () => {
   })
 
   it('titles a card at the level a recommendation of the same work is titled', () => {
-    // A page of twenty recommendations offered one heading to jump between: the
-    // rec title was a div while the same work here was a heading (WCAG 1.3.1).
     const library = mount(LibraryCard, { props: { item: baseItem } })
     const rec = mount(RecCard, {
       props: {

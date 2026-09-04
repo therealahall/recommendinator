@@ -24,7 +24,6 @@ class TestUserPreferenceConfig:
 
     def test_from_dict_clamps_variety_penalty_above_max(self) -> None:
         config = UserPreferenceConfig.from_dict({"variety_penalty": 7.5})
-        # Anchor to the literal cap so the test fails loudly if the constant moves.
         assert config.variety_penalty == 5.0
         assert config.variety_penalty == UserPreferenceConfig.MAX_VARIETY_PENALTY
 
@@ -39,7 +38,6 @@ class TestVarietyPenaltyMigrationRegression:
 
     def test_legacy_true_maps_to_max_penalty_regression(self) -> None:
         config = UserPreferenceConfig.from_dict({"variety_after_completion": True})
-        # 4.0/5.0 == the old fixed 0.8 top penalty fraction, so behaviour is kept.
         assert config.variety_penalty == 4.0
         assert config.variety_penalty == UserPreferenceConfig.LEGACY_VARIETY_ON
 

@@ -25,9 +25,6 @@ from src.web.state import (
 
 _AWATCH_PATCH_TARGET = "watchfiles.awatch"
 
-# Long enough that a loaded machine does not report a lock as never released;
-# _BLOCKED_SECONDS is the opposite, the wait an uncontended save fits inside
-# and a blocked one does not.
 _LOCK_TIMEOUT_SECONDS = 5.0
 _BLOCKED_SECONDS = 0.2
 

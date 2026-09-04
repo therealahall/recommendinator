@@ -6,8 +6,6 @@ import {
 
 describe('domId', () => {
   it('keeps the two separators a source id may use apart', () => {
-    // Both match SOURCE_ID_PATTERN and both run the gog plugin, so collapsing
-    // `_` to `-` handed two live panels the same element id.
     expect(domId('oauth-code', 'gog_work')).toBe('oauth-code-gog_work')
     expect(domId('oauth-code', 'gog_work')).not.toBe(
       domId('oauth-code', 'gog-work'),
@@ -56,8 +54,6 @@ describe('formatRelativeTime', () => {
   })
 
   it('reads the offset the API sends rather than the host zone', () => {
-    // Python writes an aware UTC stamp, so dropping the offset would shift
-    // every line by the operator's own zone.
     expect(formatRelativeTime('2026-08-17T12:00:00+02:00', now)).toBe('2 hours ago')
   })
 })

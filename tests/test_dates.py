@@ -30,8 +30,6 @@ def test_later_iso_timestamp_returns_the_later_of_two_aware_timestamps():
 
 
 def test_later_iso_timestamp_compares_naive_and_aware_without_raising():
-    # A naive timestamp is assumed to already be UTC, so it compares
-    # correctly against an aware one instead of raising TypeError.
     naive_earlier = "2026-01-01T00:00:00"
     aware_later = "2026-06-01T00:00:00+00:00"
     assert later_iso_timestamp(naive_earlier, aware_later) == aware_later
@@ -64,14 +62,8 @@ class TestLocalDateFromIsoTimestamp:
     @pytest.mark.parametrize(
         ("zone", "raw", "expected"),
         [
-            # Los Angeles (UTC-8 in January): local 23:59 is already the 16th
-            # in UTC, local 00:01 is still the 15th.
             ("America/Los_Angeles", "2026-01-16T07:59:00Z", date(2026, 1, 15)),
-            # Tokyo (UTC+9): local 00:01 is still the 14th in UTC, local 23:59
-            # is the 15th.
             ("Asia/Tokyo", "2026-01-14T15:01:00Z", date(2026, 1, 15)),
-            # Los Angeles on daylight time (UTC-7): the offset is the one in
-            # force at that instant, not a single number for the whole year.
             ("America/Los_Angeles", "2026-07-16T06:59:00Z", date(2026, 7, 15)),
         ],
     )
@@ -90,8 +82,6 @@ class TestLocalDateFromIsoTimestamp:
     @pytest.mark.parametrize(
         ("zone", "raw", "expected"),
         [
-            # Kolkata (UTC+5:30): a half-hour offset, which whole-hour
-            # arithmetic gets wrong on exactly these two instants.
             ("Asia/Kolkata", "2026-01-14T18:30:00Z", date(2026, 1, 15)),
             ("Asia/Kolkata", "2026-01-14T18:29:59.999999Z", date(2026, 1, 14)),
         ],
@@ -111,14 +101,11 @@ class TestLocalToday:
     @pytest.mark.parametrize(
         ("zone", "instant", "expected"),
         [
-            # 21:00 on the 14th in Los Angeles (UTC-7 in March) is already the
-            # 15th in UTC — the reported case.
             (
                 "America/Los_Angeles",
                 datetime(2026, 3, 15, 4, 0, tzinfo=UTC),
                 date(2026, 3, 14),
             ),
-            # 08:00 on the 15th in Tokyo (UTC+9) is still the 14th in UTC.
             ("Asia/Tokyo", datetime(2026, 3, 14, 23, 0, tzinfo=UTC), date(2026, 3, 15)),
         ],
     )

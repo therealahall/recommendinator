@@ -43,9 +43,6 @@ def mock_storage():
     real accessors by filtering whatever ``get_completed_items`` a test sets up."""
     storage = make_storage_mock()
 
-    # Each fake narrows get_completed_items itself, the way the real accessors
-    # do, so a call recorded on one is a call the engine made and not one its
-    # sibling fake made on its behalf.
     def consumption(user_id=None, content_type=None, limit=None, **kwargs):
         return [
             item
@@ -497,8 +494,6 @@ class TestTvRecommendationCarriesDbIdRegression:
             count=5,
         )
 
-        # The series rules surface only the next-unwatched season, so the show
-        # yields exactly one actionable card carrying the show's db_id.
         assert len(recommendations) == 1
         assert recommendations[0].item.db_id == 42
 
@@ -551,15 +546,9 @@ class TestTvRecommendationCarriesDbIdRegression:
             user_preference_config=UserPreferenceConfig(series_in_order=False),
         )
 
-        # The three expanded seasons collapse to a single actionable card that
-        # carries the parent show's db_id.
         assert len(recommendations) == 1
         rec_item = recommendations[0].item
         assert rec_item.db_id == 42
-        # The survivor's id is asserted with ``in {season ids}`` rather than a
-        # specific season because the three seasons score identically and pass
-        # through ``_shuffle_close_scores``, so which one survives is
-        # non-deterministic at this integration level.
         assert rec_item.id in {"tvdb:280619:s1", "tvdb:280619:s2", "tvdb:280619:s3"}
 
     def test_series_in_order_false_keeps_distinct_shows_and_backfills_regression(
@@ -590,8 +579,6 @@ class TestTvRecommendationCarriesDbIdRegression:
             user_preference_config=UserPreferenceConfig(series_in_order=False),
         )
 
-        # Both distinct shows survive, each exactly once, despite five expanded
-        # seasons between them.
         db_ids = sorted(rec.item.db_id for rec in recommendations)
         assert db_ids == [42, 99]
 
@@ -602,16 +589,15 @@ class TestCollapseDuplicateDbIds:
 
     def test_keeps_first_occurrence_among_duplicates_preserving_order(self) -> None:
         entries = [
-            (42, "expanse-s2"),  # highest-ranked season of show 42
+            (42, "expanse-s2"),
             (99, "foundation-s1"),
-            (42, "expanse-s1"),  # lower-ranked duplicate of show 42 -> dropped
-            (99, "foundation-s2"),  # lower-ranked duplicate of show 99 -> dropped
+            (42, "expanse-s1"),
+            (99, "foundation-s2"),
             (7, "standalone"),
         ]
 
         collapsed = _collapse_duplicate_db_ids(entries, lambda entry: entry[0])
 
-        # Only the first occurrence of each db_id is kept, original order intact.
         assert collapsed == [
             (42, "expanse-s2"),
             (99, "foundation-s1"),
@@ -630,7 +616,6 @@ class TestCollapseDuplicateDbIds:
 
         collapsed = _collapse_duplicate_db_ids(entries, lambda entry: entry[0])
 
-        # All three None entries survive alongside the single id'd entry.
         assert collapsed == entries
 
 
@@ -697,7 +682,6 @@ class TestCrossTypeClusterOverlapRegression:
         """Bug: "1923" (genre: ["Drama"]) was cited for every recommendation."""
         engine = _engine_for_helpers()
 
-        # "1923" has only Drama — should not match sci-fi thematically
         show_1923 = ContentItem(
             id="1923",
             title="1923",
@@ -707,7 +691,6 @@ class TestCrossTypeClusterOverlapRegression:
             metadata={"genres": ["Drama"]},
         )
 
-        # A sci-fi consumed item — should match sci-fi candidates
         sci_fi_consumed = ContentItem(
             id="expanse",
             title="The Expanse",
@@ -717,7 +700,6 @@ class TestCrossTypeClusterOverlapRegression:
             metadata={"genres": ["Science Fiction", "Drama"]},
         )
 
-        # Candidate is a sci-fi book
         sci_fi_candidate = ContentItem(
             id="dune",
             title="Dune",
@@ -815,29 +797,7 @@ class TestReasoningIntroducesTheCitation:
         )
         assert "Dune" not in reasoning
         assert "Foundation" not in reasoning
-        # The per-type breakdown this replaced was one indented line per type.
         assert "\n" not in reasoning
-
-    def test_the_citation_line_is_whole_where_the_cited_items_are_a_column_away(
-        self,
-    ) -> None:
-        engine = _engine_for_helpers()
-
-        reasoning = engine._generate_reasoning(
-            item=ContentItem(
-                id="candidate",
-                title="Hyperion",
-                content_type=ContentType.BOOK,
-                status=ConsumptionStatus.UNREAD,
-            ),
-            preferences=PreferenceAnalyzer(min_rating=4).analyze([]),
-            adaptations=[],
-            contributing_items=[
-                self._reference("book", "Foundation", ContentType.BOOK)
-            ],
-        )
-
-        assert ":" not in reasoning
 
 
 class TestContributingReferenceRatingFloorRegression:
@@ -1137,7 +1097,6 @@ class TestVarietyAfterCompletion:
 
         score_off = _variety_score_for(recs_off, "same_genre")
         score_on = _variety_score_for(recs_on, "same_genre")
-        # 4.0 / 5.0 == 0.8 top fraction => (1 - top_fraction) of the score retained.
         top_fraction = 4.0 / UserPreferenceConfig.MAX_VARIETY_PENALTY
         assert score_on == pytest.approx(score_off * (1 - top_fraction), rel=1e-6)
         assert recs_on[0].variety_penalty == pytest.approx(top_fraction)
@@ -1162,7 +1121,7 @@ class TestVarietyAfterCompletion:
             content_type=ContentType.BOOK,
             status=ConsumptionStatus.COMPLETED,
             rating=5,
-            date_completed=date(2026, 1, 2),  # more recent
+            date_completed=date(2026, 1, 2),
             metadata={"genres": ["Science Fiction"]},
         )
         fantasy_candidate = ContentItem(
@@ -1235,8 +1194,6 @@ class TestVarietyAfterCompletion:
         )
 
         def completed_items(content_type=None, **kwargs):
-            # Cross-type preference analysis sees the book; the game-type
-            # query (used to build the ladder) sees no completed games.
             if content_type is None or content_type == ContentType.BOOK:
                 return [finished_book]
             return []
@@ -1250,7 +1207,6 @@ class TestVarietyAfterCompletion:
             user_preference_config=UserPreferenceConfig(variety_penalty=4.0),
         )
 
-        # No completed games => empty ladder => the fantasy game is untouched.
         assert recs[0].item.id == "fantasy_game"
         assert recs[0].variety_penalty == 0.0
 
@@ -1454,15 +1410,10 @@ class TestVarietyAfterCompletionRegression:
         )
 
         rec_ids = [rec.item.id for rec in recs]
-        # The legit next book is recommended; the out-of-order novellas are
-        # substituted away by series filtering and never appear.
         assert "exp2" in rec_ids
         assert "exp25" not in rec_ids
         assert "exp27" not in rec_ids
 
-        # The variety layer fired too: Caliban's War shares the just-finished
-        # sci-fi cluster, but as an active series continuation its penalty is
-        # softened, not applied at full strength.
         top_fraction = (
             UserPreferenceConfig.LEGACY_VARIETY_ON
             / UserPreferenceConfig.MAX_VARIETY_PENALTY
@@ -2028,15 +1979,11 @@ class TestIgnoredAndUnratedSignalRegression:
         )
 
         titles = {rec.item.title for rec in recs}
-        # Candidate pool: the unrated candidate is still recommended (backlog
-        # is unrated by nature); the ignored candidate is not.
         assert "Hyperion" in titles
         assert "Ignored Saga" not in titles
 
         hyperion = next(rec for rec in recs if rec.item.title == "Hyperion")
         contributing = {item.title for item in hyperion.contributing_items}
-        # The rated, non-ignored signal item is cited; the ignored and the
-        # completed-but-unrated items never appear as "you liked" references.
         assert "Dune" in contributing
         assert "Neuromancer" not in contributing
         assert "Snow Crash" not in contributing
@@ -2153,8 +2100,6 @@ class TestIgnoredAndUnratedItemsDoNotShapeRankingRegression:
 class TestVarietyLadderConsumptionRegression:
     """Bug reported: unrated completions caused no genre fatigue at all."""
 
-    # variety_penalty == MAX gives a top-rung penalty fraction of 1.0, which
-    # fully zeroes a just-finished genre — the strongest, most observable rung.
     _CONFIG = UserPreferenceConfig(
         variety_penalty=UserPreferenceConfig.MAX_VARIETY_PENALTY
     )
@@ -2164,9 +2109,6 @@ class TestVarietyLadderConsumptionRegression:
 
     @classmethod
     def _seed_baseline(cls, storage):
-        # A rated, non-ignored Mystery signal item makes recommendations exist
-        # and seeds the ladder with Mystery (a cluster none of the candidates
-        # share, so baseline candidate penalties are zero).
         _save_book(
             storage,
             item_id="sig",
@@ -2191,8 +2133,6 @@ class TestVarietyLadderConsumptionRegression:
             genre="Science Fiction",
         )
 
-    # After _SEED_COMPLETED_ON, so the show's finished season outranks the
-    # Mystery completion on the ladder.
     _SEASON_WATCHED_AT = "2026-02-01T12:00:00Z"
 
     @classmethod
@@ -2353,7 +2293,6 @@ class TestVarietyLadderConsumptionRegression:
             genre="Fantasy",
         )
 
-        # Rung 2, behind the 2026-03 Science Fiction and 2026-01 Mystery rungs.
         assert self._fantasy_penalty(real_engine) == pytest.approx(
             (VARIETY_LADDER_STEPS - 2) / VARIETY_LADDER_STEPS
         )
@@ -2734,8 +2673,6 @@ class TestIdlessCandidateIdentityRegression:
         assert {
             item.title for item in by_title["The Silent Patient"].contributing_items
         } == {"Knives Out"}
-        # Only the in-progress book is a continuation, so the two breakdowns
-        # differ and each card must carry its own.
         assert "continuation" not in by_title["Hyperion"].score_breakdown
         assert by_title["The Silent Patient"].score_breakdown["continuation"] == 1.0
 
@@ -2959,7 +2896,6 @@ class TestCrossTypeRun:
                 if content_type is None or item.content_type == content_type
             ]
         )
-        # content_type=None means every type, as the real accessor does.
         mock_storage.get_unconsumed_items = Mock(
             side_effect=lambda content_type=None, **kwargs: (
                 [

@@ -2,8 +2,6 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import OAuthConnectFlow from './OAuthConnectFlow.vue'
 
-// The parent picks the wording, so these tests only follow it through. A
-// sentence no branch of that decision produces is what proves the pass-through.
 const HINT = 'The remedy the parent worked out.'
 
 function mountFlow(sourceId: string, sourceName = `GOG (${sourceId})`) {
@@ -80,8 +78,6 @@ describe('OAuthConnectFlow', () => {
       attachTo: document.body,
     })
 
-    // aria-disabled does not block activation the way `disabled` did, so the
-    // null-URL guard in openAuth is now the only thing refusing this click.
     await wrapper.get('button').trigger('click')
 
     expect(open).not.toHaveBeenCalled()

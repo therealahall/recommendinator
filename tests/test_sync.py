@@ -95,9 +95,6 @@ class TestExecuteSync:
         assert result.items_synced == 2
         assert result.total_items == 3
         assert len(result.errors) == 1
-        # Item-identifying summary is safe to expose; raw exception text
-        # ("db error") must NOT appear because plugin exceptions can carry
-        # credential bytes.
         assert "Bad" in result.errors[0]
         assert "db error" not in result.errors[0]
 
@@ -119,7 +116,6 @@ class TestExecuteSync:
 
         assert len(result.errors) == MAX_REPORTED_ERRORS
         assert result.omitted_errors == 12
-        # The list is bounded; what the run did to the library is not rounded.
         assert result.total_items == failures
         assert result.items_synced == 0
 
@@ -170,7 +166,6 @@ class TestExecuteSync:
             progress_callback=progress,
         )
 
-        # In-loop calls report (1, 3, ...), (2, 3, ...), (3, 3, ...).
         in_loop_counts = [
             call.args[0]
             for call in progress.call_args_list
@@ -207,8 +202,6 @@ class TestExecuteMultiSourceSync:
         assert results[0].items_synced == 0
         assert results[0].errors == [remedy]
         assert results[1].items_synced == 1
-        # Named, not just reported: one job covers every source, so a bare
-        # message leaves the operator guessing which one to go and fix.
         assert [(entry.source_name, entry.errors) for entry in reported] == [
             ("Failing", [remedy]),
             ("Working", []),
@@ -248,8 +241,6 @@ class TestExecuteMultiSourceSync:
         assert results[0].errors == ["Sync failed for steam"]
         (failure,) = [r for r in caplog.records if "Sync failed" in r.getMessage()]
         assert failure.exc_info is not None
-        # The frames, not the exception name: exception_for_log already puts
-        # that in the message, so the bare line the bug produced would pass.
         assert "Traceback (most recent call last)" in caplog.text
 
     def test_max_workers_runs_sources_concurrently(self) -> None:
@@ -258,9 +249,6 @@ class TestExecuteMultiSourceSync:
 
         def make_fetch(label: str) -> Any:
             def fetch(*_args: object, **_kwargs: object) -> Iterator[ContentItem]:
-                # Each source blocks until ALL sources reach the barrier;
-                # if execution were sequential, the second/third source
-                # would never start and the barrier would time out.
                 barrier.wait()
                 return iter([make_item(f"{label}1")])
 
@@ -283,16 +271,12 @@ class TestExecuteMultiSourceSync:
         )
 
         assert len(results) == thread_count
-        # Result ordering matches input ordering even though fetches ran
-        # concurrently and may have completed in any order.
         assert [result.source_name for result in results] == [
             f"Src {index}" for index in range(thread_count)
         ]
         assert all(result.items_synced == 1 for result in results)
 
     def test_parallel_isolates_per_source_failures(self) -> None:
-        # Both fetches block on the same barrier so we know they ran
-        # concurrently — neither runs until both have started.
         barrier = threading.Barrier(2, timeout=5.0)
 
         def fetch_failing(*_args: object, **_kwargs: object) -> Iterator[ContentItem]:
@@ -490,8 +474,6 @@ class TestEverySyncLeavesARun:
             datetime.fromisoformat(run["started_at"]),
             datetime.fromisoformat(str(run["finished_at"])),
         ]
-        # Naive stamps land silently and blow up where the scheduler compares
-        # them to an aware now.
         assert {stamp.utcoffset() for stamp in stamps} == {timedelta(0)}
         assert stamps[1] >= stamps[0]
 
@@ -545,8 +527,6 @@ class TestCredentialRotationCallback:
         plugin = MagicMock(spec=SourcePlugin)
         plugin.name = "gog"
         plugin.display_name = "GOG"
-        # The owner is whatever the plugin says the source is called, so a
-        # mocked plugin has to answer that question like a real one would.
         plugin.get_source_identifier.return_value = "gog"
 
         captured_callback = None
@@ -737,8 +717,6 @@ class TestASyncLeavesAStrandedTokenWhereItIs:
         assert storage.credentials.get(1, "rotating", "refresh_token") == (
             "stranded-by-upgrade"
         )
-        # Anchored: the sync ran to the rotation, so it had every chance at the
-        # row above.
         assert (
             storage.credentials.get(1, "my_source", "refresh_token") == _ROTATED_TOKEN
         )
@@ -794,8 +772,6 @@ class TestAutoEnrichmentHook:
 
         assert result.items_synced == 2
         assert storage.enrichment.mark_needed.call_count == 2
-        # The failure is reported, not just logged: nothing else shows the
-        # operator that one item will never be enriched.
         assert result.errors == [
             "Saved 1 item(s) but could not queue them for enrichment"
         ]
@@ -898,8 +874,6 @@ class TestTheOtherSyncSinksEscapeTheirValuesToo:
         assert all(len(message.splitlines()) == 1 for message in caplog.messages)
 
 
-# ESC[2K erases the line an operator just read, so it rewrites an entry
-# without breaking one.
 _ANSI_ERASE_LINE = "\x1b[2K"
 
 
@@ -920,13 +894,11 @@ class TestEveryCharacterThatEndsAnEntryIsEscapedByTheSinks:
         assert caplog.messages
         assert all(len(message.splitlines()) == 1 for message in caplog.messages)
         assert not any(breaker in message for message in caplog.messages)
-        # Escaped, not stripped: an operator still has to be able to read it.
         assert all(
             "Dune" in message for message in caplog.messages if "forged" in message
         )
 
 
-#: What ``os.fsdecode`` leaves of a ROM filename holding an undecodable byte.
 _SURROGATE_TITLE = "Metr\udcffoid"
 _ESCAPED_SURROGATE_TITLE = "Metr\\udcffoid"
 

@@ -55,7 +55,6 @@ def test_preference_analyzer_basic():
     assert preferences.total_items == 3
     assert preferences.average_rating == 4.0
     assert "author a" in preferences.preferred_authors
-    # Sole high-rated author: normalization divides by max score, yielding 1.0
     assert preferences.preferred_authors["author a"] == 1.0
 
 
@@ -109,7 +108,6 @@ def test_preference_analyzer_cross_content_type():
     assert preferences.total_items == 3
     assert "science fiction" in preferences.preferred_genres
     assert "frank herbert" in preferences.preferred_authors
-    # Sci-fi has highest accumulated weight: normalization yields 1.0
     assert preferences.preferred_genres["science fiction"] == 1.0
 
 
@@ -130,7 +128,6 @@ class TestScoreNormalisationBounds:
             ]
         )
 
-        # Equal weights normalise to the shared maximum, well inside [-1.0, 1.0]
         assert preferences.preferred_authors == {"author a": 1.0, "author b": 1.0}
         assert preferences.preferred_genres == {
             "science fiction": 1.0,
@@ -140,8 +137,6 @@ class TestScoreNormalisationBounds:
     def test_min_rating_one_does_not_invert_preference_regression(self):
         analyzer = PreferenceAnalyzer(min_rating=1)
 
-        # Both ratings sit below the old neutral of 3: any higher rating in the
-        # library kept the old maximum positive and hid the inversion
         preferences = analyzer.analyze(
             [
                 _rated_book("1", "Author A", 1, "Science Fiction"),
@@ -162,7 +157,6 @@ class TestScoreNormalisationBounds:
     ):
         analyzer = PreferenceAnalyzer(min_rating=min_rating)
 
-        # One shared genre, so a split pair puts it in both buckets at once
         preferences = analyzer.analyze(
             [
                 _rated_book("1", "Author A", rating_a, "Science Fiction"),
@@ -188,7 +182,6 @@ class TestScoreNormalisationBounds:
 
         scores = [preferences.get_author_score(f"Author {r}") for r in liked]
         assert scores == sorted(scores)
-        # The best rated author is the normalisation maximum, so exactly 1.0
         assert scores[-1] == 1.0
 
     def test_unrated_items_leave_both_buckets_empty(self):

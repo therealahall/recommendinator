@@ -72,8 +72,6 @@ function dismissButton(wrapper: ReturnType<typeof mountPair>, title: string) {
 
 describe('DuplicatePair', () => {
   it('merges every other copy into whichever one the operator chose to keep', async () => {
-    // The survivor the API offers is a proposal, and a card that always emitted
-    // it would fold away the copy that was picked.
     const wrapper = mountPair(threeCopies())
 
     await keepButton(wrapper, 'Deadhouse Gates (Malazan Book 2)').trigger('click')
@@ -82,7 +80,6 @@ describe('DuplicatePair', () => {
   })
 
   it('emits nothing more once a decision on the block is in flight', async () => {
-    // The second click would name a row the first merge is about to hide.
     const wrapper = mountPair({}, { merging: true })
 
     await keepButton(wrapper, 'Deadhouse Gates').trigger('click')
@@ -93,8 +90,6 @@ describe('DuplicatePair', () => {
   })
 
   it('sets a dismissed copy apart from every other copy in the block', async () => {
-    // Refusing it against only one of them leaves the block still offering it
-    // against the rest, which is the same copy twice over again.
     const wrapper = mountPair(threeCopies())
 
     await dismissButton(wrapper, 'Deadhouse Gates (Malazan, Book Two)').trigger('click')
@@ -103,7 +98,6 @@ describe('DuplicatePair', () => {
   })
 
   it('lists every copy of the work, marking only the one it proposes keeping', () => {
-    // Without the mark every copy reads alike, hiding the API's one-click default.
     const wrapper = mountPair(threeCopies())
 
     const marked = wrapper
@@ -152,8 +146,6 @@ describe('DuplicatePair', () => {
   })
 
   it('warns on the looser key and says nothing extra on the save door’s own', () => {
-    // Only the looser key drops a trailing parenthetical, so it is the one
-    // that can pair two genuinely different editions.
     const loose = mountPair({
       evidence: 'title_qualifier',
       evidence_label: 'same title apart from a qualifier',

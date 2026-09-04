@@ -16,8 +16,6 @@ describe('passwordComplaint', () => {
   })
 
   it('refuses against the floor it is given, which is the one the server sent', () => {
-    // Regression: the floor was a literal in this module, so an API that moved
-    // it left the forms accepting a password the API would refuse.
     const server = PASSWORD_MIN_LENGTH + 4
     const between = 'x'.repeat(server - 1)
 

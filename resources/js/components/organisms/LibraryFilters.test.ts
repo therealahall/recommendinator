@@ -16,8 +16,6 @@ describe('LibraryFilters', () => {
   }
 
   it('bounds the search input by the length the API accepts', () => {
-    // Regression: the input had no maxlength, so a term over MAX_SEARCH_LENGTH
-    // reached ?search and came back 422 instead of an empty result set.
     const wrapper = mount(LibraryFilters, { props: defaultProps })
 
     const input = wrapper.find('.lib-search input')
@@ -52,8 +50,6 @@ describe('LibraryFilters', () => {
   })
 
   it('withdraws the Status filter Needs rating overrides, announcing it, and hands both back when it goes off', async () => {
-    // Offered but ignoring what it was given, the select explained the refusal
-    // to a screen reader alone; the sighted operator saw the value snap back.
     const wrapper = mount(LibraryFilters, {
       props: { ...defaultProps, needsRating: false, statusFilter: '' },
     })
@@ -109,8 +105,6 @@ describe('LibraryFilters', () => {
   })
 
   it('leaves the keyboard in the box the closing click moved it to', async () => {
-    // An unconditional trigger.focus() here reads the same on every path above,
-    // and sends the next keystroke of a search to the Export button.
     const wrapper = mount(LibraryFilters, { props: defaultProps, attachTo: document.body })
     await wrapper.findAll('.btn').find(b => b.text() === 'Export')!.trigger('click')
     const search = wrapper.get('.lib-search input')

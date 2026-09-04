@@ -15,8 +15,6 @@ from src.utils.text import (
     strip_lone_surrogates,
 )
 
-# Read off the module's own definition, so a break the rule side learns about
-# is one the log side is tested against too.
 EXOTIC_LINE_BREAKS = [character for character in LINE_BREAKS if character not in "\n\r"]
 
 ALL_LINE_BREAKS = ["\n", "\r", "\r\n", *EXOTIC_LINE_BREAKS]

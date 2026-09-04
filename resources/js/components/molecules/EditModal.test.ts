@@ -68,8 +68,6 @@ describe('EditModal', () => {
         w.findAll('button').find((b) => b.text() === 'Cancel')!.trigger('click'),
     ],
   ])('%s asks before discarding a typed review, and declining keeps it', async (_name, dismiss) => {
-    // Every gesture used to close on the spot, taking a long review with it;
-    // Cancel is the visible one, and it kept doing so after the others stopped.
     const wrapper = mount(EditModal, {
       props: { item: defaultItem, saving: false, saveError: '' },
       attachTo: document.body,
@@ -96,8 +94,6 @@ describe('EditModal', () => {
   })
 
   it('a second Escape dismisses the confirmation and puts the caret back in the review', async () => {
-    // It only hid the panel, leaving focus on the node Vue then removed: the
-    // user landed at <body>, outside the aria-modal subtree, mid-sentence.
     const wrapper = mount(EditModal, {
       props: { item: defaultItem, saving: false, saveError: '' },
       attachTo: document.body,
@@ -154,15 +150,11 @@ describe('EditModal', () => {
   })
 
   it('a restored item says so and keeps focus in the dialog, not on the button that vanished', async () => {
-    // The refetched item unmounted the focused button, dropping the keyboard to
-    // <body> outside the trap — and nothing said the restore had worked.
     const manual = { ...defaultItem, enriched: true, manually_enriched: true }
     const wrapper = mount(EditModal, {
       props: { item: manual, saving: false, saveError: '' },
       attachTo: document.body,
     })
-    // Let the trap settle on the dialog first: the operator reaches Restore by
-    // tabbing from there, not while the opening focus is still pending.
     await vi.runAllTimersAsync()
     const said = wrapper.get('[role="status"]')
     const whileManual = said.text()
@@ -179,8 +171,6 @@ describe('EditModal', () => {
     expect(document.activeElement).toBe(said.element)
     const dialog = wrapper.get('[aria-modal="true"]').element
     expect(dialog.contains(document.activeElement)).toBe(true)
-    // A tabindex=-1 line is outside the trap's wrap, so Tab off it is native:
-    // the keyboard only stays in while something tabbable still follows.
     const tabbable = [...dialog.querySelectorAll<HTMLElement>('button, input, select, textarea')]
     expect(
       tabbable.some(
@@ -202,9 +192,6 @@ describe('EditModal', () => {
   })
 
   it('a book offers no year box, and save emits only the fields that changed', async () => {
-    // Regression: genres, tags and description went with every save, and the
-    // door stamps any of them "manual" — a rating dropped the item out of the
-    // Not enriched filter and out of automatic enrichment for good.
     const item = { ...defaultItem, genres: ['Sci-Fi'], tags: [], description: null }
     const wrapper = mount(EditModal, {
       props: { item, saving: false, saveError: '' },
@@ -241,8 +228,6 @@ describe('EditModal', () => {
   })
 
   it('an emptied description is sent as the clear, not dropped', async () => {
-    // Regression: the payload used `description || null`, and null is the
-    // door's "leave alone", so an emptied box silently kept the old text.
     const wrapper = mount(EditModal, {
       props: {
         item: { ...defaultItem, description: 'A tale.' },
@@ -277,8 +262,6 @@ describe('EditModal', () => {
   })
 
   it('save serializes a whitespace-only review to null', async () => {
-    // Regression: '   ' went as a string, and a stored blank review reads as
-    // one the user wrote, blocking every later import from filling the field.
     const wrapper = mount(EditModal, {
       props: { item: { ...defaultItem, review: 'Loved it.' }, saving: false, saveError: '' },
       attachTo: document.body,
@@ -292,8 +275,6 @@ describe('EditModal', () => {
   })
 
   it('picking completed ticks every season and sends both', async () => {
-    // Regression (#123): the modal resent the half-ticked checklist beside the
-    // new status, and the backend derived currently_consuming back over it.
     const wrapper = mount(EditModal, {
       props: { item: tvItem, saving: false, saveError: '' },
       attachTo: document.body,
@@ -310,8 +291,6 @@ describe('EditModal', () => {
   })
 
   it('opened as Mark complete it preselects completed, and the choice stays editable', async () => {
-    // Seeded from a recommendation's own status the shared dialog opened on
-    // "unread", so a rating saved from it marked nothing complete.
     const wrapper = mount(EditModal, {
       props: { item: tvItem, saving: false, saveError: '', initialStatus: 'completed' },
       attachTo: document.body,
@@ -339,7 +318,6 @@ describe('EditModal', () => {
   })
 
   it('save emits a corrected release year, and a creator trimmed to exactly the bound', async () => {
-    // Refusing the bound itself leaves a 600-character import nothing to trim to.
     const atTheBound = 'id Software '.padEnd(MAX_CREATOR_LENGTH, 'x')
     const item = {
       ...defaultItem,
@@ -364,9 +342,6 @@ describe('EditModal', () => {
   })
 
   it('an emptied creator or mistyped year is sent for the API to refuse, not blocked here', async () => {
-    // Regression: an unparseable year serialized to NaN, which JSON writes as
-    // null — the save then quietly left the stored year as it was. A cleared
-    // creator was blocked before the request, so only the dialog ever said no.
     const item = { ...defaultItem, content_type: 'video_game', release_year: 2016 }
 
     for (const typed of ['', '20', '2016 (remaster)']) {
@@ -419,8 +394,6 @@ describe('EditModal', () => {
   })
 
   it('says a refused save inside the dialog, without taking the keyboard off Save', async () => {
-    // The page banner it used to land on renders behind this overlay and
-    // outside the aria-modal subtree, so nobody saving ever saw the reason.
     const wrapper = mount(EditModal, {
       props: { item: defaultItem, saving: false, saveError: '' },
       attachTo: document.body,
@@ -464,8 +437,6 @@ describe('EditModal', () => {
     ['Creator cannot be empty.', '#edit-creator'],
     ['Release year must be a number between 1800 and 2100.', '#edit-release-year'],
   ])('the refusal "%s" is attached to the box it is about', async (saveError, selector) => {
-    // One sentence at the foot of a long dialog left a screen-reader user no
-    // route back to the field, which the deleted client-side check had given.
     const wrapper = mount(EditModal, {
       props: {
         item: { ...defaultItem, content_type: 'movie' },

@@ -12,8 +12,6 @@ const mockGet = vi.fn()
 const mockPut = vi.fn()
 const mockDelete = vi.fn()
 
-// The settings store is stubbed here. The auth store's own routes are not: the
-// account tests below assert on the request that reached the network.
 vi.mock('@/composables/useApi', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/composables/useApi')>()
   const authRoute = /^\/(auth|users)\b/
@@ -90,8 +88,6 @@ const AARON: UserResponse = {
   password_updated_at: '2026-01-15T09:30:00+00:00',
 }
 
-// Asserted on the stubbed global fetch: the mock above lets the account routes
-// through to the real API layer, so what these check is the request itself.
 describe('SettingsPage account section', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
@@ -116,11 +112,8 @@ describe('SettingsPage account section', () => {
     return wrapper
   }
 
-  // Long enough to clear the rule the form checks before it submits anything.
   const REPLACEMENT = 'hunter33-hunter33'
 
-  /** The change answers 204; the session behind it carries *changedAt*, which
-   *  is the only place the new date comes from. */
   function passwordChanged(changedAt: string) {
     return (url: RequestInfo | URL) =>
       Promise.resolve(
@@ -144,8 +137,6 @@ describe('SettingsPage account section', () => {
   }
 
   it('shows the account facts only the session carries', async () => {
-    // The floor and the password's age both arrive on the session call, and
-    // both used to stop at the store: one was hardcoded, one was not shown.
     const auth = signedIn()
     auth.$patch({ minPasswordLength: 16 })
     const wrapper = await openSettings()
@@ -189,9 +180,6 @@ describe('SettingsPage account section', () => {
   })
 
   it('dates the password from the change, not from the session it opened on', async () => {
-    // Regression: the 204 carries no body and nothing re-read the session, so
-    // the line above the form still said 15 January while the region below it
-    // announced the change — and nothing on screen said which was true.
     const CHANGED_AT = '2026-02-01T10:00:00+00:00'
     signedIn()
     vi.mocked(fetch).mockImplementation(passwordChanged(CHANGED_AT))
@@ -206,8 +194,6 @@ describe('SettingsPage account section', () => {
   })
 
   it('keeps the user on the page when the current password is wrong', async () => {
-    // A typo that emptied the whole screen would be a hard thing to recover
-    // from, and this route answers 401 for the field as well as the session.
     const auth = signedIn()
     vi.mocked(fetch).mockResolvedValue(
       jsonResponse(401, { detail: 'That is not your current password.' }),

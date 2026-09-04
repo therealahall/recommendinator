@@ -33,7 +33,6 @@ const enabledSource = {
   next_run_at: null,
 }
 
-/** The umbrella run, carrying a progress slot only for the source it syncs. */
 function allSourcesRunning(): SyncJobResponse {
   return {
     source: 'All Sources',
@@ -66,8 +65,6 @@ function allSourcesRunning(): SyncJobResponse {
   }
 }
 
-// The page against the real store and a faked transport, so the row is judged
-// on what it renders rather than on the prop it was handed.
 describe('DataPage rows during a Sync All', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
@@ -76,9 +73,6 @@ describe('DataPage rows during a Sync All', () => {
     mockPut.mockReset()
   })
 
-  /** Symptom: a second Sync click duplicated a source the run had not reached,
-   *  saving it twice at once. Root cause: membership came from progress slots,
-   *  which appear only once a source starts. Fix: record what /update resolved. */
   it('locks the Sync button of a source the run has not reached yet', async () => {
     const goodreads = {
       ...enabledSource,
@@ -109,9 +103,6 @@ describe('DataPage rows during a Sync All', () => {
 
     await wrapper.get('.sync-all-card button').trigger('click')
     await flushPromises()
-    // The run reaches Steam first, and the poll that reports it drops the
-    // optimistic flag — leaving the resolved list as the only thing that
-    // knows Goodreads is spoken for.
     jobs = [allSourcesRunning()]
     await useDataStore().checkSyncStatus()
     await wrapper.vm.$nextTick()
@@ -126,7 +117,6 @@ describe('DataPage rows during a Sync All', () => {
     wrapper.unmount()
   })
 
-  /** The only route to importing a file anywhere in the UI. */
   it('reaches importing a file from the Data page', async () => {
     mockPost.mockResolvedValue({})
     mockGet.mockImplementation((path: string) => {
@@ -246,9 +236,6 @@ describe('DataPage rows during a Sync All', () => {
     wrapper.unmount()
   })
 
-  /** Symptom: Retry had no perceivable outcome. Success unmounted the focused
-   *  button silently; a repeat failure left the alert text unchanged. Root
-   *  cause: no live region, no focus fallback. */
   describe('DataPage retry outcome', () => {
     async function mountFailed(retrySucceeds: boolean) {
       mockPost.mockResolvedValue({})

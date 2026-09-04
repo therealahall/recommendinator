@@ -26,14 +26,11 @@ function session(
   })
 }
 
-/** The request the store made, as (url, init). */
 function callTo(index: number): [string, RequestInit] {
   const [url, init] = vi.mocked(fetch).mock.calls[index]
   return [String(url), init ?? {}]
 }
 
-// fetch is stubbed rather than useApi mocked: the store goes through the API
-// layer like everything else, and these assertions are on what left the browser.
 describe('useAuthStore', () => {
   beforeEach(() => {
     localStorage.clear()
@@ -62,13 +59,10 @@ describe('useAuthStore', () => {
     const [url, init] = callTo(0)
     expect(url).toBe('/api/auth/session')
     expect(init.credentials).toBe('include')
-    // Reading the session must not be the thing that changes it.
     expect(init.method ?? 'GET').toBe('GET')
   })
 
   it('takes the password floor from the session, not from a literal of its own', async () => {
-    // Regression: the SPA hardcoded 12, so a server enforcing anything else
-    // stated a rule it does not have and refused passwords it accepts.
     const server = PASSWORD_MIN_LENGTH + 4
     vi.mocked(fetch).mockResolvedValue(session(true, true, AARON, server))
     const auth = useAuthStore()
@@ -116,8 +110,6 @@ describe('useAuthStore', () => {
   })
 
   it('reports a claimed instance, and moves to the form that advice needs', async () => {
-    // Regression: a second tab claiming first left the setup screen up, so
-    // "sign in instead" pointed at a form that was not on the page.
     vi.mocked(fetch).mockImplementation((url) =>
       Promise.resolve(
         String(url).endsWith('/setup')
@@ -149,7 +141,6 @@ describe('useAuthStore', () => {
     expect(init.credentials).toBe('include')
     expect(auth.needsLogin).toBe(true)
     expect(auth.user).toBeNull()
-    // The cookie is the whole session, and the server has just expired it.
     expect(localStorage.length).toBe(0)
   })
 
@@ -170,7 +161,6 @@ describe('useAuthStore', () => {
     expect(auth.user?.display_name).toBe('Aaron')
   })
 
-  /** The change answers 204; every other call is the session behind it. */
   function passwordChanged(user: UserResponse) {
     return (url: RequestInfo | URL) =>
       Promise.resolve(
@@ -197,9 +187,6 @@ describe('useAuthStore', () => {
   })
 
   it('re-reads the session after the change, which answers with no new date', async () => {
-    // Regression: the 204 left the account showing the old "Password changed"
-    // date beside a live region announcing the change, and only a reload agreed
-    // with either.
     const changed = { ...AARON, password_updated_at: '2026-02-01T10:00:00+00:00' }
     vi.mocked(fetch).mockResolvedValue(session(true, true, AARON))
     const auth = useAuthStore()
@@ -214,8 +201,6 @@ describe('useAuthStore', () => {
   })
 
   it('keeps the session when the current password is wrong', async () => {
-    // One typo would otherwise empty the whole screen: this route answers 401
-    // for the field as well as for a dead session.
     vi.mocked(fetch).mockResolvedValue(session(true, true, AARON))
     const auth = useAuthStore()
     await auth.resolveSession()

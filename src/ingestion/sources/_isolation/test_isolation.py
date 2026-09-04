@@ -50,8 +50,6 @@ class TestPluginLocalIsolationRegression:
     ) -> None:
         assert os.environ["TZ"] == "UTC"
 
-        # 02:30Z is the previous calendar day everywhere west of UTC, so an
-        # unpinned host narrows it to the 9th rather than the 10th.
         assert local_date_from_iso_timestamp("2024-03-10T02:30:00Z") == date(
             2024, 3, 10
         )

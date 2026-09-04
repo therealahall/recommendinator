@@ -82,8 +82,6 @@ describe('EnrichmentCard', () => {
     const region = wrapper.get('[data-testid="enrichment-progress-status"]')
     expect(region.attributes('aria-live')).toBe('polite')
     expect(region.text()).toBe('')
-    // The visible detail is the sighted operator's; a live copy of it reads the
-    // title and counts aloud again on every poll.
     expect(wrapper.get('.enrichment-status').attributes('aria-live')).toBeUndefined()
   })
 
@@ -115,8 +113,6 @@ describe('EnrichmentCard', () => {
   })
 
   it('announces the end of a run it saw, not a result stored by one it did not', async () => {
-    // The job row keeps `completed` set indefinitely, so every later visit to
-    // the page would otherwise report last week's run as news.
     const wrapper = mountWithEnrichment({
       enrichmentJob: makeRunningJob({ running: false, completed: true }),
     })
@@ -227,8 +223,6 @@ describe('EnrichmentCard', () => {
     const data = useDataStore()
     const region = wrapper.get('[data-testid="enrichment-errors-status"]')
 
-    // A region inserted already populated reads as content, and `v-show` would
-    // take it out of the accessibility tree entirely (WCAG 4.1.3).
     expect(region.text()).toBe('')
     expect(region.isVisible()).toBe(true)
 
@@ -239,7 +233,6 @@ describe('EnrichmentCard', () => {
     })
     await flushPromises()
 
-    // The same node, so the text changed under a region already being watched.
     expect(region.text()).toContain('3')
   })
 
@@ -252,8 +245,6 @@ describe('EnrichmentCard', () => {
 
     data.enrichmentJob = makeRunningJob()
     await flushPromises()
-    // An announcement that never goes back to silent leaves the run below with
-    // identical text, which no screen reader reads out.
     expect(region.text()).toBe('')
 
     data.enrichmentJob = makeRunningJob({
@@ -299,8 +290,6 @@ describe('EnrichmentCard', () => {
       await wrapper.find('[data-testid="confirm-panel-confirm"]').trigger('click')
       await flushPromises()
 
-      // 'all' reaching the API matches enrichment_provider = 'all', which is
-      // no row: the default reset silently did nothing.
       expect(data.resetEnrichment).toHaveBeenCalledWith(undefined, '')
     })
 
@@ -333,8 +322,6 @@ describe('EnrichmentCard', () => {
     })
 
     it('keeps the keyboard on the button it disables while the request runs', async () => {
-      // `disabled` blurs the control the user just pressed; aria-disabled does
-      // not, and the guard in run() is what stops a second activation.
       const wrapper = mountWithEnrichment()
       const data = useDataStore()
       data.startEnrichment = vi.fn().mockResolvedValue('Started.')
@@ -354,7 +341,6 @@ describe('EnrichmentCard', () => {
       data.resetEnrichment = vi.fn()
 
       const button = wrapper.get('[data-testid="reset-btn"]')
-      // jsdom does not focus on click the way a browser does.
       ;(button.element as HTMLElement).focus()
       await button.trigger('click')
       await wrapper.find('[data-testid="confirm-panel-cancel"]').trigger('click')

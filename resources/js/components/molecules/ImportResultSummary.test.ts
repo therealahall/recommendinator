@@ -3,7 +3,6 @@ import { mount } from '@vue/test-utils'
 import ImportResultSummary from './ImportResultSummary.vue'
 import type { ImportResponse } from '@/types/api'
 
-/** Worked example 2 of the epic: 240 unchanged with 2 skipped is a success. */
 const partlySuccessful: ImportResponse = {
   importer: 'goodreads_csv',
   content_type: 'book',
@@ -22,8 +21,6 @@ const partlySuccessful: ImportResponse = {
 }
 
 describe('ImportResultSummary', () => {
-  /** All five outcomes are distinct numbers, and a count rendered nowhere is a
-   *  row the operator never learns about. */
   it('renders every one of the five counts and the rows read', () => {
     const wrapper = mount(ImportResultSummary, { props: { result: partlySuccessful } })
 
@@ -49,8 +46,6 @@ describe('ImportResultSummary', () => {
     wrapper.unmount()
   })
 
-  /** A partly successful import is the normal case. Announcing it as an alert
-   *  would interrupt the operator to report a success. */
   it('reports a partly successful import without an alert role', () => {
     const wrapper = mount(ImportResultSummary, { props: { result: partlySuccessful } })
 
@@ -70,8 +65,6 @@ describe('ImportResultSummary', () => {
     wrapper.unmount()
   })
 
-  /** Each message names its own unit, so a heading that picks one is wrong for
-   *  the other: entry 2 of a JSON array is not file line 2. */
   it('heads the misses without presuming they are lines', () => {
     const wrapper = mount(ImportResultSummary, {
       props: {

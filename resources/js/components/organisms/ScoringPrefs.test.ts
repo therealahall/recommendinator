@@ -10,8 +10,6 @@ import {
   VARIETY_PENALTY_TOOLTIP,
 } from '@/stores/preferences'
 
-// Each slider carries the tooltip of the thing it adjusts, so selecting on it
-// survives a reordering of the section that selecting by index would not.
 function sliderFor(wrapper: VueWrapper, tooltip: string): DOMWrapper<Element> {
   const slider = wrapper.findAllComponents(ScorerSlider).find((s) => s.props('tooltip') === tooltip)
   if (!slider) throw new Error(`no slider is described by "${tooltip}"`)
@@ -28,7 +26,6 @@ describe('ScoringPrefs', () => {
 
     const sliders = wrapper.findAll('input[type="range"]')
     expect(sliders).toHaveLength(SCORER_KEYS.length + 1)
-    // Every slider uses the shared 0–5 ScorerSlider scale.
     expect(sliders.every((s) => s.attributes('max') === '5')).toBe(true)
   })
 
@@ -64,8 +61,6 @@ describe('ScoringPrefs', () => {
 
     for (let index = 0; index < SCORER_KEYS.length; index += 1) {
       const key = SCORER_KEYS[index]
-      // Distinct, on the 0–5 scale, and never a scorer's own default, so a
-      // slider wired to the wrong key cannot land on the value expected of it.
       const value = (index + 1) * 0.5
       const input = sliderFor(wrapper, SCORER_TOOLTIPS[key])
       ;(input.element as HTMLInputElement).value = String(value)

@@ -23,8 +23,6 @@ from src.recommendations.engine import RecommendationEngine
 from src.recommendations.reference_index import SignalIndex
 from tests.factories import make_item, make_storage_mock
 
-# The functions that derive a matchable value from one item. Each takes the
-# item (or one of its strings) and must run once per item per request.
 _DERIVERS = ("extract_genres", "extract_creator", "get_series_name", "get_sort_title")
 
 
@@ -387,8 +385,6 @@ class TestAdaptationLookupEdges:
         assert SignalIndex([book]).adaptations_of(candidate) == []
 
 
-#: Distinct titles with no digits and no roman numerals, so the randomised
-#: library below carries no accidental series membership to exclude.
 _NAMES: tuple[str, ...] = (
     "Ashfall",
     "Brightwater",
@@ -492,7 +488,6 @@ class TestTheIndexCitesTheTrueTopOfEachType:
 
         cited = SignalIndex(signal_items).references_for(candidate, random.Random(seed))
 
-        # Without this the comparison below could pass on two empty maps.
         assert cited, "this library must produce references for the scan to check"
         records = [
             reference_index_module._record_for(item, ordinal)

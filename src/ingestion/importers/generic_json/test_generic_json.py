@@ -226,7 +226,6 @@ class TestLogInjectionRegression:
                 json.dumps([{"title": FORGED_TITLE, "date_completed": "yesterday"}])
             )
 
-        # The item keeps the title it was given; only the log line is escaped.
         assert [item.title for item in parsed] == [FORGED_TITLE]
         assert [
             record.getMessage()

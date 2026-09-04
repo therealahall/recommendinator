@@ -91,7 +91,6 @@ class TestBuildVarietyLadder:
         ]
         ladder = build_variety_ladder(items)
 
-        # Newest first: biography strongest, western weakest.
         rungs = [
             "nonfiction_documentary",
             "crime_thriller",
@@ -135,7 +134,6 @@ class TestBuildVarietyLadder:
         ladder = build_variety_ladder(items)
         assert len(ladder) == 2
         assert ladder["fantasy"] == pytest.approx(VARIETY_TOP_PENALTY)
-        # Sci-fi is the second *distinct* cluster -> rung 1, not rung 2.
         assert ladder["science_fiction"] == pytest.approx(
             VARIETY_TOP_PENALTY * (VARIETY_LADDER_STEPS - 1) / VARIETY_LADDER_STEPS
         )
@@ -160,7 +158,6 @@ class TestBuildVarietyLadder:
             _completed("Dated", ["Science Fiction"], completed_on=date(2026, 1, 1)),
         ]
         ladder = build_variety_ladder(items)
-        # Dated sci-fi is freshest -> top penalty; undated fantasy is rung 1.
         assert ladder["science_fiction"] == pytest.approx(VARIETY_TOP_PENALTY)
         assert ladder["fantasy"] == pytest.approx(
             VARIETY_TOP_PENALTY * (VARIETY_LADDER_STEPS - 1) / VARIETY_LADDER_STEPS
@@ -180,7 +177,6 @@ class TestVarietyPenaltyFor:
 
     def test_strongest_matching_cluster_wins(self) -> None:
         ladder = {"fantasy": 0.32, "science_fiction": 0.8}
-        # Candidate is both fantasy and sci-fi; sci-fi is fresher -> 0.8.
         penalty = variety_penalty_for(
             _candidate("Crossover", ["Fantasy", "Science Fiction"]), ladder
         )
@@ -200,7 +196,6 @@ class TestVarietySeriesContinuationRegression:
         assert softened == pytest.approx(
             VARIETY_TOP_PENALTY * VARIETY_SERIES_CONTINUATION_FACTOR
         )
-        # Softening only lowers; it never raises the penalty.
         assert softened < full
 
 
@@ -280,10 +275,6 @@ class TestCompletedTvShowSeasonDateFallbackRegression:
             season_dates={"4": "2026-07-17T00:00:00+00:00"},
             db_id=1,
         )
-        # Five dated, non-animation completions. Their completion dates all sit
-        # a little before DuckTales' latest season date (2026-07-17), so once
-        # DuckTales is treated as dated it is the freshest event and claims the
-        # top rung.
         other_dated = [
             _completed_show(
                 "Crime Show", ["Crime"], completed_on=date(2026, 7, 12), db_id=2
@@ -307,14 +298,10 @@ class TestCompletedTvShowSeasonDateFallbackRegression:
 
         ladder = build_variety_ladder([ducktales, *other_dated])
 
-        # DuckTales' cluster now lands on the ladder: dating it by its season
-        # timestamp makes it the freshest completion instead of an undated event
-        # that sorts below the five dated shows and off the five-rung ladder.
         assert "animation_family" in ladder
 
         bobs_burgers = _candidate("Bob's Burgers", ["Animation", "Comedy"])
         penalty = variety_penalty_for(bobs_burgers, ladder)
-        # Before the fix this penalty was 0.0 (animation_family never on ladder).
         assert penalty > 0.0
 
 

@@ -15,7 +15,6 @@ describe('RulesPrefs', () => {
       [...wrapper.element.querySelectorAll('h1,h2,h3,h4,h5,h6')].map((h) => h.tagName),
     )
 
-    // 1.3.1. Rename or reorder the sub-blocks freely; a demoted one skips h4.
     expect(levels).toEqual(new Set(['H3', 'H4']))
   })
 
@@ -26,7 +25,6 @@ describe('RulesPrefs', () => {
     expect(checkbox.exists()).toBe(true)
     expect(checkbox.attributes('type')).toBe('checkbox')
 
-    // Reword it freely; an empty label leaves the toggle unnamed to a reader.
     expect(wrapper.find('label[for="prefSeriesOrder"]').text()).not.toBe('')
   })
 
@@ -62,8 +60,6 @@ describe('RulesPrefs', () => {
     prefs.addRule('prefer sci-fi')
     const wrapper = mount(RulesPrefs)
 
-    // role="list" reasserts list semantics WebKit/VoiceOver strips when
-    // list-style: none is applied.
     expect(wrapper.find('ul.rule-list').attributes('role')).toBe('list')
 
     const removeButtons = wrapper.findAll('.rule-item button')

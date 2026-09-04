@@ -24,9 +24,6 @@ from src.storage.sqlite_db import SaveOutcome, SQLiteDB
 from src.utils.item_serialization import item_to_dict
 from src.utils.sorting import build_search_text, get_sort_title
 
-# The instant the completion-stamping tests freeze the clock at, so each names
-# the date it expects instead of re-deriving it from the helper under test, and
-# so none of them straddles midnight between the write and the read back.
 FROZEN_NOW = datetime(2026, 3, 15, 12, 0, tzinfo=UTC)
 FROZEN_TODAY = date(2026, 3, 15)
 
@@ -181,7 +178,7 @@ def test_merge_items_from_different_sources_by_title(temp_db: SQLiteDB) -> None:
     assert retrieved is not None
     assert retrieved.status == ConsumptionStatus.COMPLETED
     assert retrieved.rating == 4
-    assert retrieved.source == "steam"  # Names what first stored the row
+    assert retrieved.source == "steam"
 
     all_games = temp_db.get_content_items(content_type=ContentType.VIDEO_GAME)
     assert len(all_games) == 1
@@ -219,7 +216,6 @@ def test_get_content_items_with_filters(temp_db: SQLiteDB) -> None:
     for item in items:
         temp_db.save_content_item(item)
 
-    # Single-status filters must only match the requested status
     completed = temp_db.get_content_items(status=ConsumptionStatus.COMPLETED)
     assert len(completed) == 3
 
@@ -582,7 +578,6 @@ class TestNormalizeTitleForMatching:
         """Bug reported: "State of Decay: Year-One" was not matching
         "State of Decay: Year One" from another source."""
         assert normalize_title_for_matching("Year-One") == "year one"
-        # "Survival Edition" is part of the game name, not removed
         assert normalize_title_for_matching(
             "State of Decay: Year-One Survival Edition"
         ) == ("state of decay year one survival edition")
@@ -1204,7 +1199,6 @@ class TestGetContentItemsSearch:
                     status=ConsumptionStatus.COMPLETED,
                 )
             )
-        # Non-matching noise interleaved in the table.
         for i in range(8):
             temp_db.save_content_item(
                 ContentItem(
@@ -1358,9 +1352,6 @@ def test_get_content_items_refuses_an_unknown_sort(temp_db: SQLiteDB) -> None:
 
 
 class TestPaginationWithoutLimit:
-    # external_id -> (title, updated_at, created_at, rating). Every column is
-    # deliberately out of step with the others so each sort returns a
-    # genuinely different ordering and a wrong ORDER BY cannot pass by luck.
     _ROWS = {
         "pager_1": ("Echo", "2025-01-05 00:00:00", "2024-02-01 00:00:00", 3),
         "pager_2": ("Alpha", "2025-01-04 00:00:00", "2024-02-05 00:00:00", 5),
@@ -1369,8 +1360,6 @@ class TestPaginationWithoutLimit:
         "pager_5": ("Charlie", "2025-01-01 00:00:00", "2024-02-02 00:00:00", 2),
     }
 
-    # What the term "a" matches, in updated_at order: every seeded title but
-    # Echo, so a search here has a matched set larger than any offset below.
     _SEARCH_MATCHES = ["pager_2", "pager_3", "pager_4", "pager_5"]
 
     @classmethod
@@ -1585,8 +1574,6 @@ class TestTheDerivedSearchColumns:
         assert temp_db.get_content_items(search="Ridley Scott") == []
 
 
-# Every library any test here seeds is a dozen rows at most, so a walk still
-# going after this many pages is not paging, whatever it is returning.
 _MAX_PAGES_WALKED = 20
 
 
@@ -1610,9 +1597,6 @@ class TestSearchPagesPartitionTheMatchedSet:
     """A search is a query like any other, so the pages of one have to concatenate
     back into the unpaged answer — that is the whole meaning of an offset."""
 
-    # Two books whose author's name is spelled correctly and one imported with
-    # the surname's middle letters transposed, which is the ordinary way a
-    # library ends up holding both spellings.
     _LIBRARY = (
         ("caves", "The Caves of Steel", "Isaac Asmiov"),
         ("foundation", "Foundation", "Isaac Asimov"),
@@ -1663,8 +1647,6 @@ class TestPagesPartitionALibraryOfTies:
 
     _TITLES = ("Dune", "Solaris", "Contact")
 
-    # Every row shares this rating, so the rating sort falls through to its
-    # own tiebreaks rather than ordering on a column that separates the rows.
     _SHARED_RATING = 4
 
     @classmethod
@@ -1712,9 +1694,6 @@ class TestTheTitleSortAgreesWithThePythonKey:
     compares the UTF-8 bytes, so the two agree — but nothing in the code says so,
     and the whole library's order rests on it."""
 
-    # Titles chosen so that no two share a sort key, since equal keys would
-    # leave the expected order to the id tiebreak and prove nothing about the
-    # comparison itself. The articles, the case and the scripts are the point.
     _TITLES = (
         "The Zebra",
         "an Almond",
@@ -1755,7 +1734,6 @@ class TestEveryWriteDoorLeavesTheDerivedColumnsCurrent:
     the creator, so a door that writes the row without recomputing them makes the
     library order and search on values that are no longer there."""
 
-    # One creator per content type, each stored in that type's own column.
     _CREATOR_OF_TYPE = (
         (ContentType.BOOK, "Ursula K. Le Guin"),
         (ContentType.MOVIE, "Denis Villeneuve"),
@@ -2295,8 +2273,6 @@ class TestUpdateItemFromUi:
         dates = retrieved.metadata["seasons_watched_dates"]
         assert set(dates.keys()) == {"2"}
 
-        # Unchecking every season empties the dates map entirely, not just
-        # the season that was dropped.
         temp_db.update_item_from_ui(db_id=db_id, status="unread", seasons_watched=[])
         retrieved = temp_db.get_content_item(db_id)
         assert retrieved is not None
@@ -2421,8 +2397,6 @@ class TestUpdateItemFromUiRegression:
         )
         db_id = temp_db.save_content_item(item)
 
-        # Season 1 has an existing date; season 3 was watched but is
-        # undated (e.g. imported before date tracking existed).
         temp_db.update_item_from_ui(
             db_id=db_id, status="currently_consuming", seasons_watched=[1]
         )
@@ -2446,7 +2420,6 @@ class TestUpdateItemFromUiRegression:
             )
             conn.commit()
 
-        # User checks off season 2, leaving season 3 as it was: watched but undated.
         temp_db.update_item_from_ui(
             db_id=db_id, status="currently_consuming", seasons_watched=[1, 2, 3]
         )
@@ -2455,9 +2428,9 @@ class TestUpdateItemFromUiRegression:
         assert retrieved is not None
         assert retrieved.metadata is not None
         dates = retrieved.metadata["seasons_watched_dates"]
-        assert dates["1"] == season_1_stamp  # preserved
-        datetime.fromisoformat(dates["2"].replace("Z", "+00:00"))  # newly stamped
-        assert "3" not in dates  # previously watched but undated: not invented
+        assert dates["1"] == season_1_stamp
+        datetime.fromisoformat(dates["2"].replace("Z", "+00:00"))
+        assert "3" not in dates
 
 
 class TestPartialEditPreservesUnsentFields:
@@ -2582,7 +2555,7 @@ class TestCompletionDateTimezone:
     """Bug reported: a user in America/Los_Angeles marking something complete at
     21:00 got tomorrow's date."""
 
-    LOCAL_EVENING = datetime(2026, 3, 15, 4, 0, tzinfo=UTC)  # 21:00 on the 14th in LA
+    LOCAL_EVENING = datetime(2026, 3, 15, 4, 0, tzinfo=UTC)
 
     def test_ui_completion_stamps_the_host_calendar_day_regression(
         self, temp_db: SQLiteDB, host_timezone
@@ -3039,8 +3012,8 @@ class TestTvSeasonSyncRegression:
         assert retrieved is not None
         assert retrieved.metadata is not None
         assert retrieved.metadata.get("seasons_watched_dates") == {
-            "1": "2026-06-01T00:00:00+00:00",  # later existing date kept
-            "2": "2026-06-02T00:00:00+00:00",  # new season gap-filled
+            "1": "2026-06-01T00:00:00+00:00",
+            "2": "2026-06-02T00:00:00+00:00",
         }
         assert retrieved.metadata.get("seasons_watched") == [1, 2]
 
@@ -3369,7 +3342,6 @@ class TestCreatorColumnEdges:
                 author="Denis Villeneuve",
             )
         )
-        # Same source and id, so the row matches its own: no creator veto.
         second = temp_db.save_content_item(
             ContentItem(
                 id="movie-fill-only",
@@ -3439,7 +3411,6 @@ class TestEachSourceHoldsItsOwnExternalId:
 
         temp_db.save_content_item(self._game("steam", "379720", "Doom"))
 
-        # A deleted row's ids cascade away with it, so an empty list is a loss.
         assert [
             _external_ids(temp_db, db_id) for db_id in (gog_1993, gog_2016, steam)
         ] == [
@@ -3640,9 +3611,7 @@ class TestCrossSourceDuplicateDetectionRegression:
                     json.dumps(
                         {
                             "seasons_watched_dates": {
-                                # Season 2: later than the kept row's date.
                                 "2": "2026-05-01T00:00:00+00:00",
-                                # Season 3: only on the duplicate row.
                                 "3": "2026-03-01T00:00:00+00:00",
                             }
                         }
@@ -3660,9 +3629,9 @@ class TestCrossSourceDuplicateDetectionRegression:
         assert retrieved is not None
         assert retrieved.metadata is not None
         assert retrieved.metadata.get("seasons_watched_dates") == {
-            "1": "2026-01-01T00:00:00+00:00",  # Only on the kept row
-            "2": "2026-05-01T00:00:00+00:00",  # Duplicate's later date wins
-            "3": "2026-03-01T00:00:00+00:00",  # Only on the duplicate row
+            "1": "2026-01-01T00:00:00+00:00",
+            "2": "2026-05-01T00:00:00+00:00",
+            "3": "2026-03-01T00:00:00+00:00",
         }
 
     def test_merge_keeps_later_date_completed_regression(
@@ -3797,10 +3766,8 @@ class TestCrossSourceDuplicateDetectionRegression:
 
         retrieved = temp_db.get_content_item(keep_id)
         assert retrieved is not None
-        # seasons: dup (4) > kept (2), so 4 wins
         assert retrieved.metadata is not None
         assert retrieved.metadata.get("seasons") == 4
-        # episodes: kept (20) > dup (15), so 20 is preserved
         assert retrieved.metadata.get("episodes") == 20
 
     def test_a_merge_carries_the_detail_tables_onto_the_survivor(
@@ -3874,9 +3841,7 @@ class TestCrossSourceDuplicateDetectionRegression:
         detail = cursor.fetchone()
         assert detail is not None
 
-        # Developer: kept had value, so it's preserved (fill-only)
         assert detail["developer"] == "Arkane Studios"
-        # Publisher: kept was NULL, filled from dup
         assert detail["publisher"] == "Bethesda"
 
         genres = json.loads(detail["genres"])
@@ -3889,8 +3854,8 @@ class TestCrossSourceDuplicateDetectionRegression:
         assert "steampunk" in tags
 
         meta = json.loads(detail["metadata"])
-        assert meta["playtime_hours"] == 40  # kept's value wins
-        assert meta["award"] == "GOTY"  # dup's unique key added
+        assert meta["playtime_hours"] == 40
+        assert meta["award"] == "GOTY"
 
         cursor.execute(
             "SELECT merged_into FROM content_items WHERE id = ?",
@@ -3898,7 +3863,6 @@ class TestCrossSourceDuplicateDetectionRegression:
         )
         assert cursor.fetchone()["merged_into"] == keep_id
 
-        # And it keeps its own detail row for an unmerge to give back
         cursor.execute(
             "SELECT publisher FROM video_game_details WHERE content_item_id = ?",
             (dup_id,),

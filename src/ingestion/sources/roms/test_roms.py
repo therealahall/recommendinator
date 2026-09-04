@@ -369,7 +369,6 @@ class TestRomScannerPathContainmentRegression:
             for item in plugin.fetch({"paths": [str(allowed), str(outside)]}):
                 collected.append(item)
 
-        # list() would discard these, leaving the leak half of the name unproven.
         assert collected == []
 
 

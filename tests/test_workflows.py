@@ -16,13 +16,10 @@ import pytest
 import yaml
 from packaging.specifiers import SpecifierSet
 
-# parents[1] resolves /tests/test_workflows.py -> repo root.
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = _REPO_ROOT / ".github" / "workflows"
 CHANGELOG = _REPO_ROOT / "CHANGELOG.md"
 
-# A release heading and a bullet under it, as python-semantic-release writes
-# them. The release step's own extraction matches the same heading shape.
 _VERSION_HEADING = re.compile(r"^## (?P<tag>v\d+\.\d+\.\d+) ", re.MULTILINE)
 _CHANGELOG_BULLET = re.compile(r"^- \S.*$", re.MULTILINE)
 
@@ -31,7 +28,6 @@ RELEASE = WORKFLOWS / "release.yml"
 AUDIT = WORKFLOWS / "audit.yml"
 DEPENDABOT = _REPO_ROOT / ".github" / "dependabot.yml"
 
-# A surface with no entry here is one nothing ever bumps, and nothing says so.
 PINNED_SURFACES = {
     "github-actions": WORKFLOWS,
     "uv": _REPO_ROOT / "uv.lock",
@@ -39,18 +35,12 @@ PINNED_SURFACES = {
     "docker": _REPO_ROOT / "Dockerfile",
 }
 
-# python-semantic-release cuts a release from a commit wearing one of these, so
-# a weekly bump carrying one releases this project for someone else's patch.
 RELEASE_TRIGGERING_TYPES = frozenset({"feat", "fix", "perf"})
 
-# Comments are gone by the time YAML is parsed, and the version trailing a sha
-# is a comment.
 _ACTION_REFERENCE = re.compile(
     r"^\s*-?\s*uses:\s*(?P<ref>\S+)(?P<trailing>.*)$", re.MULTILINE
 )
 
-# Every spelling GitHub honours in a head commit's message. The tag points at
-# the version commit, so a tag push is a push event carrying whichever is there.
 CI_SKIP_MARKERS = (
     "[skip ci]",
     "[ci skip]",
@@ -59,20 +49,12 @@ CI_SKIP_MARKERS = (
     "[actions skip]",
 )
 
-# The step making those decisions. Its `id:` is what the job's `outputs:` block
-# reads them from, so both are taken off the step rather than spelled twice.
 ALIAS_DECISION_STEP = "Decide which floating tags this release may move"
 
-# The step the release job's publishing steps all key on, the one deciding
-# whether there is anything to release at all, and the last one, which is the
-# only place the tag becomes public.
 TAG_DETECTION_STEP = "Identify the release tag"
 MERGE_RACE_GUARD_STEP = "Release only the commit CI validated"
 RELEASE_CREATION_STEP = "Create GitHub release with docker-compose.yml asset"
 
-# The git fixtures below inherit the developer's environment, so a global
-# `commit.gpgsign` or `core.hooksPath` would decide whether they pass. Both
-# config files are neutralised rather than each setting overridden by name.
 GIT_ISOLATION = {
     "GIT_CONFIG_GLOBAL": os.devnull,
     "GIT_CONFIG_SYSTEM": os.devnull,
@@ -124,7 +106,6 @@ def _jobs_querying_an_advisory_feed(path: Path) -> set[str]:
     querying = set()
     for name, job in _workflow_jobs(path).items():
         for step in job.get("steps", []):
-            # A whole word, so `requirements-audit.txt` stays an argument.
             words = str(step.get("run", "")).split()
             if "audit" in str(step.get("uses", "")).split("@")[0] or any(
                 word == "audit" or word.endswith("-audit") for word in words
@@ -266,8 +247,6 @@ def _decide_aliases(repository: Path, tmp_path: Path, tag: str) -> dict[str, str
     decided = dict(
         line.split("=", 1) for line in step_output.splitlines() if "=" in line
     )
-    # Held against what the job exports, not a literal: a name written here and
-    # not exported there resolves to the empty string in publish's `enable=`.
     assert set(decided) == set(_workflow_jobs(DOCKER)["guard"]["outputs"]), decided
     return decided
 
@@ -296,8 +275,6 @@ def _stub_gh(
     stub = _StubbedGh(
         environment={
             "PATH": f"{binaries}{os.pathsep}{os.environ['PATH']}",
-            # The step's `mktemp` writes the notes file, and the system temp
-            # directory is the one place this suite would leave anything.
             "TMPDIR": str(tmp_path),
         },
         log=tmp_path / "gh-calls.log",
@@ -388,8 +365,6 @@ class TestReleaseTagDetectionRegression:
 
         assert code == 0, stdout
         assert f"tag={released}\n" in step_output
-        # One line: the tags are newline-separated, and a warning interpolating
-        # them renders as several lines with only the first one flagged.
         (warning,) = [line for line in stdout.splitlines() if "WARNING" in line]
         assert all(name in warning for name in others), warning
 
@@ -689,8 +664,6 @@ class TestFloatingTagsOnlyMoveForward:
         decided = _decide_aliases(published_repository, tmp_path, "v9.0.0")
 
         assert decided["highest_overall"] == "false"
-        # `9` and `9.0` name no earlier release, so nothing is behind them to
-        # walk back from and the new build is where they belong.
         assert decided["highest_in_major"] == "true"
         assert decided["highest_in_minor"] == "true"
 
@@ -758,11 +731,9 @@ class TestTheDependencyAuditStaysOffTheReleasePath:
 
         assert DOCKER in published, "no workflow publishes on a tag any more"
         assert AUDIT not in published
-        # Pasting the audit's steps into the gate costs the same image.
         for workflow in published:
             assert not _jobs_querying_an_advisory_feed(workflow), workflow.name
 
-        # Or the workflow is a green tick over an audit nobody runs.
         assert _jobs_querying_an_advisory_feed(AUDIT) == set(_workflow_jobs(AUDIT))
         assert "schedule" in _triggers(AUDIT)
 
@@ -811,7 +782,6 @@ class TestEveryActionRunsCodeThatCannotBeSwappedOut:
             declared = [
                 used for job in _workflow_jobs(workflow).values() for used in _uses(job)
             ]
-            # A pattern that skipped a ref would pass the loop below vacuously.
             assert [reference for reference, _ in read] == declared, workflow.name
 
             for reference, trailing in read:

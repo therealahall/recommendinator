@@ -50,8 +50,6 @@ describe('DuplicateHistory', () => {
   })
 
   it('says why a blocked undo is blocked, and does not run it when pressed anyway', () => {
-    // aria-disabled keeps the control focusable on purpose, so the reason has
-    // to reach a screen reader and the handler has to be what refuses.
     const store = useDuplicatesStore()
     store.merges = [merge(1, 10, 11), merge(2, 10, 12)]
     const undo = vi.spyOn(store, 'undoMerge')
@@ -70,8 +68,6 @@ describe('DuplicateHistory', () => {
   })
 
   it('renders the evidence wording the payload carries rather than one of its own', () => {
-    // Both surfaces print the server's label, so a map here would drift from
-    // the CLI's the first time the wording changed.
     const store = useDuplicatesStore()
     store.merges = [{ ...merge(1, 10, 11), evidence_label: 'your choice (deadhouse gates)' }]
 
@@ -81,8 +77,6 @@ describe('DuplicateHistory', () => {
   })
 
   it('leaves focus in the history when an undo unmounts the row holding it', async () => {
-    // Dropped to <body>, the next Tab restarts at the top of the document,
-    // behind the sidebar and the whole queue (WCAG 2.4.3).
     const store = useDuplicatesStore()
     store.merges = [merge(1, 10, 11), merge(2, 20, 21)]
     vi.spyOn(store, 'undoMerge').mockImplementation(async (id: number) => {

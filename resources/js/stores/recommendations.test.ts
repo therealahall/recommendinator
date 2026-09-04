@@ -200,23 +200,17 @@ describe('useRecommendationsStore', () => {
     await expect(store.markComplete(1, { status: 'completed', rating: null, review: null })).rejects.toThrow('Server error')
 
     expect(store.editSaving).toBe(false)
-    // The dialog's own error, not the page's: the page banner renders behind
-    // the overlay and calls every failure a failure to load recommendations.
     expect(store.editError).toBe('Server error')
     expect(store.error).toBe('')
   })
 
   it('openEdit surfaces an error and leaves editingItem null when the item GET fails', async () => {
-    // The user clicked expecting a modal, so a failed detail fetch must not be a
-    // silent dead button: editingItem stays null (no stale/partial modal) AND the
-    // store error is set so the page can tell the user it failed.
     mockGet.mockRejectedValue(new Error('Not found'))
     const store = useRecommendationsStore()
     await store.openEdit(99)
 
     expect(store.editingItem).toBeNull()
     expect(store.error).toBe('Not found')
-    // openEdit must not touch the save flag; only markComplete owns editSaving.
     expect(store.editSaving).toBe(false)
   })
 })

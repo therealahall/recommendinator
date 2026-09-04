@@ -6,12 +6,8 @@ from pathlib import Path
 
 import pytest
 
-# parents[1] resolves /tests/test_credential_url_chains.py -> repo root.
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
-# Every tree a credential could reach a third party from. Discovery
-# over-approximates, so a tree holding no such call today still costs nothing
-# to scan, and one that leaves the list loses future coverage in silence.
 _SCANNED_TREES = (
     Path("src/auth"),
     Path("src/config"),
@@ -24,9 +20,6 @@ _SCANNED_TREES = (
 
 _FUNCTION_NODES = (ast.FunctionDef, ast.AsyncFunctionDef)
 
-# GOG's token endpoint takes the refresh token, the authorization code and the
-# client secret as query parameters; Steam's Web API takes ``key``, TMDB
-# ``api_key`` and RAWG ``key``.
 _CREDENTIAL_URL_FUNCTIONS = (
     ("src/auth/gog.py", "exchange_code_for_tokens"),
     ("src/enrichment/providers/rawg/rawg.py", "_fetch_game_details"),
@@ -42,9 +35,6 @@ _CREDENTIAL_URL_FUNCTIONS = (
     ("src/ingestion/sources/steam/steam.py", "get_steam_id_from_vanity_url"),
 )
 
-# Parameter names that carry a secret. Naming one of these where a ``params=``
-# call site can reach it is what enrols a plugin in the guard, so a new
-# integration joins by being written rather than by being remembered.
 _CREDENTIAL_PARAM_NAMES = frozenset(
     {
         "access_token",
@@ -68,13 +58,8 @@ _LOG_METHODS = frozenset(
     {"critical", "debug", "error", "exception", "info", "log", "warning"}
 )
 
-# The two calls that render a request fault without its URL. Everything else
-# reaching a log argument keeps the words the credential is in.
 _SCRUBBERS = frozenset({"exception_for_log", "scrub_request_error"})
 
-# Matched on the trailing name, so ``except HTTPError`` is judged like
-# ``except requests.exceptions.HTTPError``. The catch-alls are in the set
-# because widening the clause is the cheapest way to empty a named sweep.
 _REQUEST_ERROR_NAMES = frozenset(
     {
         "BaseException",

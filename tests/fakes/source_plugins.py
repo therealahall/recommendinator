@@ -133,15 +133,10 @@ class FakeApiPlugin(SourcePlugin):
         )
 
 
-#: A deliberate mismatch, so no interface can pass by matching the two names:
-#: module ``goodreads_rss`` is what fails, plugin ``goodreads_rss_shelves`` is
-#: what a source asks for.
 FAILED_PLUGIN_MODULE = "goodreads_rss"
 FAILED_PLUGIN_REASON = "ModuleNotFoundError: No module named 'nonesuch'"
 UNLOADED_PLUGIN = "goodreads_rss_shelves"
 
-#: The wording every interface refuses such a source with, spelled out here so
-#: a change to it fails rather than following the code.
 UNLOADED_PLUGIN_DETAIL = (
     "Plugin 'goodreads_rss_shelves' is not loaded. Modules that failed to "
     "import: goodreads_rss: ModuleNotFoundError: No module named 'nonesuch'"
@@ -174,8 +169,6 @@ def registry_with_a_failed_import() -> Iterator[None]:
     PluginRegistry.reset_instance()
 
 
-#: What the broken private module is called and why it dies, spelled out so an
-#: interface that stops carrying either one fails rather than following the code.
 BROKEN_PRIVATE_MODULE = "broken_provider"
 BROKEN_PRIVATE_REASON = "ModuleNotFoundError: no module named 'httpx'"
 
