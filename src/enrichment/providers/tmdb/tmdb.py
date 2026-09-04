@@ -354,6 +354,14 @@ class TMDBProvider(EnrichmentProvider):
                 extra_metadata["seasons"] = show["number_of_seasons"]
             if show.get("number_of_episodes"):
                 extra_metadata["episodes"] = show["number_of_episodes"]
+            # Season 0 is the specials, and its falsy number drops out here.
+            season_counts = {
+                season["season_number"]: season["episode_count"]
+                for season in show.get("seasons") or []
+                if season.get("season_number") and season.get("episode_count")
+            }
+            if season_counts:
+                extra_metadata["season_episode_counts"] = season_counts
             if show.get("vote_average"):
                 extra_metadata["tmdb_rating"] = show["vote_average"]
             if show.get("first_air_date"):

@@ -150,6 +150,64 @@ class TestSonarrPluginFetch:
         assert items[0].title == "Valid Show"
 
 
+class TestSonarrSeasonEpisodeCounts:
+    """Without a count per season every season looks the same size, so nothing
+    downstream can tell a finished season from a merely caught-up one."""
+
+    @patch("src.ingestion.sources.arr_base.requests.get")
+    def test_each_season_keeps_its_aired_count_without_specials_or_unaired(
+        self,
+        mock_get: Mock,
+        plugin: SonarrPlugin,
+    ) -> None:
+        mock_get.return_value = _api_response(
+            [
+                {
+                    "title": "Severance",
+                    "tvdbId": 371980,
+                    "seasons": [
+                        {"seasonNumber": 0, "statistics": {"episodeCount": 3}},
+                        {
+                            "seasonNumber": 1,
+                            "statistics": {"episodeCount": 9, "totalEpisodeCount": 9},
+                        },
+                        {
+                            "seasonNumber": 2,
+                            "statistics": {"episodeCount": 8, "totalEpisodeCount": 10},
+                        },
+                        {"seasonNumber": 3, "monitored": True},
+                    ],
+                }
+            ]
+        )
+
+        items = list(plugin.fetch({"url": "http://localhost:8989", "api_key": "key"}))
+
+        assert items[0].metadata["season_episode_counts"] == {1: 9, 2: 8}
+
+    @patch("src.ingestion.sources.arr_base.requests.get")
+    def test_a_series_with_no_countable_season_writes_no_counts_key(
+        self,
+        mock_get: Mock,
+        plugin: SonarrPlugin,
+    ) -> None:
+        mock_get.return_value = _api_response(
+            [
+                {
+                    "title": "Specials Only",
+                    "tvdbId": 1,
+                    "seasons": [{"seasonNumber": 0, "statistics": {"episodeCount": 3}}],
+                },
+                {"title": "No Seasons Yet", "tvdbId": 2},
+            ]
+        )
+
+        items = list(plugin.fetch({"url": "http://localhost:8989", "api_key": "key"}))
+
+        assert "season_episode_counts" not in items[0].metadata
+        assert "season_episode_counts" not in items[1].metadata
+
+
 class TestSonarrPluginErrors:
     @patch("src.ingestion.sources.arr_base.requests.get")
     def test_tls_failure_is_reported_as_tls_not_as_unreachable(
