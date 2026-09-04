@@ -29,6 +29,18 @@ describe('SeasonChecklist watched marker', () => {
     expect(wrapper.emitted('update:modelValue')).toEqual([[[1, 2, 4]], [[4]]])
   })
 
+  it('counts the label against the grid, so a preserved off-grid season is not announced', async () => {
+    const wrapper = mount(SeasonChecklist, {
+      props: { totalSeasons: 2, modelValue: [1, 4] },
+    })
+
+    expect(wrapper.get('.season-counter').text()).toBe('1 of 2 seasons watched')
+
+    await wrapper.setProps({ modelValue: [4] })
+
+    expect(wrapper.get('.season-counter').text()).toBe('No seasons watched')
+  })
+
   it('marks a season the moment the toggled value comes back from the parent', async () => {
     const wrapper = mount(SeasonChecklist, {
       props: { totalSeasons: 10, modelValue: [] },

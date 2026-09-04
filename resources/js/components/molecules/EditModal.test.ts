@@ -290,6 +290,19 @@ describe('EditModal', () => {
     wrapper.unmount()
   })
 
+  it('Reset to synced sends the clear the CLI flag sends, not a list of rejections', async () => {
+    const wrapper = mount(EditModal, {
+      props: { item: tvItem, saving: false, saveError: '' },
+      attachTo: document.body,
+    })
+
+    await wrapper.findAll('button').find((one) => one.text() === 'Reset to synced')!.trigger('click')
+    await wrapper.findAll('.btn-primary').find(b => b.text().includes('Save'))!.trigger('click')
+
+    expect(wrapper.emitted('save')![0][1]).toEqual({ status: 'unread', clear_seasons: true })
+    wrapper.unmount()
+  })
+
   it('opened as Mark complete it preselects completed, and the choice stays editable', async () => {
     const wrapper = mount(EditModal, {
       props: { item: tvItem, saving: false, saveError: '', initialStatus: 'completed' },

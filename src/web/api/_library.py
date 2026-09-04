@@ -145,6 +145,9 @@ class ItemEditRequest(BaseModel):
     seasons_watched: list[Annotated[int, Field(ge=1, le=MAX_SEASONS)]] | None = Field(
         None, max_length=MAX_SEASONS
     )
+    clear_seasons: bool = Field(
+        False, description="Empty the seasons and drop the manual overrides"
+    )
     genres: list[Annotated[str, Field(max_length=MAX_GENRE_TAG_LENGTH)]] | None = Field(
         None, max_length=MAX_GENRES, description="Manual genres (overwrite)"
     )
@@ -350,6 +353,8 @@ def _edit_bound_crossed(request: ItemEditRequest) -> str | None:
             return "Creator cannot be empty."
         if len(request.creator) > MAX_CREATOR_LENGTH:
             return f"Creator must be at most {MAX_CREATOR_LENGTH} characters."
+    if request.clear_seasons and request.seasons_watched is not None:
+        return "Seasons watched and clear seasons cannot be sent together."
     if request.release_year is not None:
         year = request.corrected_year
         if year is None or not MIN_RELEASE_YEAR <= year <= MAX_RELEASE_YEAR:
@@ -387,7 +392,8 @@ def edit_item(
             status=status,
             rating=request.rating if "rating" in supplied else UNSET,
             review=request.review if "review" in supplied else UNSET,
-            seasons_watched=request.seasons_watched,
+            seasons_watched=[] if request.clear_seasons else request.seasons_watched,
+            clear_seasons=request.clear_seasons,
             genres=request.genres,
             tags=request.tags,
             description=request.description,

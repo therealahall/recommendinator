@@ -95,8 +95,11 @@ function refusalFor(inputId: string) {
 
 const hasReleaseYear = computed(() => RELEASE_YEAR_TYPES.includes(props.item.content_type))
 
+const seasonsReset = ref(false)
+
 // Handlers, not watchers: a watcher each way retriggers the other.
 function onSeasonsChange(watched: number[]) {
+  seasonsReset.value = false
   seasonsWatched.value = watched
   if (!isTvShow.value) return
   const total = props.item.total_seasons!
@@ -107,6 +110,11 @@ function onSeasonsChange(watched: number[]) {
   } else {
     status.value = 'currently_consuming'
   }
+}
+
+function onSeasonsReset() {
+  onSeasonsChange([])
+  seasonsReset.value = true
 }
 
 function seasonsForStatus() {
@@ -144,7 +152,9 @@ const edits = computed<ItemEditRequest>(() => {
   if (releaseYear.value.trim() !== loaded.releaseYear) {
     data.release_year = releaseYear.value.trim()
   }
-  if (isTvShow.value && !sameList(seasonsWatched.value, loaded.seasons)) {
+  if (isTvShow.value && seasonsReset.value) {
+    data.clear_seasons = true
+  } else if (isTvShow.value && !sameList(seasonsWatched.value, loaded.seasons)) {
     data.seasons_watched = seasonsWatched.value
   }
   if (!sameList(genres.value, loaded.genres)) data.genres = genres.value
@@ -233,6 +243,7 @@ function save() {
         :model-value="seasonsWatched"
         :total-seasons="item.total_seasons!"
         @update:model-value="onSeasonsChange"
+        @reset="onSeasonsReset"
       />
     </div>
 
