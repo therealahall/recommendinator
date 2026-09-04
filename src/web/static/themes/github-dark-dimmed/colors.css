@@ -1,0 +1,47 @@
+:root {
+    color-scheme: dark;
+
+    /* --accent fills bars and spine segments at 3:1 on the surfaces behind them,
+       --accent-hover the focus ring at 3:1 on every surface (WCAG 1.4.11). One
+       --text-inverse owes both fills 4.5:1, ruling out accent.emphasis #316dca. */
+    --accent: #539bf5;
+    --accent-hover: #6cb6ff;
+
+    --bg-primary: #22272e;
+    --bg-card: #2d333b;
+    --bg-sidebar: #1c2128;
+    /* canvas.overlay and canvas.subtle are one value in dark_dimmed, so an
+       overlay is told from a card by its edge rather than by its fill. */
+    --bg-elevated: #2d333b;
+    --bg-input: #22272e;
+    --bg-hover: #373e47;
+    --bg-secondary: #2d333b;
+
+    --text-primary: #adbac7;
+    /* Primer publishes no grey between fg.default and gray-2, and gray-2 misses
+       4.5:1 on --bg-hover, which this tier exists to survive. So secondary
+       holds fg.default rather than inventing an unpublished step. */
+    --text-secondary: #adbac7;
+    /* gray-2, one step off fg.muted #768390, which reaches 3.88:1 on the page
+       against the 4.5:1 muted help text owes (WCAG 1.4.3). */
+    --text-muted: #909dab;
+    --text-inverse: #22272e;
+    --text-on-emphasis: #ffffff;
+
+    --border-default: color-mix(in srgb, #444c56 45%, var(--text-primary));
+    --border-subtle: #373e47;
+
+    --color-success: #57ab5a;
+    --color-warning: #c69026;
+    /* red-3, one step off danger.fg #e5534b: half of danger.fg mixed into a
+       fg.default-weight grey is the 4.42:1 error text that misses AA on a
+       card (WCAG 1.4.3). */
+    --color-error: #f47067;
+
+    --overlay-backdrop: rgba(0, 0, 0, 0.6);
+    --overlay-scrim: rgba(0, 0, 0, 0.5);
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.3);
+    --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
