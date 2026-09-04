@@ -15,6 +15,7 @@ share: managing sources, importing a file, parallel sync, and library export.
 | **Sonarr** | TV Shows | [sonarr](../src/ingestion/sources/sonarr/README.md) | Sonarr API |
 | **Radarr** | Movies | [radarr](../src/ingestion/sources/radarr/README.md) | Radarr API |
 | **Trakt** | TV Shows / Movies | [trakt](../src/ingestion/sources/trakt/README.md) | OAuth device code: watched history, ratings, watchlist |
+| **Tautulli** | TV Shows / Movies | [tautulli](../src/ingestion/sources/tautulli/README.md) | Tautulli API: watched Plex history |
 | **ROM Library** | Games | [roms](../src/ingestion/sources/roms/README.md) | Scans emulator ROM directories |
 
 ## Importing a file
