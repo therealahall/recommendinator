@@ -556,7 +556,7 @@ class RecommendationEngine:
         # The cited items are carried alongside this line and listed by both
         # interfaces, so naming them here prints every title twice.
         if adaptations or contributing_items:
-            return "Recommended because you liked related items"
+            return "Recommended because you liked"
 
         if item.author and preferences.get_author_score(item.author) > 0.5:
             return f"Recommended because you enjoy works by {item.author}"

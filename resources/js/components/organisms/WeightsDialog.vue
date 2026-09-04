@@ -11,8 +11,6 @@ import {
 } from '@/stores/preferences'
 import { formatScorerName } from '@/utils/format'
 
-defineProps<{ summary: string }>()
-
 const emit = defineEmits<{ close: [] }>()
 
 const prefs = usePreferencesStore()
@@ -72,7 +70,6 @@ onUnmounted(revert)
   >
     <header class="weights-head">
       <h2 id="weights-heading" class="weights-title">Scoring weights</h2>
-      <span class="badge">{{ summary }}</span>
       <button
         type="button"
         class="btn btn-ghost weights-close"
