@@ -4,8 +4,7 @@
     /* Deeper than Nord's frost: --accent carries a white label on a primary
        button and an active pill, which #5e81ac missed (WCAG 1.4.3). */
     --accent: #4c6f96;
-    --accent-light: #47798a;
-    --accent-teal: #6ea0a0;
+    --accent-hover: #47798a;
 
     --bg-primary: #f8f9fb;
     --bg-card: #ffffff;
@@ -19,7 +18,7 @@
     --text-secondary: #4c566a;
     --text-muted: #5c6678;
     --text-inverse: #ffffff;
-    --text-on-dark-fill: #ffffff;
+    --text-on-emphasis: #ffffff;
 
     --border-default: color-mix(in srgb, #c0c8d4 45%, var(--text-primary));
     --border-subtle: #d8dee9;
@@ -30,8 +29,8 @@
     --color-warning: #7a5a00;
     --color-error: #b04850;
 
-    --overlay-dark: rgba(0, 0, 0, 0.4);
-    --overlay-medium: rgba(0, 0, 0, 0.3);
+    --overlay-backdrop: rgba(0, 0, 0, 0.4);
+    --overlay-scrim: rgba(0, 0, 0, 0.3);
 
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.08);
     --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.1);

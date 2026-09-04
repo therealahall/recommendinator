@@ -632,7 +632,7 @@ function isSecretSet(name: string): boolean {
    success colour is a light label on a light fill in a light theme. */
 :deep(.btn-success) {
   background: color-mix(in srgb, var(--color-success) 60%, black);
-  color: var(--text-on-dark-fill);
+  color: var(--text-on-emphasis);
   border-color: color-mix(in srgb, var(--color-success) 60%, black);
   font-weight: var(--weight-semibold);
 }
