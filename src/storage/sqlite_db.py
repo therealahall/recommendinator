@@ -72,10 +72,8 @@ from src.storage.schema import (
 from src.utils.dates import local_today, merge_seasons_watched_dates, utc_now
 from src.utils.list_merge import merge_string_lists
 from src.utils.series import (
-    cleared_hand_overrides,
-    hand_overrides,
+    all_seasons_watched,
     reconcile_seasons,
-    same_seasons,
     seasons_watched_for_completed,
     status_for_seasons_watched,
 )
@@ -133,12 +131,6 @@ class SaveOutcome(Enum):
 class SavedItem:
     db_id: int
     outcome: SaveOutcome
-
-
-@dataclass(frozen=True)
-class DetailWrite:
-    changed: bool
-    seasons_moved: bool
 
 
 @dataclass
@@ -440,16 +432,12 @@ class SQLiteDB:
                     (item.cover_url, db_id),
                 )
             # SQLite refuses to bind the lone surrogate an undecodable byte leaves.
-            detail = self._save_detail_table(
-                cursor, db_id, _surrogate_free(item), content_type
-            )
+            self._save_detail_table(cursor, db_id, _surrogate_free(item), content_type)
             # Both read what was stored: a creator this filled belongs in the
             # search text, and a season count it raised unfinishes the show.
             write_derived_columns(cursor, db_id)
             if content_type == "tv_show":
-                self._handle_tv_season_change(
-                    cursor, db_id, seasons_moved=detail.seasons_moved
-                )
+                self._handle_tv_season_change(cursor, db_id)
             conn.commit()
 
     def clear_cover_url(self, db_id: int) -> bool:
@@ -691,21 +679,21 @@ class SQLiteDB:
             cursor, db_id, effective_user_id, item, content_type_value
         )
 
-        detail = self._save_detail_table(cursor, db_id, item, content_type_value)
+        detail_changed = self._save_detail_table(
+            cursor, db_id, item, content_type_value
+        )
 
         # After the detail write, so the derived columns read the creator that
         # was actually stored rather than the one this sync offered.
         write_derived_columns(cursor, db_id)
 
         season_status_moved = content_type_value == "tv_show" and (
-            self._handle_tv_season_change(
-                cursor, db_id, seasons_moved=detail.seasons_moved
-            )
+            self._handle_tv_season_change(cursor, db_id)
         )
 
         if existing_id is None:
             outcome = SaveOutcome.ADDED
-        elif row_changed or detail.changed or season_status_moved:
+        elif row_changed or detail_changed or season_status_moved:
             outcome = SaveOutcome.UPDATED
         else:
             outcome = SaveOutcome.UNCHANGED
@@ -732,7 +720,7 @@ class SQLiteDB:
 
     def _save_detail_table(
         self, cursor: sqlite3.Cursor, db_id: int, item: ContentItem, content_type: str
-    ) -> DetailWrite:
+    ) -> bool:
         """For existing rows, enrichment is the source of truth: genres and tags
         merge additively, every other column is fill-only, and the leftover
         metadata blob merges with existing keys winning — bar the season fields,
@@ -842,20 +830,13 @@ class SQLiteDB:
                 if name != "content_item_id" and existing_data.get(name) != value
             }
             if not changed:
-                return DetailWrite(changed=False, seasons_moved=False)
+                return False
             set_clauses = ", ".join(f"{name} = ?" for name in changed)
             cursor.execute(
                 f"UPDATE {table} SET {set_clauses} WHERE content_item_id = ?",
                 [*changed.values(), db_id],
             )
-            return DetailWrite(
-                changed=True,
-                seasons_moved="seasons" in changed
-                or not same_seasons(
-                    existing_remaining.get("seasons_watched"),
-                    merged_remaining.get("seasons_watched"),
-                ),
-            )
+            return True
 
         placeholders = ", ".join("?" for _ in values)
         col_list = ", ".join(col_names)
@@ -863,14 +844,12 @@ class SQLiteDB:
             f"INSERT INTO {table} ({col_list}) VALUES ({placeholders})",
             values,
         )
-        return DetailWrite(changed=True, seasons_moved=True)
+        return True
 
-    def _handle_tv_season_change(
-        self, cursor: sqlite3.Cursor, db_id: int, *, seasons_moved: bool
-    ) -> bool:
-        """Status follows the seasons the write above left, and completes a show
-        only where that write moved them: a sync deriving what was already there
-        leaves a status the operator set alone.
+    def _handle_tv_season_change(self, cursor: sqlite3.Cursor, db_id: int) -> bool:
+        """Status follows the season list: a show completes when every season of
+        a known total is watched, and returns to currently_consuming when a new
+        season appears. An ignored show is never touched.
         """
         cursor.execute(
             "SELECT ci.status, ci.ignored, td.seasons, td.metadata"
@@ -883,13 +862,9 @@ class SQLiteDB:
         if not row or row["ignored"]:
             return False
 
-        status = row["status"]
         total_seasons = row["seasons"]
-        if not total_seasons:
-            return False
-
         metadata_raw = row["metadata"]
-        if not metadata_raw:
+        if not total_seasons or not metadata_raw:
             return False
         try:
             metadata = json.loads(metadata_raw)
@@ -900,23 +875,14 @@ class SQLiteDB:
         if not isinstance(seasons_watched, list):
             return False
 
-        derived = status_for_seasons_watched(seasons_watched, total_seasons)
-        if derived is ConsumptionStatus.COMPLETED:
-            if not seasons_moved:
-                return False
-            resolved = "completed"
-        elif status == "completed":
-            resolved = "currently_consuming"
-        else:
-            return False
-
-        if resolved == status:
+        finished = all_seasons_watched(seasons_watched, total_seasons)
+        if finished == (row["status"] == "completed"):
             return False
 
         cursor.execute(
             "UPDATE content_items SET status = ?,"
             " updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (resolved, db_id),
+            ("completed" if finished else "currently_consuming", db_id),
         )
         return True
 
@@ -1256,7 +1222,6 @@ class SQLiteDB:
         rating: int | None | Unset = UNSET,
         review: str | None | Unset = UNSET,
         seasons_watched: list[int] | None = None,
-        clear_seasons: bool = False,
         genres: list[str] | None = None,
         tags: list[str] | None = None,
         description: str | None = None,
@@ -1265,8 +1230,8 @@ class SQLiteDB:
         user_id: int | None = None,
     ) -> bool:
         """No status empties the list: the dialog hides the checklist for a show
-        whose total never synced, so a status-only save must not erase it. A
-        clear resets the overrides rather than rejecting every season.
+        whose total never synced, so a status-only save must not erase seasons
+        only a sync can write back.
         """
         with self.connection() as conn:
             cursor = conn.cursor()
@@ -1315,13 +1280,6 @@ class SQLiteDB:
                     except (json.JSONDecodeError, TypeError):
                         pass
 
-                if clear_seasons:
-                    existing_metadata.update(cleared_hand_overrides())
-                    existing_metadata.pop("seasons_watched", None)
-                    seasons_watched = reconcile_seasons(existing_metadata, {}).get(
-                        "seasons_watched", []
-                    )
-
                 if tv_row:
                     if seasons_watched is None:
                         if status == "completed":
@@ -1350,12 +1308,6 @@ class SQLiteDB:
                             new_dates[key] = existing_dates[key]
                         elif season not in previously_watched:
                             new_dates[key] = now_iso
-                    if not clear_seasons:
-                        existing_metadata.update(
-                            hand_overrides(
-                                existing_metadata, seasons_watched, total_seasons
-                            )
-                        )
                     existing_metadata["seasons_watched"] = seasons_watched
                     existing_metadata["seasons_watched_dates"] = new_dates
                     cursor.execute(

@@ -407,7 +407,6 @@ export interface ItemEditRequest {
   rating?: number | null
   review?: string | null
   seasons_watched?: number[] | null
-  clear_seasons?: boolean
   genres?: string[]
   tags?: string[]
   description?: string | null

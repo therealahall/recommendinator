@@ -160,15 +160,12 @@ rating. Passing one replaces it.
 
 A TV show status fills in a season list you did not pass only where that adds
 one: `--status completed` ticks every season. Nothing else infers seasons from a
-status. Pass both and both are written as given.
-
-`--clear-seasons` drops every season ticked or unticked by hand and rewrites the
-list from what the sources report, leaving the seasons Sonarr, TMDB or Plex say
-are finished rather than emptying it.
+status, and nothing but `--clear-seasons` empties the list, because a sync only
+ever adds a watched season. Pass both and both are written as given.
 
 Emptying a field is a separate instruction. `--clear-rating`, `--clear-review`,
-`--clear-genres` and `--clear-tags` are the only way to store nothing there, and
-none may be combined with its value flag, `--clear-seasons` included. `--review ""` is
+`--clear-seasons`, `--clear-genres` and `--clear-tags` are the only way to store
+nothing there, and none may be combined with its value flag. `--review ""` is
 refused, pointing you at `--clear-review`, because an empty string is far more
 often a shell accident than an intention. A description is the exception:
 `--description ""` is its clear, whitespace included, matching the emptied box

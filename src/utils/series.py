@@ -317,19 +317,6 @@ _SOURCE_REPORTED_SEASON_COUNTS: tuple[str, ...] = (
     "episodes_watched_by_season",
 )
 
-_MANUAL_ADDITIONS = "seasons_manually_added"
-_MANUAL_REMOVALS = "seasons_manually_removed"
-_SOURCE_ASSERTED = "seasons_source_asserted"
-
-
-class SeasonCompletion(NamedTuple):
-    finished: set[int]
-    unfinished: set[int]
-
-
-def _season_set(raw: Any) -> set[int]:
-    return set(merge_seasons_watched(raw, None) or ())
-
 
 def _season_number(key: Any) -> int | None:
     try:
@@ -349,27 +336,30 @@ def _season_counts(raw: Any) -> dict[int, int]:
     }
 
 
-def _merge_season_counts(existing: Any, incoming: Any) -> dict[str, int] | None:
+def _largest_season_counts(existing: Any, incoming: Any) -> dict[str, int] | None:
     if not isinstance(existing, dict) and not isinstance(incoming, dict):
         return None
-    merged = {**_season_counts(existing), **_season_counts(incoming)}
+    merged = _season_counts(existing)
+    for season, count in _season_counts(incoming).items():
+        merged[season] = max(merged.get(season, 0), count)
     return {str(season): count for season, count in sorted(merged.items())}
 
 
-def season_completion(
-    episodes_watched: Any, aired_counts: Any, library_counts: Any
-) -> SeasonCompletion:
-    aired = _season_counts(aired_counts)
-    library = _season_counts(library_counts)
+def seasons_finished(episodes_watched: Any, *season_sizes: Any) -> set[int]:
+    """The largest count a source states is the season's size: Sonarr's misses
+    the episodes it does not monitor and TMDB's counts episodes yet to air, and
+    only the low reading can tick a season the operator has not finished.
+    """
+    sizes: dict[int, int] = {}
+    for stated in season_sizes:
+        for season, size in _season_counts(stated).items():
+            sizes[season] = max(sizes.get(season, 0), size)
 
-    finished: set[int] = set()
-    unfinished: set[int] = set()
-    for season, watched in _season_counts(episodes_watched).items():
-        best_available_count = aired.get(season, library.get(season))
-        if best_available_count is None or best_available_count < 1:
-            continue
-        (finished if watched >= best_available_count else unfinished).add(season)
-    return SeasonCompletion(finished=finished, unfinished=unfinished)
+    return {
+        season
+        for season, watched in _season_counts(episodes_watched).items()
+        if sizes.get(season, 0) >= 1 and watched >= sizes[season]
+    }
 
 
 def reconcile_seasons(
@@ -377,71 +367,22 @@ def reconcile_seasons(
 ) -> dict[str, Any]:
     fields: dict[str, Any] = {}
     for key in _SOURCE_REPORTED_SEASON_COUNTS:
-        counts = _merge_season_counts(existing.get(key), incoming.get(key))
+        counts = _largest_season_counts(existing.get(key), incoming.get(key))
         if counts is not None:
             fields[key] = counts
 
     reported = merge_seasons_watched(
         existing.get("seasons_watched"), incoming.get("seasons_watched")
     )
-    completion = season_completion(
+    finished = seasons_finished(
         fields.get("episodes_watched_by_season"),
         fields.get("season_episode_counts"),
         fields.get("plex_season_episode_counts"),
     )
-    asserted = _asserted_seasons(existing) | _season_set(
-        incoming.get("seasons_watched")
-    )
-    hand_added = _season_set(existing.get(_MANUAL_ADDITIONS))
-    hand_removed = _season_set(existing.get(_MANUAL_REMOVALS))
-    watched = (
-        (set(reported or ()) | completion.finished)
-        - (completion.unfinished - asserted)
-        - hand_removed
-    ) | hand_added
-    if asserted:
-        fields[_SOURCE_ASSERTED] = sorted(asserted)
+    watched = set(reported or ()) | finished
     if reported is not None or watched:
         fields["seasons_watched"] = sorted(watched)
     return fields
-
-
-def _asserted_seasons(existing: Mapping[str, Any]) -> set[int]:
-    stored = existing.get(_SOURCE_ASSERTED)
-    if stored is not None:
-        return _season_set(stored)
-    written_before_any_count_arrived = not any(
-        key in existing for key in _SOURCE_REPORTED_SEASON_COUNTS
-    )
-    if written_before_any_count_arrived:
-        return _season_set(existing.get("seasons_watched"))
-    return set()
-
-
-def same_seasons(one: Any, other: Any) -> bool:
-    return _season_set(one) == _season_set(other)
-
-
-def cleared_hand_overrides() -> dict[str, list[int]]:
-    return {_MANUAL_ADDITIONS: [], _MANUAL_REMOVALS: [], _SOURCE_ASSERTED: []}
-
-
-def hand_overrides(
-    existing: Mapping[str, Any], chosen: Sequence[int], total_seasons: int | None
-) -> dict[str, list[int]]:
-    shown = _season_set(existing.get("seasons_watched"))
-    picked = {season for season in chosen if isinstance(season, int)}
-    ticked = picked - shown
-    rendered = {season for season in shown if season <= (total_seasons or MAX_SEASONS)}
-    unticked = rendered - picked
-    return {
-        _MANUAL_ADDITIONS: sorted(
-            (_season_set(existing.get(_MANUAL_ADDITIONS)) | ticked) - unticked
-        ),
-        _MANUAL_REMOVALS: sorted(
-            (_season_set(existing.get(_MANUAL_REMOVALS)) | unticked) - ticked
-        ),
-    }
 
 
 def latest_season_watched_date(item: ContentItem) -> date | None:
