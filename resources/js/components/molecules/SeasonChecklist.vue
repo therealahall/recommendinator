@@ -33,12 +33,14 @@ function toggle(season: number) {
 }
 
 function selectAll() {
-  const all = Array.from({ length: props.totalSeasons }, (_, i) => i + 1)
-  emit('update:modelValue', all)
+  const rendered = Array.from({ length: props.totalSeasons }, (_, i) => i + 1)
+  const beyond = props.modelValue.filter((season) => season > props.totalSeasons)
+  emit('update:modelValue', [...rendered, ...beyond].sort((a, b) => a - b))
 }
 
 function deselectAll() {
-  emit('update:modelValue', [])
+  const beyond = props.modelValue.filter((season) => season > props.totalSeasons)
+  emit('update:modelValue', beyond)
 }
 </script>
 

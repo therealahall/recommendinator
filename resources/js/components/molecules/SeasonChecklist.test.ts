@@ -16,6 +16,19 @@ describe('SeasonChecklist watched marker', () => {
     expect(marked.sort()).toEqual(['2', '3'])
   })
 
+  it('keeps a watched season past the total, which the grid never rendered to untick', async () => {
+    const wrapper = mount(SeasonChecklist, {
+      props: { totalSeasons: 2, modelValue: [1, 4] },
+    })
+    const button = (label: string) =>
+      wrapper.findAll('button').find((one) => one.text() === label)!
+
+    await button('Select All').trigger('click')
+    await button('Deselect All').trigger('click')
+
+    expect(wrapper.emitted('update:modelValue')).toEqual([[[1, 2, 4]], [[4]]])
+  })
+
   it('marks a season the moment the toggled value comes back from the parent', async () => {
     const wrapper = mount(SeasonChecklist, {
       props: { totalSeasons: 10, modelValue: [] },
