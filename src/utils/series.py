@@ -1,7 +1,7 @@
 import math
 import re
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import date
 from typing import Any, NamedTuple, TypedDict
 
@@ -309,6 +309,117 @@ def merge_seasons_watched(existing: Any, incoming: Any) -> list[int] | None:
     return sorted(
         {season for side in sides for season in side if isinstance(season, int)}
     )
+
+
+_SOURCE_REPORTED_SEASON_COUNTS: tuple[str, ...] = (
+    "season_episode_counts",
+    "plex_season_episode_counts",
+    "episodes_watched_by_season",
+)
+
+_MANUAL_ADDITIONS = "seasons_manually_added"
+_MANUAL_REMOVALS = "seasons_manually_removed"
+
+
+class SeasonCompletion(NamedTuple):
+    finished: set[int]
+    unfinished: set[int]
+
+
+def _season_set(raw: Any) -> set[int]:
+    return set(merge_seasons_watched(raw, None) or ())
+
+
+def _season_number(key: Any) -> int | None:
+    try:
+        season = int(key)
+    except (TypeError, ValueError):
+        return None
+    return season if 1 <= season <= MAX_SEASONS else None
+
+
+def _season_counts(raw: Any) -> dict[int, int]:
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        season: value
+        for key, value in raw.items()
+        if (season := _season_number(key)) is not None and isinstance(value, int)
+    }
+
+
+def _merge_season_counts(existing: Any, incoming: Any) -> dict[str, int] | None:
+    if not isinstance(existing, dict) and not isinstance(incoming, dict):
+        return None
+    merged = {**_season_counts(existing), **_season_counts(incoming)}
+    return {str(season): count for season, count in sorted(merged.items())}
+
+
+def season_completion(
+    episodes_watched: Any, aired_counts: Any, library_counts: Any
+) -> SeasonCompletion:
+    aired = _season_counts(aired_counts)
+    library = _season_counts(library_counts)
+
+    finished: set[int] = set()
+    unfinished: set[int] = set()
+    for season, watched in _season_counts(episodes_watched).items():
+        best_available_count = aired.get(season, library.get(season))
+        if best_available_count is None or best_available_count < 1:
+            continue
+        (finished if watched >= best_available_count else unfinished).add(season)
+    return SeasonCompletion(finished=finished, unfinished=unfinished)
+
+
+def reconcile_seasons(
+    existing: Mapping[str, Any], incoming: Mapping[str, Any]
+) -> dict[str, Any]:
+    fields: dict[str, Any] = {}
+    for key in _SOURCE_REPORTED_SEASON_COUNTS:
+        counts = _merge_season_counts(existing.get(key), incoming.get(key))
+        if counts is not None:
+            fields[key] = counts
+
+    reported = merge_seasons_watched(
+        existing.get("seasons_watched"), incoming.get("seasons_watched")
+    )
+    completion = season_completion(
+        fields.get("episodes_watched_by_season"),
+        fields.get("season_episode_counts"),
+        fields.get("plex_season_episode_counts"),
+    )
+    hand_added = _season_set(existing.get(_MANUAL_ADDITIONS))
+    hand_removed = _season_set(existing.get(_MANUAL_REMOVALS))
+    watched = (
+        (set(reported or ()) | completion.finished)
+        - completion.unfinished
+        - hand_removed
+    ) | hand_added
+    if reported is not None or watched:
+        fields["seasons_watched"] = sorted(watched)
+    return fields
+
+
+def cleared_hand_overrides() -> dict[str, list[int]]:
+    return {_MANUAL_ADDITIONS: [], _MANUAL_REMOVALS: []}
+
+
+def hand_overrides(
+    existing: Mapping[str, Any], chosen: Sequence[int], total_seasons: int | None
+) -> dict[str, list[int]]:
+    shown = _season_set(existing.get("seasons_watched"))
+    picked = {season for season in chosen if isinstance(season, int)}
+    ticked = picked - shown
+    rendered = {season for season in shown if season <= (total_seasons or MAX_SEASONS)}
+    unticked = rendered - picked
+    return {
+        _MANUAL_ADDITIONS: sorted(
+            (_season_set(existing.get(_MANUAL_ADDITIONS)) | ticked) - unticked
+        ),
+        _MANUAL_REMOVALS: sorted(
+            (_season_set(existing.get(_MANUAL_REMOVALS)) | unticked) - ticked
+        ),
+    }
 
 
 def latest_season_watched_date(item: ContentItem) -> date | None:

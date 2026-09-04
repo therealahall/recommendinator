@@ -575,6 +575,7 @@ def library_edit(
             rating=None if clear_rating else unset_if_none(rating),
             review=None if clear_review else unset_if_none(review),
             seasons_watched=parsed_seasons,
+            clear_seasons=clear_seasons,
             genres=genre_list,
             tags=tag_list,
             description=description,
