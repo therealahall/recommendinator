@@ -141,7 +141,6 @@ class TestRAWGProviderEnrichment:
         assert result.extra_metadata.get("metacritic") == 93
         assert result.extra_metadata.get("release_year") == 2015
         assert result.cover_url == "https://media.rawg.io/media/games/witcher3.jpg"
-        # Its own key, not the playtime_hours Steam fills with the user's hours
         assert result.extra_metadata.get("average_playtime_hours") == 46
         assert "playtime_hours" not in result.extra_metadata
 
@@ -377,7 +376,7 @@ class TestRAWGFranchiseExtraction:
             )
 
         assert franchise_name == "Dragon Age"
-        assert position == 3  # Third by release date
+        assert position == 3
 
     def test_fetch_game_series_api_error_graceful_fallback(
         self, provider: RAWGProvider

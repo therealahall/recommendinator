@@ -16,8 +16,6 @@ from tests.factories import (
     make_storage_mock,
 )
 
-#: The SPA reads the response through this, so a field it does not declare is
-#: one the browser drops on the floor however faithfully the API sends it.
 _MIRROR = Path("resources/js/types/api.ts")
 
 
@@ -143,5 +141,4 @@ class TestRecommendationEvidence:
                 "cover_url": None,
             }
         ]
-        # Empty, never null: the SPA iterates both lists without a guard.
         assert payload["contributing_items"] == []

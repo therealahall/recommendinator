@@ -35,7 +35,7 @@ describe('useLibraryStore', () => {
 
     expect(store.items).toEqual(items)
     expect(store.offset).toBe(2)
-    expect(store.hasMore).toBe(false) // < PAGE_SIZE items
+    expect(store.hasMore).toBe(false)
   })
 
   it('loadMore appends items', async () => {
@@ -101,8 +101,6 @@ describe('useLibraryStore', () => {
   })
 
   it('clamps an over-long search term to the length the API accepts', async () => {
-    // Regression: the store sent whatever term it was handed, so anything over
-    // MAX_SEARCH_LENGTH came back 422 and surfaced as a bare status line.
     vi.useFakeTimers()
     try {
       mockGet.mockResolvedValue([])
@@ -130,8 +128,6 @@ describe('useLibraryStore', () => {
       const firstLoad = store.resetAndLoad()
       expect(store.loading).toBe(true)
 
-      // Type a search while that load is still running: the debounced
-      // runSearch must await the real settle, not strand searchLoading.
       mockGet.mockResolvedValue([])
       store.setFilter('search', 'dune')
       await vi.advanceTimersByTimeAsync(250)
@@ -169,7 +165,6 @@ describe('useLibraryStore', () => {
     await store.setFilter('needsRating', true)
 
     expect(store.needsRating).toBe(true)
-    // statusFilter is independent — the toggle must not mutate it.
     expect(store.statusFilter).toBe('')
     const params = mockGet.mock.lastCall![1] as Record<string, unknown>
     expect(params.needs_rating).toBe(true)
@@ -186,7 +181,6 @@ describe('useLibraryStore', () => {
     await store.setFilter('needsRating', false)
 
     expect(store.needsRating).toBe(false)
-    // The orthogonal redesign means the prior status survives the round-trip.
     expect(store.statusFilter).toBe('unread')
     const params = mockGet.mock.lastCall![1] as Record<string, unknown>
     expect(params.needs_rating).toBeUndefined()
@@ -194,7 +188,6 @@ describe('useLibraryStore', () => {
   })
 
   it('clearFilters keeps Show ignored on, since it only ever adds rows', async () => {
-    // The button reads "Show everything", and it was turning a filter back off.
     mockGet.mockResolvedValue([])
     const store = useLibraryStore()
     await store.setFilter('showIgnored', true)
@@ -208,8 +201,6 @@ describe('useLibraryStore', () => {
   })
 
   it('exports the whole library when no content type is selected', () => {
-    // Regression: exportLibrary returned early without a type filter, so the
-    // default view's Export menu picked a format and downloaded nothing.
     const store = useLibraryStore()
 
     const url = new URL(store.exportUrl('csv'), 'http://localhost')
@@ -229,9 +220,6 @@ describe('useLibraryStore', () => {
   })
 
   it('sends the chosen sort order as sort_by, on the next page as well', async () => {
-    // A page fetched in a different order than the one before it repeats some
-    // rows and drops others, so sort_by belongs on every request rather than
-    // on the reset that follows the choice.
     const page = Array.from({ length: 50 }, (_, i) => ({
       db_id: i, title: `Item ${i}`, content_type: 'book', status: 'completed', ignored: false,
     }))
@@ -264,8 +252,6 @@ describe('useLibraryStore', () => {
   })
 
   it('saveEdit keeps a refused save on the dialog, not on the load banner', async () => {
-    // The banner renders behind the modal overlay and prefixes "Failed to load
-    // library:", so a refusal routed there was unreadable and misdescribed.
     const item = { db_id: 1, title: 'Book A', content_type: 'book', status: 'unread', rating: null, ignored: false }
     mockGet.mockResolvedValue([item])
     const store = useLibraryStore()
@@ -298,8 +284,6 @@ describe('useLibraryStore', () => {
   })
 
   it('openEdit refreshes the card behind the dialog', async () => {
-    // Restoring automatic enrichment reopens the dialog on fresh data, and the
-    // card behind it read enriched until a reload — the badge said the opposite.
     const item = { db_id: 1, title: 'Book A', content_type: 'book', status: 'unread', ignored: false, enriched: true, manually_enriched: true }
     mockGet.mockResolvedValueOnce([item])
     const store = useLibraryStore()

@@ -3,9 +3,6 @@ import { mount } from '@vue/test-utils'
 import AppIcon from './AppIcon.vue'
 
 describe('AppIcon', () => {
-  // Every glyph sits beside its own label or in a button carrying an
-  // aria-label, so an announced icon reads twice — and a focusable <svg> adds
-  // a tab stop on Edge.
   it('is decorative and unreachable by Tab', () => {
     const icon = mount(AppIcon, { props: { name: 'search' } })
 

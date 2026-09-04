@@ -8,7 +8,6 @@ from src.models.content import ConsumptionStatus, ContentItem, ContentType
 
 IMPORTER = StorygraphCsvImporter()
 
-# A full StoryGraph export header row, matching the columns the site emits.
 HEADER = (
     "Title,Authors,Contributors,ISBN/UID,Format,Read Status,Date Added,"
     "Last Date Read,Dates Read,Read Count,Moods,Pace,"

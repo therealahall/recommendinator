@@ -39,7 +39,6 @@ const TEMPLATES = [
   { importer: 'csv_import', content_type: 'video_game', filename: 'video_games.csv' },
 ]
 
-/** Worked example 2 of the epic, the numbers the CLI prints for the same file. */
 const RESULT: ImportResponse = {
   importer: 'goodreads_csv',
   content_type: 'book',
@@ -82,7 +81,6 @@ async function toggle(wrapper: VueWrapper): Promise<void> {
   await flushPromises()
 }
 
-/** The form lives behind the disclosure, so every test that drives it opens. */
 async function openPanel() {
   const opening = await mountPanel()
   await toggle(opening)
@@ -116,8 +114,6 @@ describe('ImportPanel', () => {
     mockUpload.mockResolvedValue(RESULT)
   })
 
-  /** A region inserted already populated is read as page content and skipped
-   *  (WCAG 4.1.3) — the bug this repo has hit in three components. */
   it('mounts the live region empty, before an import gives it anything to say', async () => {
     const wrapper = await mountPanel()
 
@@ -127,9 +123,6 @@ describe('ImportPanel', () => {
     wrapper.unmount()
   })
 
-  /** The disclosure sets `hidden` on the panel, and `hidden` takes everything
-   *  under it out of the accessibility tree. A region parked in there would go
-   *  silent for the rest of the session the first time the panel was shut. */
   it('keeps the live region announcing after the panel is collapsed', async () => {
     const wrapper = await openPanel()
 
@@ -156,8 +149,6 @@ describe('ImportPanel', () => {
     wrapper.unmount()
   })
 
-  /** Each message names its own unit, so the announcement cannot: entry 2 of a
-   *  JSON array is not file line 2, and the heading already says rows. */
   it('announces the misses without presuming they are lines', async () => {
     const wrapper = await openPanel()
     mockUpload.mockResolvedValue({
@@ -177,8 +168,6 @@ describe('ImportPanel', () => {
     wrapper.unmount()
   })
 
-  /** Re-importing the same file to the same counts leaves the summary text
-   *  identical, and a region whose text does not change announces nothing. */
   it('announces the file in flight, so a repeat import is not silent', async () => {
     const wrapper = await openPanel()
     let settle: (value: ImportResponse) => void = () => {}
@@ -200,8 +189,6 @@ describe('ImportPanel', () => {
     wrapper.unmount()
   })
 
-  /** A drop leaves the input's own value untouched, so without this the first
-   *  a screen reader hears of the file is "Importing …", after the commit. */
   it('announces a dropped file, which no input value speaks', async () => {
     const wrapper = await openPanel()
 
@@ -213,8 +200,6 @@ describe('ImportPanel', () => {
     wrapper.unmount()
   })
 
-  /** The visible error goes on the same pick, so a region still reading the old
-   *  failure describes a panel that no longer says it (WCAG 1.3.1). */
   it('drops a failed import from the live region when a replacement file is picked', async () => {
     const wrapper = await openPanel()
     mockUpload.mockRejectedValue(new Error('CSV needs a content type.'))
@@ -230,8 +215,6 @@ describe('ImportPanel', () => {
     wrapper.unmount()
   })
 
-  /** The failure is about the API, not the file, so the pick that cleared it
-   *  left Import refusing with nothing on screen saying why. */
   it('keeps the format-load failure on screen after a file is picked', async () => {
     mockGet.mockImplementation((path: string) =>
       path === '/importers'
@@ -252,7 +235,6 @@ describe('ImportPanel', () => {
     wrapper.unmount()
   })
 
-  /** A resolved blip left a notice still refusing an Import that works. */
   it('drops the format-load failure once a reopen loads the formats', async () => {
     let attempts = 0
     mockGet.mockImplementation((path: string) => {
@@ -278,8 +260,6 @@ describe('ImportPanel', () => {
     wrapper.unmount()
   })
 
-  /** Naming only "unavailable" leaves the operator nothing to act on, and
-   *  naming the file, when one is picked, misdirects them. */
   it('names whichever of the two conditions is refusing the Import button', async () => {
     const wrapper = await openPanel()
     const button = wrapper.get('[data-testid="import-submit"]')
@@ -305,8 +285,6 @@ describe('ImportPanel', () => {
     unloaded.unmount()
   })
 
-  /** The server caps the list and tallies the rest, so a count taken from it
-   *  reports a handful of refused rows beside a Skipped tile reading 10000. */
   it('counts the refused rows the file actually had, not the ones it lists', async () => {
     const wrapper = await openPanel()
     mockUpload.mockResolvedValue({
@@ -330,9 +308,6 @@ describe('ImportPanel', () => {
     wrapper.unmount()
   })
 
-  /** A note is not a row, so no count covers it: listed with the misses it sat
-   *  under "Rows that did not import (0)", and the region announced nothing
-   *  about it at all (WCAG 4.1.3). */
   it('shows and announces a file-level note when every row imported', async () => {
     const wrapper = await openPanel()
     const note = 'Saved 255 item(s) but could not queue them for enrichment'
@@ -380,8 +355,6 @@ describe('ImportPanel', () => {
     wrapper.unmount()
   })
 
-  /** A site export decides its own content type. Sending one anyway would have
-   *  the response echo the operator's guess instead of what the format chose. */
   it('omits content_type for a format that decides its own', async () => {
     const wrapper = await openPanel()
 
@@ -408,8 +381,6 @@ describe('ImportPanel', () => {
     wrapper.unmount()
   })
 
-  /** A Docker operator has no shell and templates/ ships inside the image, so
-   *  the link has to follow the pair currently picked. */
   it('links to the template for the format and content type currently chosen', async () => {
     const wrapper = await openPanel()
 
@@ -429,8 +400,6 @@ describe('ImportPanel', () => {
     wrapper.unmount()
   })
 
-  /** Natively disabling the focused button drops the keyboard user to <body>
-   *  (WCAG 2.4.3). */
   it('keeps the Import button focused while the upload is in flight', async () => {
     const wrapper = await openPanel()
     let settle: (value: ImportResponse) => void = () => {}
@@ -457,8 +426,6 @@ describe('ImportPanel', () => {
     wrapper.unmount()
   })
 
-  /** An upload creates no source_configs row, so re-reading the accordion after
-   *  one would imply a source that does not exist. */
   it('does not reload the sync source list after an import', async () => {
     const wrapper = await openPanel()
 
@@ -491,8 +458,6 @@ describe('ImportPanel', () => {
     wrapper.unmount()
   })
 
-  /** Some installs ship no templates directory. Losing the link is survivable;
-   *  losing the panel that imports the file is not. */
   it('still imports when the template listing is unavailable', async () => {
     mockGet.mockImplementation((path: string) => {
       if (path === '/importers') return Promise.resolve(IMPORTERS)

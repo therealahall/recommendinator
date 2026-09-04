@@ -49,9 +49,6 @@ class TestStaleEditableInstallRegression:
         )
 
     def test_this_repository_still_puts_pyproject_where_the_reader_looks(self) -> None:
-        # Without this, a packaging move leaves _read_source_version returning
-        # None in the real tree and __version__ falls back to the stale
-        # editable-install metadata the class above exists to prevent.
         assert src._read_source_version() is not None
 
     def test_returns_none_when_no_pyproject(self, tmp_path: Path) -> None:

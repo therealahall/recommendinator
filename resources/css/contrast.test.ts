@@ -10,15 +10,11 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { describe, it, expect } from 'vitest'
 
-// Measured from the real CSS in every installed theme, because a theme
-// overrides only tokens and a token move is what breaks a floor silently.
 
 const AA_NORMAL_TEXT = 4.5
 const BASE = 'resources/css/base.css'
 const THEME_ROOT = 'src/web/static/themes'
 
-/** Every installed theme folder, so one dropped in is measured without this
- *  file being edited, and one with no colors.css fails on the missing path. */
 function themesIn(root: string): [string, string][] {
   const resolved = resolve(process.cwd(), root)
   const themes = readdirSync(resolved, { withFileTypes: true })
@@ -41,8 +37,6 @@ const BADGE_TONES = ['.badge', ...TONED_BADGES]
 
 const TONE_CHROMA = 0.1
 
-/** The four surfaces a badge is placed on: a card, a dialog or duplicate row,
- *  the page itself, and the top strip that carries the version. */
 const BADGE_SURFACES = ['--bg-card', '--bg-elevated', '--bg-primary', '--chrome']
 
 interface Rgba {
@@ -67,13 +61,10 @@ function customProperties(source: string): [string, string][] {
   ])
 }
 
-/** The palette a theme paints with: the defaults, overridden by its own. */
 function tokens(themePath: string): Map<string, string> {
   return new Map([...customProperties(read(BASE)), ...customProperties(read(themePath))])
 }
 
-/** Finds the rule the selector opens, whether or not it shares it with others.
- *  Anchored so `.badge` never resolves to `.badge-group`. */
 function ruleBody(source: string, selector: string): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const pattern = new RegExp(`^${escaped}\\s*(?:,[^{}]*)?\\{([^}]*)\\}`, 'm')
@@ -93,7 +84,6 @@ function declaration(body: string, property: string): string {
   return value
 }
 
-/** Splits on the commas that are not inside a nested function call. */
 function commaSeparated(text: string): string[] {
   const parts: string[] = []
   let depth = 0
@@ -110,7 +100,6 @@ function commaSeparated(text: string): string[] {
   return parts.map((part) => part.trim())
 }
 
-/** color-mix interpolates premultiplied, so a transparent share tints nothing. */
 function mixSrgb(first: Rgba, share: number, second: Rgba): Rgba {
   const rest = 1 - share
   const a = first.a * share + second.a * rest
@@ -180,8 +169,6 @@ function contrast(text: Rgba, backdrop: Rgba): number {
 const DROP_ZONE = 'resources/js/components/atoms/FileDropZone.vue'
 const RESULT_SUMMARY = 'resources/js/components/molecules/ImportResultSummary.vue'
 
-/** The import panel's own surfaces, none of them the plain card: text, the rule
- *  that colours it, and the rule declaring what it sits on. */
 const IMPORT_SURFACES: [string, string, string, string][] = [
   ['a count', RESULT_SUMMARY, '.import-count dd', '.import-counts'],
   ['a count label', RESULT_SUMMARY, '.import-count dt', '.import-counts'],
@@ -212,8 +199,6 @@ describe.each(THEMES)('import panel surfaces in %s', (_theme, themePath) => {
     },
   )
 
-  // .drop-zone-over sets background on the same element as .drop-zone, at equal
-  // specificity, so --bg-active replaces --bg-elevated instead of sitting on it.
   it.each(DRAGGED_OVER)('%s stays readable with a file over the zone', (textSelector) => {
     const component = read(DROP_ZONE)
     const background = (selector: string): string =>
@@ -263,8 +248,6 @@ describe.each(THEMES)('every badge tone in %s', (_theme, themePath) => {
     ).toBeGreaterThanOrEqual(NON_TEXT)
   })
 
-  // Reported on Nord: --color-warning at 20% over the card composited to
-  // rgb(94, 93, 93), so the badge read as chrome rather than as its tone.
   it.each(TONED_BADGES)('%s carries its own hue rather than a grey', (selector) => {
     expect(chroma(edgeOf(selector))).toBeGreaterThanOrEqual(TONE_CHROMA)
   })
@@ -274,8 +257,6 @@ const LIBRARY_FILTERS = 'resources/js/components/organisms/LibraryFilters.vue'
 const CONFIRM_PANEL = 'resources/js/components/molecules/ConfirmPanel.vue'
 const MODAL_DIALOG = 'resources/js/components/atoms/ModalDialog.vue'
 
-/** Text and the rule painting what it sits on, which for two of the three is
- *  declared in another file. */
 const EDIT_SURFACES: [string, string, string, string, string][] = [
   ['the export scope', LIBRARY_FILTERS, '.export-scope', BASE, '.dropdown-menu'],
   ['an enrichment note', BASE, '.edit-modal-note', MODAL_DIALOG, '.dialog-surface'],
@@ -302,8 +283,6 @@ const DUP_PAIR = 'resources/js/components/molecules/DuplicatePair.vue'
 const DUP_HISTORY = 'resources/js/components/organisms/DuplicateHistory.vue'
 const DUP_QUEUE = 'resources/js/components/organisms/DuplicateQueue.vue'
 
-/** A pair card sits on the plain card and its two rows sit on the pair card,
- *  so the backdrops stack: measuring against the card alone measures wrong. */
 const DUPLICATE_SURFACES: [string, string, string, string[]][] = [
   ['a copy offered twice', DUP_PAIR, '.dup-side-elsewhere', ['.dup-side', '.dup-pair']],
   ['the looser-key caution', DUP_PAIR, '.dup-pair-caution', ['.dup-pair']],
@@ -366,8 +345,6 @@ const MUTED_SURFACES = [
   '--bg-sidebar',
   '--bg-elevated',
   '--bg-input',
-  // The rail, the tab bar and the top strip are one material, and it is derived
-  // rather than declared, so a palette moves it without naming it.
   '--chrome',
 ]
 const EDGE_SURFACES = [...MUTED_SURFACES, '--bg-hover']
@@ -375,10 +352,8 @@ const RING_SURFACES = [
   '--bg-card',
   '--bg-input',
   '--bg-primary',
-  // The CSV drop zone and the export menu, both of which a Tab reaches.
   '--bg-elevated',
   '--bg-sidebar',
-  // Every rail item and tab, which is where a Tab starts.
   '--chrome',
 ]
 
@@ -400,14 +375,10 @@ describe.each(THEMES)('the token layer in %s', (_theme, themePath) => {
   const ratio = (token: string, surface: string): number =>
     contrast(toRgba(`var(${token})`, vars), toRgba(`var(${surface})`, vars))
 
-  // Help text, empty states, hints and secondary labels all default to this at
-  // 12-13px, so a theme cannot tune it as a decorative grey.
   it.each(MUTED_SURFACES)('--text-muted stays readable on %s', (surface) => {
     expect(ratio('--text-muted', surface)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT)
   })
 
-  // In a light theme a field and the card behind it are both white, so this
-  // edge is the only thing saying where the field is (WCAG 1.4.11).
   it.each(EDGE_SURFACES)('--border-interactive divides a control from %s', (surface) => {
     expect(ratio('--border-interactive', surface)).toBeGreaterThanOrEqual(NON_TEXT)
   })
@@ -416,8 +387,6 @@ describe.each(THEMES)('the token layer in %s', (_theme, themePath) => {
     expect(ratio('--border-default', surface)).toBeGreaterThanOrEqual(NON_TEXT)
   })
 
-  // The app's one focus indicator, and the measurement THEME_DEVELOPMENT.md
-  // promises a theme author.
   it.each(RING_SURFACES)('--accent-light rings a focused control on %s', (surface) => {
     expect(ratio('--accent-light', surface)).toBeGreaterThanOrEqual(NON_TEXT)
   })
@@ -443,24 +412,18 @@ describe.each(THEMES)('the token layer in %s', (_theme, themePath) => {
   )
 })
 
-/** Controls that declare both their edge and the fill it encloses. Every text
- *  entry in the app is one rule now, so the field appears here once. */
 const CONTROL_EDGES: [string, string, string][] = [
   ['every text entry', BASE, '.field'],
   ['a settings toggle', BASE, '.toggle-switch'],
   ['the file picker button', DROP_ZONE, '.drop-zone-input::file-selector-button'],
 ]
 
-/** Secret fields that go `readonly` mid-write: the rule painting one open, then
- *  the rule painting it locked. */
 const LOCKED_FIELDS: [string, string, string, string][] = [
   ['a secret being typed', BASE, '.field', '.field[readonly]'],
 ]
 
 const BORDER_STYLES = new Set(['solid', 'dashed', 'dotted', 'double'])
 
-/** The colour out of a `<width> <style> <colour>` shorthand, or a value that is
- *  already only a colour. */
 function colourIn(value: string): string {
   const parts = value.split(/\s+/)
   const style = parts.findIndex((part) => BORDER_STYLES.has(part))
@@ -471,8 +434,6 @@ function borderColour(body: string): string {
   return colourIn(declaration(body, 'border'))
 }
 
-/** The colours a gradient paints, dropping its angle and each stop position.
- *  A stop's position can itself be a var(), so the colour is the first token. */
 function gradientColours(value: string): string[] {
   const gradient = value.match(/^linear-gradient\((.*)\)$/)
   if (!gradient) return [value]
@@ -503,8 +464,6 @@ describe.each(THEMES)('editable control edges in %s', (_theme, themePath) => {
     ).toBeGreaterThanOrEqual(NON_TEXT)
   })
 
-  // `readonly` is not exempt from 1.4.3 the way `disabled` is. Folding opacity
-  // is what CONTROL_EDGES never did, which is how an unreadable fade shipped.
   it.each(LOCKED_FIELDS)(
     '%s keeps the value being typed readable',
     (_label, path, editable, locked) => {
@@ -527,8 +486,6 @@ describe.each(THEMES)('editable control edges in %s', (_theme, themePath) => {
     expect(edgeAgainst(colour, 'var(--bg-card)')).toBeGreaterThanOrEqual(NON_TEXT)
   })
 
-  // The stepper takes its edge from .field and paints its own interior, so the
-  // pair that has to divide is declared in two files.
   it('the number stepper frames the value rather than blending into it', () => {
     const edge = borderColour(ruleBody(read(BASE), '.field'))
     const fill = declaration(ruleBody(read(NUMBER_STEPPER), '.stepper-input'), 'background')
@@ -537,7 +494,6 @@ describe.each(THEMES)('editable control edges in %s', (_theme, themePath) => {
   })
 })
 
-/** Text that paints its own tint, or none at all, over the surface it lands on. */
 const TINTED_TEXT: [string, string, string, string][] = [
   ['a page that failed to load', BASE, '.status-bar.error', '--bg-primary'],
   ['a page loading', BASE, '.status-bar.loading', '--bg-primary'],
@@ -574,8 +530,6 @@ const SCORE_BUTTON_TEXT = ['.rec-score-caption', '.rec-score-cue']
 describe.each(THEMES)('text over the surface it lands on in %s', (_theme, themePath) => {
   const vars = tokens(themePath)
 
-  // opacity is folded into the measurement rather than forbidden, because a
-  // faded token reads as its blend and a rule is free to earn the ratio anyway.
   it.each(TINTED_TEXT)('%s says so readably', (_label, path, selector, surface) => {
     const body = ruleBody(read(path), selector)
     const beneath = toRgba(`var(${surface})`, vars)
@@ -587,8 +541,6 @@ describe.each(THEMES)('text over the surface it lands on in %s', (_theme, themeP
     expect(contrast({ ...text, a: text.a * fade }, behind)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT)
   })
 
-  // The score control paints itself while hovered and while expanded, so its
-  // own labels are read on that fill and not on the card behind it.
   it.each(SCORE_BUTTON_TEXT)('%s stays readable on the fill the score takes', (selector) => {
     const base = read(BASE)
     const fill = declaration(ruleBody(base, '.rec-score:hover'), 'background')
@@ -600,8 +552,6 @@ describe.each(THEMES)('text over the surface it lands on in %s', (_theme, themeP
   })
 })
 
-/** Backgrounds that named an undefined token, so they painted nothing and the
- *  text inside them was measured against a surface it never met. */
 const RESTORED_SURFACES: [string, string, string, string, string][] = [
   ['an accordion header', ACCORDION, '.accordion-trigger', ACCORDION, '.accordion'],
   ['the All Sources hint', BASE, '.sync-plugin-name', DATA_PAGE, '.sync-all-card'],
@@ -623,7 +573,6 @@ describe.each(THEMES)('surfaces restored to a defined token in %s', (_theme, the
   )
 })
 
-/** A label, and the rule painting the fill it sits on. */
 const BUTTON_LABELS: [string, string, string, string][] = [
   ['Delete', BASE, '.btn-danger', '.btn-danger'],
   ['a primary action', BASE, '.btn-primary', '.btn-primary'],
@@ -653,7 +602,6 @@ describe.each(THEMES)('button labels on the fills they carry in %s', (_theme, th
   })
 })
 
-/** The track a bar fills and the rule painting the fill, which for the range is one rule. */
 const BARS: [string, string, string, string][] = [
   ['a scorer contribution', BASE, '.score-bar-bg', '.score-bar-fill'],
   ['a variety penalty', BASE, '.score-bar-bg', '.score-bar-fill-penalty'],
@@ -665,7 +613,6 @@ describe.each(THEMES)('how far a bar has filled in %s', (_theme, themePath) => {
   const vars = tokens(themePath)
   const card = toRgba('var(--bg-card)', vars)
 
-  // No token clears 3:1 against --accent; a track is rule-local (1.4.11).
   const boundedBy = (fills: string[], track: Rgba, edge: string | null): void => {
     expect(fills, 'flat bar measures nothing').not.toEqual([])
     for (const fill of fills) {
@@ -691,8 +638,6 @@ describe.each(THEMES)('how far a bar has filled in %s', (_theme, themePath) => {
   })
 })
 
-/** An edge that identifies a control, the property declaring it, and the fill
- *  or surface it has to divide itself from (WCAG 1.4.11). */
 const CONTROL_BOUNDARIES: [string, string, string, string, string][] = [
   ['a refused field', BASE, ".field[aria-invalid='true']", 'border-color', 'var(--bg-input)'],
   ['a season checkbox', SEASON_CHECKLIST, '.season-checkbox', 'border', 'var(--bg-elevated)'],
@@ -750,8 +695,6 @@ describe.each(THEMES)('edges that say where a control is in %s', (_theme, themeP
     expect(contrast(segment, ring)).toBeGreaterThanOrEqual(NON_TEXT)
   })
 
-  // The thinner of the two tints a secondary button lands on, so the nearer of
-  // the two to the page the button is cut out of.
   it('a secondary button keeps an edge on the bar reporting a failure', () => {
     const base = read(BASE)
     const tint = declaration(ruleBody(base, '.status-bar.error'), 'background')

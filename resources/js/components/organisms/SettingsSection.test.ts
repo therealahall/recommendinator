@@ -41,8 +41,6 @@ vi.mock('@/composables/useApi', () => ({
 function textSetting(key: string, value: string, extra: Partial<SettingView> = {}): SettingView {
   return {
     key,
-    // A real registry section, so the heading these fixtures produce is one the
-    // settings page actually renders.
     section: 'enrichment',
     label: key,
     help: '',
@@ -64,9 +62,6 @@ function numberSetting(key: string, value: number): SettingView {
   return { ...textSetting(key, ''), type: 'int', widget: 'number', value } as SettingView
 }
 
-// SettingsSection resolves focus targets with document.getElementById, which returns
-// the FIRST match in tree order — so a leaked node from an earlier test would satisfy
-// a focus assertion in a later one, and the assertion could not tell the difference.
 enableAutoUnmount(afterEach)
 
 function mountSection(section: SettingsSectionType) {
@@ -101,9 +96,6 @@ describe('SettingsSection', () => {
   })
 
   it('announces each landed save through the region already mounted for it', async () => {
-    // The "Saved ✓" pill enters the DOM already populated, which reads as page
-    // content, and a second save writes the sentence the first left in place:
-    // silence either way unless the region mounts empty and is blanked between.
     mockPut.mockResolvedValue({ sections: [] })
     const wrapper = mountSection({
       section: 'enrichment',
@@ -157,16 +149,12 @@ describe('SettingsSection', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-testid="setting-error-enrichment.providers.tmdb.language"]').text()).toBe('invalid language tag')
-    // Identity, not id: an id comparison is satisfied by any element carrying
-    // that id, including one leaked into document.body by an earlier test.
     expect(document.activeElement).toBe(
       wrapper.find('[data-testid="setting-enrichment.providers.tmdb.language"]').element,
     )
   })
 
   it('does not PUT or claim a save when nothing was edited', async () => {
-    // Regression: Save always issued PUT /settings with {updates: {}} and then
-    // showed "Saved ✓", telling the user a write happened that did not.
     const wrapper = mountSection({
       section: 'enrichment',
       settings: [textSetting('enrichment.providers.tmdb.language', 'en-US')],
@@ -200,8 +188,6 @@ describe('SettingsSection', () => {
   })
 
   it('catches the focus the Reset button takes with it when the override is gone', async () => {
-    // The refusal path keeps focus by leaving the button standing, so nothing
-    // else covers the path where the button unmounts (WCAG 2.4.3).
     const overridden = reactive(
       textSetting('enrichment.providers.tmdb.language', 'en-US', {
         db_overridden: true,
@@ -262,9 +248,6 @@ describe('SettingsSection', () => {
   })
 
   describe('advanced caution copy', () => {
-    // Regression: a single shared caution string was rendered in every section's
-    // Advanced panel, so the Logging panel warned about CORS allowed origins and
-    // bind hosts — neither of which it contains. The copy is now per section.
     function mountAdvanced(section: string, key: string) {
       return mountSection({
         section,
@@ -285,8 +268,6 @@ describe('SettingsSection', () => {
   })
 
   describe('when a reset or secret action fails', () => {
-    // Regression: onReset/onSetSecret/onClearSecret used try/finally with no
-    // catch, and neither the store nor useApi swallows a non-2xx.
     const OVERRIDDEN: SettingsSectionType = {
       section: 'enrichment',
       settings: [
@@ -329,8 +310,6 @@ describe('SettingsSection', () => {
       await flushPromises()
 
       expect(wrapper.find('p.sr-only').text()).toContain('Reset failed.')
-      // A refusal leaves the button standing, so the user is neither dumped at
-      // <body> nor moved off the control they pressed — and can press it again.
       expect(document.activeElement).toBe(pressed)
       expect(reset.attributes('disabled')).toBeUndefined()
     })

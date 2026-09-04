@@ -48,8 +48,6 @@ describe('useSubmission', () => {
   })
 
   it('ignores a second submission while one is in flight', async () => {
-    // The form guards on a prop, which lags a render behind: a fast second Enter
-    // would otherwise post the same credentials twice.
     const submission = useSubmission()
     const action = vi.fn(() => new Promise<string>((resolve) => setTimeout(() => resolve(''), 0)))
 

@@ -14,8 +14,6 @@ const mockGet = vi.fn()
 const mockPost = vi.fn()
 const mockDelete = vi.fn()
 
-// Only the transport is faked. ApiError is the real class so the store meets
-// the message the app actually gets, including the server's ``detail``.
 vi.mock('@/composables/useApi', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/composables/useApi')>()),
   useApi: () => ({
@@ -73,8 +71,6 @@ describe('useDuplicatesStore', () => {
   })
 
   it('offers every page size the API will serve, up to its ceiling', () => {
-    // The CLI's --limit takes the ceiling, so a preset list short of it leaves
-    // a web operator paging through work a terminal does in one pass.
     const source = readFileSync(`${process.cwd()}/src/storage/duplicates.py`, 'utf8')
     const ceiling = source.match(/^SUGGESTION_PAGE_MAX = (\d+)$/m)![1]
     const fallback = source.match(/^SUGGESTION_PAGE_DEFAULT = (\d+)$/m)![1]
@@ -98,9 +94,6 @@ describe('useDuplicatesStore', () => {
   })
 
   it('leaves a merge into an untouched survivor undoable however old it is', () => {
-    // Storage sequences the undo per survivor, not across the whole log, so a
-    // rule keyed on the newest merge overall disables the undo on every pair
-    // but one of a session's work while the server would take any of them.
     const store = useDuplicatesStore()
     store.merges = [merge(1, 10, 11), merge(2, 20, 21), merge(3, 20, 22)]
 
@@ -112,7 +105,6 @@ describe('useDuplicatesStore', () => {
   })
 
   it('surfaces the server’s own refusal rather than a generic failure', async () => {
-    // It names the row or merge to deal with first; a generic line does not.
     const store = useDuplicatesStore()
     mockPost.mockRejectedValue(
       new ApiError(409, 'Conflict', { detail: 'A book cannot absorb a video_game.' }),
@@ -125,7 +117,6 @@ describe('useDuplicatesStore', () => {
   })
 
   it('ignores a second decision on a block already in flight', async () => {
-    // Two clicks would merge, then try to merge the row the first one hid.
     const store = useDuplicatesStore()
     let settle = (): void => {}
     mockPost.mockReturnValue(new Promise((resolve) => (settle = () => resolve(merge(1, 10, 11)))))
@@ -140,8 +131,6 @@ describe('useDuplicatesStore', () => {
   })
 
   it('folds every copy of a block into the survivor without re-reading the offer', async () => {
-    // Each merge invalidates nothing else in the block, so a reload between
-    // them only costs the operator a page they already decided.
     const store = useDuplicatesStore()
     mockPost.mockResolvedValue(merge(1, 10, 11))
     mockGet.mockResolvedValue(pageOf())
@@ -178,8 +167,6 @@ describe('useDuplicatesStore', () => {
   })
 
   it('omits the type parameter entirely when no type is chosen', async () => {
-    // Sending type='' would ask the API for a content type named the empty
-    // string, which it refuses with a 400.
     const store = useDuplicatesStore()
     mockGet.mockResolvedValue(pageOf())
 
@@ -189,7 +176,6 @@ describe('useDuplicatesStore', () => {
   })
 
   it('refuses a copy against every other copy of its block in one call', async () => {
-    // Split into a call per pair, a failure part way leaves half a refusal.
     const store = useDuplicatesStore()
     mockPost.mockResolvedValue([
       { one_id: 10, one_title: 'Row 10', other_id: 12, other_title: 'Row 12' },

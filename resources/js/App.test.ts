@@ -22,8 +22,6 @@ const AARON: UserResponse = {
   password_updated_at: '2026-01-15T09:30:00+00:00',
 }
 
-/** Neutralise the calls App fires once the session resolves, so they can be
- *  counted rather than performed. */
 function spyOnLoad() {
   const app = useAppStore()
   const theme = useThemeStore()
@@ -115,9 +113,6 @@ describe('App', () => {
     },
   ]
 
-  // Regression: boot painted the cache, or the config default when there was
-  // none, so a pick made elsewhere arrived only on the Preferences page,
-  // flipping the theme as it mounted.
   it.each(BOOTS)('boots on $browser', async ({ cached, stored, painted }) => {
     vi.spyOn(useAppStore(), 'fetchStatus').mockResolvedValue(undefined)
     if (cached) localStorage.setItem('theme', cached)
@@ -131,9 +126,6 @@ describe('App', () => {
   })
 
   it('says it is working, and fetches nothing else, until the session resolves', async () => {
-    // Regression: none of the three screens rendered while the call was open,
-    // which on a slow connection is an empty document — no landmark, no
-    // heading, nothing telling a screen reader the page is not broken.
     const load = spyOnLoad()
     deferredFetch()
 
@@ -175,8 +167,6 @@ describe('App', () => {
   })
 
   it('states the floor the session reported on the setup form it puts up', async () => {
-    // Regression: the setup screen stated a floor compiled into the bundle, so
-    // a server enforcing another one refused the password it had just invited.
     spyOnLoad()
     const server = PASSWORD_MIN_LENGTH + 4
     answerSession(false, false, null, server)
@@ -188,9 +178,6 @@ describe('App', () => {
   })
 
   it('puts the sign-in screen back when the session is revoked mid-session', async () => {
-    // Regression: a credential revoked while the app was open surfaced as a 401
-    // each store swallowed, leaving a half-empty shell and no way to sign in
-    // again.
     spyOnLoad()
     answerSession(true, true, AARON)
     const wrapper = mount(App, { shallow: true })
@@ -202,14 +189,11 @@ describe('App', () => {
 
     expect(wrapper.findComponent(LoginForm).exists()).toBe(true)
     expect(wrapper.find('#main-content').exists()).toBe(false)
-    // A shell that empties with no word reads as a crash.
     expect(wrapper.findComponent(LoginForm).props('notice')).toBe(SESSION_ENDED)
     expect(wrapper.findComponent(LoginForm).props('error')).toBe('')
   })
 
   it('reports an unreachable server without blaming the empty sign-in form', async () => {
-    // Same class as the sign-out notice: nothing has been typed here, so
-    // "invalid entry" on both fields is a lie a screen reader reads out.
     spyOnLoad()
     vi.mocked(fetch).mockRejectedValue(new TypeError('Failed to fetch'))
     const wrapper = mount(App)
@@ -221,8 +205,6 @@ describe('App', () => {
   })
 
   it('moves to the sign-in form when another tab claimed the instance first', async () => {
-    // Regression: the 409 left the setup form up, so "sign in instead" was
-    // advice with nowhere to follow it to.
     spyOnLoad()
     answerSession(false, false)
     const wrapper = mount(App)
@@ -250,15 +232,12 @@ describe('App', () => {
     expect(wrapper.findComponent(SetupForm).exists()).toBe(false)
     const login = wrapper.findComponent(LoginForm)
     expect(login.exists()).toBe(true)
-    // Advice about the screen, not a refusal of anything typed into it.
     expect(login.props('notice')).toContain('Sign in instead')
     expect(login.props('error')).toBe('')
     expect(wrapper.find('#login-username').attributes('aria-invalid')).toBeUndefined()
   })
 
   it('puts it back when a request comes back 401, without reloading the page', async () => {
-    // The whole point of the store handling the refusal: a reload would be the
-    // only other way back, and it would lose whatever the user was doing.
     spyOnLoad()
     answerSession(true, true, AARON)
     const wrapper = mount(App, { shallow: true })
@@ -270,12 +249,9 @@ describe('App', () => {
 
     expect(wrapper.findComponent(LoginForm).exists()).toBe(true)
     expect(wrapper.findComponent(LoginForm).props('notice')).toBe(SESSION_ENDED)
-    // Booting again is what a reload looks like from here.
     expect(sessionCalls()).toBe(1)
   })
 
-  // Every routed page opens on an h2 inside .page-header, so this stands in for
-  // whichever one the router lands on.
   const PAGE = { template: '<div class="page-header"><h2>Library</h2></div>' }
 
   function outline(wrapper: ReturnType<typeof mount>): number[] {
@@ -285,8 +261,6 @@ describe('App', () => {
       .map((heading) => Number(heading.element.tagName.slice(1)))
   }
 
-  // Regression: the only h1 sat in a drawer that went inert off screen, so a
-  // phone had none and the page opened on an h2 skipped from nothing (1.3.1).
   it('carries one h1, and no level skipped under it', async () => {
     spyOnLoad()
     answerSession(true, true, AARON)
@@ -303,8 +277,6 @@ describe('App', () => {
     }, 0)
   })
 
-  // The sign-in, setup and session screens render outside RouterView, so the
-  // title named a page nobody could see (WCAG 2.4.2).
   it.each([
     { screen: 'the sign-in form', authenticated: false },
     { screen: 'the shell', authenticated: true },
@@ -326,8 +298,6 @@ describe('App', () => {
     { screen: 'a screen no ranking is on', route: 'library', offered: false },
   ]
 
-  // WeightsPanel's own tests mount it directly, so nothing else says the shell
-  // ever puts it on screen, or keeps it off the screens it cannot change.
   it.each(SUMMONS)('summons the scoring weights from $screen', async ({ route, offered }) => {
     await router.push({ name: route })
     const wrapper = await shell()
@@ -336,8 +306,6 @@ describe('App', () => {
   })
 
   it('opens the shell on a bypass that lands the keyboard on the page', async () => {
-    // Regression: a hard reload or a Shift+Tab left the five nav destinations
-    // between the keyboard and the first control on the page (WCAG 2.4.1).
     spyOnLoad()
     answerSession(true, true, AARON)
     const wrapper = mount(App, { shallow: true, attachTo: document.body })
@@ -358,8 +326,6 @@ describe('App', () => {
   })
 
   it('stops polling the server it can no longer ask when the session ends', async () => {
-    // Every /api call 401s from the sign-in screen, and each one signs the
-    // session out again, so a poll left running never settles.
     await shell()
     const stopped = vi.spyOn(useAppStore(), 'stopPolling')
 
@@ -370,8 +336,6 @@ describe('App', () => {
   })
 
   it('clears the password on a second refusal worded exactly like the first', async () => {
-    // The two refusals are the same string, so a form watching the message for
-    // a change sees none and leaves the wrong password in the field.
     spyOnLoad()
     answerSession(true, false)
     const wrapper = mount(App)

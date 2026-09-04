@@ -1,7 +1,4 @@
 // @vitest-environment node
-//
-// Build-time config, no DOM involved — and loading vite.config.ts pulls in
-// esbuild, which refuses to run against jsdom's TextEncoder.
 import { readFileSync } from 'fs'
 import type { ProxyOptions, ServerOptions, UserConfig } from 'vite'
 import { describe, it, expect, vi, afterEach } from 'vitest'
@@ -31,9 +28,6 @@ afterEach(() => {
 })
 
 describe('dev server defaults', () => {
-  // The committed defaults are the contract with every contributor: none of
-  // them has the reverse proxy these env vars exist for, so an unset
-  // environment must reproduce the hardcoded config this replaced exactly.
   it('serves on 5173 and proxies to FastAPI on 18473', () => {
     const options = devServerOptions({})
 
@@ -44,23 +38,16 @@ describe('dev server defaults', () => {
   })
 
   it('binds IPv4 loopback, which is the address Caddy proxies to', () => {
-    // Vite's default `localhost` picks ::1 here, and the proxy 502s.
     expect(devServerOptions({}).host).toBe('127.0.0.1')
   })
 
   it('leaves HMR entirely up to Vite', () => {
-    // Vite reads every hmr field with `?.` + `||`, so undefined fields behave
-    // exactly like no `hmr` key at all — the client keeps deriving its port
-    // and protocol from the server it was served by.
     const options = devServerOptions({})
 
     expect(options.hmr).toEqual({ clientPort: undefined, protocol: undefined })
   })
 
   it('treats an empty value as unset', () => {
-    // A `.env` file written as `DEV_SERVER_PORT=` yields an empty string rather
-    // than an absent key. Falling through to the default is the only sane
-    // reading; `Number('') === 0` would otherwise hand Vite port 0.
     const options = devServerOptions({
       DEV_SERVER_PORT: '',
       DEV_SERVER_API_TARGET: '',
@@ -80,8 +67,6 @@ describe('dev server overrides', () => {
   })
 
   it('retargets every proxied prefix at once', () => {
-    // Every prefix hits the same backend, so one variable has to move them all.
-    // Splitting them would let /api and the theme roots drift apart.
     const options = devServerOptions({ DEV_SERVER_API_TARGET: 'http://127.0.0.1:9000' })
 
     expect(proxyFor(options, '/api').target).toBe('http://127.0.0.1:9000')
@@ -89,9 +74,6 @@ describe('dev server overrides', () => {
   })
 
   it('points the HMR client at the public port over TLS', () => {
-    // The shape of every reverse-proxy setup: Vite listens on one port, the
-    // browser only ever sees the proxy's, and the websocket has to follow the
-    // page's scheme or the browser blocks it as mixed content.
     const options = devServerOptions({
       DEV_SERVER_PORT: '3000',
       DEV_SERVER_HMR_CLIENT_PORT: '443',
@@ -103,10 +85,6 @@ describe('dev server overrides', () => {
   })
 
   it('never pins the HMR host', () => {
-    // Load-bearing omission, not an oversight. A dev server behind a proxy is
-    // typically reachable under several hostnames, and any single `hmr.host`
-    // would send every other one's websocket to an address that browser cannot
-    // reach.
     const options = devServerOptions({
       DEV_SERVER_HMR_CLIENT_PORT: '443',
       DEV_SERVER_HMR_PROTOCOL: 'wss',
@@ -118,8 +96,6 @@ describe('dev server overrides', () => {
   it.each(['DEV_SERVER_PORT', 'DEV_SERVER_HMR_CLIENT_PORT'])(
     'rejects a %s that is not a port',
     (name) => {
-      // A typo'd port would otherwise be silently swallowed and the dev server
-      // would come up on the default, which looks like the proxy is broken.
       expect(() => devServerOptions({ [name]: '3000;' })).toThrow(name)
       expect(() => devServerOptions({ [name]: '99999' })).toThrow(name)
     },
@@ -127,9 +103,6 @@ describe('dev server overrides', () => {
 })
 
 describe('the watcher', () => {
-  // Reported: `pnpm dev` died with a bare ENOSPC naming a .mypy_cache file
-  // inside .claude/worktrees. Agent worktrees are whole checkouts, and enough
-  // of them exhaust the inotify limit before Vite serves anything.
   it('does not watch the agent worktrees', () => {
     const ignored = devServerOptions({}).watch?.ignored as string[]
 
@@ -152,9 +125,6 @@ describe('the watcher', () => {
 })
 
 describe('vite.config.ts wiring', () => {
-  // These assert only what no environment can change, because the config
-  // function really does read the developer's .env — asserting a default value
-  // here would fail on any machine that has one.
   it('hands the dev server the proxied prefixes', async () => {
     const config = await resolveViteConfig()
 
@@ -174,9 +144,6 @@ describe('vite.config.ts wiring', () => {
   })
 
   it('reads variables that are not VITE_ prefixed', async () => {
-    // Vite's loadEnv filters by prefix and defaults to `VITE_`. With that
-    // default these variables would be dropped on the floor and the config
-    // would silently keep its defaults. Hence the empty prefix.
     vi.stubEnv('DEV_SERVER_API_TARGET', 'http://127.0.0.1:9000')
 
     const config = await resolveViteConfig()

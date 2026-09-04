@@ -78,7 +78,6 @@ class TestMinRatingZeroRegression:
         items = database.get_content_items(min_rating=0)
         titles = [item.title for item in items]
         assert "Rated Book" in titles
-        # Unrated items have NULL rating, which fails the >= 0 check in SQL
         assert "Unrated Book" not in titles
 
     def test_min_rating_none_returns_all_regression(self, tmp_path: Path) -> None:

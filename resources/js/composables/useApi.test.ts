@@ -28,8 +28,6 @@ describe('useApi ApiError', () => {
   })
 
   it('takes the message from a string detail, which is written for the user', async () => {
-    // Regression: the stream cap's "try again in a moment" reached no screen,
-    // because every message came from the status line instead of the body.
     vi.mocked(fetch).mockResolvedValue(
       jsonResponse(503, { detail: 'Too many streams in progress. Try again in a moment.' }),
     )
@@ -43,8 +41,6 @@ describe('useApi ApiError', () => {
     ['empty', ''],
     ['whitespace', '   '],
   ])('keeps the status line as the message when the detail is %s', async (_label, detail) => {
-    // A blank detail is still a string, so it beat the status line and the
-    // page rendered "Failed to load recommendations: " and nothing after it.
     vi.mocked(fetch).mockResolvedValue({
       ok: false,
       status: 503,
@@ -76,9 +72,6 @@ describe('useApi query parameters', () => {
   }
 
   it('carries params on the URL of a POST that already has a body', async () => {
-    // The OAuth writes key on ``source_id`` here and nowhere else: a store test
-    // asserting the mock's arguments passes just as well with the query string
-    // dropped, and every token then lands on the wrong source.
     vi.mocked(fetch).mockResolvedValue(jsonResponse(200, { message: 'ok' }))
 
     await useApi().post('/gog/exchange', { code_or_url: 'abc' }, { source_id: 'gog_work' })
@@ -110,8 +103,6 @@ describe('useApi upload', () => {
   })
 
   it('leaves the Content-Type of a multipart body to the browser', async () => {
-    // Naming it here drops the boundary only the browser knows, and the server
-    // then finds no part at all in a body that looks well formed.
     vi.mocked(fetch).mockResolvedValue(jsonResponse(200, { added: 1 }))
     const form = new FormData()
     form.append('importer', 'goodreads_csv')
@@ -125,7 +116,6 @@ describe('useApi upload', () => {
   })
 })
 
-/** Put the store where a live session leaves it, without a boot round trip. */
 function signedIn() {
   const auth = useAuthStore()
   auth.$patch({
@@ -157,8 +147,6 @@ describe('useApi authentication', () => {
   })
 
   it('leaves it alone where the route answers 401 for the request itself', async () => {
-    // Changing a password is refused with a 401 when the current one is wrong,
-    // and signing the user out there would cost one typo the whole screen.
     const auth = signedIn()
     vi.mocked(fetch).mockResolvedValue(
       jsonResponse(401, { detail: 'That is not your current password.' }),

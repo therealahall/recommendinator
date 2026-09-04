@@ -295,7 +295,7 @@ class TestRadarrCollections:
                 "movies": [
                     {"tmdbId": 105},
                     {"tmdbId": 165},
-                    {"tmdbId": 166},  # Part III - not in our library
+                    {"tmdbId": 166},
                 ],
             }
         ]

@@ -60,7 +60,6 @@ function view(overrides: Record<string, unknown> = {}) {
   }
 }
 
-/** A section with two keys, so a save touching one can be checked against the other. */
 function twoSettingView() {
   const base = view()
   const first = base.sections[0].settings[0]
@@ -148,9 +147,6 @@ describe('useSettingsStore', () => {
   })
 
   it('saveSection clears stale field errors for keys absent from this save', async () => {
-    // Regression: the clear was scoped to Object.keys(updates), so a field that
-    // errored and was then reverted by the user dropped out of `updates` and
-    // kept its error forever.
     mockGet.mockResolvedValue(twoSettingView())
     const store = useSettingsStore()
     await store.load()
@@ -163,7 +159,6 @@ describe('useSettingsStore', () => {
     await store.saveSection('recommendations', { 'recommendations.default_count': -1 })
     expect(store.fieldErrors['recommendations.default_count']).toBe('must be >= 1')
 
-    // The user reverts default_count and saves an unrelated key instead.
     mockPut.mockResolvedValueOnce(twoSettingView())
     await store.saveSection('recommendations', { 'recommendations.max_count': 50 })
 

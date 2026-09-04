@@ -29,7 +29,6 @@ describe('RecControls', () => {
     expect(recs.contentType).toBe('movie')
   })
 
-  // Without it a list narrowed to one type could never be widened again.
   it('offers the every-type scope alongside the four', async () => {
     const recs = useRecommendationsStore()
     recs.contentType = 'movie'

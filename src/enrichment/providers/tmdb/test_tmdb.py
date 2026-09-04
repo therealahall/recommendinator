@@ -109,7 +109,6 @@ class TestTMDBProviderMovieEnrichment:
         assert result.extra_metadata.get("runtime") == 136
         assert result.extra_metadata.get("release_year") == 1999
         assert result.cover_url == "https://image.tmdb.org/t/p/w500/abc123.jpg"
-        # Backward compat: a response without a 'credits' key degrades cleanly.
         assert "director" not in result.extra_metadata
 
     def test_enrich_movie_with_search(

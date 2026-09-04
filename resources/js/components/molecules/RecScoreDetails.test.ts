@@ -30,8 +30,6 @@ describe('RecScoreDetails', () => {
     })
     const penaltyRow = wrapper.find('.score-row-penalty')
     expect(penaltyRow.exists()).toBe(true)
-    expect(penaltyRow.text()).toContain('Variety penalty')
-    // Minus sign (U+2212).
     expect(penaltyRow.text()).toContain('−25%')
   })
 

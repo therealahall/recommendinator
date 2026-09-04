@@ -1,11 +1,6 @@
 import { readFileSync, readdirSync } from 'node:fs'
 import { describe, it, expect } from 'vitest'
 
-// base.css is a static asset: importing it through Vite yields an empty stub
-// under Vitest, so read the file off disk to assert on its real contents.
-
-// Isolate the `.sr-only { ... }` declaration block so the assertion cannot be
-// satisfied by an unrelated rule that happens to mention user-select.
 function srOnlyBlock(source: string): string {
   const match = source.match(/\.sr-only\s*\{([^}]*)\}/)
   if (!match) throw new Error('.sr-only rule not found in base.css')
@@ -16,8 +11,6 @@ function readBase(): string {
   return readFileSync(`${process.cwd()}/resources/css/base.css`, 'utf8')
 }
 
-// Requiring `{` immediately after the selector keeps a lookup off a longer
-// selector that starts with the same text, or a descendant rule under it.
 function ruleBlock(source: string, selector: string): string {
   const escaped = selector.replace(/\./g, '\\.')
   const match = source.match(new RegExp(`(?:^|[\\s}])${escaped}\\s*\\{([^}]*)\\}`))
@@ -26,7 +19,6 @@ function ruleBlock(source: string, selector: string): string {
 }
 
 function declaration(block: string, property: string): string {
-  // Strip comments first: prose in this file names the properties it explains.
   const match = block
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .match(new RegExp(`(?<![-\\w])${property}:\\s*([^;]+);`))
@@ -42,8 +34,6 @@ function mediaBlock(source: string, maxWidth: string): string {
 
 describe('the type scale', () => {
   it('sizes every rule off it, so a text-only zoom moves all the text', () => {
-    // An absolute font-size ignores the text size the browser was set to
-    // (WCAG 1.4.4), and the scale itself is declared in rem.
     const scanned = styledFiles('resources')
     const fixed = scanned.flatMap((path) =>
       [
@@ -76,15 +66,11 @@ describe('ratios written into the stylesheets', () => {
 
 describe('the scorer tooltip', () => {
   it('opens inside a 320px viewport rather than off the side of it', () => {
-    // 260px centred on its trigger hung half the box past the left edge of the
-    // page, and nothing about it could shrink (WCAG 1.4.10).
     expect(declaration(ruleBlock(readBase(), '.scorer-tooltip-text'), 'transform')).toBe('none')
     expect(declaration(ruleBlock(readBase(), '.scorer-tooltip-text'), 'max-width')).toContain('100vw')
   })
 
   it('opens down and back inside the weights panel, which scrolls its rows', () => {
-    // Above the trigger or right of it, the box lands in overflow that scroll
-    // box cannot reach, and the row at the top of it loses its help entirely.
     const source = readFileSync(
       `${process.cwd()}/resources/js/components/organisms/WeightsDialog.vue`,
       'utf8',
@@ -100,8 +86,6 @@ describe('the scorer tooltip', () => {
 })
 
 describe('inactive button styling', () => {
-  // Regression: the project had NO `.btn:disabled` rule at all. The fade is
-  // the pre-interaction lock's alone; contrast.test.ts measures why.
   it('re-cursors both inactive spellings and dims the exempt one', () => {
     const source = readBase()
     const locked = source.match(/\.btn:disabled,\s*\.toggle-switch:disabled\s*\{([^}]*)\}/)
@@ -114,8 +98,6 @@ describe('inactive button styling', () => {
   })
 
   it('never brightens an inactive button on hover', () => {
-    // aria-disabled buttons stay in the hover-able tree, so an ungated
-    // `.btn-*:hover` lights them up while `cursor: not-allowed` says otherwise.
     const source = readBase()
     const hoverRules = source.match(/^\.btn-[a-z]+:hover[^{]*/gm) ?? []
 
@@ -129,9 +111,6 @@ describe('inactive button styling', () => {
 })
 
 describe('the one text-entry field', () => {
-  // Both are (0,2,0), so order alone decides. Declared the other way round the
-  // focus ring repainted the edge and the refusal vanished under the cursor —
-  // which is what the `!important` this replaced existed to fight.
   it('keeps a refused edge while the field is focused', () => {
     const source = readBase()
 
@@ -140,8 +119,6 @@ describe('the one text-entry field', () => {
     )
   })
 
-  // aria-invalid is what the rule keys off, so the assistive-tech signal and
-  // the visible one cannot drift apart.
   it('draws its refusal off the same attribute assistive tech reads', () => {
     const match = readBase().match(/\.field\[aria-invalid='true'\]\s*\{([^}]*)\}/)
     if (!match) throw new Error('no refused-field rule in base.css')
@@ -151,9 +128,6 @@ describe('the one text-entry field', () => {
 })
 
 describe('a status region with nothing to say', () => {
-  // It stays in the accessibility tree so a later message is announced rather
-  // than read as inserted content (WCAG 4.1.3) — which means it must not paint
-  // an empty tinted block on every screen that mounts one.
   it('takes no space while it is silent', () => {
     const empty = ruleBlock(readBase(), '.state--error:empty')
 
@@ -165,7 +139,6 @@ describe('a status region with nothing to say', () => {
 
 describe('error text token', () => {
   it('derives error text from the active palette, not the fill colour', () => {
-    // --color-error is sized for fills and falls short of 4.5:1 as text.
     const source = readBase()
     const match = source.match(/--color-error-text:([^;]*);/)
     if (!match) throw new Error('--color-error-text declaration not found in base.css')
@@ -176,8 +149,6 @@ describe('error text token', () => {
 })
 
 describe('the reset Tailwind used to supply', () => {
-  // These read as dead resets, so a tidy-up deletes them — and each is the
-  // only rule covering its surface.
   it('leaves an unsized heading at body size and weight', () => {
     const match = readBase().match(/h1,\s*h2,\s*h3,\s*h4,\s*h5,\s*h6\s*\{([^}]*)\}/)
     if (!match) throw new Error('heading reset not found in base.css')
@@ -204,8 +175,6 @@ describe('the reset Tailwind used to supply', () => {
 })
 
 describe('the stale-bundle banner', () => {
-  // The banner is one flex item, so its min-content floor is its longest word
-  // — and that word is --renew-anon-volumes unless the token can break.
   it('lets the recovery command break rather than set the row floor', () => {
     expect(declaration(ruleBlock(readBase(), '.update-banner code'), 'overflow-wrap')).toBe(
       'anywhere',
@@ -227,9 +196,6 @@ describe('the item a sync is working on', () => {
 })
 
 describe('library card divider (issue #108)', () => {
-  // margin-top:auto is zero on a content-height card, so on a one-column grid
-  // the divider touched the badges — but looked right whenever the card was
-  // rated.
   it('spaces the badges off the divider whether or not the card is rated', () => {
     const source = readBase()
     const gap = declaration(ruleBlock(source, '.library-meta'), 'margin-bottom')
@@ -240,8 +206,6 @@ describe('library card divider (issue #108)', () => {
 })
 
 describe('the one cover box', () => {
-  // 16:9 key art and square art arrive in the same 2:3 box as a poster, so
-  // anything but `cover` renders them stretched or letterboxed.
   it('slices art of any source ratio rather than distorting it', () => {
     const source = readBase()
 
@@ -249,8 +213,6 @@ describe('the one cover box', () => {
     expect(declaration(ruleBlock(source, '.cover-art img'), 'object-position')).toBe('center')
   })
 
-  // Slicing to a box off the poster ratio crops the art every source ships,
-  // rather than only the wider key art it is there for.
   it('holds the 2:3 the covers themselves are, at every size it is set to', () => {
     const source = readBase()
     const box = ruleBlock(source, '.cover-art')
@@ -263,8 +225,6 @@ describe('the one cover box', () => {
     expect(ratio).toBeCloseTo(1.5)
   })
 
-  // A <span> is inline, where width and height do not apply, so the box was only
-  // ever sized by a flex parent blockifying it.
   it('carries its own box rather than the layout its parent happens to use', () => {
     const box = ruleBlock(readBase(), '.cover-art')
 
@@ -274,8 +234,6 @@ describe('the one cover box', () => {
 })
 
 describe('recommendation card header (issue #98)', () => {
-  // 1.4.10: at 375px the score and the rank column squeezed the title until the
-  // card scrolled sideways, so nothing sharing the identity line holds a width.
   it('drops the score below the title before it can crowd it', () => {
     const base = readBase()
     const mobile = mediaBlock(base, '640px')
@@ -302,7 +260,6 @@ describe('one-handed reach on a phone', () => {
   })
 
   it('gives a badge a thumb-sized target once it is a button (WCAG 2.5.8)', () => {
-    // 20px tall in a group gapped 4px reaches no spacing exception either.
     const source = readBase()
 
     expect(declaration(ruleBlock(source, 'button.badge'), 'min-height')).toBe('44px')
@@ -310,8 +267,6 @@ describe('one-handed reach on a phone', () => {
   })
 
   it('gives every control standing in a filter row the same thumb target', () => {
-    // The pills were 44px and the stepper, the selects and the buttons beside
-    // them 35, so one row disagreed with itself about what a target is.
     const row = readBase().match(/\.toolbar \.btn,\s*\.toolbar \.field\s*\{([^}]*)\}/)
     if (!row) throw new Error('no shared toolbar control height in base.css')
     const stepper = readFileSync(
@@ -352,7 +307,6 @@ describe('one-handed reach on a phone', () => {
   })
 
   it('sizes the standalone screens to the visible viewport, not the tallest one', () => {
-    // 100vh alone strands the submit button under a collapsing mobile toolbar.
     const match = readBase().match(/\.auth-screen\s*\{([^}]*)\}/)
     if (!match) throw new Error('.auth-screen rule not found in base.css')
 
@@ -371,7 +325,6 @@ describe('typing into the app on a phone', () => {
     const touch = coarsePointerBlock(readBase())
 
     expect(declaration(ruleBlock(touch, ':root'), '--control-text')).toBe('1rem')
-    // The element rule, for a control carrying no class of its own.
     expect(declaration(touch, 'font-size')).toBe('var(--control-text)')
   })
 
@@ -389,7 +342,6 @@ describe('typing into the app on a phone', () => {
   })
 
   it('leaves pinch-zoom alone, which is the other way to stop that zoom', () => {
-    // Barring it would take the reader's own zoom with it (WCAG 1.4.4).
     const html = readFileSync(`${process.cwd()}/index.html`, 'utf8')
 
     expect(html).not.toMatch(/maximum-scale|user-scalable/)
@@ -413,8 +365,6 @@ describe('the items a recommendation cites', () => {
 })
 
 describe('full-bleed controls inside a bordered field', () => {
-  // The ring is offset outward and the controls are full-bleed, so a clipping
-  // parent leaves them with no focus indicator at all (WCAG 2.4.7).
   it('lets the shared focus ring paint outside the field that holds the tag entry', () => {
     const source = readFileSync(
       `${process.cwd()}/resources/js/components/molecules/SourceConfigForm.vue`,
@@ -451,10 +401,6 @@ describe('full-bleed controls inside a bordered field', () => {
 
 describe('.sr-only utility', () => {
   it('disables text selection so hidden labels never enter a copy', () => {
-    // A loose /user-select:\s*none/ would match the `-webkit-` line as a
-    // substring and so pass even if the unprefixed declaration were dropped, so
-    // assert each explicitly. The negative lookbehind isolates the unprefixed
-    // declaration.
     const source = readFileSync(`${process.cwd()}/resources/css/base.css`, 'utf8')
     const block = srOnlyBlock(source)
     expect(block).toMatch(/-webkit-user-select:\s*none/)
@@ -499,8 +445,6 @@ function step(steps: Map<string, number>, value: string): number {
 }
 
 describe('library filter row (issue #102)', () => {
-  // 1.4.10: a select cannot shrink past its widest option, so three of them
-  // widened the page itself.
   it('lets the filter selects share a row instead of widening the page', () => {
     const mobile = mediaBlock(
       readFileSync(`${process.cwd()}/resources/js/components/organisms/LibraryFilters.vue`, 'utf8'),
@@ -537,9 +481,6 @@ describe('stacking order', () => {
 })
 
 describe('the bypass link', () => {
-  // Equal z-index breaks on tree order, and the link is first in the tree
-  // precisely so Tab reaches it first — which puts it under the chrome it
-  // opens on top of.
   it('is painted over the rail and the top strip it lands on', () => {
     const source = readBase()
     const steps = scale(source)
@@ -605,8 +546,6 @@ describe('the faces the app paints with', () => {
     }
   })
 
-  // The app vendors no mono face, so a rule asking for one lands on whatever
-  // the reader's OS calls monospace.
   it('asks for no monospace anywhere, so a value is tabular sans or nothing', () => {
     const scanned = styledFiles('resources')
     const asking = scanned.flatMap((path) =>
@@ -620,8 +559,6 @@ describe('the faces the app paints with', () => {
   })
 })
 
-/** Every depth a stylesheet paints. An `inset` shadow is a hairline rule
- *  rather than a lift, so it names an edge token and no rung. */
 function depths(): [string, string][] {
   return styledFiles('resources').flatMap((path) =>
     [
@@ -667,8 +604,6 @@ describe('the elevation ladder', () => {
 
 describe('motion the reader asked not to see', () => {
   it('stops every animation in the app, wherever it is declared (WCAG 2.3.3)', () => {
-    // Per-rule opt-outs are what rot: the next animation added — a spinner, a
-    // skeleton — is covered by this one block or by nobody.
     const block = readBase().match(
       /@media \(prefers-reduced-motion: reduce\)\s*\{([\s\S]*?)\n\}/,
     )
@@ -722,9 +657,6 @@ describe('the token contract', () => {
   })
 
   it('lets no theme reach past colour into a size the layout depends on', () => {
-    // The contract is what nord declares, plus the non-colour tokens a theme
-    // is allowed. --elevation-* is core because it derives from --shadow-*,
-    // and a theme setting both leaves two knobs for one depth.
     const contract = themePalette('nord')
     const allowed = /^--(font-(ui|display)|radius-|shadow-)/
 
@@ -738,8 +670,6 @@ describe('the token contract', () => {
   })
 
   it('is overridden in full by every shipped theme, so no grey shows through one', () => {
-    // The fallback greys exist for a colors.css that declares half a palette.
-    // A shipped theme that leaves one showing is a grey patch nothing reports.
     const root = readBase().match(/:root\s*\{([\s\S]*?)\n\s*\}/)
     if (!root) throw new Error('no :root block in base.css')
     const unbranded = [...root[1].matchAll(/(--[\w-]+):\s*([^;]+);/g)]
@@ -755,8 +685,6 @@ describe('the token contract', () => {
 })
 
 describe('the heights the chrome reserves', () => {
-  // A px constant does not move when the chrome itself grows with the text, and
-  // the shell lays every page out inside what these two reserve.
   it('grows every reserved chrome height with the text in it (WCAG 1.4.4)', () => {
     const reserved = [...readBase().matchAll(/(--[\w-]+-h):\s*([^;]+);/g)]
 
@@ -801,7 +729,6 @@ describe('a control with a floor measured in rem', () => {
 })
 
 describe('the score spine', () => {
-  // On hue alone the penalty reads as more of the score it came off.
   it('separates its tones by a channel that is not colour (WCAG 1.4.11)', () => {
     const source = readBase()
     const lead = ruleBlock(source, '.rec-spine-segment')
@@ -823,9 +750,6 @@ describe('the rail at a text size taller than the viewport', () => {
 })
 
 describe('the rail becoming a tab bar', () => {
-  // Two queries and a script watching a third let an 800px tablet have the nav
-  // off screen at a width nothing called narrow, so it stayed tabbable while
-  // invisible. One query, and no script, is what makes that unreachable.
   it('turns the shell over at one width, decided by the stylesheet alone', () => {
     const widths = shellBreakpoints().map(([width]) => width)
 
@@ -834,8 +758,6 @@ describe('the rail becoming a tab bar', () => {
     expect(readFileSync(`${process.cwd()}/${APP}`, 'utf8')).not.toMatch(/@media|matchMedia/)
   })
 
-  // The drawer had to go inert because it was on screen and hidden at once.
-  // The tab bar owes the same promise by never being hidden at all.
   it('leaves the nav and every tab on screen at that width', () => {
     const [[, narrow]] = shellBreakpoints()
 
@@ -846,8 +768,6 @@ describe('the rail becoming a tab bar', () => {
     }
   })
 
-  // Sticky would scroll the tabs away; taking them out of the flow instead
-  // costs the shell the height back, or every page ends under them.
   it('pays back the height a detached tab bar stops occupying', () => {
     const [[, narrow]] = shellBreakpoints()
     const detached = /position:\s*(?:fixed|absolute)/.test(ruleBlock(narrow, '.app-nav'))

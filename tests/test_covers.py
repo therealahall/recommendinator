@@ -23,7 +23,6 @@ from tests.factories import authenticated_client, booted_web_app, make_item
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 32
 
-# IP literals throughout: a hostname needs DNS, which isolation refuses first.
 REMOTE = "https://1.2.3.4/cover.jpg"
 LAN = "http://10.0.0.5:8083/opds/cover/1"
 

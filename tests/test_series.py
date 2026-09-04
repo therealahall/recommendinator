@@ -84,7 +84,6 @@ def test_expand_tv_shows_to_seasons():
 
     expanded = expand_tv_shows_to_seasons([show_with_seasons, show_without_seasons])
 
-    # The Expanse: 6 seasons; Unknown Show: 1 (passthrough, no expansion)
     assert len(expanded) == 7
     assert expanded[0].title == "The Expanse (Season 1)"
     assert expanded[0].id == "tvdb:280619:s1"
@@ -97,8 +96,6 @@ def test_expand_tv_shows_to_seasons():
     assert expanded[6].id == "tvdb:999"
     assert expanded[6].parent_id is None
 
-    # Every season item carries the parent show's db_id so recommendation
-    # actions (mark complete / ignore) resolve to the show-level library row.
     for season_item in expanded[:6]:
         assert season_item.db_id == 42
     assert expanded[6].db_id == 99
@@ -121,7 +118,6 @@ def test_get_series_name():
 def test_get_series_item_number():
     assert get_series_item_number(title="Book (The Witcher, #4)") == 4
     assert get_series_item_number(title="Standalone Book") is None
-    # Half-numbered novellas parse as floats, not truncated to an int.
     novella_number = get_series_item_number(title="Gods of Risk (The Expanse, #2.5)")
     assert novella_number == 2.5
 
@@ -218,7 +214,6 @@ class TestIsNextAfterConsumed:
         assert is_next_after_consumed(2.0, {1.0, 2.0}, {3.0}) is False
         assert is_next_after_consumed(1.0, {1.0, 2.0}, {3.0}) is False
         assert is_next_after_consumed(2.5, {1.0, 2.0, 2.5}, {3.0}) is False
-        # A gap the reader gets to only by going backwards stays behind them.
         assert is_next_after_consumed(2.0, {1.0, 3.0}, {2.0}) is False
 
     def test_prequel_unlocks_book_one(self) -> None:
@@ -724,12 +719,9 @@ class TestDecimalSeriesOrderingRegression:
         "Drive (The Expanse, #2.7)", "Gods of Risk (The Expanse, #2.5)", and
         "The Vital Abyss (The Expanse, #5.5)" out of series order."""
         assert extract_series_info("Drive (The Expanse, #2.7)") == ("The Expanse", 2.7)
-        # Whole-number positions still parse, now as floats (the point of the
-        # migration) — assert the type explicitly, not just equality.
         whole = extract_series_info("Caliban's War (The Expanse, #2)")
         assert whole == ("The Expanse", 2)
         assert whole is not None and isinstance(whole[1], float)
-        # Decimal position carried in metadata as a string.
         metadata_str = {"series_name": "The Expanse", "series_position": "2.7"}
         assert extract_series_info("Drive", metadata_str, ContentType.BOOK) == (
             "The Expanse",
@@ -753,12 +745,10 @@ class TestDecimalSeriesOrderingRegression:
         novella_27 = self._expanse("exp27", "Drive (The Expanse, #2.7)")
         unconsumed = [book_two, novella_25, novella_27]
 
-        # The legit next book is recommendable; the novellas must wait for it.
         assert should_recommend_item(book_two, series_tracking, unconsumed) is True
         assert should_recommend_item(novella_25, series_tracking, unconsumed) is False
         assert should_recommend_item(novella_27, series_tracking, unconsumed) is False
 
-        # Substitution offers Caliban's War in place of an out-of-order novella.
         substitute = find_earliest_recommendable(
             "The Expanse", series_tracking, unconsumed
         )
@@ -784,7 +774,6 @@ class TestDecimalSeriesOrderingRegression:
         unconsumed = [novella_25, book_three]
 
         assert should_recommend_item(novella_25, series_tracking, unconsumed) is True
-        # Book 3 waits behind the novella that precedes it.
         assert should_recommend_item(book_three, series_tracking, unconsumed) is False
 
 
@@ -807,7 +796,6 @@ class TestSeasonBoundsRegression:
         )
         expanded = expand_tv_shows_to_seasons([show])
         assert len(expanded) == MAX_SEASONS
-        # The cap produces seasons 1..MAX_SEASONS, not some other run of 200.
         assert expanded[0].metadata["season"] == 1
         assert expanded[-1].metadata["season"] == MAX_SEASONS
         assert expanded[-1].title == f"Endless Show (Season {MAX_SEASONS})"
@@ -827,7 +815,6 @@ class TestSeasonBoundsRegression:
             },
         )
         tracking = inject_seasons_watched_tracking([show], {})
-        # In-range seasons (including the cap boundary) kept; out-of-range dropped.
         assert tracking["The Show"] == {1, 5, MAX_SEASONS}
 
 

@@ -2,7 +2,6 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
-// Read rather than copied: a copy would drift and still pass.
 function preferenceScript(): string {
   const module = readFileSync(resolve(process.cwd(), 'src/web/themes.py'), 'utf8')
   const match = module.match(/THEME_PREFERENCE_SCRIPT = """([\s\S]*?)"""/)

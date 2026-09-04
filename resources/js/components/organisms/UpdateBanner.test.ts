@@ -20,8 +20,6 @@ describe('UpdateBanner', () => {
 
     const wrapper = mount(UpdateBanner)
 
-    // Renewing the anonymous volume without --build re-seeds it from the
-    // unrebuilt image, so the banner comes straight back. Pin each whole.
     const commands = wrapper.findAll('code').map((node) => node.text())
     expect(commands).toContain('pnpm build')
     expect(commands).toContain('docker compose up -d --build --renew-anon-volumes')
@@ -35,8 +33,6 @@ describe('UpdateBanner', () => {
 
     const wrapper = mount(UpdateBanner)
 
-    // A nowrap flex row: loose <code> children each become their own item and
-    // set a min-content floor the viewport cannot meet.
     expect(wrapper.find('.update-banner').element.children).toHaveLength(1)
   })
 

@@ -6,7 +6,6 @@ const mockGet = vi.fn()
 const mockPut = vi.fn()
 const mockDelete = vi.fn()
 const mockApplyTheme = vi.fn()
-/** What the browser already has on screen. */
 let appliedThemeId: string | null = null
 
 vi.mock('@/composables/useApi', () => ({
@@ -35,7 +34,6 @@ const STORED_PREFS = {
   custom_rules: [],
 }
 
-/** A store in the only state the Save button is reachable from: loaded. */
 async function loadedStore() {
   mockGet.mockResolvedValue(STORED_PREFS)
   const store = usePreferencesStore()
@@ -119,7 +117,6 @@ describe('usePreferencesStore', () => {
 
     store.contentLengthPreferences.book = 'short'
     expect(store.isDirty).toBe(true)
-    // 'any' is what the dropdown shows for the key the load left absent.
     store.contentLengthPreferences.book = 'any'
 
     expect(store.isDirty).toBe(false)
@@ -133,7 +130,6 @@ describe('usePreferencesStore', () => {
 
     expect(mockApplyTheme).toHaveBeenCalledWith('snowstorm')
     expect(mockPut).toHaveBeenCalledWith('/users/1/theme', { theme: 'snowstorm' })
-    // The theme is not an edit the Save button holds.
     expect(store.isDirty).toBe(false)
   })
 
@@ -149,8 +145,6 @@ describe('usePreferencesStore', () => {
   })
 
   it('load leaves the theme alone: boot already applied the stored one', async () => {
-    // Regression: opening this page was where the stored theme was read, so the
-    // whole UI restyled the moment it mounted.
     appliedThemeId = 'snowstorm'
     mockGet.mockResolvedValue(STORED_PREFS)
 
@@ -160,8 +154,6 @@ describe('usePreferencesStore', () => {
   })
 
   it('reset shows the defaults the server answers with, and leaves the theme painted', async () => {
-    // Regression: resetting the scoring preferences repainted the default over
-    // the theme the user picked, which the reset no longer touches.
     const store = await loadedStore()
     store.customRules = ['no horror']
     store.varietyPenalty = 3.0
@@ -177,9 +169,6 @@ describe('usePreferencesStore', () => {
   })
 })
 
-// Symptom: a failed Preferences load then a Save wiped every stored rule and
-// weight. Cause: load()'s catch reset the store to empty defaults, which save()
-// PUT. Fix: keep the values, record loadError, gate save on hasLoaded.
 describe('preferences load-failure regression', () => {
   beforeEach(() => {
     setActivePinia(createPinia())

@@ -17,8 +17,6 @@ function mountForm(props: Record<string, unknown> = {}) {
 
 describe('AccountProfileForm', () => {
   it('re-seeds from the prop when the saved account comes back changed', async () => {
-    // A draft captured once at setup goes stale the moment the parent hands
-    // down the values the server accepted.
     const wrapper = mountForm()
 
     await wrapper.setProps({ user: { ...AARON, username: 'ahall', display_name: 'A. Hall' } })
@@ -49,8 +47,6 @@ describe('AccountProfileForm', () => {
   })
 
   it('says why a username of nothing but spaces did not save', async () => {
-    // Regression: `required` reports only the empty string as missing, so three
-    // spaces cleared the browser's own check and the handler returned silently.
     const wrapper = mountForm()
 
     await wrapper.find('#account-username').setValue('   ')
@@ -59,7 +55,6 @@ describe('AccountProfileForm', () => {
     expect(wrapper.emitted('submit')).toBeUndefined()
     expect(wrapper.find('#account-profile-status').text()).toBe(USERNAME_BLANK)
     expect(wrapper.find('#account-username').attributes('aria-invalid')).toBe('true')
-    // The lock says nothing on its own, and going native would blur the button.
     const button = wrapper.find('[data-testid="account-profile-save"]')
     expect(button.attributes('aria-disabled')).toBe('true')
     expect(button.attributes('disabled')).toBeUndefined()

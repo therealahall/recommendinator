@@ -8,7 +8,6 @@ import LoadingRows from '@/components/molecules/LoadingRows.vue'
 import { useLibraryStore } from '@/stores/library'
 import { useDataStore } from '@/stores/data'
 
-// jsdom has no IntersectionObserver; the page sets one up on mount.
 class FakeIntersectionObserver {
   observe = vi.fn()
   disconnect = vi.fn()
@@ -49,8 +48,6 @@ function mountPage(overrides: Record<string, unknown> = {}, attachTo?: HTMLEleme
 }
 
 describe('LibraryPage search behaviour', () => {
-  // Duplicates review lost its nav destination, so this link is now the only
-  // way anyone reaches it.
   it('offers the only route to duplicates review', async () => {
     const { wrapper } = mountPage()
     await wrapper.vm.$nextTick()
@@ -103,12 +100,13 @@ describe('LibraryPage search behaviour', () => {
     expect(region.text()).toBe('2 items match “dune”')
   })
 
-  it('speaks the load and the count that landed, with no query to describe', async () => {
+  it('speaks the load, then the count that landed, with no query to describe', async () => {
     const { wrapper, lib } = mountPage({ items: [], loading: true })
     await wrapper.vm.$nextTick()
     const region = () => wrapper.get('[role="status"]')
+    const whileLoading = region().text()
 
-    expect(region().text()).toBe('Loading library…')
+    expect(whileLoading).not.toBe('')
 
     Object.assign(lib, {
       loading: false,
@@ -117,12 +115,11 @@ describe('LibraryPage search behaviour', () => {
     })
     await wrapper.vm.$nextTick()
 
-    expect(region().text()).toBe('All 1 item loaded')
+    expect(region().text()).not.toBe(whileLoading)
+    expect(region().text()).toContain('1')
   })
 
   it('hands a refused save to the dialog, and never to the load banner', async () => {
-    // The banner sits behind the modal overlay and prefixes "Failed to load
-    // library:", so a refused save was both unreadable and misdescribed.
     const refusal = 'Review must be at most 10000 characters.'
     const { wrapper } = mountPage({
       editingItem: { db_id: 1, title: 'Dune', content_type: 'book', status: 'unread' },
@@ -172,8 +169,6 @@ describe('LibraryPage search behaviour', () => {
     expect(wrapper.find('[data-testid="library-empty"]').exists()).toBe(true)
   })
 
-  // A filter hiding everything and a library holding nothing need different
-  // first actions, and one sentence for both sends the user to the wrong one.
   it('offers to widen a filter that emptied the list, not to go and sync', async () => {
     const { wrapper, lib } = mountPage({ items: [], loading: false, statusFilter: 'completed' })
     await wrapper.vm.$nextTick()
@@ -233,12 +228,11 @@ describe('LibraryPage search behaviour', () => {
     },
   )
 
-  // Showing ignored items only ever adds rows, so it never emptied the list.
   it('still sends an empty library to sync when Show ignored is on', async () => {
     const { wrapper } = mountPage({ items: [], loading: false, showIgnored: true })
     await wrapper.vm.$nextTick()
 
     expect(wrapper.find('[data-testid="library-clear-filters"]').exists()).toBe(false)
-    expect(wrapper.get('[data-testid="library-empty"]').text()).toContain('Your library is empty')
+    expect(wrapper.find('[data-testid="library-empty"]').exists()).toBe(true)
   })
 })

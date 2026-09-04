@@ -28,7 +28,6 @@ class TestGetSortTitle:
         assert get_sort_title("") == ""
 
     def test_article_without_following_space_not_stripped(self) -> None:
-        # "Theater" starts with "The" but shouldn't be stripped
         assert get_sort_title("Theater") == "theater"
 
 
@@ -97,8 +96,6 @@ class TestTitlesSimilarWordBoundaryRegression:
 
 class TestNormalizeForSearch:
     def test_strips_punctuation(self) -> None:
-        # Hyphens, parentheses, and the like collapse to single spaces so a
-        # search term and a title normalize onto equal footing.
         assert normalize_for_search("Sci-Fi (1988)") == "sci fi 1988"
 
     def test_punctuation_only(self) -> None:
@@ -116,9 +113,6 @@ class TestTheMatchingTiers:
         assert title_matches("Die Hard (1988)", "Die Hard") is True
 
     def test_fuzzy_typo_match(self) -> None:
-        # Hard PM requirement: "Die Heard" must match "Die Hard (1988)".
-        # After normalization this is "die heard" vs the "die hard " window of
-        # "die hard 1988", which scores ~0.89, above FUZZY_MATCH_THRESHOLD.
         assert title_matches("Die Hard (1988)", "Die Heard") is True
 
     def test_fuzzy_below_threshold_does_not_match(self) -> None:
@@ -168,15 +162,15 @@ class TestUnicodeSearch:
         title, so covering only Japanese/Cyrillic/Arabic would leave most of the
         reported surface unproven."""
         titles = [
-            "進撃の巨人",  # Japanese
-            "三体",  # Chinese
-            "백년의 고독",  # Korean
-            "Метро 2033",  # Cyrillic
-            "Οδύσσεια",  # Greek
-            "מלחמה ושלום",  # Hebrew
-            "ألف ليلة وليلة",  # Arabic
-            "गोदान",  # Devanagari
-            "แฮร์รี่ พอตเตอร์",  # Thai
+            "進撃の巨人",
+            "三体",
+            "백년의 고독",
+            "Метро 2033",
+            "Οδύσσεια",
+            "מלחמה ושלום",
+            "ألف ليلة وليلة",
+            "गोदान",
+            "แฮร์รี่ พอตเตอร์",
         ]
         for title in titles:
             assert normalize_for_search(title) != ""

@@ -63,9 +63,6 @@ def mock_components(mock_config):
         mock_storage_manager = make_storage_mock()
         mock_storage_manager.credentials.get_for_source.return_value = {}
         mock_storage_manager.sources.list.return_value = []
-        # Let the real migrate_config_settings boot hook run against an empty
-        # settings store (no stub) — the DB overlay is a no-op and nothing
-        # leaks across tests.
         back_mock_settings_store(mock_storage_manager)
         mock_storage.return_value = mock_storage_manager
 
@@ -481,8 +478,6 @@ def test_update_command_steam_api_error(mock_components):
         result = runner.invoke(cli, ["update", "--source", "steam"])
 
         assert result.exit_code == 0
-        # A SourceError is our own wording, and it names what to fix, so the
-        # per-source warning carries it (see src/ingestion/sync.py).
         assert "Warning: API error" in result.output
         assert "No items were updated" in result.output
 
@@ -595,7 +590,7 @@ class TestUpdateWorkersFlag:
         assert captured["max_workers"] == 6
 
     def test_workers_defaults_to_four_when_unset(self) -> None:
-        config = self._config_with_sources()  # no sync block
+        config = self._config_with_sources()
 
         captured: dict = {}
 
@@ -659,8 +654,6 @@ def test_update_records_the_run_it_just_finished(tmp_path: Path) -> None:
     storage = StorageManager(sqlite_path=db_path)
     run = storage.sync_runs.latest_per_source(1)["steam"]
     assert run["status"] == "completed"
-    # Recording the run is what releases the claim, so a run that only inserts
-    # leaves the source refused until the staleness bound passes.
     assert storage.sync_runs.claim(1, "steam") is not None
 
 
@@ -700,8 +693,6 @@ def test_update_enriches_what_it_synced_unless_auto_enrich_is_off(
     record = StorageManager(sqlite_path=db_path).enrichment_jobs.read()
     assert record.items_processed == (1 if auto_enrich else 0)
     assert (record.started_at is not None) is auto_enrich
-    # The command waits the run out: a backgrounded one dies with the process
-    # and leaves the claim held until it goes stale.
     assert record.running is False
 
 
@@ -737,7 +728,6 @@ def test_update_json_keeps_the_enrichment_report_off_stdout(tmp_path: Path) -> N
 
     assert result.exit_code == 0, result.stderr
     assert json.loads(result.stdout)["jobs"][0]["status"] == "completed"
-    # Anchors the parse above, which a run that never enriched also satisfies.
     record = StorageManager(sqlite_path=db_path).enrichment_jobs.read()
     assert record.items_processed == 1
 
@@ -783,7 +773,6 @@ def test_update_reports_the_omitted_error_count_the_web_payload_carries(
         )
 
     assert result.exit_code == 0, result.stderr
-    # Parsed by the web's own model, so a field only one door serves fails here.
     job = SyncStatusResponse(**json.loads(result.stdout)).jobs[0]
     assert len(job.errors) == MAX_REPORTED_ERRORS
     assert len(job.errors) + job.sources[0].omitted_errors == failures
@@ -1072,7 +1061,6 @@ def test_preferences_set_variety_rejects_out_of_range(mock_components):
     result = runner.invoke(cli, ["preferences", "set-variety", "6.0"])
 
     assert result.exit_code != 0
-    # The rejection must name both ends of the accepted range.
     assert "0.0" in result.output
     assert "5.0" in result.output
     merge.assert_not_called()
@@ -1226,8 +1214,6 @@ class TestPreferencesResetConfirms:
         )
 
         assert result.exit_code == 0
-        # The prompt sizes the loss rather than just asking, and does not offer
-        # the theme, which the reset leaves alone.
         assert "3" in result.output
         assert "theme" not in result.output.lower()
         assert storage.get_user_preference_config(1) == before
@@ -1402,7 +1388,6 @@ class TestConfigLoadingRegression:
         config_dir = tmp_path / "config"
         config_dir.mkdir()
 
-        # config.yaml has steam enabled
         config_yaml = config_dir / "config.yaml"
         config_yaml.write_text("""
 inputs:
@@ -1411,7 +1396,6 @@ inputs:
     api_key: "test"
 """)
 
-        # example.yaml has steam disabled
         example_yaml = config_dir / "example.yaml"
         example_yaml.write_text("""
 inputs:
@@ -1419,7 +1403,6 @@ inputs:
     enabled: false
 """)
 
-        # We need to temporarily change the working directory
         import os
 
         original_cwd = os.getcwd()

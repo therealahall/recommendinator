@@ -24,8 +24,6 @@ vi.mock('@/composables/useApi', () => ({
   }),
 }))
 
-// A controllable timer: schedulePoll hands us the callback and we fire it on
-// demand, so the poll loop advances without waiting real seconds.
 function makeTimer() {
   let pending: (() => void) | null = null
   const setTimer = vi.fn((handler: () => void) => {
@@ -44,13 +42,9 @@ function makeTimer() {
   return { setTimer, clearTimer, fire, hasPending: () => pending !== null }
 }
 
-// Not "trakt": the flow belongs to the source being connected, whatever the
-// operator named it.
 const SOURCE_ID = 'trakt_work'
 const SOURCE_NAME = 'Trakt (work)'
 
-// The parent picks the wording, so these tests only follow it through. A
-// sentence no branch of that decision produces is what proves the pass-through.
 const HINT = 'The remedy the parent worked out.'
 
 function mountFlow(timer: ReturnType<typeof makeTimer>) {
@@ -74,8 +68,6 @@ function setTraktEnabled(enabled: boolean): void {
   }
 }
 
-// The code panel stays mounted across states (v-show), so visibility — not
-// existence — distinguishes the awaiting state from the connected/error one.
 function codePanelVisible(
   wrapper: ReturnType<typeof mountFlow>,
 ): boolean {
@@ -99,8 +91,6 @@ describe('TraktDeviceCodeFlow', () => {
     mockGet.mockReset()
     mockPost.mockReset()
     mockDelete.mockReset()
-    // Client credentials resolve by default so the connect action is live;
-    // the gating tests below flip this off explicitly.
     setTraktEnabled(true)
   })
 
@@ -108,8 +98,6 @@ describe('TraktDeviceCodeFlow', () => {
     setTraktEnabled(false)
     const wrapper = mountFlow(makeTimer())
 
-    // aria-disabled leaves the button activatable, so this guard is the only
-    // thing between the click and a 400 the user never asked for.
     await wrapper.get('[data-testid="trakt-connect-btn"]').trigger('click')
     await flushPromises()
 
@@ -134,9 +122,7 @@ describe('TraktDeviceCodeFlow', () => {
     expect(link.attributes('href')).toBe('https://trakt.tv/activate')
     expect(link.attributes('target')).toBe('_blank')
     expect(link.attributes('rel')).toBe('noopener noreferrer')
-    // The new-tab behaviour is announced to screen readers, not implied.
     expect(link.text()).toContain('opens in new tab')
-    // Polling was scheduled, not invoked synchronously.
     expect(timer.setTimer).toHaveBeenCalledTimes(1)
   })
 
@@ -145,7 +131,6 @@ describe('TraktDeviceCodeFlow', () => {
       .mockResolvedValueOnce(FLOW)
       .mockResolvedValueOnce({ connected: false, status: 'pending', message: 'wait' })
       .mockResolvedValueOnce({ connected: true, message: 'Trakt connected!' })
-    // The status re-read that follows a successful poll.
     mockGet.mockResolvedValue({ enabled: true, connected: true })
     const timer = makeTimer()
     const wrapper = mountFlow(timer)
@@ -153,19 +138,13 @@ describe('TraktDeviceCodeFlow', () => {
     await wrapper.get('[data-testid="trakt-connect-btn"]').trigger('click')
     await flushPromises()
 
-    await timer.fire() // first poll -> pending, reschedules
-    // The code panel is shown while awaiting (v-show keeps it mounted so the
-    // shared live region is never re-created).
+    await timer.fire()
     expect(codePanelVisible(wrapper)).toBe(true)
 
-    await timer.fire() // second poll -> connected
-    // The confirmation goes to the store, which the panel's live region reads:
-    // this component is unmounted by the status flip and cannot announce it.
+    await timer.fire()
     expect(useDataStore().oauthMessages[SOURCE_ID]).toBe('Trakt connected!')
     expect(wrapper.text()).not.toContain('Waiting for you to approve')
-    // Once connected the code panel is hidden, not unmounted.
     expect(codePanelVisible(wrapper)).toBe(false)
-    // No further poll scheduled once connected.
     expect(timer.hasPending()).toBe(false)
   })
 
@@ -183,8 +162,6 @@ describe('TraktDeviceCodeFlow', () => {
     expect(wrapper.get('.trakt-flow-status--error').text()).toContain('expired')
     expect(wrapper.find('[data-testid="trakt-retry-btn"]').exists()).toBe(true)
     expect(timer.hasPending()).toBe(false)
-    // Hiding the code panel strands whoever was reading it, so this is the one
-    // transition that may claim the keyboard.
     expect(document.activeElement).toBe(
       wrapper.get('[data-testid="trakt-result-panel"]').element,
     )
@@ -201,8 +178,6 @@ describe('TraktDeviceCodeFlow', () => {
     const wrapper = mountFlow(timer)
     await wrapper.get('[data-testid="trakt-connect-btn"]').trigger('click')
     await flushPromises()
-    // The poll fires from a timer, and the wait is long enough to go and edit
-    // another source's fields on the same page.
     const elsewhere = document.createElement('input')
     document.body.appendChild(elsewhere)
     elsewhere.focus()
@@ -233,22 +208,20 @@ describe('TraktDeviceCodeFlow', () => {
       .mockResolvedValueOnce(FLOW)
       .mockResolvedValueOnce({ connected: false, status: 'slow_down', message: 'slow' })
       .mockResolvedValueOnce({ connected: true, message: 'Trakt connected!' })
-    // The status re-read that follows a successful poll.
     mockGet.mockResolvedValue({ enabled: true, connected: true })
     const timer = makeTimer()
     const wrapper = mountFlow(timer)
 
     await wrapper.get('[data-testid="trakt-connect-btn"]').trigger('click')
     await flushPromises()
-    // Initial schedule uses the server interval (5s).
     expect(timer.setTimer).toHaveBeenLastCalledWith(expect.any(Function), 5000)
 
-    await timer.fire() // poll -> slow_down: interval grows to 10s, keep polling
+    await timer.fire()
     expect(wrapper.text()).toContain('slow down')
     expect(timer.setTimer).toHaveBeenLastCalledWith(expect.any(Function), 10000)
     expect(timer.hasPending()).toBe(true)
 
-    await timer.fire() // next poll -> connected
+    await timer.fire()
     expect(useDataStore().oauthMessages[SOURCE_ID]).toBe('Trakt connected!')
     expect(timer.hasPending()).toBe(false)
   })
@@ -267,8 +240,6 @@ describe('TraktDeviceCodeFlow', () => {
 
     await timer.fire()
 
-    // The failed re-read leaves `connected` false, so the parent keeps this
-    // component mounted: staying silent rendered an empty box with no controls.
     expect(useDataStore().oauthStatusFor(SOURCE_ID).connected).toBe(false)
     const result = wrapper.get('[data-testid="trakt-result-panel"]')
     expect(result.get('[data-testid="trakt-result-text"]').text()).toContain(

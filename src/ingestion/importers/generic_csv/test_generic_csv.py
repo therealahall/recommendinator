@@ -219,7 +219,6 @@ class TestLogInjectionRegression:
         with caplog.at_level(logging.WARNING, logger=ROW_LOGGER):
             parsed = items(f'title,date_completed\n"{FORGED_TITLE}",yesterday\n')
 
-        # The item keeps the title it was given; only the log line is escaped.
         assert [item.title for item in parsed] == [FORGED_TITLE]
         assert self._messages(caplog, ROW_LOGGER) == [
             f"Invalid date format for '{ESCAPED_TITLE}': yesterday. "

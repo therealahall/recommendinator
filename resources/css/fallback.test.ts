@@ -2,9 +2,6 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, it, expect } from 'vitest'
 
-// contrast.test.ts measures the installed themes. This measures what is left
-// when a colors.css declares none of a token: the unbranded greys in base.css,
-// which a theme with one line in it still has to be readable on.
 
 const AA_NORMAL_TEXT = 4.5
 const NON_TEXT = 3

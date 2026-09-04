@@ -109,8 +109,6 @@ def _builtin_plugins() -> dict[str, SourcePlugin]:
         for name, plugin in _discovered_plugins().items()
         if type(plugin).__module__.startswith("src.ingestion.sources.")
     }
-    # The sweeps below assert an absence, so discovery finding nothing would
-    # pass every one of them while proving nothing.
     assert built_in, "discovery found no built-in plugins"
     return built_in
 

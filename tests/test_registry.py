@@ -99,12 +99,8 @@ def clean_registry() -> PluginRegistry:
     return PluginRegistry()
 
 
-# Bounded so a thread nothing releases fails the test instead of hanging the
-# suite; nothing waits this long on the passing path.
 _STALL_TIMEOUT_SECONDS = 5.0
 
-# How long the second discovery is given to prove it cannot get in. Only spent
-# on the passing path.
 _BLOCKED_GRACE_SECONDS = 0.5
 
 
@@ -120,8 +116,6 @@ class TestConcurrentDiscoveryRegression:
         release = threading.Event()
 
         def register_one_builtin(self: PluginRegistry) -> None:
-            # A different plugin per pass, so which map the reader got is
-            # readable off its contents rather than inferred from timing.
             if not first_pass_done.is_set():
                 self.register(FakeBookPlugin())
                 first_pass_done.set()
@@ -144,8 +138,6 @@ class TestConcurrentDiscoveryRegression:
             assert parked.wait(timeout=_STALL_TIMEOUT_SECONDS)
 
             try:
-                # Read from a worker: with the scan under the lock this read
-                # never returns, and a wedged main thread takes the suite too.
                 during_rebuild = pool.submit(registry.get_all_plugins).result(
                     timeout=_BLOCKED_GRACE_SECONDS
                 )
@@ -153,9 +145,6 @@ class TestConcurrentDiscoveryRegression:
                 release.set()
             rebuild.result(timeout=_STALL_TIMEOUT_SECONDS)
 
-        # The parked pass has already registered fake_games into a map of its
-        # own, so getting the previous pass's plugin is the swap being
-        # invisible. Rebuilt in place, this read lands on the half-built map.
         assert set(during_rebuild) == {"fake_books"}
         assert set(registry.get_all_plugins()) == {"fake_games"}
 
@@ -192,8 +181,6 @@ class TestPluginConstructedOutsideTheLockRegression:
                     PluginRegistry, "_discover_private_plugins", lambda self: None
                 ),
             ):
-                # Daemon, because a thread deadlocked on the module lock is
-                # never joinable and pytest would never exit.
                 discovery = threading.Thread(
                     target=registry.discover_plugins, daemon=True
                 )
@@ -236,9 +223,6 @@ class TestRegistrySingletonIsBuiltOnceRegression:
                 assert building.wait(timeout=_STALL_TIMEOUT_SECONDS)
 
                 second = pool.submit(PluginRegistry.get_instance)
-                # Unlocked, the second caller passes the ``is None`` check and
-                # builds a registry of its own while the first is parked, so it
-                # finishes here rather than waiting for the release.
                 with pytest.raises(TimeoutError):
                     second.result(timeout=_BLOCKED_GRACE_SECONDS)
 
@@ -262,7 +246,7 @@ class TestPluginRegistryAbstractClassRegression:
         fake_module.ArrPlugin = ArrPlugin  # type: ignore[attr-defined]
         fake_module.FakeBookPlugin = FakeBookPlugin  # type: ignore[attr-defined]
 
-        clean_registry._discovered = True  # Prevent auto-discovery
+        clean_registry._discovered = True
 
         with caplog.at_level(logging.WARNING, logger="src.ingestion.registry"):
             clean_registry._register_plugins_from_module(

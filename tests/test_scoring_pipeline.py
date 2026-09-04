@@ -97,7 +97,6 @@ class TestScoringPipeline:
 
         result = pipeline.score_candidates_with_breakdown([make_item()], context)
 
-        # Averaged in as a zero it would be 0.2.
         assert result[0].aggregate_score == pytest.approx(0.8)
 
     def test_zero_total_weight(self) -> None:
@@ -152,8 +151,6 @@ class TestTiebreakerRegression:
         ]
         context = _build_context(consumed=consumed)
 
-        # "An Amazing Sequel" sorts before "The Zebra Adventure" alphabetically
-        # (after article stripping: "Amazing Sequel" < "Zebra Adventure")
         book_2 = make_item(
             title="An Amazing Sequel (Test Series #2)",
             metadata={"genre": "Adventure"},

@@ -3,7 +3,6 @@ import { mount } from '@vue/test-utils'
 import SettingControl from './SettingControl.vue'
 import type { SettingViewValue } from '@/types/api'
 
-// Fixtures name real registry leaves.
 function value(overrides: Partial<SettingViewValue> = {}): SettingViewValue {
   return {
     key: 'enrichment.batch_size',
@@ -41,7 +40,6 @@ function lastEmit(wrapper: ReturnType<typeof mountControl>, event: string): unkn
 
 describe('SettingControl widget mapping', () => {
   it('passes through an absent max so the stepper renders unbounded', () => {
-    // Regression: this binding is the seam the max-100 bug came through.
     const setting = value({
       type: 'int',
       widget: 'number',
@@ -75,8 +73,6 @@ describe('SettingControl widget mapping', () => {
 
 describe('SettingControl badges and reset', () => {
   it('keeps Reset in the tab order while its request is in flight, and drops the second press', async () => {
-    // `disabled` closed on the button the user had just pressed, blurring them
-    // to <body> for the length of the request (WCAG 2.4.3).
     const wrapper = mount(SettingControl, {
       props: {
         setting: value({ db_overridden: true, has_stored_value: true }),

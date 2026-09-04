@@ -138,13 +138,11 @@ class TestScorerWeightFallback:
 
         engine = _build_engine({}, storage)
 
-        # A new user overrides only genre_match; creator_match is left unset.
         overridden = build_scorers_with_overrides(
             engine.pipeline.scorers, {"genre_match": 3.0}
         )
 
         assert _weight_of(overridden, GenreMatchScorer) == 3.0
-        # The unset key falls back to the global (DB) default, not the class one.
         assert _weight_of(overridden, CreatorMatchScorer) == 6.0
 
     def test_yaml_scorer_weight_used_when_db_absent(
@@ -285,7 +283,6 @@ class TestConstDefaultFallback:
             "recommendations.default_count"
         )
         assert rec_config.max_count == _const_default("recommendations.max_count")
-        # No writes on boot — the fallback comes from consts, not a seeded row.
         assert storage.settings.list() == {}
 
 
@@ -339,13 +336,9 @@ class TestLiveSettingsApply:
         assert response.status_code == 200, response.text
         after = self._recommendations(booted_app)
 
-        # Positive control on the seeded flip: without it the inequalities
-        # below could pass on noise instead of on the weight actually applying.
         assert before[0]["title"] == "Neon Divide"
         assert after[0]["title"] == "Quiet Harvest"
 
-        # Zeroing a weight re-normalises every aggregate and re-orders the list,
-        # so both the per-title scores and the breakdown sequence must move.
         assert {rec["title"]: rec["score"] for rec in before} != {
             rec["title"]: rec["score"] for rec in after
         }
@@ -403,7 +396,6 @@ def _apply_on_another_thread(
         try:
             apply_settings(config, storage, updates)
         except Exception as error:
-            # A thread's exception dies with it, so it is carried out by hand.
             raised.append(error)
 
     worker = threading.Thread(target=write)

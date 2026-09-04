@@ -33,7 +33,6 @@ describe('AccountSection', () => {
   })
 
   it('forwards the password change to its parent', async () => {
-    // Long enough to clear the rule the form checks before it emits anything.
     const replacement = 'hunter3-hunter3'
     const wrapper = mountSection()
 
@@ -66,8 +65,6 @@ describe('AccountSection', () => {
   })
 
   it('keeps the two reports apart', async () => {
-    // Separate endpoints, separate failures: a rejected password must not put
-    // an error beside the Save details button, or vice versa.
     const wrapper = mountSection({ passwordError: 'That is not your current password.' })
 
     expect(wrapper.find('#account-password-status').text()).toContain('current password')

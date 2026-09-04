@@ -44,7 +44,7 @@ def test_create_user(temp_db: sqlite3.Connection) -> None:
         settings={"compact_cards": True},
     )
 
-    assert user_id > 1  # Default user is 1
+    assert user_id > 1
 
     user = get_user_by_id(temp_db, user_id)
     assert user is not None
@@ -101,8 +101,6 @@ class TestUpdatingAUsersIdentity:
         assert user is not None and user["username"] == "default"
 
 
-# The two states the one-time content repair can be in on a given open. Named
-# so a test says which it expects rather than spelling out the zeroes.
 _EVERY_PASS_ONCE = {"renormalize": 1, "detail_shapes": 1}
 _NO_PASS_AT_ALL = {"renormalize": 0, "detail_shapes": 0}
 
@@ -252,9 +250,6 @@ class TestTheDerivedColumnBackfill:
             build_search_text("The Witcher 3", "CD Projekt Red"),
         )
 
-    # One row per type, each keeping its creator in a column of its own. The
-    # titles carry a leading article and non-Latin letters, which SQL's own
-    # lower() cannot normalize.
     _LIBRARY_OF_EVERY_TYPE = (
         ("The Left Hand of Darkness", "book", "book_details", "author", "Le Guin"),
         ("Ångström", "movie", "movie_details", "director", "Roy Andersson"),
@@ -361,7 +356,6 @@ class TestOpeningADatabaseThatPredatesSyncScheduling:
         assert stored is not None
         assert stored["config_json"] == '{"vanity_url": "myname"}'
         assert stored["sync_interval"] is None
-        # The run history is a new table, so the upgrade has to create it too.
         temp_db.execute(
             "INSERT INTO sync_runs (user_id, source_id, started_at, finished_at,"
             " status) VALUES (1, 'steam', '2026-03-01T12:00:00.000000+00:00',"

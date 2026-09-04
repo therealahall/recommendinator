@@ -88,7 +88,6 @@ describe('useFocusTrap', () => {
   })
 
   it('holds Shift+Tab in from the container the trap parks focus on', async () => {
-    // Unguarded, the trigger behind the scrim took focus (WCAG 2.4.3).
     const onEscape = vi.fn()
     createWrapper(
       '<div ref="containerRef" tabindex="-1"><button id="first">A</button><button id="last">B</button></div>',

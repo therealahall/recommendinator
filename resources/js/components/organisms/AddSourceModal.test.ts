@@ -59,8 +59,6 @@ const filePlugin: PluginInfoResponse = {
   ],
 }
 
-// A plugin with a required non-sensitive field and an OPTIONAL secret, so the
-// "empty optional secret is skipped" path can be exercised.
 const optionalSecretPlugin: PluginInfoResponse = {
   name: 'opt_secret',
   display_name: 'Optional Secret',
@@ -146,7 +144,6 @@ describe('AddSourceModal', () => {
     expect(wrapper.emitted('close')).toBeTruthy()
 
     await wrapper.find('[data-testid="add-source-secret-password"]').setValue('hunter2')
-    // A real backdrop press blurs to <body> before the click, which jsdom skips.
     ;(document.activeElement as HTMLElement).blur()
     await dismiss(wrapper)
 
@@ -160,14 +157,11 @@ describe('AddSourceModal', () => {
       (wrapper.find('[data-testid="add-source-secret-password"]').element as HTMLInputElement)
         .value,
     ).toBe('hunter2')
-    // Declining left focus on <body>, so the next Tab walked out of the dialog.
     expect(wrapper.get('[aria-modal="true"]').element.contains(document.activeElement)).toBe(true)
     wrapper.unmount()
   })
 
   it('refuses Create for an invalid id, and says why where Tab reaches it', async () => {
-    // A natively disabled Create is not focusable, so the paragraph explaining
-    // what it is waiting for was reachable only by browse-mode arrowing.
     const { wrapper, store } = await mountWithPlugins()
     const create = vi.spyOn(store, 'createSource')
     await wrapper.find('#add-source-id').setValue('Bad ID')
@@ -324,7 +318,6 @@ describe('AddSourceModal', () => {
     }
 
     it('keeps the submit button focusable so the trap holds', async () => {
-      // `disabled` everywhere left none, so Tab walked out (WCAG 2.4.3).
       const { wrapper, store } = await mountMidSubmit()
 
       expect(store.createSource).toHaveBeenCalled()

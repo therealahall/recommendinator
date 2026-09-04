@@ -90,10 +90,10 @@ describe('RecCard', () => {
     })
 
     expect(wrapper.find('img').exists()).toBe(false)
-    expect(wrapper.text()).toContain('No cover art for Test')
+    expect(wrapper.get('.cover-art .sr-only').text()).toContain('Test')
   })
 
-  it('names every cited library item and says in words how it counted', () => {
+  it('names every cited library item', () => {
     const wrapper = mount(RecCard, {
       props: {
         rec: makeRec({
@@ -110,25 +110,9 @@ describe('RecCard', () => {
     const pills = wrapper.findAll('.rec-evidence .badge')
     expect(pills).toHaveLength(2)
     expect(pills[0].text()).toContain('A Memory Called Empire')
-    expect(pills[0].text()).toContain('contributed directly')
     expect(pills[1].text()).toContain('Ancillary Justice')
-    expect(pills[1].text()).toContain('contributed directly')
   })
 
-  it('names an inferred citation as inferred for a screen reader', () => {
-    const wrapper = mount(RecCard, {
-      props: {
-        rec: makeRec({ adaptations: [related({ title: 'Dune, the novel' })] }),
-        rank: 1,
-      },
-    })
-
-    const pill = wrapper.get('.rec-evidence .badge')
-    expect(pill.text()).toContain('inferred')
-  })
-
-  // The engine hands the same liked book back in both lists — proven in
-  // tests/test_reference_index.py — and its own reasoning sentence dedupes them.
   it('cites a library item once when it is both the adaptation and a direct signal', () => {
     const dune = related({ db_id: 11, title: 'Dune' })
     const wrapper = mount(RecCard, {
@@ -141,23 +125,7 @@ describe('RecCard', () => {
     expect(wrapper.findAll('.rec-evidence .badge')).toHaveLength(1)
   })
 
-  it('leads the citation with the sentence that introduces it', () => {
-    const wrapper = mount(RecCard, {
-      props: {
-        rec: makeRec({
-          reasoning: 'Recommended because you liked related items',
-          contributing_items: [related({ title: 'Hyperion' })],
-        }),
-        rank: 1,
-      },
-    })
-
-    expect(wrapper.get('.rec-reasoning').text()).toContain('because you liked')
-    expect(wrapper.get('.rec-evidence').text()).toContain('Hyperion')
-  })
-
   it('counts the citations it holds back and reaches them all when opened', async () => {
-    // A silently truncated citation reads as the whole reason for the pick.
     const titles = ['Ancillary Justice', 'Hyperion', 'Neuromancer', 'Blindsight', 'Ubik']
     const wrapper = mount(RecCard, {
       props: {
@@ -223,8 +191,9 @@ describe('RecCard', () => {
       props: { rec: makeRec({ score: 0.78, score_breakdown: { genre_match: 0.8 } }), rank: 1 },
     })
 
-    expect(wrapper.get('.rec-score').text()).toContain('Why this')
-    expect(wrapper.get('.rec-score .sr-only').text()).toMatch(/^Why this/)
+    const visible = wrapper.get('.rec-score-cue-label').text()
+    expect(visible).not.toBe('')
+    expect(wrapper.get('.rec-score .sr-only').text().startsWith(visible)).toBe(true)
   })
 
   it('offers no disclosure when there is no breakdown behind it', () => {

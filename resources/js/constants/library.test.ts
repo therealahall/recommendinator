@@ -25,8 +25,6 @@ function pythonSortOptions(source: string): string[] {
 
 describe('the sort orders the library select mirrors from Python', () => {
   it('offers exactly the orders the API accepts, and defaults to one of them', () => {
-    // Drop an order from the whitelist and the select still sends it, which
-    // comes back 400 and empties the library view.
     const db = readFileSync(`${process.cwd()}/src/storage/sqlite_db.py`, 'utf8')
 
     const offered = SORT_OPTIONS.map(option => option.value)
@@ -37,8 +35,6 @@ describe('the sort orders the library select mirrors from Python', () => {
 
 describe('the correction facts the edit dialog mirrors from Python', () => {
   it('bounds a correction, and offers a year box, exactly where the API does', () => {
-    // Widen MAX_CREATOR_LENGTH in Python alone and the box stops accepting a
-    // name `library edit --creator` stores.
     const content = readFileSync(`${process.cwd()}/src/models/content.py`, 'utf8')
     const fields = readFileSync(`${process.cwd()}/src/models/detail_fields.py`, 'utf8')
 

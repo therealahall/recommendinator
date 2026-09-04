@@ -67,9 +67,6 @@ describe('DuplicatesPage', () => {
   })
 
   it('hands focus to the refusal a part-way merge drew, its block being gone', async () => {
-    // Reported: the block silently shrank to two copies and said nothing. The
-    // reload re-keys it, so the row that would have printed the refusal is gone,
-    // and focusing the survivor instead scrolls the refusal off the screen.
     const offers = [block(10, 11, 12), block(10, 12)]
     mockGet.mockImplementation(async (url: string) =>
       url === '/duplicates' ? page([offers.shift() ?? block(10, 12)]) : [],
@@ -93,7 +90,6 @@ describe('DuplicatesPage', () => {
   })
 
   it('hands focus to the refusal a merge drew with its block still on the list', async () => {
-    // Nothing merged, so the block reloads keyed as it was and keeps the button.
     const offer = page([block(10, 11)])
     mockGet.mockImplementation(async (url) => (url === '/duplicates' ? offer : []))
     mockPost.mockRejectedValue(new Error('Item 11 is already merged into 10.'))
@@ -109,7 +105,6 @@ describe('DuplicatesPage', () => {
   })
 
   it('reports a refused offer again, whose row the reload took off the list', async () => {
-    // Lifted from the CLI first, the DELETE 404s and the row is already gone.
     const pair = { one_id: 20, one_title: 'Row 20', other_id: 21, other_title: 'Row 21' }
     mockGet.mockImplementation(async (url: string) => {
       if (url === '/duplicates') return page([])
@@ -130,7 +125,6 @@ describe('DuplicatesPage', () => {
   })
 
   it('says a work was left unsearched rather than showing its empty state', async () => {
-    // Counted in neither number, a skipped work reads as a library with none.
     const note = '1 work is not offered: more review than one pass can hold.'
     mockGet.mockImplementation(async (url: string) =>
       url === '/duplicates' ? page([], note) : [],
@@ -142,8 +136,6 @@ describe('DuplicatesPage', () => {
     expect(wrapper.text()).not.toContain('Nothing looks like the same work twice.')
   })
 
-  // The rail marks Library while this screen is up and links nowhere here, so
-  // without this link the only way back is the browser's own Back.
   it('offers the way back to the section the rail says it is in', async () => {
     mockGet.mockImplementation(async (url: string) => (url === '/duplicates' ? page([]) : []))
     const wrapper = mountPage()
@@ -155,8 +147,6 @@ describe('DuplicatesPage', () => {
   })
 
   it('keeps the alert in the tree while silent, so a refusal reads as a change', async () => {
-    // Inserted with v-if once it has words, or hidden with v-show until then,
-    // the refusal above never reaches a screen reader (WCAG 4.1.3).
     mockGet.mockImplementation(async (url: string) =>
       url === '/duplicates' ? page([]) : [],
     )

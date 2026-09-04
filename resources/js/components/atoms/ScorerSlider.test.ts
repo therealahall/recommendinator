@@ -6,8 +6,6 @@ describe('ScorerSlider', () => {
   const defaultProps = { label: 'Popularity Bias', modelValue: 2.5 }
 
   it('renders "0.0" at zero so a disabled value reads as off, not blank', () => {
-    // Zero formatting is label-agnostic; use the generic props so the atom
-    // test stays domain-free.
     const wrapper = mount(ScorerSlider, {
       props: { ...defaultProps, modelValue: 0 },
     })

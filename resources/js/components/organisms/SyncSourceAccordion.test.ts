@@ -348,7 +348,6 @@ describe('SyncSourceAccordion', () => {
       await wrapper.find('button.accordion-trigger').trigger('click')
       await flushPromises()
       const button = wrapper.get('[data-testid="remove-btn-steam"]')
-      // jsdom does not focus on click the way a browser does.
       if (focusRemove) (button.element as HTMLElement).focus()
       await button.trigger('click')
       return { wrapper, remove }
@@ -534,7 +533,6 @@ describe('SyncSourceAccordion', () => {
 
       const line = wrapper.get('[data-testid="sync-schedule-steam"]').text()
       expect(line).toContain('2 hours ago')
-      // In words, never a colour alone (WCAG 1.4.1).
       expect(line).toContain('succeeded')
       expect(line).toContain('in 6 hours')
       expect(
@@ -575,7 +573,6 @@ describe('SyncSourceAccordion', () => {
       await wrapper.find('button.accordion-trigger').trigger('click')
       await flushPromises()
 
-      // Hardcoding these in TypeScript is how the two interfaces drift.
       const select = wrapper.get('[data-testid="cadence-select-steam"]')
       expect(select.findAll('option').map((option) => option.text())).toEqual([
         'Off',
@@ -586,7 +583,6 @@ describe('SyncSourceAccordion', () => {
       await select.setValue('off')
       await flushPromises()
       expect(setSchedule).toHaveBeenCalledWith('steam', 'off')
-      // Cleared on a timer rather than at once: clearing announces nothing.
       expect(wrapper.get('[data-testid="cadence-status-steam"]').text()).toContain(
         'Cadence saved',
       )
@@ -658,7 +654,6 @@ describe('SyncSourceAccordion', () => {
       const status = wrapper.get('[data-testid="cadence-status-steam"]')
       expect(status.text()).toContain('not migrated to the database')
       expect(status.attributes('role')).toBe('alert')
-      // Back to the server's cadence, with the alert beside it saying why.
       expect((select.element as HTMLSelectElement).value).toBe('6h')
       expect(select.attributes('aria-describedby')).toBe(status.attributes('id'))
     })
@@ -693,7 +688,6 @@ describe('SyncSourceAccordion', () => {
       const trigger = wrapper.find('button.accordion-trigger')
       await trigger.trigger('click')
       await flushPromises()
-      // Unawaited on purpose: the refusal must settle after the collapse.
       void wrapper.get('[data-testid="cadence-select-steam"]').setValue('off')
       await trigger.trigger('click')
       await flushPromises()
@@ -706,7 +700,6 @@ describe('SyncSourceAccordion', () => {
     })
 
     it('fetches the run history when the disclosure opens, not on page load', async () => {
-      // Spied before the mount, or the page-load half below asserts nothing.
       const store = useDataStore()
       const loadRuns = vi
         .spyOn(store, 'loadSourceRuns')
@@ -728,7 +721,6 @@ describe('SyncSourceAccordion', () => {
 
       expect(loadRuns).toHaveBeenCalledWith('steam')
       expect(toggle.attributes('aria-expanded')).toBe('true')
-      // As reported: a failed sync showed a count and no way to see the cause.
       expect(wrapper.get('[data-testid="run-history-steam"]').text()).toContain(
         'Steam API returned 401 Unauthorized',
       )
@@ -804,8 +796,6 @@ describe('SyncSourceAccordion', () => {
     })
   })
 
-  // Each OAuth source below is named for its purpose, not for its plugin: the
-  // connect flow is chosen by plugin and addressed by source id.
   describe('trakt device-code connect/disconnect', () => {
     const traktSource = {
       ...baseSource,
@@ -858,8 +848,6 @@ describe('SyncSourceAccordion', () => {
 
     it('disconnects once when Disconnect is activated twice in flight', async () => {
       const { wrapper, store } = await expandTrakt(true)
-      // The second DELETE 404s, and the panel reported the connection status
-      // unreadable after a disconnect that had in fact worked.
       const disconnect = vi
         .spyOn(store, 'disconnectTrakt')
         .mockImplementation(() => new Promise<never>(() => {}))
@@ -875,9 +863,6 @@ describe('SyncSourceAccordion', () => {
     it('carries a trakt disconnect failure in the panel live region', async () => {
       const { wrapper, store } = await expandTrakt(true)
 
-      // Trakt used to be excluded from the panel's only live region, so a
-      // refused disconnect left the button, the "connected" label and no word
-      // anywhere that it had failed (WCAG 3.3.1).
       const region = wrapper.get('[data-testid="oauth-message"]')
       expect(region.attributes('aria-live')).toBe('polite')
 
@@ -911,8 +896,6 @@ describe('SyncSourceAccordion', () => {
       await disconnect.trigger('click')
       await flushPromises()
 
-      // The button unmounts itself as it succeeds; without a deliberate move
-      // focus falls to <body> and keyboard users restart from the top.
       expect(document.activeElement).toBe(
         wrapper.get('.source-connect').element,
       )
@@ -934,8 +917,6 @@ describe('SyncSourceAccordion', () => {
       expect(wrapper.get('[data-testid="oauth-status-error"]').text()).toContain(
         'Could not read',
       )
-      // The fallback status reads as "not connected", which would offer a
-      // Connect button hinting at credentials that may be perfectly fine.
       expect(wrapper.find('[data-testid="trakt-connect-btn"]').exists()).toBe(false)
       wrapper.unmount()
     })
@@ -988,7 +969,6 @@ describe('SyncSourceAccordion', () => {
 
     it('reports the status as unknown when a disconnect cannot be re-read', async () => {
       const { wrapper, store } = await expandGog(true)
-      // The DELETE succeeded and said so; only the re-read after it failed.
       vi.spyOn(store, 'disconnectGog').mockImplementation(async (id: string) => {
         store.oauthMessages[id] = 'Disconnected. You can reconnect below.'
         throw new Error('status read failed')
@@ -997,9 +977,6 @@ describe('SyncSourceAccordion', () => {
       await wrapper.get('[data-testid="disconnect-btn-gog_work"]').trigger('click')
       await flushPromises()
 
-      // The cached flag still says connected, so rendering it put "GOG account
-      // connected." and a Disconnect button beside a region announcing the
-      // disconnect, with nothing saying which one is current.
       expect(store.oauthStatusFor('gog_work').connected).toBe(true)
       expect(wrapper.find('[data-testid="oauth-connected"]').exists()).toBe(false)
       expect(
@@ -1011,8 +988,6 @@ describe('SyncSourceAccordion', () => {
       expect(wrapper.find('[data-testid="oauth-status-retry"]').exists()).toBe(true)
     })
 
-    // The Epic branch is `v-else-if="isEpic"`, so a third OAuth plugin cannot
-    // silently inherit Epic's flow, origin and label.
     const epicSource = {
       ...baseSource,
       id: 'epic_work',
@@ -1149,18 +1124,12 @@ describe('SyncSourceAccordion', () => {
       expect(bar.attributes('aria-valuenow')).toBe('87')
       expect(wrapper.text()).toContain('7/8')
       expect(wrapper.text()).toContain('Portal 2')
-      // The umbrella job's top-level current_item ("Other thing") is for
-      // a different source — it must NOT leak into this accordion.
       expect(wrapper.text()).not.toContain('Other thing')
     })
 
     it('bounds the error list and states the server total exactly once', () => {
-      // This renders outside the collapsible panel, so a list as long as the
-      // run's failures pushes every other source's Sync button off the page.
       const reported = 200
       const omitted = 4800
-      // Sonarr's failures come first, so capping before filtering renders
-      // another source's errors here, or none at all.
       const failures = (source: string) =>
         Array.from({ length: reported }, (_, i) => ({
           source,

@@ -22,11 +22,8 @@ from src.storage import sqlite_db
 from src.storage.schema import create_schema
 from src.storage.sqlite_db import SQLiteDB
 
-# Columns every detail table carries whatever the content type: the foreign
-# key and the free-form blob holding whatever no column claimed.
 _UNDECLARED_COLUMNS = {"content_item_id", "metadata"}
 
-# A value of each kind, with what its column holds once stored.
 _SAMPLES: dict[FieldKind, tuple[Any, Any]] = {
     FieldKind.CREATOR: ("Sample Creator", "Sample Creator"),
     FieldKind.TEXT: ("Sample Text", "Sample Text"),
@@ -34,8 +31,6 @@ _SAMPLES: dict[FieldKind, tuple[Any, Any]] = {
     FieldKind.STRING_LIST: ("Noir", '["Noir"]'),
 }
 
-# What each kind's sample reads back as, which is the stored form only for
-# the kinds whose codec parses nothing on the way out.
 _READ_BACK: dict[FieldKind, Any] = {
     FieldKind.CREATOR: "Sample Creator",
     FieldKind.TEXT: "Sample Text",
@@ -43,9 +38,6 @@ _READ_BACK: dict[FieldKind, Any] = {
     FieldKind.STRING_LIST: ["Noir"],
 }
 
-# A metadata key no column claims, so it belongs in the free-form blob.
-# Non-ASCII on both sides: the blob is JSON, and a key or value mangled by
-# the encode/decode round trip would come back as a different key.
 _UNCLAIMED_KEY = "übersetzung"
 _UNCLAIMED_VALUE = "Ursula K. Le Guin ✨"
 
@@ -263,8 +255,6 @@ class TestAListColumnRefusesAValueItCannotHold:
                 )
             )
 
-        # The refusal rolls the title row back with the detail row it belongs
-        # to, rather than leaving a genreless ghost a re-sync never fills.
         assert db.get_content_items() == []
 
 

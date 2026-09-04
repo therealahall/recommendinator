@@ -63,8 +63,6 @@ describe('StatusBar', () => {
   })
 
   it('offers a way to ask the server again once it could not be reached', async () => {
-    // Regression: the connection error was final — no control, and nothing
-    // saying a reload was the only way out of it.
     const app = useAppStore()
     const retry = vi.spyOn(app, 'fetchStatus').mockResolvedValue(undefined)
     app.status = 'error'

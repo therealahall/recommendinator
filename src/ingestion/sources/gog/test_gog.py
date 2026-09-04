@@ -268,7 +268,6 @@ class TestGogPluginFetch:
         mock_wishlist.return_value = [100, 200]
 
         plugin = GogPlugin()
-        # Without enrichment, product 200 has no title → skipped
         items = list(
             plugin.fetch(
                 {

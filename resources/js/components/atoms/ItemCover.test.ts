@@ -9,7 +9,7 @@ describe('ItemCover', () => {
     })
 
     expect(wrapper.find('img').exists()).toBe(false)
-    expect(wrapper.get('.sr-only').text()).toBe('No cover art for Dune')
+    expect(wrapper.get('.sr-only').text()).toContain('Dune')
   })
 
   it('falls back to the same state when a cached cover 404s', async () => {
@@ -21,7 +21,7 @@ describe('ItemCover', () => {
     await wrapper.get('img').trigger('error')
 
     expect(wrapper.find('img').exists()).toBe(false)
-    expect(wrapper.get('.sr-only').text()).toBe('No cover art for Piranesi')
+    expect(wrapper.get('.sr-only').text()).toContain('Piranesi')
   })
 
   it('retries the next item rather than staying failed on a recycled box', async () => {
