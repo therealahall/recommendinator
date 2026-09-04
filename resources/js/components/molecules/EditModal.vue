@@ -103,9 +103,10 @@ function onSeasonsChange(watched: number[]) {
   seasonsWatched.value = watched
   if (!isTvShow.value) return
   const total = props.item.total_seasons!
-  if (watched.length === 0) {
+  const rendered = watched.filter((season) => season <= total).length
+  if (rendered === 0) {
     status.value = 'unread'
-  } else if (watched.length >= total) {
+  } else if (rendered >= total) {
     status.value = 'completed'
   } else {
     status.value = 'currently_consuming'
@@ -113,7 +114,8 @@ function onSeasonsChange(watched: number[]) {
 }
 
 function onSeasonsReset() {
-  onSeasonsChange([])
+  seasonsWatched.value = []
+  status.value = loaded.status
   seasonsReset.value = true
 }
 
@@ -242,6 +244,7 @@ function save() {
       <SeasonChecklist
         :model-value="seasonsWatched"
         :total-seasons="item.total_seasons!"
+        :reset="seasonsReset"
         @update:model-value="onSeasonsChange"
         @reset="onSeasonsReset"
       />

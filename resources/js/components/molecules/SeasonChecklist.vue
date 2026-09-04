@@ -5,6 +5,7 @@ import AppIcon from '@/components/atoms/AppIcon.vue'
 const props = defineProps<{
   totalSeasons: number
   modelValue: number[]
+  reset?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -23,6 +24,7 @@ const renderedWatched = computed(
 // so it announces rather than merely displays (WCAG 4.1.3).
 const watchedLabel = computed(() => {
   const noun = props.totalSeasons === 1 ? 'season' : 'seasons'
+  if (props.reset) return `Saving will set the ${noun} from the synced counts`
   if (renderedWatched.value === 0) return `No ${noun} watched`
   return `${renderedWatched.value} of ${props.totalSeasons} ${noun} watched`
 })
@@ -54,7 +56,13 @@ function deselectAll() {
     <div class="season-controls">
       <button class="btn btn-small btn-secondary" type="button" @click="selectAll">Select All</button>
       <button class="btn btn-small btn-secondary" type="button" @click="deselectAll">Deselect All</button>
-      <button class="btn btn-small btn-secondary" type="button" @click="emit('reset')">Reset to synced</button>
+      <button
+        class="btn btn-small btn-secondary"
+        type="button"
+        aria-label="Reset seasons to the synced values"
+        :aria-pressed="reset ?? false"
+        @click="emit('reset')"
+      >Reset to synced</button>
       <span
         class="season-counter"
         role="status"
@@ -89,6 +97,12 @@ function deselectAll() {
   align-items: center;
   gap: var(--space-2);
   margin-bottom: var(--space-3);
+}
+
+.season-controls .btn[aria-pressed='true'] {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  border-color: var(--accent);
+  color: var(--text-primary);
 }
 
 .season-counter {
