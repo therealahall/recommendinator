@@ -166,13 +166,19 @@ class TestSonarrSeasonEpisodeCounts:
                     "title": "Severance",
                     "tvdbId": 371980,
                     "seasons": [
-                        {"seasonNumber": 0, "statistics": {"episodeCount": 3}},
+                        {
+                            "seasonNumber": 0,
+                            "monitored": True,
+                            "statistics": {"episodeCount": 3},
+                        },
                         {
                             "seasonNumber": 1,
+                            "monitored": True,
                             "statistics": {"episodeCount": 9, "totalEpisodeCount": 9},
                         },
                         {
                             "seasonNumber": 2,
+                            "monitored": True,
                             "statistics": {"episodeCount": 8, "totalEpisodeCount": 10},
                         },
                         {"seasonNumber": 3, "monitored": True},
@@ -184,6 +190,32 @@ class TestSonarrSeasonEpisodeCounts:
         items = list(plugin.fetch({"url": "http://localhost:8989", "api_key": "key"}))
 
         assert items[0].metadata["season_episode_counts"] == {"1": 9, "2": 8}
+
+    @patch("src.ingestion.sources.arr_base.requests.get")
+    def test_an_unmonitored_season_states_no_count_because_sonarr_counts_files(
+        self,
+        mock_get: Mock,
+        plugin: SonarrPlugin,
+    ) -> None:
+        mock_get.return_value = _api_response(
+            [
+                {
+                    "title": "Severance",
+                    "tvdbId": 371980,
+                    "seasons": [
+                        {
+                            "seasonNumber": 1,
+                            "monitored": False,
+                            "statistics": {"episodeCount": 3, "totalEpisodeCount": 10},
+                        },
+                    ],
+                }
+            ]
+        )
+
+        items = list(plugin.fetch({"url": "http://localhost:8989", "api_key": "key"}))
+
+        assert "season_episode_counts" not in items[0].metadata
 
     @patch("src.ingestion.sources.arr_base.requests.get")
     def test_a_series_with_no_countable_season_writes_no_counts_key(

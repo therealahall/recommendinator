@@ -47,15 +47,15 @@ class SonarrPlugin(ArrPlugin):
 
 
 def _aired_episodes_per_season(series: dict[str, Any]) -> dict[str, int]:
-    """``episodeCount`` is what has aired; ``totalEpisodeCount`` counts announced
-    episodes too, so one unaired episode would hold a season open forever.
+    """``episodeCount`` is the aired count only where the season is monitored;
+    elsewhere it counts files. ``totalEpisodeCount`` counts unaired episodes too.
     """
     counts: dict[str, int] = {}
     for season in series.get("seasons") or []:
         number = season.get("seasonNumber")
         aired = (season.get("statistics") or {}).get("episodeCount")
         # Season 0 is the specials, and its falsy number drops out here.
-        if number and aired:
+        if number and aired and season.get("monitored"):
             counts[str(number)] = aired
     return counts
 
