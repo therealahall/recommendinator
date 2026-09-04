@@ -433,6 +433,24 @@ class TestErrorsKeepTheApiKeyOut:
 
         mock_get.assert_called_once()
 
+    def test_a_force_ssl_proxy_echoing_the_query_back_is_refused_without_the_key(
+        self, plugin: TautulliPlugin
+    ) -> None:
+        redirect = Mock(spec=requests.Response)
+        redirect.status_code = 301
+        redirect.headers = {
+            "Location": f"https://elsewhere.example/api/v2?apikey={_API_KEY}"
+        }
+
+        with patch(
+            "src.ingestion.sources.tautulli.tautulli.requests.get",
+            return_value=redirect,
+        ):
+            with pytest.raises(SourceError, match="Refused a redirect") as raised:
+                list(plugin.fetch(dict(_CONFIG)))
+
+        assert _API_KEY not in str(raised.value)
+
 
 class TestValidateConfig:
     def test_every_missing_field_is_reported_at_once(
