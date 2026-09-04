@@ -222,7 +222,12 @@ state.
 
 A merge keeps `--survivor` and folds the other row into it; run it once per
 copy, from the one listing. Nothing is deleted, and `unmerge` puts the absorbed
-row back — newest merge first, refusing any other order. `decline-duplicate`
+row back — newest merge first, refusing any other order.
+
+A show's season sizes survive on both sides: each season takes the largest count
+either row stated.
+
+`decline-duplicate`
 sets `--one` apart from every `--other` named, for the life of the library, and
 leaves the copies it did not name still offered together; it takes at most 39
 of them, one short of the largest block offered.
