@@ -69,6 +69,7 @@ Each source has its own setup guide. Pick the ones you use.
 | **Sonarr** | TV Shows | [sonarr](src/ingestion/sources/sonarr/README.md) |
 | **Radarr** | Movies | [radarr](src/ingestion/sources/radarr/README.md) |
 | **Trakt** | TV Shows / Movies | [trakt](src/ingestion/sources/trakt/README.md) |
+| **Tautulli** | TV Shows / Movies | [tautulli](src/ingestion/sources/tautulli/README.md) |
 | **ROM Library** | Games | [roms](src/ingestion/sources/roms/README.md) |
 
 A one-off export — a Goodreads or StoryGraph CSV, or a CSV, JSON or Markdown
