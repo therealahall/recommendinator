@@ -5,20 +5,8 @@ const CONTENT_TYPE_LABELS: Record<string, string> = {
   video_game: 'Video Game',
 }
 
-const STATUS_LABELS: Record<string, string> = {
-  completed: 'Completed',
-  in_progress: 'In Progress',
-  plan_to_consume: 'Plan to Consume',
-  dropped: 'Dropped',
-  on_hold: 'On Hold',
-}
-
 export function formatContentType(type: string): string {
   return CONTENT_TYPE_LABELS[type] ?? type
-}
-
-export function formatStatus(status: string): string {
-  return STATUS_LABELS[status] ?? status
 }
 
 export function formatScore(score: number): string {
@@ -103,13 +91,6 @@ export function formatRelativeTime(iso: string, now: Date = new Date()): string 
     }
   }
   return format.format(Math.round(seconds), 'second')
-}
-
-export function formatElapsed(seconds: number): string {
-  if (seconds < 60) return `${Math.round(seconds)}s`
-  const minutes = Math.floor(seconds / 60)
-  const secs = Math.round(seconds % 60)
-  return `${minutes}m ${secs}s`
 }
 
 export function formatStatusForContentType(status: string, contentType: string): string {

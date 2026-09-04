@@ -1,13 +1,9 @@
 <script setup lang="ts">
 import AppIcon from '@/components/atoms/AppIcon.vue'
 import WeightsDialog from '@/components/organisms/WeightsDialog.vue'
-import { SCORER_KEYS } from '@/stores/preferences'
 import { ref } from 'vue'
 
 const open = ref(false)
-
-// The dialog still counts what it holds; the trigger does not need to.
-const summary = `${SCORER_KEYS.length + 1} signals`
 </script>
 
 <template>
@@ -24,7 +20,7 @@ const summary = `${SCORER_KEYS.length + 1} signals`
     Scoring<span class="sr-only"> weights</span>
   </button>
 
-  <WeightsDialog v-if="open" :summary="summary" @close="open = false" />
+  <WeightsDialog v-if="open" @close="open = false" />
 </template>
 
 <style scoped>
