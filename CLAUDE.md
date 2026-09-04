@@ -81,7 +81,9 @@ src/
 ├── auth/             # GOG/Epic/Trakt OAuth flows
 ├── ingestion/        # Data ingestion. paths.py holds the process-global
 │   │                 # security.allowed_source_roots allowlist; urls.py the
-│   │                 # source-URL shape check; schedule.py the cadence presets,
+│   │                 # source-URL shape check and the same-origin redirect
+│   │                 # guard every network plugin applies; schedule.py the
+│   │                 # cadence presets,
 │   │                 # failure backoff and due computation
 │   ├── importers/    # One-off file formats, reached only by import
 │   └── sources/      # Source plugins (folder-per-plugin: <name>/<name>.py + README.md + test_<name>.py).

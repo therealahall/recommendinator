@@ -47,8 +47,9 @@ class SonarrPlugin(ArrPlugin):
 
 
 def _aired_episodes_per_season(series: dict[str, Any]) -> dict[str, int]:
-    """``episodeCount`` is the aired count only where the season is monitored;
-    elsewhere it counts files. ``totalEpisodeCount`` counts unaired episodes too.
+    """``episodeCount`` counts aired *and monitored* episodes, so it is the aired
+    count only for a fully monitored season, and this payload cannot show
+    per-episode monitoring. ``totalEpisodeCount`` counts unaired episodes too.
     """
     counts: dict[str, int] = {}
     for season in series.get("seasons") or []:
