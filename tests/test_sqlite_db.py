@@ -101,6 +101,29 @@ def _merged(temp_db: SQLiteDB, survivor_id: int, absorbed_id: int) -> None:
     temp_db.merge_content_items(survivor_id, absorbed_id, MergeEvidence.MANUAL)
 
 
+def _insert_raw_show(
+    temp_db: SQLiteDB, source: str, external_id: str, season_counts: dict[str, int]
+) -> int:
+    with temp_db.connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO content_items"
+            " (user_id, title, normalized_title, content_type, status, source)"
+            " VALUES (1, 'The Bear', 'the bear', 'tv_show', 'currently_consuming', ?)",
+            (source,),
+        )
+        db_id = cursor.lastrowid
+        assert db_id is not None
+        _record_raw_external_id(cursor, db_id, source, external_id)
+        cursor.execute(
+            "INSERT INTO tv_show_details (content_item_id, seasons, metadata)"
+            " VALUES (?, 1, ?)",
+            (db_id, json.dumps({"season_episode_counts": season_counts})),
+        )
+        conn.commit()
+    return db_id
+
+
 def _insert_raw_book(
     temp_db: SQLiteDB, source: str, external_id: str, author: str | None
 ) -> None:
@@ -2909,7 +2932,7 @@ def _tmdb_enrichment(season_counts: dict[int, int]) -> ContentItem:
     )
 
 
-def _sonarr_show(aired: dict[int, int], genres: list[str] | None = None) -> ContentItem:
+def _sonarr_show(aired: dict[int, int]) -> ContentItem:
     return ContentItem(
         id="tvdb:388477",
         title="The Bear",
@@ -2921,7 +2944,6 @@ def _sonarr_show(aired: dict[int, int], genres: list[str] | None = None) -> Cont
                 "title": "The Bear",
                 "tvdbId": 388477,
                 "year": 2022,
-                "genres": genres or [],
                 "statistics": {"seasonCount": len(aired)},
                 "seasons": [
                     {
@@ -3196,18 +3218,16 @@ class TestSeasonCompletionFromTheLargestCount:
         assert retrieved is not None
         assert retrieved.metadata.get("seasons_watched") is None
 
-    def test_a_season_sonarr_reports_smaller_than_tmdb_takes_the_larger_size(
+    def test_a_show_plex_no_longer_holds_completes_on_the_size_sonarr_states(
         self, temp_db: SQLiteDB
     ) -> None:
-        db_id = temp_db.save_content_item(_tautulli_show({"2": 8}))
-        temp_db.save_enrichment_metadata(db_id, _tmdb_enrichment({2: 10}))
-
-        temp_db.save_content_item(_sonarr_show({2: 8}))
+        db_id = temp_db.save_content_item(_tautulli_show({"1": 9}))
+        temp_db.save_content_item(_sonarr_show({1: 9}))
 
         retrieved = temp_db.get_content_item(db_id)
         assert retrieved is not None
-        assert retrieved.metadata.get("seasons_watched") is None
-        assert retrieved.metadata["season_episode_counts"] == {"2": 10}
+        assert retrieved.metadata["seasons_watched"] == [1]
+        assert retrieved.status == ConsumptionStatus.COMPLETED
 
     def test_a_stored_season_size_never_shrinks_when_a_source_reports_a_smaller_one(
         self, temp_db: SQLiteDB
@@ -3973,6 +3993,20 @@ class TestCrossSourceDuplicateDetectionRegression:
         assert retrieved.metadata is not None
         assert retrieved.metadata.get("seasons") == 4
         assert retrieved.metadata.get("episodes") == 20
+
+    def test_merge_keeps_the_larger_season_size_the_absorbed_row_held(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        keep_id = _insert_raw_show(temp_db, "sonarr", "tvdb:388477", {"1": 3})
+        dup_id = _insert_raw_show(temp_db, "tmdb", "tmdb:88", {"1": 22})
+
+        _merged(temp_db, keep_id, dup_id)
+        temp_db.save_content_item(_tautulli_show({"1": 3}))
+
+        retrieved = temp_db.get_content_item(keep_id)
+        assert retrieved is not None
+        assert retrieved.metadata["season_episode_counts"] == {"1": 22}
+        assert retrieved.metadata.get("seasons_watched") is None
 
     def test_a_merge_carries_the_detail_tables_onto_the_survivor(
         self, tmp_path: Path

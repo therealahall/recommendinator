@@ -15,7 +15,7 @@ from src.models.detail_fields import (
 )
 from src.utils.dates import merge_seasons_watched_dates
 from src.utils.list_merge import merge_string_lists
-from src.utils.series import merge_seasons_watched
+from src.utils.series import reconcile_seasons
 from src.utils.sorting import FUZZY_MATCH_THRESHOLD
 
 __all__ = [
@@ -531,13 +531,9 @@ def _merge_detail_metadata(
 
     merged = {**dup_meta, **keep_meta}
 
-    # Exception: seasons_watched is the union of both rows. Each row's list may
-    # hold seasons the user ticked by hand, and only the survivor is read.
-    combined_seasons = merge_seasons_watched(
-        keep_meta.get("seasons_watched"), dup_meta.get("seasons_watched")
-    )
-    if combined_seasons is not None:
-        merged["seasons_watched"] = combined_seasons
+    # Exception: the season fields, reconciled as the save path reconciles them,
+    # so the absorbed row's larger season size is not dropped for the kept one.
+    merged.update(reconcile_seasons(keep_meta, dup_meta))
 
     # Exception: seasons_watched_dates keeps the later date per season, so an
     # earlier duplicate never overwrites the kept row's. A None result — both
