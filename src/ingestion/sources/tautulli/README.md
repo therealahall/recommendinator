@@ -38,7 +38,7 @@ Moving Tautulli to another host takes the steps in
 
 A season is finished only when every episode of it has been watched, counted against the largest size any source states: every episode Sonarr or TMDB knows the season has, announced or not, or the number Plex holds. The largest wins because too small a count ticks a season early and nothing un-ticks one, while too large only delays the tick. A season no source counts is never ticked.
 
-**A show no longer in the Plex library imports with no seasons ticked.** Its watch history still arrives, but there is no season size left to measure against.
+**A show no longer in the Plex library still ticks its seasons where Sonarr or TMDB states a size.** Its watch history arrives either way; only where no source states one is there nothing left to measure against.
 
 ## Notes
 - Tautulli records plays and never ratings, so imported items carry none.
