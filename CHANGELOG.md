@@ -1,6 +1,64 @@
 # CHANGELOG
 
 
+## v0.51.0 (2026-09-04)
+
+### Bug Fixes
+
+- **recommendations**: Break a cross-type tie the way the pipeline breaks it
+  ([`bac3b3c`](https://github.com/therealahall/recommendinator/commit/bac3b3cccb5ffc7dfd6bc46d2c3189b901eca0ae))
+
+- **recommendations**: Score every type in a merged run against one divisor
+  ([`04b63a2`](https://github.com/therealahall/recommendinator/commit/04b63a2e732c464553a595f9b3bf85725fa8c005))
+
+- **recommendations**: Weight the breakdown the way the run weighted it
+  ([`7c595f2`](https://github.com/therealahall/recommendinator/commit/7c595f2841f2614950f7fa7190a310544a26bcca))
+
+- **web**: Keep the keyboard and the pointer on the surfaces they act on
+  ([`3b11d87`](https://github.com/therealahall/recommendinator/commit/3b11d873693c785e4ad2e8b63c2d0d326ee973e3))
+
+### Documentation
+
+- Describe per-item scorer applicability
+  ([`2347f6d`](https://github.com/therealahall/recommendinator/commit/2347f6df8ebbc955d5f4d0617ed5a92b77ccacce))
+
+### Features
+
+- **covers**: Serve cover art for TV seasons and report missing art
+  ([`1605604`](https://github.com/therealahall/recommendinator/commit/160560405d8123cfba042702ace9d347c448bf60))
+
+- **recommendations**: Rank one list across all four content types
+  ([`8918bb4`](https://github.com/therealahall/recommendinator/commit/8918bb47d5ba880c515251e88a44a1109f8f090e))
+
+- **recommendations**: Score items on the signals that apply to them
+  ([`e94ca13`](https://github.com/therealahall/recommendinator/commit/e94ca1380e56c2f44e1ccc7ea8dd9af49733323e))
+
+- **settings**: Resolve recommendation counts from the registry
+  ([`8f48c72`](https://github.com/therealahall/recommendinator/commit/8f48c7244707118c7ae2309989419365716cc578))
+
+- **web**: Put every route on one depth ladder and one type scale
+  ([`4e20597`](https://github.com/therealahall/recommendinator/commit/4e20597f0671b1933321823bf02d22a5b368cd8f))
+
+- **web**: Rebuild the card and the shell on the chosen design
+  ([`cb91fe7`](https://github.com/therealahall/recommendinator/commit/cb91fe72c9099fd806772efc80d5908d3494db7b))
+
+- **web**: Rebuild the recommendation card and filter chrome
+  ([`08aedd9`](https://github.com/therealahall/recommendinator/commit/08aedd9001869e56602912602cae36d35505276a))
+
+### Refactoring
+
+- **web**: Collapse the badge, field, icon and state languages into four
+  ([`417fb39`](https://github.com/therealahall/recommendinator/commit/417fb39c50c68171ccf5f551e7bc7ec1f3d87bbe))
+
+- **web**: Drop the signal count and unreached helpers
+  ([`02e3a4f`](https://github.com/therealahall/recommendinator/commit/02e3a4fd286d3e433f6717a2edb202c6c33e15f2))
+
+### Testing
+
+- Let test names carry their own regressions
+  ([`4818740`](https://github.com/therealahall/recommendinator/commit/48187408b578d643835be532a72aeb62e03dd500))
+
+
 ## v0.50.0 (2026-09-02)
 
 ### Chores
