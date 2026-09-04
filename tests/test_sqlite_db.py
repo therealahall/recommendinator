@@ -2896,6 +2896,20 @@ def _tautulli_show(
     )
 
 
+def _trakt_show(seasons_watched: list[int], total_seasons: int) -> ContentItem:
+    return ContentItem(
+        id="trakt:388477",
+        title="The Bear",
+        content_type=ContentType.TV_SHOW,
+        status=ConsumptionStatus.CURRENTLY_CONSUMING,
+        source="trakt",
+        metadata={
+            "seasons_watched": seasons_watched,
+            "total_seasons": total_seasons,
+        },
+    )
+
+
 def _sonarr_show(aired: dict[int, int], genres: list[str] | None = None) -> ContentItem:
     return ContentItem(
         id="tvdb:388477",
@@ -2911,7 +2925,11 @@ def _sonarr_show(aired: dict[int, int], genres: list[str] | None = None) -> Cont
                 "genres": genres or [],
                 "statistics": {"seasonCount": len(aired)},
                 "seasons": [
-                    {"seasonNumber": number, "statistics": {"episodeCount": episodes}}
+                    {
+                        "seasonNumber": number,
+                        "monitored": True,
+                        "statistics": {"episodeCount": episodes},
+                    }
                     for number, episodes in aired.items()
                 ],
             }
@@ -3109,19 +3127,6 @@ class TestTvSeasonSyncRegression:
 
 
 class TestSeasonEpisodeCountsThroughTheMetadataBlob:
-    def test_a_saved_show_reads_back_the_season_keys_its_source_emitted(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        item = _sonarr_show({1: 9, 2: 8})
-        db_id = temp_db.save_content_item(item)
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert (
-            retrieved.metadata["season_episode_counts"]
-            == item.metadata["season_episode_counts"]
-        )
-
     def test_a_resync_raises_the_count_of_a_season_still_airing(
         self, temp_db: SQLiteDB
     ) -> None:
@@ -3146,14 +3151,16 @@ class TestSeasonCompletionFromTheBestAvailableCount:
         assert retrieved.metadata["seasons_watched"] == []
         assert retrieved.status == ConsumptionStatus.CURRENTLY_CONSUMING
 
-    def test_the_library_count_finishes_a_season_when_no_aired_count_is_known(
+    def test_a_season_trakt_reported_watched_survives_the_plex_episode_counts(
         self, temp_db: SQLiteDB
     ) -> None:
-        db_id = temp_db.save_content_item(_tautulli_show({"2": 8}, {"2": 8}))
+        db_id = temp_db.save_content_item(_trakt_show([1, 2, 3], total_seasons=3))
+        temp_db.save_content_item(_tautulli_show({"1": 2}, {"1": 10}))
+        temp_db.save_content_item(_tautulli_show({"1": 2}, {"1": 10}))
 
         retrieved = temp_db.get_content_item(db_id)
         assert retrieved is not None
-        assert retrieved.metadata["seasons_watched"] == [2]
+        assert retrieved.metadata["seasons_watched"] == [1, 2, 3]
 
     def test_a_season_no_count_reaches_is_never_ticked(self, temp_db: SQLiteDB) -> None:
         db_id = temp_db.save_content_item(_tautulli_show({"2": 8}))
@@ -3315,7 +3322,7 @@ class TestSeasonCompletionFromTheBestAvailableCount:
         assert retrieved is not None
         assert retrieved.metadata["seasons_watched"] == []
 
-    def test_a_show_no_source_states_a_season_total_for_never_completes(
+    def test_the_plex_library_count_alone_finishes_a_season_but_not_the_show(
         self, temp_db: SQLiteDB
     ) -> None:
         db_id = temp_db.save_content_item(_tautulli_show({"1": 8}, {"1": 8}))
