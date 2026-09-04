@@ -418,8 +418,12 @@ def _asserted_seasons(existing: Mapping[str, Any]) -> set[int]:
     return set()
 
 
+def same_seasons(one: Any, other: Any) -> bool:
+    return _season_set(one) == _season_set(other)
+
+
 def cleared_hand_overrides() -> dict[str, list[int]]:
-    return {_MANUAL_ADDITIONS: [], _MANUAL_REMOVALS: []}
+    return {_MANUAL_ADDITIONS: [], _MANUAL_REMOVALS: [], _SOURCE_ASSERTED: []}
 
 
 def hand_overrides(

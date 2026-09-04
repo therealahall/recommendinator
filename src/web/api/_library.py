@@ -146,7 +146,8 @@ class ItemEditRequest(BaseModel):
         None, max_length=MAX_SEASONS
     )
     clear_seasons: bool = Field(
-        False, description="Empty the seasons and drop the manual overrides"
+        False,
+        description="Drop the manual season edits and take what the synced counts say",
     )
     genres: list[Annotated[str, Field(max_length=MAX_GENRE_TAG_LENGTH)]] | None = Field(
         None, max_length=MAX_GENRES, description="Manual genres (overwrite)"
@@ -392,7 +393,7 @@ def edit_item(
             status=status,
             rating=request.rating if "rating" in supplied else UNSET,
             review=request.review if "review" in supplied else UNSET,
-            seasons_watched=[] if request.clear_seasons else request.seasons_watched,
+            seasons_watched=request.seasons_watched,
             clear_seasons=request.clear_seasons,
             genres=request.genres,
             tags=request.tags,
