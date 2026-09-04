@@ -430,7 +430,7 @@ class TestTMDBSeasonEpisodeCounts:
             }
         )
 
-        assert result.extra_metadata["season_episode_counts"] == {1: 7, 2: 13}
+        assert result.extra_metadata["season_episode_counts"] == {"1": 7, "2": 13}
         assert result.extra_metadata["seasons"] == 5
         assert result.extra_metadata["episodes"] == 62
 

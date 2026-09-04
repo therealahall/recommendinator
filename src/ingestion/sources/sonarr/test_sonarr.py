@@ -183,7 +183,7 @@ class TestSonarrSeasonEpisodeCounts:
 
         items = list(plugin.fetch({"url": "http://localhost:8989", "api_key": "key"}))
 
-        assert items[0].metadata["season_episode_counts"] == {1: 9, 2: 8}
+        assert items[0].metadata["season_episode_counts"] == {"1": 9, "2": 8}
 
     @patch("src.ingestion.sources.arr_base.requests.get")
     def test_a_series_with_no_countable_season_writes_no_counts_key(

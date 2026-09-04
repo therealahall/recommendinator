@@ -199,7 +199,7 @@ class TestShows:
             ("The Bear", ContentType.TV_SHOW)
         ]
         assert items[0].status == ConsumptionStatus.CURRENTLY_CONSUMING
-        assert items[0].metadata["episodes_watched_by_season"] == {1: 2}
+        assert items[0].metadata["episodes_watched_by_season"] == {"1": 2}
 
     def test_each_season_carries_the_timestamp_of_its_latest_play(
         self, plugin: TautulliPlugin
@@ -237,7 +237,7 @@ class TestShows:
 
         items = _fetch(server, plugin)
 
-        assert items[0].metadata["plex_season_episode_counts"] == {1: 8, 2: 10}
+        assert items[0].metadata["plex_season_episode_counts"] == {"1": 8, "2": 10}
 
     def test_a_show_with_no_live_rating_key_still_imports(
         self, plugin: TautulliPlugin
@@ -251,7 +251,7 @@ class TestShows:
         items = _fetch(server, plugin)
 
         assert items[0].title == "Severance"
-        assert items[0].metadata["episodes_watched_by_season"] == {1: 1}
+        assert items[0].metadata["episodes_watched_by_season"] == {"1": 1}
         assert items[0].metadata["plex_season_episode_counts"] == {}
         assert [query["cmd"] for query in server.queries] == [
             "get_history",
@@ -300,9 +300,9 @@ class TestShows:
         items = _fetch(server, plugin)
 
         metadata = items[0].metadata
-        assert metadata["episodes_watched_by_season"] == {1: 1}
+        assert metadata["episodes_watched_by_season"] == {"1": 1}
         assert metadata["seasons_watched_dates"] == {"1": "2024-02-20T12:00:00+00:00"}
-        assert metadata["plex_season_episode_counts"] == {1: 8}
+        assert metadata["plex_season_episode_counts"] == {"1": 8}
 
 
 class TestWhatIsIgnored:
@@ -355,7 +355,7 @@ class TestPagination:
 
         items = _fetch(server, plugin)
 
-        assert items[0].metadata["episodes_watched_by_season"] == {1: 1500}
+        assert items[0].metadata["episodes_watched_by_season"] == {"1": 1500}
         assert [query["start"] for query in server.history_calls("episode")] == [
             0,
             1000,
@@ -377,7 +377,7 @@ class TestPagination:
 
         items = _fetch(server, plugin)
 
-        assert items[0].metadata["episodes_watched_by_season"] == {1: 5}
+        assert items[0].metadata["episodes_watched_by_season"] == {"1": 5}
 
 
 class TestErrorsKeepTheApiKeyOut:
