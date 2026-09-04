@@ -60,11 +60,16 @@ def same_origin(url: str, target: str) -> bool:
     return isinstance(origin, UrlOrigin) and url_origin(target) == origin
 
 
+def _url_without_the_secret_bearing_query(value: str) -> str:
+    parts = urlsplit(value)
+    return f"{parts.scheme}://{parts.netloc}{parts.path}"
+
+
 def redirect_refusal(url: str, target: str, service: str) -> str:
     origin = urlsplit(url)
-    safe_url = sanitize_for_log(url)
+    safe_url = sanitize_for_log(_url_without_the_secret_bearing_query(url))
     safe_origin = sanitize_for_log(f"{origin.scheme}://{origin.netloc}")
-    safe_target = sanitize_for_log(target)
+    safe_target = sanitize_for_log(_url_without_the_secret_bearing_query(target))
     return (
         f"Refused a redirect from {safe_url} to {safe_target}. It leaves the "
         f"configured origin {safe_origin}, and the api key only goes where the "
