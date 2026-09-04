@@ -9,7 +9,8 @@
 # =============================================================================
 FROM node:24-slim@sha256:a9f5f7c91a432850b2a8a7797adf5eadb6c733ceed61167806cee7ea7fbc29df AS frontend-builder
 
-RUN corepack enable && corepack prepare pnpm@9.7.0 --activate
+# Node dropped corepack from the distribution at 25, so pnpm installs directly.
+RUN npm install -g pnpm@9.7.0
 
 WORKDIR /app
 
