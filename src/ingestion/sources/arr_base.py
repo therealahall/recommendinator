@@ -4,7 +4,7 @@ import logging
 from abc import abstractmethod
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urljoin
 
 import requests
 
@@ -14,27 +14,21 @@ from src.ingestion.plugin_base import (
     SourceError,
     SourcePlugin,
 )
-from src.ingestion.urls import UrlOrigin, source_url_error, url_origin
+from src.ingestion.urls import (
+    MAX_SAME_ORIGIN_REDIRECTS,
+    REDIRECT_STATUSES,
+    REQUEST_TIMEOUT,
+    redirect_refusal,
+    same_origin,
+    source_url_error,
+)
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.utils.progress import log_progress
-from src.utils.text import sanitize_for_log
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
 
 logger = logging.getLogger(__name__)
-
-_REQUEST_TIMEOUT = 30
-
-_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
-
-_MAX_SAME_ORIGIN_REDIRECTS = 5
-
-
-def _same_origin(url: str, target: str) -> bool:
-    """Whether *target* addresses the party *url* does, scheme included."""
-    origin = url_origin(url)
-    return isinstance(origin, UrlOrigin) and url_origin(target) == origin
 
 
 class ArrPlugin(SourcePlugin):
@@ -238,41 +232,30 @@ class ArrPlugin(SourcePlugin):
         unverifiable certificate for a scheme nobody configured.
         """
         current = url
-        for _ in range(_MAX_SAME_ORIGIN_REDIRECTS):
+        for _ in range(MAX_SAME_ORIGIN_REDIRECTS):
             response = requests.get(
                 current,
                 headers={"X-Api-Key": api_key},
-                timeout=_REQUEST_TIMEOUT,
+                timeout=REQUEST_TIMEOUT,
                 verify=verify_ssl,
                 allow_redirects=False,
             )
-            if response.status_code not in _REDIRECT_STATUSES:
+            if response.status_code not in REDIRECT_STATUSES:
                 return response
             location = response.headers.get("Location")
             if not location:
                 return response
 
             target = urljoin(current, location)
-            if not _same_origin(url, target):
-                raise SourceError(self.name, self._redirect_refusal(current, target))
+            if not same_origin(url, target):
+                raise SourceError(
+                    self.name,
+                    redirect_refusal(current, target, self.display_name),
+                )
             current = target
 
         raise SourceError(
             self.name,
             f"{self.display_name} redirected {url} more than "
-            f"{_MAX_SAME_ORIGIN_REDIRECTS} times.",
-        )
-
-    def _redirect_refusal(self, url: str, target: str) -> str:
-        """The target is whatever ``Location`` said and this message is logged
-        on one line, so it is escaped like any other header text (CWE-117).
-        """
-        origin = urlsplit(url)
-        safe_target = sanitize_for_log(target)
-        return (
-            f"Refused a redirect from {url} to {safe_target}. It leaves the "
-            f"configured origin {origin.scheme}://{origin.netloc}, and the API "
-            f"key only goes where the source url points. If {self.display_name} "
-            f"really is at {safe_target}, set the source url to it (and "
-            "verify_ssl to false if its certificate is not publicly trusted)."
+            f"{MAX_SAME_ORIGIN_REDIRECTS} times.",
         )
