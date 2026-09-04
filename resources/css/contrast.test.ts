@@ -357,7 +357,7 @@ const RING_SURFACES = [
   '--chrome',
 ]
 
-const ACCENT_LIGHT_FILLS: [string, string, string][] = [
+const ACCENT_HOVER_FILLS: [string, string, string][] = [
   [
     'a hovered primary button',
     ".btn-primary:hover:not(:disabled):not([aria-disabled='true'])",
@@ -387,19 +387,19 @@ describe.each(THEMES)('the token layer in %s', (_theme, themePath) => {
     expect(ratio('--border-default', surface)).toBeGreaterThanOrEqual(NON_TEXT)
   })
 
-  it.each(RING_SURFACES)('--accent-light rings a focused control on %s', (surface) => {
-    expect(ratio('--accent-light', surface)).toBeGreaterThanOrEqual(NON_TEXT)
+  it.each(RING_SURFACES)('--focus-ring rings a focused control on %s', (surface) => {
+    expect(ratio('--focus-ring', surface)).toBeGreaterThanOrEqual(NON_TEXT)
   })
 
-  it("--accent-light rings Try again on the error bar's own tint", () => {
+  it("--focus-ring rings Try again on the error bar's own tint", () => {
     const tint = declaration(ruleBody(read(BASE), '.status-bar.error'), 'background')
     const bar = over(toRgba(tint, vars), toRgba('var(--bg-primary)', vars))
 
-    expect(contrast(toRgba('var(--accent-light)', vars), bar)).toBeGreaterThanOrEqual(NON_TEXT)
+    expect(contrast(toRgba('var(--focus-ring)', vars), bar)).toBeGreaterThanOrEqual(NON_TEXT)
   })
 
-  it.each(ACCENT_LIGHT_FILLS)(
-    '%s keeps its label readable on the --accent-light it fills with',
+  it.each(ACCENT_HOVER_FILLS)(
+    '%s keeps its label readable on the --accent-hover it fills with',
     (_label, hoverSelector, labelSelector) => {
       const base = read(BASE)
       const fill = declaration(ruleBody(base, hoverSelector), 'background')

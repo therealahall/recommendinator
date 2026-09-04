@@ -67,7 +67,17 @@ Every field is required.
 
 Declare these in `colors.css` under a `:root` selector. The Nord column is what
 the default theme sets; a token you leave out falls back to base.css's unbranded
-grey, not to Nord, so declare the whole set.
+grey, not to Nord, so declare the whole set. A row marked _derived_ is not part
+of that set: `base.css` computes it from the tokens above, and a theme shipped in
+this repo that declares one fails the token contract, which allows only what Nord
+declares.
+
+Five tokens were renamed for role rather than appearance, and a theme still
+declaring an old name silently paints the unbranded fallback. A private theme
+predating the rename needs `--accent-light` → `--accent-hover`, `--overlay-dark`
+→ `--overlay-backdrop`, `--overlay-medium` → `--overlay-scrim`,
+`--text-on-dark-fill` → `--text-on-emphasis`; `--accent-teal` is gone and no rule
+ever read it.
 
 ### Backgrounds
 
@@ -80,7 +90,7 @@ grey, not to Nord, so declare the whole set.
 | `--bg-input` | `#2e3440` | Input fields |
 | `--bg-hover` | `#434c5e` | Hover states |
 | `--bg-secondary` | `#3b4252` | Secondary surfaces (code blocks) |
-| `--bg-active` | `color-mix(in srgb, var(--accent) 20%, transparent)` | Active/selected, derived from the accent |
+| `--bg-active` | _derived_ `color-mix(in srgb, var(--accent) 20%, transparent)` | Active/selected |
 
 ### Text
 
@@ -90,7 +100,7 @@ grey, not to Nord, so declare the whole set.
 | `--text-secondary` | `#d8dee9` | Secondary/dimmer text |
 | `--text-muted` | `#b3c7da` | Muted/label text |
 | `--text-inverse` | `#2e3440` | Text on accent backgrounds |
-| `--text-on-dark-fill` | `#ffffff` | Labels on the Delete and Enable fills, dark in either theme |
+| `--text-on-emphasis` | `#ffffff` | Labels on the Delete and Enable fills, dark in either theme |
 
 `--text-muted` carries help text, hints and empty states at 12-13px, so keep it
 at 4.5:1 or better against `--bg-primary`, `--bg-card`, `--bg-sidebar`,
@@ -103,18 +113,19 @@ darkest in a light one, is the one that binds.
 | Variable | Nord | Used for |
 |----------|---------|-------------|
 | `--accent` | `#81a1c1` | Buttons, links, active states |
-| `--accent-light` | `#88c0d0` | Highlights, and the keyboard focus ring |
-| `--accent-teal` | `#8fbcbb` | Supplementary |
+| `--accent-hover` | `#88c0d0` | A primary button or checked pill under the pointer, and at rest the weight slider's thumb and filled track |
+| `--focus-ring` | _derived_ `var(--accent-hover)` | The keyboard focus ring |
 
-`--accent-light` is the one focus indicator the whole app uses, drawn just
-outside the control. Keep it at 3:1 or better against every surface a ring can
+`--focus-ring` is the one focus indicator the whole app uses, drawn just outside
+the control, and `base.css` derives it so a theme declares one accent rather than
+two. Keep `--accent-hover` at 3:1 or better against every surface a ring can
 land on — `--bg-card`, `--bg-input`, `--bg-primary`, `--bg-elevated`,
 `--bg-sidebar`, `--chrome` and the error status bar's tint, where Try again
 sits — or
 keyboard users lose the only cue telling them where they are (WCAG 1.4.11).
 
 Both accents are also fills under `--text-inverse`: `--accent` on a primary
-button or active pill at rest, `--accent-light` on the same two hovered. Each
+button or active pill at rest, `--accent-hover` on the same two hovered. Each
 owes that pairing 4.5:1 (WCAG 1.4.3), and the resting one binds tighter.
 
 ### Borders
@@ -123,13 +134,14 @@ owes that pairing 4.5:1 (WCAG 1.4.3), and the resting one binds tighter.
 |----------|---------|-------------|
 | `--border-default` | `color-mix(in srgb, #4c566a 45%, var(--text-primary))` | The edge of a button, accordion, menu or drop zone |
 | `--border-subtle` | `#434c5e` | Subtle/secondary borders |
-| `--border-focus` | `var(--accent)` | Border of a focused field |
-| `--border-interactive` | `var(--border-default)` | The edge of every field, select, pill and toggle |
+| `--border-focus` | _derived_ `var(--accent)` | Border of a focused field |
+| `--border-interactive` | _derived_ `var(--border-default)` | The edge of every field, select, pill and toggle |
 
 Both separate a control from its own fill and from the surface behind it, so
 each owes 3:1 against every background a control lands on (WCAG 1.4.11).
 `--border-default` is pulled toward `--text-primary` to earn that, so a theme
-setting its text colour inherits an edge and need not override either. Override
+setting its text colour inherits an edge and need not override either. A private
+theme, which the token contract does not police, may declare
 `--border-interactive` alone to give fields a heavier edge than the buttons and
 menus that keep `--border-default`.
 
@@ -140,7 +152,7 @@ menus that keep `--border-default`.
 | `--color-success` | `#a3be8c` | Completed, unignore |
 | `--color-warning` | `#ebcb8b` | Unread badge, rating stars, ignored badge |
 | `--color-error` | `#bf616a` | Danger buttons, failures |
-| `--color-info` | `var(--accent)` | Loading, sync |
+| `--color-info` | _derived_ `var(--accent)` | Loading, sync |
 
 These are sized for fills and fall under 4.5:1 as text, so `base.css` derives
 `--color-success-text`, `--color-error-text`, `--color-info-text` and
@@ -151,8 +163,8 @@ and the text colour follows.
 
 | Variable | Nord | Used for |
 |----------|---------|-------------|
-| `--overlay-dark` | `rgba(0, 0, 0, 0.6)` | Modal backdrops |
-| `--overlay-medium` | `rgba(0, 0, 0, 0.5)` | The scoring weights scrim |
+| `--overlay-backdrop` | `rgba(0, 0, 0, 0.6)` | Modal backdrops |
+| `--overlay-scrim` | `rgba(0, 0, 0, 0.5)` | The scoring weights scrim |
 | `--shadow-sm` | `0 1px 2px rgba(0, 0, 0, 0.3)` | Rung 1: a surface resting on the stage |
 | `--shadow-md` | `0 2px 8px rgba(0, 0, 0, 0.3)` | Rung 2: a surface summoned over it |
 | `--shadow-lg` | `0 4px 16px rgba(0, 0, 0, 0.4)` | Rung 3: a modal surface |
@@ -189,7 +201,7 @@ variants yourself.
    :root {
        color-scheme: dark;
        --accent: #e06c75;
-       --accent-light: #e5c07b;
+       --accent-hover: #e5c07b;
        --color-success: #98c379;
        --color-warning: #d19a66;
        --color-error: #be5046;
@@ -217,10 +229,11 @@ is set to.
 
 The selection is a row in `user_ui_settings`, one per user, so it follows them
 across browsers and `preferences reset` leaves it alone. Both interfaces reach
-it: `theme show` / `theme set` and `GET` / `PUT /api/users/{id}/theme`. The
-server reads the row before serving the page, so no request decides the first
-paint; `localStorage` still caches it for the Vite dev server. A user who has
-picked nothing is painted in the default theme, and the shell swaps to the first
-installed theme matching the OS `prefers-color-scheme` only when the default is
-of the other kind — before first paint, so there is no flash. A stored pick is
-never overridden.
+it: `theme show` / `theme set` and `GET` / `PUT /api/users/{id}/theme`.
+
+The server reads the row before serving the page, so no request decides the
+first paint; `localStorage` still caches it for the Vite dev server. A user who
+has picked nothing is painted in the default theme, and the shell swaps to the
+first installed theme matching the OS `prefers-color-scheme` only when the
+default is of the other kind — before first paint, so there is no flash. A
+stored pick is never overridden.

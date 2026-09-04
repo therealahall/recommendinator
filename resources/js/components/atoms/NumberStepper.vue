@@ -155,7 +155,7 @@ function onInput(event: Event) {
 
 /* Inset: the clip above cuts the shared outward ring off a full-bleed button. */
 .stepper-btn:focus-visible {
-  outline: 2px solid var(--accent-light);
+  outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
 
@@ -197,7 +197,7 @@ function onInput(event: Event) {
 }
 
 .stepper-input:focus-visible {
-  outline: 2px solid var(--accent-light);
+  outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
 </style>

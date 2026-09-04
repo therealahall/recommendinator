@@ -6,7 +6,7 @@ The default dark theme based on the [Nord color palette](https://www.nordtheme.c
 
 - **Backgrounds:** Dark navy and charcoal
 - **Text:** Light snow-white tones
-- **Accents:** Frost blues and teals
+- **Accents:** Frost blues, the lighter one taking hover fills and the focus ring
 - **Semantic:** Aurora greens, yellows, and reds
 
 ## Notes

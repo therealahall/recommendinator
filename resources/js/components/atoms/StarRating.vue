@@ -63,7 +63,7 @@ function clear() {
 }
 
 .star-rating-star:hover {
-  color: var(--accent-light);
+  color: var(--accent-hover);
 }
 
 .btn-clear-rating {

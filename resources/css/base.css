@@ -43,8 +43,7 @@
 
     /* Fallback, not a theme: an omitted token degrades to legible, not to Nord. */
     --accent: #8c8c8c;
-    --accent-light: #a6a6a6;
-    --accent-teal: #999999;
+    --accent-hover: #a6a6a6;
 
     --bg-primary: #1c1c1c;
     --bg-card: #262626;
@@ -60,7 +59,7 @@
     --text-secondary: #d9d9d9;
     --text-muted: #b3b3b3;
     --text-inverse: #1c1c1c;
-    --text-on-dark-fill: #ffffff;
+    --text-on-emphasis: #ffffff;
 
     /* Pulled toward the text colour because this edge is what identifies the
        secondary button, the accordion, the drop zone and the spinner, so it
@@ -72,8 +71,8 @@
     --color-warning: #a6a6a6;
     --color-error: #737373;
 
-    --overlay-dark: rgba(0, 0, 0, 0.6);
-    --overlay-medium: rgba(0, 0, 0, 0.5);
+    --overlay-backdrop: rgba(0, 0, 0, 0.6);
+    --overlay-scrim: rgba(0, 0, 0, 0.5);
 
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
     --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.3);
@@ -94,6 +93,10 @@
     --chrome: color-mix(in srgb, var(--text-primary) 5%, var(--bg-sidebar));
     --border-focus: var(--accent);
     --color-info: var(--accent);
+
+    /* The ring is its own role: a theme declares the hover fill and never has to
+       know the indicator happens to be drawn in it. */
+    --focus-ring: var(--accent-hover);
 
     /* The retune above already clears a control edge, and re-deriving from it
        lands at near-text weight, so a field's edge is the same colour. */
@@ -221,7 +224,7 @@ svg {
    behind the control rather than on its edge: swapping the border to --accent
    barely differs from a resting edge, so no component replaces this. */
 :focus-visible {
-  outline: 2px solid var(--accent-light);
+  outline: 2px solid var(--focus-ring);
   outline-offset: var(--space-05);
 }
 
@@ -294,13 +297,13 @@ input[type="range"] {
   height: 6px;
   /* The page colour as the unfilled track, edged rather than refilled: no token
      clears 3:1 against both the accent and the card behind it (1.4.11). */
-  background: linear-gradient(90deg, var(--accent) 0%, var(--accent-light) var(--value-percent), var(--bg-primary) var(--value-percent));
+  background: linear-gradient(90deg, var(--accent) 0%, var(--accent-hover) var(--value-percent), var(--bg-primary) var(--value-percent));
   border: 1px solid var(--border-default);
   border-radius: 3px;
 }
 
 input[type="range"]:focus-visible {
-  outline: 2px solid var(--accent-light);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 4px;
   border-radius: 3px;
 }
@@ -309,7 +312,7 @@ input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
   width: 16px;
   height: 16px;
-  background: var(--accent-light);
+  background: var(--accent-hover);
   border-radius: 50%;
   cursor: pointer;
   border: 2px solid var(--bg-card);
@@ -323,14 +326,14 @@ input[type="range"]::-webkit-slider-thumb:hover {
 input[type="range"]::-moz-range-thumb {
   width: 16px;
   height: 16px;
-  background: var(--accent-light);
+  background: var(--accent-hover);
   border-radius: 50%;
   cursor: pointer;
   border: 2px solid var(--bg-card);
 }
 
 input[type="range"]::-moz-range-progress {
-  background: linear-gradient(90deg, var(--accent), var(--accent-light));
+  background: linear-gradient(90deg, var(--accent), var(--accent-hover));
   height: 6px;
   border-radius: 3px;
 }
@@ -800,7 +803,7 @@ textarea.field {
    the hover-able tree, so without this it brightens under the pointer while
    showing `cursor: not-allowed` — contradicting itself. */
 .btn-primary:hover:not(:disabled):not([aria-disabled='true']) {
-  background: var(--accent-light);
+  background: var(--accent-hover);
 }
 
 .btn-secondary {
@@ -830,7 +833,7 @@ textarea.field {
 
 .btn-danger {
   background: color-mix(in srgb, var(--color-error) 75%, black);
-  color: var(--text-on-dark-fill);
+  color: var(--text-on-emphasis);
   border-color: color-mix(in srgb, var(--color-error) 75%, black);
 }
 
@@ -938,8 +941,8 @@ button.badge[aria-checked='true'] {
 }
 
 button.badge[aria-checked='true']:hover {
-  background: var(--accent-light);
-  border-color: var(--accent-light);
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
 }
 
 .type-pills {
@@ -991,8 +994,8 @@ button.badge[aria-checked='true']:hover {
 }
 
 .toggle-switch[aria-checked="true"]:hover {
-  background: var(--accent-light);
-  border-color: var(--accent-light);
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
 }
 
 .dropdown-wrap {

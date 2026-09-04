@@ -138,7 +138,7 @@ onUnmounted(revert)
   position: fixed;
   inset: 0;
   z-index: var(--z-scrim);
-  background: var(--overlay-medium);
+  background: var(--overlay-scrim);
 }
 
 /* Inset on all four sides rather than flush, so it reads as an object over the

@@ -132,11 +132,11 @@ describe('the unbranded fallback a theme degrades to', () => {
     expect(ratio('--border-default', surface)).toBeGreaterThanOrEqual(NON_TEXT)
   })
 
-  it.each(SURFACES)('--accent-light rings a focused control on %s', (surface) => {
-    expect(ratio('--accent-light', surface)).toBeGreaterThanOrEqual(NON_TEXT)
+  it.each(SURFACES)('--focus-ring rings a focused control on %s', (surface) => {
+    expect(ratio('--focus-ring', surface)).toBeGreaterThanOrEqual(NON_TEXT)
   })
 
-  it.each(['--accent', '--accent-light'])('%s carries a readable label', (fill) => {
+  it.each(['--accent', '--accent-hover'])('%s carries a readable label', (fill) => {
     expect(ratio('--text-inverse', fill)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT)
   })
 })

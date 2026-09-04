@@ -123,7 +123,7 @@ function onEscape(e: KeyboardEvent) {
 }
 
 .search-input:has(:focus-visible) {
-  outline: 2px solid var(--accent-light);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 

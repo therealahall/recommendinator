@@ -110,12 +110,12 @@ function deselectAll() {
 }
 
 .season-checkbox:has(:focus-visible) {
-  outline: 2px solid var(--accent-light);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
 /* The season number is exposed text on this tint and owes 4.5:1, where the
-   check glyph beside it is a graphical object owing 3:1 — --accent-light was
+   check glyph beside it is a graphical object owing 3:1 — --accent-hover was
    enough for the glyph and short for the number. */
 .season-checkbox.checked {
   background: color-mix(in srgb, var(--accent) 20%, transparent);
