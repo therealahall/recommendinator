@@ -191,7 +191,7 @@ def _movie_item(external_id: str, movie: _WatchedMovie) -> ContentItem:
 
 
 def _show_item(
-    external_id: str, show: _WatchedShow, plex_season_episode_counts: dict[int, int]
+    external_id: str, show: _WatchedShow, plex_season_episode_counts: dict[str, int]
 ) -> ContentItem:
     return ContentItem(
         id=external_id,
@@ -203,7 +203,7 @@ def _show_item(
         rating=None,
         metadata={
             "episodes_watched_by_season": {
-                season: len(episodes)
+                str(season): len(episodes)
                 for season, episodes in sorted(show.episodes.items())
             },
             "seasons_watched_dates": {
@@ -355,9 +355,10 @@ class TautulliPlugin(SourcePlugin):
         api_key: str,
         verify_ssl: bool,
         show: _WatchedShow,
-    ) -> dict[int, int]:
+    ) -> dict[str, int]:
         """Empty for a show Plex no longer holds, which is every show whose files
-        an *arr stack has since deleted.
+        an *arr stack has since deleted. Season keys are strings: the mapping is
+        stored in a JSON blob, which has no other kind of key.
         """
         if show.rating_key is None:
             return {}
@@ -381,13 +382,13 @@ class TautulliPlugin(SourcePlugin):
             return {}
 
         children = data.get("children_list") if isinstance(data, dict) else None
-        counts: dict[int, int] = {}
+        counts: dict[str, int] = {}
         for child in children or []:
             season = _to_int(child.get("media_index"))
             episodes = _to_int(child.get("children_count"))
             if season is None or season <= _SPECIALS_SEASON or episodes is None:
                 continue
-            counts[season] = episodes
+            counts[str(season)] = episodes
         return counts
 
     def _history(

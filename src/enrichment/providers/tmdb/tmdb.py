@@ -356,7 +356,7 @@ class TMDBProvider(EnrichmentProvider):
                 extra_metadata["episodes"] = show["number_of_episodes"]
             # Season 0 is the specials, and its falsy number drops out here.
             season_counts = {
-                season["season_number"]: season["episode_count"]
+                str(season["season_number"]): season["episode_count"]
                 for season in show.get("seasons") or []
                 if season.get("season_number") and season.get("episode_count")
             }
