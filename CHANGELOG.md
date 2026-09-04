@@ -1,6 +1,42 @@
 # CHANGELOG
 
 
+## v0.52.0 (2026-09-04)
+
+### Bug Fixes
+
+- **web**: Bound the scorer tooltip with an edge of its own
+  ([`17cbc4a`](https://github.com/therealahall/recommendinator/commit/17cbc4a673fd8973b3d92bde57965382345507b2))
+
+### Chores
+
+- Bump the base-images group with 2 updates
+  ([`796fcad`](https://github.com/therealahall/recommendinator/commit/796fcad8a9c693bc2ded149b22a86ee4cbd1e294))
+
+- Bump the frontend group with 4 updates
+  ([`45c5f1f`](https://github.com/therealahall/recommendinator/commit/45c5f1f75072c4921ccfc9f920ffeddf516d2ee6))
+
+- Bump the python group across 1 directory with 4 updates
+  ([`1a1dde4`](https://github.com/therealahall/recommendinator/commit/1a1dde4eda9bb2a12e4d5060404ae294f062877d))
+
+- Install pnpm directly and develop on 3.14
+  ([`d31abf3`](https://github.com/therealahall/recommendinator/commit/d31abf301ee373331fa2ff4accc08fe8af1ce21c))
+
+### Features
+
+- **web**: Add the GitHub Dark Dimmed theme
+  ([`2e574d8`](https://github.com/therealahall/recommendinator/commit/2e574d8418b8b83c69b1c9c15b2aec225b3c5383))
+
+### Refactoring
+
+- **web**: Name colour tokens for the role they play
+  ([`e3f8e11`](https://github.com/therealahall/recommendinator/commit/e3f8e11ac5cc35ba5b62fccb3e424885a5f35560))
+
+### Breaking Changes
+
+- **web**: A private theme declaring --accent-light, --overlay-dark,
+
+
 ## v0.51.0 (2026-09-04)
 
 ### Bug Fixes
