@@ -4,7 +4,7 @@ from typing import Any
 
 import requests
 
-from src.enrichment.matching import best_match_index
+from src.enrichment.matching import best_match_index, year_of
 from src.enrichment.provider_base import (
     ConfigField,
     EnrichmentProvider,
@@ -21,9 +21,7 @@ TMDB_API_BASE = "https://api.themoviedb.org/3"
 
 _POSTER_BASE = "https://image.tmdb.org/t/p/w500"
 
-# Year in parentheses: (2022), (1999)
 YEAR_PATTERN = re.compile(r"\s*\(\d{4}\)\s*$")
-# Country codes: (US), (UK), (JP), etc.
 COUNTRY_PATTERN = re.compile(r"\s*\([A-Z]{2,3}\)\s*$")
 
 
@@ -32,14 +30,6 @@ def clean_media_title_for_search(title: str) -> str:
     cleaned = YEAR_PATTERN.sub("", cleaned).strip()
     cleaned = COUNTRY_PATTERN.sub("", cleaned).strip()
     return cleaned if cleaned else title
-
-
-def _year_of(value: Any) -> int | None:
-    """Takes a bare year and a ``release_date``/``first_air_date`` alike."""
-    try:
-        return int(str(value)[:4])
-    except ValueError:
-        return None
 
 
 def _poster_url(payload: dict[str, Any]) -> str | None:
@@ -227,8 +217,8 @@ class TMDBProvider(EnrichmentProvider):
                     timeout=10,
                 )
                 response.raise_for_status()
-                # Dropping the year removed the only discriminator this search
-                # had, so the title check is what keeps the retry honest.
+                # TMDB filters on an exact year where the gate allows three of
+                # drift, so a near-year release only surfaces on this retry.
                 return self._pick_result(
                     response.json().get("results", []), search_title, year
                 )
@@ -247,12 +237,21 @@ class TMDBProvider(EnrichmentProvider):
     ) -> int | None:
         candidates = [
             (
-                str(result.get("title") or result.get("name") or ""),
-                _year_of(result.get("release_date") or result.get("first_air_date")),
+                [
+                    str(title)
+                    for title in (
+                        result.get("title"),
+                        result.get("name"),
+                        result.get("original_title"),
+                        result.get("original_name"),
+                    )
+                    if title
+                ],
+                year_of(result.get("release_date") or result.get("first_air_date")),
             )
             for result in results
         ]
-        index = best_match_index(search_title, _year_of(year), candidates)
+        index = best_match_index(search_title, year_of(year), candidates)
         return None if index is None else int(results[index]["id"])
 
     def _search_movie(

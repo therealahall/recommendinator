@@ -78,6 +78,7 @@ class TestOpenLibraryProviderISBNLookup:
         assert "dystopian" in result.description.lower()
         assert result.match_quality == "high"
         assert result.cover_url == "https://covers.openlibrary.org/b/id/8231856-L.jpg"
+        assert result.extra_metadata["pages"] == 328
 
     def test_isbn_not_found(self, provider: OpenLibraryProvider) -> None:
         item = ContentItem(
