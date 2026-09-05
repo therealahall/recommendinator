@@ -1,6 +1,80 @@
 # CHANGELOG
 
 
+## v0.53.0 (2026-09-05)
+
+### Bug Fixes
+
+- **ingestion**: Drop the query string from a redirect refusal
+  ([`eb7fa81`](https://github.com/therealahall/recommendinator/commit/eb7fa81a6772fd18298da1b1af922c2a25c677d8))
+
+- **ingestion**: Emit string season keys so a reader gets what a source wrote
+  ([`7aadc3d`](https://github.com/therealahall/recommendinator/commit/7aadc3d37f97620464f48f9c9c8cf019ac2b0336))
+
+- **ingestion**: Escape the url a redirect refusal reports
+  ([`933cc13`](https://github.com/therealahall/recommendinator/commit/933cc1301e1a43d21d1feaeecc03ceb1d7cd01ee))
+
+- **ingestion**: Read Sonarr's season count only where it means aired
+  ([`d3c6332`](https://github.com/therealahall/recommendinator/commit/d3c633259331edb8a75eacaad3a44c1540aa3d29))
+
+- **ingestion**: Take a Tautulli film's year from its release date when it has none
+  ([`0f09ac5`](https://github.com/therealahall/recommendinator/commit/0f09ac5cd2e26a44a1c583f47d3bb185242441c6))
+
+- **ingestion**: Take Sonarr's announced episode count as the season size
+  ([`9ac89eb`](https://github.com/therealahall/recommendinator/commit/9ac89eb3ad38d1fc4815ed69b6f6cd839598107c))
+
+- **storage**: Keep the larger season size when a duplicate is absorbed
+  ([`b5e5dd0`](https://github.com/therealahall/recommendinator/commit/b5e5dd09e7255f49fd7a566fa2eafd56bb54b3b9))
+
+- **storage**: Keep the seasons a source asserted out of count-based retraction
+  ([`e1546c3`](https://github.com/therealahall/recommendinator/commit/e1546c3cb5cb45118fb51f6387970c45e87acf60))
+
+- **storage**: Make clearing a show's seasons hand them back to the derivation
+  ([`dccf284`](https://github.com/therealahall/recommendinator/commit/dccf28403a3faa4dbc67bc9388ba65eb5fca1f9c))
+
+- **web**: Give the seasons reset a state anyone can perceive
+  ([`f139931`](https://github.com/therealahall/recommendinator/commit/f1399311c497a6d884bf79f3bc682020d01e3e4b))
+
+### Documentation
+
+- Document the Tautulli source
+  ([`a6aee60`](https://github.com/therealahall/recommendinator/commit/a6aee60d4e3446093cb4147e7f89e15c3a06d2d1))
+
+- Say what a merge does to a show's season sizes
+  ([`513ce20`](https://github.com/therealahall/recommendinator/commit/513ce20a8821a217971b67508009158017e47c85))
+
+- Say what Sonarr's season count actually counts
+  ([`6fb6c6a`](https://github.com/therealahall/recommendinator/commit/6fb6c6aaf51157b9fe7bf82ec43c5a338bb86a7d))
+
+- Say when an archived show can still finish a season
+  ([`9a606b4`](https://github.com/therealahall/recommendinator/commit/9a606b4ee6e2a2d0caefe287f08698e507a38286))
+
+- Trim the library edit section back under budget
+  ([`56fc065`](https://github.com/therealahall/recommendinator/commit/56fc065f8b3d96cc40b22b92413855dc5bd21667))
+
+### Features
+
+- **ingestion**: Add Tautulli as a watch-history source
+  ([`3e0a207`](https://github.com/therealahall/recommendinator/commit/3e0a20735af79639ea773f716afe9e0bf233bdcc))
+
+- **ingestion**: Keep the per-season episode counts Sonarr and TMDB return
+  ([`ac31371`](https://github.com/therealahall/recommendinator/commit/ac3137116d90ad976a9ec7fe0c7147dd04301317))
+
+- **storage**: Derive season completion from the best available episode count
+  ([`6bbd370`](https://github.com/therealahall/recommendinator/commit/6bbd3701d10c12e19196c30f09e8a1ba0fbd1d51))
+
+- **web**: Let the web hand a show's seasons back to the derivation
+  ([`6d99e14`](https://github.com/therealahall/recommendinator/commit/6d99e145fdf776b62a6015aa36b04bb182acbc7f))
+
+### Refactoring
+
+- **ingestion**: Keep one same-origin redirect guard
+  ([`d576038`](https://github.com/therealahall/recommendinator/commit/d5760385fa7c040a24da20c11cd22b18e11ffd4a))
+
+- **storage**: Make season completion forward only
+  ([`6944488`](https://github.com/therealahall/recommendinator/commit/6944488fd9f772031836cac80810a7a1b8246a9f))
+
+
 ## v0.52.0 (2026-09-04)
 
 ### Bug Fixes
