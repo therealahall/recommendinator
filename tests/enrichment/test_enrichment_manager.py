@@ -281,6 +281,24 @@ class TestMergeEnrichment:
 
         assert merge_enrichment({field: stored}, result)[field] == expected
 
+    def test_re_enriching_replaces_a_franchise_stored_from_a_worse_guess(self) -> None:
+        better = EnrichmentResult(
+            extra_metadata={"franchise": "Donkey Kong"}, provider="rawg"
+        )
+
+        assert merge_enrichment({"franchise": "Donkey"}, better) == {
+            "franchise": "Donkey Kong"
+        }
+
+    def test_a_series_key_ingestion_also_writes_is_never_replaced(self) -> None:
+        stored = {"series_name": "Alien", "series_position": 1}
+        result = EnrichmentResult(
+            extra_metadata={"series_name": "Alien Collection", "series_position": 3},
+            provider="tmdb",
+        )
+
+        assert merge_enrichment(stored, result) == stored
+
     def test_merging_leaves_the_callers_metadata_untouched(self) -> None:
         existing = {"genres": ["Comedy"]}
         merge_enrichment(existing, EnrichmentResult(genres=["Action"], provider="tmdb"))
@@ -1646,7 +1664,9 @@ class TestARunReachesTMDBThroughTheGlobalRegistry:
     ) -> None:
         db_id = save_movie(storage_manager)
         payloads = {
-            self._tmdb_url("search/movie"): {"results": [{"id": 603}]},
+            self._tmdb_url("search/movie"): {
+                "results": [{"id": 603, "title": "The Matrix"}]
+            },
             self._tmdb_url("movie/603"): {
                 "id": 603,
                 "overview": "A hacker learns the true nature of reality.",

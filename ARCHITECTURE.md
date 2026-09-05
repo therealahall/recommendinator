@@ -318,13 +318,15 @@ it after a sync.
 
 RAWG derives a franchise name from the longest common prefix of the related
 titles, after majority first-word voting drops outliers, and strips DLC suffixes
-before searching. Both providers store `franchise` and `series_position` in
-`extra_metadata` for series ordering.
+before searching. RAWG stores `franchise` and TMDB `series_name`, both alongside
+`series_position` in `extra_metadata`, for series ordering.
 
 Rules:
 
-- The merge is gap-filling and never overwrites existing metadata. Manual edits
-  are the exception: genres, tags and a description set from the edit modal or
+- The merge is gap-filling and never overwrites existing metadata, bar
+  `franchise`: RAWG is its only writer, so re-running enrichment corrects a name
+  an earlier run derived badly. Manual edits are the other exception: genres,
+  tags and a description set from the edit modal or
   `library edit` overwrite the detail table, record the `"manual"` provider, and
   leave the automatic queue for good.
 - **A settled miss is not a failure.** Every provider answering "not this one"

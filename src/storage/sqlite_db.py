@@ -24,6 +24,7 @@ from src.models.content import (
 from src.models.detail_fields import (
     CREATOR_FIELDS,
     DETAIL_FIELDS,
+    PROVIDER_OWNED_METADATA_KEYS,
     RELEASE_YEAR_FIELDS,
     ContentTypeFields,
     FieldKind,
@@ -432,7 +433,13 @@ class SQLiteDB:
                     (item.cover_url, db_id),
                 )
             # SQLite refuses to bind the lone surrogate an undecodable byte leaves.
-            self._save_detail_table(cursor, db_id, _surrogate_free(item), content_type)
+            self._save_detail_table(
+                cursor,
+                db_id,
+                _surrogate_free(item),
+                content_type,
+                replaceable_metadata_keys=PROVIDER_OWNED_METADATA_KEYS,
+            )
             # Both read what was stored: a creator this filled belongs in the
             # search text, and a season count it raised unfinishes the show.
             write_derived_columns(cursor, db_id)
@@ -719,12 +726,16 @@ class SQLiteDB:
         return cursor.rowcount > 0
 
     def _save_detail_table(
-        self, cursor: sqlite3.Cursor, db_id: int, item: ContentItem, content_type: str
+        self,
+        cursor: sqlite3.Cursor,
+        db_id: int,
+        item: ContentItem,
+        content_type: str,
+        replaceable_metadata_keys: frozenset[str] = frozenset(),
     ) -> bool:
         """For existing rows, enrichment is the source of truth: genres and tags
-        merge additively, every other column is fill-only, and the leftover
-        metadata blob merges with existing keys winning — bar the season fields,
-        which reconcile every source's numbers.
+        merge additively, every other column is fill-only, and the metadata blob
+        keeps existing keys — bar the season fields and *replaceable_metadata_keys*.
         """
         spec = DETAIL_FIELDS[content_type]
 
@@ -801,6 +812,13 @@ class SQLiteDB:
 
         # Existing keys take precedence, incoming fills gaps
         merged_remaining = {**remaining_metadata, **existing_remaining}
+        merged_remaining.update(
+            {
+                key: val
+                for key, val in remaining_metadata.items()
+                if key in replaceable_metadata_keys
+            }
+        )
         # Exception: the season fields, which no one source can state alone.
         merged_remaining.update(
             reconcile_seasons(existing_remaining, remaining_metadata)

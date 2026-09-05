@@ -2223,6 +2223,35 @@ class TestDetailTableFillOnly:
         assert retrieved.metadata.get("custom_key_1") == "original_value"
         assert retrieved.metadata.get("custom_key_2") == "new_value"
 
+    def test_a_re_enrich_corrects_a_truncated_franchise_but_not_a_series_name(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        stored = ContentItem(
+            id="detail_franchise",
+            title="Donkey Kong Country",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.COMPLETED,
+            metadata={"franchise": "Donkey", "series_name": "Donkey"},
+        )
+        db_id = temp_db.save_content_item(stored)
+
+        temp_db.save_enrichment_metadata(
+            db_id,
+            stored.model_copy(
+                update={
+                    "metadata": {
+                        "franchise": "Donkey Kong",
+                        "series_name": "Donkey Kong",
+                    }
+                }
+            ),
+        )
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.metadata["franchise"] == "Donkey Kong"
+        assert retrieved.metadata["series_name"] == "Donkey"
+
 
 class TestUpdateItemFromUi:
     def test_update_status_backward(self, temp_db: SQLiteDB) -> None:
