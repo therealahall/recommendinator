@@ -217,7 +217,9 @@ the show's length. Your own `franchise` re-orders a series.
 Enrichment writes into the blob too. RAWG writes `average_playtime_hours`,
 `franchise` and `series_position`, TMDB writes `series_name`, `series_position`
 and `tmdb_collection_id`. `merge_enrichment` (`src/enrichment/manager.py`) fills
-each only where the key is missing or empty, so it never overwrites you. See
+each only where the key is missing or empty, so it never overwrites you — except
+`franchise`, which RAWG replaces because it is that key's only writer. Write your
+own franchise name to `series_name` instead. See
 [ARCHITECTURE.md](../ARCHITECTURE.md).
 
 ### Shape rules
@@ -550,8 +552,9 @@ class MyEnrichmentProvider(EnrichmentProvider):
 ```
 
 You return one `EnrichmentResult` instead of yielding `ContentItem`s, the manager
-throttles you from `rate_limit_requests_per_second`, the merge is gap-filling
-only, and config lives under `enrichment.providers.<name>` rather than `inputs`.
+throttles you from `rate_limit_requests_per_second`, the merge is gap-filling bar
+`franchise`, and config lives under `enrichment.providers.<name>` rather than
+`inputs`.
 
 ```yaml
 enrichment:

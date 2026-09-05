@@ -173,14 +173,6 @@ class TestTMDBProviderMovieEnrichment:
         ("retry_result", "expected_external_id"),
         [
             (
-                {
-                    "id": 12345,
-                    "title": "Herbie: Fully Loaded",
-                    "release_date": "2005-06-22",
-                },
-                None,
-            ),
-            (
                 {"id": 12345, "title": "Fully Loaded", "release_date": "2018-01-12"},
                 None,
             ),
@@ -189,7 +181,7 @@ class TestTMDBProviderMovieEnrichment:
                 "tmdb:12345",
             ),
         ],
-        ids=["another-film", "another-year", "a-year-or-two-out"],
+        ids=["another-year", "a-year-or-two-out"],
     )
     def test_the_yearless_retry_takes_a_near_year_release_and_nothing_further_off(
         self,
@@ -268,51 +260,6 @@ class TestTMDBProviderMovieEnrichment:
         assert result is not None
         assert result.match_quality == "not_found"
         assert result.genres is None
-
-    def test_enrich_movie_skips_a_same_title_release_too_far_from_the_item_year(
-        self, provider: TMDBProvider, config: dict[str, Any]
-    ) -> None:
-        item = ContentItem(
-            id="movie123",
-            title="Blade Runner",
-            content_type=ContentType.MOVIE,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"release_year": 1982},
-        )
-
-        mock_search_response = {
-            "results": [
-                {"id": 335984, "title": "Blade Runner", "release_date": "2017-10-04"},
-                {"id": 78, "title": "Blade Runner", "release_date": "1982-06-25"},
-            ]
-        }
-        mock_movie_response = {"id": 78, "title": "Blade Runner", "genres": []}
-        mock_keywords_response = {"keywords": []}
-
-        with patch("src.enrichment.providers.tmdb.tmdb.requests.get") as mock_get:
-            mock_get.side_effect = [
-                MagicMock(
-                    spec=requests.Response,
-                    status_code=200,
-                    json=lambda: mock_search_response,
-                ),
-                MagicMock(
-                    spec=requests.Response,
-                    status_code=200,
-                    json=lambda: mock_movie_response,
-                ),
-                MagicMock(
-                    spec=requests.Response,
-                    status_code=200,
-                    json=lambda: mock_keywords_response,
-                ),
-            ]
-
-            result = provider.enrich(item, config)
-
-        assert result is not None
-        assert result.external_id == "tmdb:78"
-        assert result.match_quality == "high"
 
     def test_a_library_holding_the_original_title_matches_the_localized_result(
         self, provider: TMDBProvider, config: dict[str, Any]

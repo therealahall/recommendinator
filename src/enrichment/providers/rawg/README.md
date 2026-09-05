@@ -33,7 +33,8 @@ uv run python -m src.cli settings set-secret enrichment.providers.rawg.api_key
   carries a year, its release lands within three years; anything else settles as
   not found rather than storing the wrong game.
 - Resolves franchise membership and series ordering when RAWG has the data.
-- Uses gap-filling — never overwrites existing fields.
+- Gap-fills every field but `franchise`, which a re-run replaces so a name
+  stored from a truncated match is corrected.
 - Outlier titles in fuzzy matches are filtered via longest-common-prefix heuristics.
 
 ## Development
