@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urljoin
 
@@ -78,6 +78,16 @@ def _to_int(raw: Any) -> int | None:
         return None
 
 
+def _release_year(row: dict[str, Any]) -> int | None:
+    year = _to_int(row.get("year"))
+    if year is not None:
+        return year
+    try:
+        return date.fromisoformat(str(row.get("originally_available_at"))).year
+    except ValueError:
+        return None
+
+
 def _played_at(row: dict[str, Any]) -> datetime | None:
     epoch = _to_int(row.get("date"))
     if epoch is None:
@@ -133,7 +143,7 @@ def _record_movie(movies: dict[str, _WatchedMovie], row: dict[str, Any]) -> None
     if not title or played is None:
         return
 
-    year = _to_int(row.get("year"))
+    year = _release_year(row)
     movie = movies.setdefault(
         _stable_id("movie", title, year),
         _WatchedMovie(title=title, year=year, last_played=played),

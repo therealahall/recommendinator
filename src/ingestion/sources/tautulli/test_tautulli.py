@@ -161,6 +161,59 @@ class TestMovies:
         assert items[0].metadata["year"] == 2016
         assert items[0].id == "tautulli:movie:arrival:2016"
 
+    def test_two_yearless_films_sharing_a_title_stay_apart_on_their_release_dates(
+        self, plugin: TautulliPlugin
+    ) -> None:
+        server = _FakeTautulli(
+            movies=[
+                _movie_row(
+                    "Fully Loaded", year=None, originally_available_at="2000-07-23"
+                ),
+                _movie_row(
+                    "Fully Loaded", year=None, originally_available_at="1999-07-25"
+                ),
+            ]
+        )
+
+        items = _fetch(server, plugin)
+
+        assert [item.id for item in items] == [
+            "tautulli:movie:fully loaded:2000",
+            "tautulli:movie:fully loaded:1999",
+        ]
+        assert [item.metadata["year"] for item in items] == [2000, 1999]
+
+    def test_a_release_date_never_overrides_the_year_tautulli_reported(
+        self, plugin: TautulliPlugin
+    ) -> None:
+        server = _FakeTautulli(
+            movies=[
+                _movie_row(
+                    "Half Baked", year=1998, originally_available_at="2005-01-01"
+                )
+            ]
+        )
+
+        items = _fetch(server, plugin)
+
+        assert items[0].id == "tautulli:movie:half baked:1998"
+        assert items[0].metadata["year"] == 1998
+
+    @pytest.mark.parametrize("release_date", [None, "", "unknown", "2000-13-99"])
+    def test_an_unreadable_release_date_leaves_a_yearless_id_rather_than_raising(
+        self, plugin: TautulliPlugin, release_date: str | None
+    ) -> None:
+        server = _FakeTautulli(
+            movies=[
+                _movie_row("Mystery", year=None, originally_available_at=release_date)
+            ]
+        )
+
+        items = _fetch(server, plugin)
+
+        assert items[0].id == "tautulli:movie:mystery"
+        assert "year" not in items[0].metadata
+
     def test_the_completion_date_is_the_local_day_of_the_latest_play(
         self, plugin: TautulliPlugin, host_timezone: Callable[[str], None]
     ) -> None:
