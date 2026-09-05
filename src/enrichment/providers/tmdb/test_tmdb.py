@@ -169,8 +169,34 @@ class TestTMDBProviderMovieEnrichment:
         assert result.match_quality == "not_found"
         assert result.genres is None
 
-    def test_yearless_retry_still_runs_but_a_title_mismatch_is_not_stored(
-        self, provider: TMDBProvider, config: dict[str, Any]
+    @pytest.mark.parametrize(
+        ("retry_result", "expected_external_id"),
+        [
+            (
+                {
+                    "id": 12345,
+                    "title": "Herbie: Fully Loaded",
+                    "release_date": "2005-06-22",
+                },
+                None,
+            ),
+            (
+                {"id": 12345, "title": "Fully Loaded", "release_date": "2018-01-12"},
+                None,
+            ),
+            (
+                {"id": 12345, "title": "Fully Loaded", "release_date": "2000-01-12"},
+                "tmdb:12345",
+            ),
+        ],
+        ids=["another-film", "another-year", "a-year-or-two-out"],
+    )
+    def test_the_yearless_retry_takes_a_near_year_release_and_nothing_further_off(
+        self,
+        provider: TMDBProvider,
+        config: dict[str, Any],
+        retry_result: dict[str, Any],
+        expected_external_id: str | None,
     ) -> None:
         item = ContentItem(
             id="movie123",
@@ -181,11 +207,8 @@ class TestTMDBProviderMovieEnrichment:
         )
 
         mock_empty_response = {"results": []}
-        mock_found_response = {
-            "results": [
-                {"id": 12345, "title": "Herbie: Fully Loaded"},
-            ]
-        }
+        mock_retry_response = {"results": [retry_result]}
+        mock_movie_response = {"id": 12345, "title": "Fully Loaded", "genres": []}
 
         with patch("src.enrichment.providers.tmdb.tmdb.requests.get") as mock_get:
             mock_get.side_effect = [
@@ -197,17 +220,20 @@ class TestTMDBProviderMovieEnrichment:
                 MagicMock(
                     spec=requests.Response,
                     status_code=200,
-                    json=lambda: mock_found_response,
+                    json=lambda: mock_retry_response,
+                ),
+                MagicMock(
+                    spec=requests.Response,
+                    status_code=200,
+                    json=lambda: mock_movie_response,
                 ),
             ]
 
-            result = provider.enrich(item, config)
+            result = provider.enrich(item, {**config, "include_keywords": False})
 
         assert "year" not in mock_get.call_args_list[1].kwargs["params"]
-        assert mock_get.call_count == 2
         assert result is not None
-        assert result.match_quality == "not_found"
-        assert result.external_id is None
+        assert result.external_id == expected_external_id
 
     def test_enrich_movie_rejects_a_search_hit_that_merely_contains_the_title(
         self, provider: TMDBProvider, config: dict[str, Any]
@@ -256,11 +282,7 @@ class TestTMDBProviderMovieEnrichment:
 
         mock_search_response = {
             "results": [
-                {
-                    "id": 335984,
-                    "title": "Blade Runner 2049",
-                    "release_date": "2017-10-04",
-                },
+                {"id": 335984, "title": "Blade Runner", "release_date": "2017-10-04"},
                 {"id": 78, "title": "Blade Runner", "release_date": "1982-06-25"},
             ]
         }
@@ -290,6 +312,55 @@ class TestTMDBProviderMovieEnrichment:
 
         assert result is not None
         assert result.external_id == "tmdb:78"
+        assert result.match_quality == "high"
+
+    def test_a_library_holding_the_original_title_matches_the_localized_result(
+        self, provider: TMDBProvider, config: dict[str, Any]
+    ) -> None:
+        item = ContentItem(
+            id="movie123",
+            title="Sen to Chihiro no Kamikakushi",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"release_year": 2001},
+        )
+
+        mock_search_response = {
+            "results": [
+                {
+                    "id": 129,
+                    "title": "Spirited Away",
+                    "original_title": "Sen to Chihiro no Kamikakushi",
+                    "release_date": "2001-07-20",
+                }
+            ]
+        }
+        mock_movie_response = {"id": 129, "title": "Spirited Away", "genres": []}
+        mock_keywords_response = {"keywords": []}
+
+        with patch("src.enrichment.providers.tmdb.tmdb.requests.get") as mock_get:
+            mock_get.side_effect = [
+                MagicMock(
+                    spec=requests.Response,
+                    status_code=200,
+                    json=lambda: mock_search_response,
+                ),
+                MagicMock(
+                    spec=requests.Response,
+                    status_code=200,
+                    json=lambda: mock_movie_response,
+                ),
+                MagicMock(
+                    spec=requests.Response,
+                    status_code=200,
+                    json=lambda: mock_keywords_response,
+                ),
+            ]
+
+            result = provider.enrich(item, config)
+
+        assert result is not None
+        assert result.external_id == "tmdb:129"
         assert result.match_quality == "high"
 
     def test_a_tmdb_prefixed_item_id_enriches_without_a_title_check(
@@ -532,6 +603,48 @@ class TestTMDBProviderTVShowEnrichment:
 
         assert result is not None
         assert result.external_id == "tmdb:2966"
+
+    def test_a_show_titled_with_its_original_name_matches_the_localized_result(
+        self, provider: TMDBProvider, config: dict[str, Any]
+    ) -> None:
+        item = ContentItem(
+            id="show123",
+            title="La casa de papel",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"release_year": 2017},
+        )
+        mock_search_response = {
+            "results": [
+                {
+                    "id": 71446,
+                    "name": "Money Heist",
+                    "original_name": "La casa de papel",
+                    "first_air_date": "2017-05-02",
+                }
+            ]
+        }
+        mock_tv_response = {"id": 71446, "name": "Money Heist", "genres": []}
+
+        with patch("src.enrichment.providers.tmdb.tmdb.requests.get") as mock_get:
+            mock_get.side_effect = [
+                MagicMock(
+                    spec=requests.Response,
+                    status_code=200,
+                    json=lambda: mock_search_response,
+                ),
+                MagicMock(
+                    spec=requests.Response,
+                    status_code=200,
+                    json=lambda: mock_tv_response,
+                ),
+            ]
+
+            result = provider.enrich(item, {**config, "include_keywords": False})
+
+        assert result is not None
+        assert result.external_id == "tmdb:71446"
+        assert result.match_quality == "high"
 
 
 class TestTMDBSeasonEpisodeCounts:

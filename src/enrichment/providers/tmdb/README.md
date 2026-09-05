@@ -30,7 +30,8 @@ uv run python -m src.cli settings set-secret enrichment.providers.tmdb.api_key
 
 ## Behavior
 - Searches by title, with year-aware disambiguation when available. A search hit
-  is only taken when its title is near-identical and, where the item carries a
+  is only taken when one of its titles — the one in the configured language or
+  the original — is near-identical and, where the item carries a
   year, its release lands within three years; anything else settles as not found
   rather than storing the wrong film. An item carrying a TMDB id skips the search
   and the check.

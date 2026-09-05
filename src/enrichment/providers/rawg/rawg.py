@@ -5,6 +5,7 @@ from typing import Any
 
 import requests
 
+from src.enrichment.matching import best_match_index, year_of
 from src.enrichment.provider_base import (
     ConfigField,
     EnrichmentProvider,
@@ -86,13 +87,14 @@ def _longest_common_prefix(titles: list[str]) -> str:
             end = index + 1
         prefix = prefix[:end]
 
-    needs_trim = False
-    for title in filtered_titles:
-        if len(title) > len(prefix) and title[len(prefix)].isalnum():
-            needs_trim = True
-            break
+    # Only a prefix every sibling cuts mid-word is an artifact: 'Donkey Konga'
+    # running past 'Donkey Kong' must not shorten the series to 'Donkey'.
+    ends_a_word = any(
+        len(title) == len(prefix) or not title[len(prefix)].isalnum()
+        for title in filtered_titles
+    )
 
-    if needs_trim:
+    if not ends_a_word:
         last_space = prefix.rfind(" ")
         if last_space > 0:
             prefix = prefix[:last_space]
@@ -221,18 +223,14 @@ class RAWGProvider(EnrichmentProvider):
                 return None
 
             metadata = item.metadata or {}
-            release_year = metadata.get("release_year")
-
-            for result in results:
-                if result.get("name", "").lower() == search_title.lower():
-                    if release_year and result.get("released"):
-                        result_year = self._extract_year(result["released"])
-                        if result_year and result_year == release_year:
-                            return int(result["id"])
-                    else:
-                        return int(result["id"])
-
-            return int(results[0]["id"])
+            candidates = [
+                ([str(result.get("name") or "")], year_of(result.get("released")))
+                for result in results
+            ]
+            index = best_match_index(
+                search_title, year_of(metadata.get("release_year")), candidates
+            )
+            return None if index is None else int(results[index]["id"])
 
         except requests.RequestException as error:
             # ``from None``: the key is a query parameter, so the URL on
@@ -261,7 +259,7 @@ class RAWGProvider(EnrichmentProvider):
 
             if game.get("released"):
                 extra_metadata["release_date"] = game["released"]
-                year = self._extract_year(game["released"])
+                year = year_of(game["released"])
                 if year:
                     extra_metadata["release_year"] = year
 
@@ -372,12 +370,6 @@ class RAWGProvider(EnrichmentProvider):
             # Franchise info is optional — don't fail enrichment
             logger.warning("Failed to fetch game-series for game %s", game_id)
             return (None, None)
-
-    def _extract_year(self, date_str: str) -> int | None:
-        try:
-            return int(date_str[:4])
-        except (ValueError, IndexError):
-            return None
 
     def _clean_description(self, description: str | None) -> str | None:
         if not description:

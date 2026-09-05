@@ -284,6 +284,43 @@ class TestRAWGProviderEnrichment:
         assert result is not None
         assert result.external_id == "rawg:2"
 
+    @pytest.mark.parametrize(
+        ("release_year", "search_results"),
+        [
+            (2017, [{"id": 1, "name": "Prey", "released": "2006-07-11"}]),
+            (None, [{"id": 2, "name": "Prey Day: Survival", "released": "2019-01-01"}]),
+        ],
+        ids=["another-year", "another-game"],
+    )
+    def test_a_top_hit_the_item_does_not_match_is_not_enriched_in(
+        self,
+        provider: RAWGProvider,
+        config: dict[str, Any],
+        release_year: int | None,
+        search_results: list[dict[str, Any]],
+    ) -> None:
+        item = ContentItem(
+            id="game1",
+            title="Prey",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"release_year": release_year} if release_year else {},
+        )
+
+        with patch("src.enrichment.providers.rawg.rawg.requests.get") as mock_get:
+            mock_get.return_value = MagicMock(
+                spec=requests.Response,
+                status_code=200,
+                json=lambda: {"results": search_results},
+            )
+
+            result = provider.enrich(item, config)
+
+        assert mock_get.call_count == 1
+        assert result is not None
+        assert result.match_quality == "not_found"
+        assert result.external_id is None
+
 
 class TestRAWGProviderDescriptionCleaning:
     def test_clean_description_removes_html(self) -> None:
@@ -331,6 +368,27 @@ class TestLongestCommonPrefix:
     def test_no_common_prefix(self) -> None:
         titles = ["Halo", "Zelda", "Mario"]
         assert _longest_common_prefix(titles) == ""
+
+    @pytest.mark.parametrize(
+        ("titles", "expected"),
+        [
+            (["Donkey Kong", "Donkey Kong Country", "Donkey Konga"], "Donkey Kong"),
+            (
+                ["Sonic the Hedgehog", "Sonic the Hedgehog 2", "Sonic the Hedgehog 3"],
+                "Sonic the Hedgehog",
+            ),
+        ],
+    )
+    def test_a_sibling_running_past_the_series_name_does_not_shorten_it(
+        self, titles: list[str], expected: str
+    ) -> None:
+        assert _longest_common_prefix(titles) == expected
+
+    def test_a_prefix_every_sibling_cuts_mid_word_falls_back_to_whole_words(
+        self,
+    ) -> None:
+        titles = ["Mega Man Legends", "Mega Man Legacy"]
+        assert _longest_common_prefix(titles) == "Mega Man"
 
 
 class TestLongestCommonPrefixOutlierFiltering:
