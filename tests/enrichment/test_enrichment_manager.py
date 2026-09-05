@@ -1646,7 +1646,9 @@ class TestARunReachesTMDBThroughTheGlobalRegistry:
     ) -> None:
         db_id = save_movie(storage_manager)
         payloads = {
-            self._tmdb_url("search/movie"): {"results": [{"id": 603}]},
+            self._tmdb_url("search/movie"): {
+                "results": [{"id": 603, "title": "The Matrix"}]
+            },
             self._tmdb_url("movie/603"): {
                 "id": 603,
                 "overview": "A hacker learns the true nature of reality.",

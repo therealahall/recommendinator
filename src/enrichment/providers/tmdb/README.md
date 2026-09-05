@@ -29,7 +29,11 @@ uv run python -m src.cli settings set-secret enrichment.providers.tmdb.api_key
 | `include_keywords` | bool | no | Fetch the keyword set for tag enrichment (default `true`). |
 
 ## Behavior
-- Searches by title, with year-aware disambiguation when available.
+- Searches by title, with year-aware disambiguation when available. A search hit
+  is only taken when its title is near-identical and, where the item carries a
+  year, its release lands within three years; anything else settles as not found
+  rather than storing the wrong film. An item carrying a TMDB id skips the search
+  and the check.
 - Uses gap-filling — never overwrites existing fields.
 - Rate-limited to TMDB's 40 requests/sec ceiling.
 - Enriches genres, description, tags (keywords), and extra metadata. For movies

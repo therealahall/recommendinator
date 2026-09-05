@@ -133,8 +133,9 @@ and TV shows need `tmdb.enabled` plus a stored key, video games need
 
 ### Items showing as "not found"
 
-A settled answer: the provider replied and had nothing, which is normal for
-niche or very new content. Ordinary runs skip the item from then on. Retry later,
+A settled answer: the provider replied with nothing, or with nothing whose title
+and release year are close enough to be the same work, which is normal for niche
+or very new content and for anything oddly titled. Ordinary runs skip the item from then on. Retry later,
 once the data may have been added upstream, with
 `uv run python -m src.cli enrichment start --retry-not-found`.
 

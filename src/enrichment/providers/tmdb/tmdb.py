@@ -4,6 +4,7 @@ from typing import Any
 
 import requests
 
+from src.enrichment.matching import best_match_index
 from src.enrichment.provider_base import (
     ConfigField,
     EnrichmentProvider,
@@ -33,15 +34,21 @@ def clean_media_title_for_search(title: str) -> str:
     return cleaned if cleaned else title
 
 
+def _year_of(value: Any) -> int | None:
+    """Takes a bare year and a ``release_date``/``first_air_date`` alike."""
+    try:
+        return int(str(value)[:4])
+    except ValueError:
+        return None
+
+
 def _poster_url(payload: dict[str, Any]) -> str | None:
     poster_path = payload.get("poster_path")
     return f"{_POSTER_BASE}{poster_path}" if poster_path else None
 
 
 # The provider's own defaults, consumed by BOTH get_config_schema() and enrich()
-# so the two cannot drift. The settings-registry copies in src/settings/metadata.py
-# are pinned against these by
-# tests/settings/test_service.py::test_tmdb_registry_defaults_match_the_provider_schema.
+# so the two cannot drift.
 _DEFAULT_LANGUAGE = "en-US"
 _DEFAULT_INCLUDE_KEYWORDS = True
 
@@ -206,9 +213,11 @@ class TMDBProvider(EnrichmentProvider):
                 timeout=10,
             )
             response.raise_for_status()
-            results = response.json().get("results", [])
-            if results:
-                return int(results[0]["id"])
+            matched = self._pick_result(
+                response.json().get("results", []), search_title, year
+            )
+            if matched is not None:
+                return matched
 
             if year and year_param in params:
                 del params[year_param]
@@ -218,9 +227,11 @@ class TMDBProvider(EnrichmentProvider):
                     timeout=10,
                 )
                 response.raise_for_status()
-                results = response.json().get("results", [])
-                if results:
-                    return int(results[0]["id"])
+                # Dropping the year removed the only discriminator this search
+                # had, so the title check is what keeps the retry honest.
+                return self._pick_result(
+                    response.json().get("results", []), search_title, year
+                )
 
             return None
 
@@ -230,6 +241,19 @@ class TMDBProvider(EnrichmentProvider):
             raise ProviderError(
                 self.name, f"Failed to search TMDB: {scrub_request_error(error)}"
             ) from None
+
+    def _pick_result(
+        self, results: list[dict[str, Any]], search_title: str, year: Any
+    ) -> int | None:
+        candidates = [
+            (
+                str(result.get("title") or result.get("name") or ""),
+                _year_of(result.get("release_date") or result.get("first_air_date")),
+            )
+            for result in results
+        ]
+        index = best_match_index(search_title, _year_of(year), candidates)
+        return None if index is None else int(results[index]["id"])
 
     def _search_movie(
         self, item: ContentItem, api_key: str, language: str
