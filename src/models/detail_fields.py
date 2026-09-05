@@ -445,6 +445,11 @@ RELEASE_YEAR_FIELDS: dict[str, DetailField] = {
 }
 
 
+#: A provider replaces these rather than filling them. Only a key with a single
+#: writer qualifies: ``series_name`` also comes from ingestion and would be lost.
+PROVIDER_OWNED_METADATA_KEYS = frozenset({"franchise"})
+
+
 def _assert_select_aliases_are_unique() -> None:
     """The joined read hands every detail column to one ``sqlite3.Row``, which
     resolves a repeated name to whichever came first, so a collision reads one

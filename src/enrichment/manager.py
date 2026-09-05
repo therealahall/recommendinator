@@ -13,6 +13,7 @@ from src.enrichment.provider_base import EnrichmentResult
 from src.enrichment.rate_limiter import RateLimiter
 from src.enrichment.registry import EnrichmentRegistry, get_enrichment_registry
 from src.models.content import ContentItem, ContentType, get_enum_value
+from src.models.detail_fields import PROVIDER_OWNED_METADATA_KEYS
 from src.storage.enrichment_jobs import EnrichmentJobRecord
 from src.storage.global_secrets import read_secret
 from src.utils.request_errors import scrub_request_error
@@ -685,7 +686,7 @@ def merge_enrichment(
     existing_metadata: dict[str, Any],
     result: EnrichmentResult,
 ) -> dict[str, Any]:
-    """Only fills in fields that are missing or empty in the existing metadata."""
+    """Fills fields that are missing or empty, and replaces the provider-owned ones."""
     merged = dict(existing_metadata)
 
     if result.genres:
@@ -718,7 +719,12 @@ def merge_enrichment(
         merged["description"] = result.description
 
     for key, value in result.extra_metadata.items():
-        if key not in merged or merged[key] is None or merged[key] == "":
+        if (
+            key in PROVIDER_OWNED_METADATA_KEYS
+            or key not in merged
+            or merged[key] is None
+            or merged[key] == ""
+        ):
             merged[key] = value
 
     if result.external_id:

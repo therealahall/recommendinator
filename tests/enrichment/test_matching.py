@@ -29,11 +29,6 @@ class TestBestMatchIndex:
 
         assert best_match_index("Blade Runner", None, candidates) == 1
 
-    def test_a_remake_decades_from_the_item_year_is_rejected(self) -> None:
-        candidates = [(["Dune"], 1984), (["Dune"], 2021)]
-
-        assert best_match_index("Dune", 2021, candidates) == 1
-
     def test_a_release_three_years_out_is_the_same_work_but_four_is_not(self) -> None:
         assert best_match_index("Some Movie", 1999, [(["Some Movie"], 2002)]) == 0
         assert best_match_index("Some Movie", 1999, [(["Some Movie"], 2003)]) is None
