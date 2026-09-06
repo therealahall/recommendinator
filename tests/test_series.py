@@ -25,7 +25,6 @@ from src.utils.series import (
     is_next_after_consumed,
     latest_season_watched_date,
     reconcile_series,
-    reconcile_series_ordinal,
     series_entry,
     should_recommend_item,
     split_series_from_title,
@@ -834,6 +833,23 @@ class TestPositionlessSeriesOrdersByReleaseDate:
             ("The Show", float(number)) for number in range(1, 13)
         ]
 
+    def test_a_shows_franchise_ordinal_never_shadows_its_season_numbers(self) -> None:
+        show = ContentItem(
+            id="show",
+            title="The Show",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            metadata={
+                "total_seasons": 3,
+                "series_position": 3.0,
+                "series_position_authority": "authored",
+            },
+        )
+
+        assert [
+            series_entry(season) for season in expand_tv_shows_to_seasons([show])
+        ] == [("The Show", 1.0), ("The Show", 2.0), ("The Show", 3.0)]
+
 
 class TestReconcileSeries:
     def _authored(self, position: float, **extra: object) -> dict[str, object]:
@@ -896,36 +912,6 @@ class TestReconcileSeries:
 
         assert reconcile_series({}, offered) == {"series_name": "Alien Collection"}
         assert reconcile_series({"series_name": "Alien"}, offered) == {}
-
-
-class TestReconcileSeriesOrdinal:
-    """Wikidata positioning one film of a collection and not the other split it
-    in two, because it renamed 'The Godfather Collection' on the way through.
-    """
-
-    _WIKIDATA = {
-        "series_position": 2.0,
-        "series_name": "The Godfather",
-        "series_position_authority": "authored",
-    }
-
-    def test_a_stated_name_survives_the_ordinal_that_positions_it(self) -> None:
-        stored = {"series_name": "The Godfather Collection"}
-
-        assert reconcile_series_ordinal(stored, self._WIKIDATA) == {
-            "series_position": 2.0,
-            "series_position_authority": "authored",
-        }
-
-    def test_a_franchise_names_the_series_as_surely_as_the_canonical_key(self) -> None:
-        stored = {"franchise": "Halo"}
-
-        assert "series_name" not in reconcile_series_ordinal(stored, self._WIKIDATA)
-
-    def test_a_series_with_no_name_takes_the_one_the_ordinal_states(self) -> None:
-        assert reconcile_series_ordinal({}, self._WIKIDATA)["series_name"] == (
-            "The Godfather"
-        )
 
 
 class TestDecimalSeriesOrderingRegression:

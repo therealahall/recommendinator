@@ -137,24 +137,30 @@ def _ordinal_position(stated: Any) -> float | None:
     return position if valid_series_position(position) else None
 
 
+def _claim_ordinals(claim: Mapping[str, Any]) -> list[float]:
+    qualifiers = claim.get("qualifiers")
+    return [
+        position
+        for qualifier in (qualifiers if isinstance(qualifiers, list) else [])
+        if isinstance(qualifier, dict)
+        and _qualifier_property(qualifier) == SERIES_ORDINAL_QUALIFIER
+        and (position := _ordinal_position(_stated_value(qualifier))) is not None
+    ]
+
+
 def _stated_ordinal(statements: Mapping[str, Any]) -> float | None:
     # A series stating no ordinal yields none. Counting the P155/P156
     # preceded-by chain would invent the rank the qualifier exists to state,
     # and it would be written at the authority of one Wikidata does state.
-    for claim in _undeprecated_claims(statements, PART_OF_THE_SERIES):
-        series_id = _stated_value(claim)
-        if not isinstance(series_id, str) or not QID.match(series_id):
-            continue
-        qualifiers = claim.get("qualifiers")
-        for qualifier in qualifiers if isinstance(qualifiers, list) else []:
-            if not isinstance(qualifier, dict):
-                continue
-            if _qualifier_property(qualifier) != SERIES_ORDINAL_QUALIFIER:
-                continue
-            position = _ordinal_position(_stated_value(qualifier))
-            if position is not None:
-                return position
-    return None
+    stated = {
+        position
+        for claim in _undeprecated_claims(statements, PART_OF_THE_SERIES)
+        if isinstance(series_id := _stated_value(claim), str) and QID.match(series_id)
+        for position in _claim_ordinals(claim)
+    }
+    # Refused rather than guessed: the ordinal carries no series name, so a work
+    # Wikidata files in two series has nothing to say which one it counts in.
+    return stated.pop() if len(stated) == 1 else None
 
 
 def _item_year(item: ContentItem) -> int | None:

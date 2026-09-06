@@ -26,7 +26,6 @@ from src.utils.series import (
     SERIES_RECONCILED_KEYS,
     SeriesAuthority,
     reconcile_series,
-    reconcile_series_ordinal,
     stored_series_authority,
 )
 from src.utils.text import sanitize_for_log
@@ -633,7 +632,7 @@ class EnrichmentManager:
 
             if ordinal is None:
                 continue
-            settled = reconcile_series_ordinal(item.metadata, ordinal.as_metadata())
+            settled = reconcile_series(item.metadata, ordinal.as_metadata())
             if not settled:
                 continue
             item = item.model_copy(update={"metadata": {**item.metadata, **settled}})

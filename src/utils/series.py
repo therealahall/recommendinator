@@ -257,22 +257,6 @@ def reconcile_series(
     follows it. A name arriving beside an ordinal too weak to replace anything
     only fills a gap.
     """
-    return _settled_series(existing, incoming, renames=True)
-
-
-def reconcile_series_ordinal(
-    existing: Mapping[str, Any], incoming: Mapping[str, Any]
-) -> dict[str, Any]:
-    """Wikidata labels the series 'The Godfather' where TMDB's collection is
-    'The Godfather Collection', so renaming on the strength of an ordinal alone
-    would split one collection into two one-member series.
-    """
-    return _settled_series(existing, incoming, renames=False)
-
-
-def _settled_series(
-    existing: Mapping[str, Any], incoming: Mapping[str, Any], *, renames: bool
-) -> dict[str, Any]:
     offered = stored_series_authority(incoming)
     replacing = (
         offered
@@ -285,7 +269,7 @@ def _settled_series(
     # alias it writes, and one already naming the series is a name to keep.
     name = str(incoming.get(SERIES_NAME_KEY) or "").strip()
     stored_name = get_series_name_from_metadata(existing)
-    if name and (stored_name is None or (renames and replacing is not None)):
+    if name and (stored_name is None or replacing is not None):
         fields[SERIES_NAME_KEY] = name
     if replacing is not None:
         fields[SERIES_POSITION_KEY] = get_series_position_from_metadata(incoming)
@@ -632,7 +616,11 @@ def expand_tv_shows_to_seasons(items: list[ContentItem]) -> list[ContentItem]:
             season_title = f"{show_title} (Season {season_num})"
             season_id = f"{base_id}:s{season_num}" if base_id else None
             season_metadata = dict(item.metadata)
-            season_metadata["series_name"] = show_title
+            # The show's ordinal places it in a franchise, not this season in
+            # the show, and it is read ahead of ``season``.
+            season_metadata.pop(SERIES_POSITION_KEY, None)
+            season_metadata.pop(SERIES_AUTHORITY_KEY, None)
+            season_metadata[SERIES_NAME_KEY] = show_title
             season_metadata["season"] = season_num
             season_metadata["season_number"] = season_num
 
