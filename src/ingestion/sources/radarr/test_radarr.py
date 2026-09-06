@@ -310,9 +310,8 @@ class TestRadarrCollections:
 
         assert len(items) == 2
         assert items[0].metadata.get("series_name") == "Back to the Future Collection"
-        assert items[0].metadata.get("movie_number") == 1
         assert items[1].metadata.get("series_name") == "Back to the Future Collection"
-        assert items[1].metadata.get("movie_number") == 2
+        assert "movie_number" not in items[0].metadata
 
     def test_a_second_source_is_not_tagged_from_the_firsts_collections(
         self, plugin: RadarrPlugin
@@ -323,7 +322,6 @@ class TestRadarrCollections:
         wrestling = list(plugin.fetch({"url": WRESTLING_RADARR, "api_key": "key"}))
 
         assert main[0].metadata["series_name"] == "Back to the Future"
-        assert main[0].metadata["movie_number"] == 1
         assert "series_name" not in wrestling[0].metadata
 
     def test_two_sources_fetching_at_once_keep_their_own_collections(
@@ -362,7 +360,6 @@ class TestRadarrCollections:
 
         assert "series_name" not in before[0].metadata
         assert after[0].metadata["series_name"] == "Back to the Future"
-        assert after[0].metadata["movie_number"] == 2
 
 
 class TestRadarrTls:

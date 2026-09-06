@@ -327,11 +327,6 @@ class TMDBProvider(EnrichmentProvider):
             if collection:
                 extra_metadata["series_name"] = collection.get("name")
                 extra_metadata["tmdb_collection_id"] = collection.get("id")
-                movie_position = self._get_movie_position_in_collection(
-                    collection["id"], tmdb_id, api_key
-                )
-                if movie_position:
-                    extra_metadata["series_position"] = movie_position
 
             return EnrichmentResult(
                 external_id=f"tmdb:{tmdb_id}",
@@ -456,37 +451,3 @@ class TMDBProvider(EnrichmentProvider):
 
     def _fetch_tv_keywords(self, tmdb_id: int, api_key: str) -> list[str] | None:
         return self._fetch_keywords("tv", tmdb_id, api_key, "results")
-
-    def _get_movie_position_in_collection(
-        self, collection_id: int, movie_id: int, api_key: str
-    ) -> int | None:
-        try:
-            response = requests.get(
-                f"{TMDB_API_BASE}/collection/{collection_id}",
-                params={"api_key": api_key},
-                timeout=10,
-            )
-            response.raise_for_status()
-            collection = response.json()
-
-            parts = collection.get("parts", [])
-            if not parts:
-                return None
-
-            sorted_parts = sorted(
-                parts,
-                key=lambda movie: movie.get("release_date") or "9999-99-99",
-            )
-
-            for index, movie in enumerate(sorted_parts):
-                if movie.get("id") == movie_id:
-                    return index + 1
-
-            return None
-
-        except requests.RequestException:
-            # Collection info is optional, don't fail enrichment
-            logger.warning(
-                "Failed to fetch collection %s for movie %s", collection_id, movie_id
-            )
-            return None

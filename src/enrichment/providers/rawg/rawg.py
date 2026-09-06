@@ -120,11 +120,6 @@ def _filter_outlier_titles(titles: list[str]) -> list[str]:
     return filtered if len(filtered) >= 2 else titles
 
 
-def _release_sort_key(entry: dict[str, Any]) -> str:
-    """Games without a release date sort to the end."""
-    return entry.get("released") or "9999-12-31"
-
-
 def clean_game_title_for_search(title: str) -> str:
     cleaned = title
     cleaned = TRADEMARK_PATTERN.sub("", cleaned).strip()
@@ -294,16 +289,13 @@ class RAWGProvider(EnrichmentProvider):
             if game.get("esrb_rating"):
                 extra_metadata["esrb_rating"] = game["esrb_rating"]["name"]
 
-            franchise_name, franchise_position = self._fetch_game_series(
+            franchise_name = self._fetch_game_series(
                 game_id=game_id,
                 game_name=game.get("name", ""),
-                game_released=game.get("released"),
                 api_key=api_key,
             )
             if franchise_name:
                 extra_metadata["franchise"] = franchise_name
-            if franchise_position is not None:
-                extra_metadata["series_position"] = franchise_position
 
             return EnrichmentResult(
                 external_id=f"rawg:{game_id}",
@@ -326,9 +318,8 @@ class RAWGProvider(EnrichmentProvider):
         self,
         game_id: int,
         game_name: str,
-        game_released: str | None,
         api_key: str,
-    ) -> tuple[str | None, int | None]:
+    ) -> str | None:
         try:
             response = requests.get(
                 f"{RAWG_API_BASE}/games/{game_id}/game-series",
@@ -340,36 +331,24 @@ class RAWGProvider(EnrichmentProvider):
 
             series_results: list[dict[str, Any]] = data.get("results", [])
             if not series_results:
-                return (None, None)
-
-            # The current game may not be included in its own series results;
-            # insert it so the prefix and position calculations are correct.
-            if not any(entry.get("id") == game_id for entry in series_results):
-                series_results.append(
-                    {"id": game_id, "name": game_name, "released": game_released}
-                )
+                return None
 
             all_titles = [
                 entry["name"] for entry in series_results if entry.get("name")
             ]
-            franchise_name = _longest_common_prefix(all_titles)
-            if not franchise_name:
-                return (None, None)
+            # The current game may not be included in its own series results,
+            # and the prefix has to span it too.
+            if game_name and not any(
+                entry.get("id") == game_id for entry in series_results
+            ):
+                all_titles.append(game_name)
 
-            sorted_entries = sorted(series_results, key=_release_sort_key)
-
-            position: int | None = None
-            for index, entry in enumerate(sorted_entries):
-                if entry.get("id") == game_id:
-                    position = index + 1
-                    break
-
-            return (franchise_name, position)
+            return _longest_common_prefix(all_titles) or None
 
         except requests.RequestException:
             # Franchise info is optional — don't fail enrichment
             logger.warning("Failed to fetch game-series for game %s", game_id)
-            return (None, None)
+            return None
 
     def _clean_description(self, description: str | None) -> str | None:
         if not description:
