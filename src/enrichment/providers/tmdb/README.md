@@ -38,8 +38,9 @@ uv run python -m src.cli settings set-secret enrichment.providers.tmdb.api_key
 - Uses gap-filling — never overwrites existing fields.
 - Rate-limited to TMDB's 40 requests/sec ceiling.
 - Enriches genres, description, tags (keywords), and extra metadata. For movies
-  this includes runtime, ratings, release date/year, language, studio, series
-  ordering, and `director` (from credits, up to 3 directors comma-joined). For
+  this includes runtime, ratings, release date/year, language, studio, the
+  collection name, and `director` (from credits, up to 3 directors
+  comma-joined). For
   TV shows it includes seasons, episodes, networks, status, and `creators` (up
   to 3 creators comma-joined).
 

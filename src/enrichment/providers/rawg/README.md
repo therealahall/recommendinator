@@ -32,7 +32,9 @@ uv run python -m src.cli settings set-secret enrichment.providers.rawg.api_key
 - A search hit is only taken when its name is near-identical and, where the item
   carries a year, its release lands within three years; anything else settles as
   not found rather than storing the wrong game.
-- Resolves franchise membership and series ordering when RAWG has the data.
+- Resolves franchise membership, and never a position within it: the
+  `game-series` endpoint returns spin-offs, ports and collections, not an
+  ordered franchise.
 - Gap-fills every field but `franchise`, which a re-run replaces so a name
   stored from a truncated match is corrected.
 - Outlier titles in fuzzy matches are filtered via longest-common-prefix heuristics.

@@ -71,8 +71,9 @@ def test_unknown_enriched_serializes_as_false() -> None:
         ({"series": "The Murderbot Diaries", "series_index": 1.0}, 1.0),
         ({"series": "The Murderbot Diaries"}, None),
         ({"series": "The Murderbot Diaries", "series_index": "nonsense"}, None),
+        ({"franchise": "The Murderbot Diaries"}, None),
     ],
-    ids=["stated", "no-position", "unreadable-position"],
+    ids=["stated", "no-position", "unreadable-position", "franchise-only"],
 )
 def test_a_series_the_title_no_longer_states_reaches_both_interfaces(
     metadata: dict[str, object], expected: float | None

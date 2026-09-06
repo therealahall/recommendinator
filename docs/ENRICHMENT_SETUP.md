@@ -33,7 +33,7 @@ publish year. No account needed.
 
 **TMDB** fills genres, tags from keywords, the overview, runtime for movies or
 season and episode counts for TV, ratings, release dates, studio or network, up
-to three directors or creators, and collection info with series position. Create
+to three directors or creators, and the collection a film belongs to. Create
 a free account at [themoviedb.org](https://www.themoviedb.org/), go to
 **Settings > API**, request a Developer key, and copy the **API Key (v3 auth)**.
 Two optional fields:
@@ -47,7 +47,7 @@ uv run python -m src.cli settings set enrichment.providers.tmdb.include_keywords
 
 **RAWG** fills genres, up to 20 tags, description, developer and publisher,
 platforms, RAWG and Metacritic scores, ESRB rating, playtime estimates, and
-franchise info ordered by release. It strips edition suffixes, trademark symbols
+the franchise a game belongs to. It strips edition suffixes, trademark symbols
 and DLC indicators from a title before searching, so it copes with messy names.
 Get a key from [rawg.io/apidocs](https://rawg.io/apidocs).
 

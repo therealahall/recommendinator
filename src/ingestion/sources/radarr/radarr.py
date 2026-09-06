@@ -50,7 +50,7 @@ class RadarrPlugin(ArrPlugin):
 
     def fetch_context(
         self, base_url: str, api_key: str, verify_ssl: bool
-    ) -> dict[int, dict[str, Any]]:
+    ) -> dict[int, str]:
         return self._fetch_collections(base_url, api_key, verify_ssl)
 
     def post_fetch(
@@ -60,17 +60,14 @@ class RadarrPlugin(ArrPlugin):
         context: Any,
     ) -> None:
         tmdb_id = item.get("tmdbId")
-        collection_info = context.get(tmdb_id) if tmdb_id else None
-        if collection_info:
-            metadata["series_name"] = collection_info["title"]
-            metadata["movie_number"] = collection_info["order"]
+        collection_title = context.get(tmdb_id) if tmdb_id else None
+        if collection_title:
+            metadata["series_name"] = collection_title
 
     def _fetch_collections(
         self, base_url: str, api_key: str, verify_ssl: bool
-    ) -> dict[int, dict[str, Any]]:
-        """Radarr collections (e.g., Back to the Future) provide movie order for
-        series-aware recommendations.
-        """
+    ) -> dict[int, str]:
+        """Radarr collections (e.g. Back to the Future) name a movie's series."""
         url = f"{base_url}/api/v3/collection"
 
         try:
@@ -86,19 +83,19 @@ class RadarrPlugin(ArrPlugin):
         if not isinstance(data, list):
             return {}
 
-        result: dict[int, dict[str, Any]] = {}
+        result: dict[int, str] = {}
         for collection in data:
             title = collection.get("title") or collection.get("name") or ""
             if not title:
                 continue
 
             movies = collection.get("movies") or collection.get("items") or []
-            for order, movie in enumerate(movies, start=1):
+            for movie in movies:
                 tmdb_id = None
                 if isinstance(movie, dict):
                     tmdb_id = movie.get("tmdbId") or movie.get("tmdb_id")
                 if tmdb_id is not None:
-                    result[int(tmdb_id)] = {"title": title, "order": order}
+                    result[int(tmdb_id)] = title
 
         if result:
             logger.info("Loaded collection info for %d movies", len(result))

@@ -111,6 +111,48 @@ class TestTMDBProviderMovieEnrichment:
         assert result.cover_url == "https://image.tmdb.org/t/p/w500/abc123.jpg"
         assert "director" not in result.extra_metadata
 
+    def test_a_collection_names_the_series_without_ranking_the_movie_in_it(
+        self, provider: TMDBProvider, config: dict[str, Any]
+    ) -> None:
+        item = ContentItem(
+            id="movie123",
+            title="The Godfather Part II",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"tmdb_id": 240},
+        )
+
+        mock_movie_response = {
+            "id": 240,
+            "title": "The Godfather Part II",
+            "release_date": "1974-12-20",
+            "belongs_to_collection": {"id": 230, "name": "The Godfather Collection"},
+        }
+
+        with patch("src.enrichment.providers.tmdb.tmdb.requests.get") as mock_get:
+            mock_get.side_effect = [
+                MagicMock(
+                    spec=requests.Response,
+                    status_code=200,
+                    json=lambda: mock_movie_response,
+                ),
+                MagicMock(
+                    spec=requests.Response,
+                    status_code=200,
+                    json=lambda: {"keywords": []},
+                ),
+            ]
+
+            result = provider.enrich(item, config)
+
+        assert result is not None
+        assert result.extra_metadata["series_name"] == "The Godfather Collection"
+        assert result.extra_metadata["tmdb_collection_id"] == 230
+        assert "series_position" not in result.extra_metadata
+        assert not [
+            call for call in mock_get.call_args_list if "/collection/" in call.args[0]
+        ]
+
     def test_enrich_movie_with_search(
         self, provider: TMDBProvider, movie_item: ContentItem, config: dict[str, Any]
     ) -> None:

@@ -28,7 +28,6 @@ _CREDENTIAL_URL_FUNCTIONS = (
     ("src/enrichment/providers/tmdb/tmdb.py", "_fetch_keywords"),
     ("src/enrichment/providers/tmdb/tmdb.py", "_fetch_movie_details"),
     ("src/enrichment/providers/tmdb/tmdb.py", "_fetch_tv_details"),
-    ("src/enrichment/providers/tmdb/tmdb.py", "_get_movie_position_in_collection"),
     ("src/enrichment/providers/tmdb/tmdb.py", "_search_media"),
     ("src/ingestion/sources/gog/gog.py", "refresh_access_token"),
     ("src/ingestion/sources/steam/steam.py", "get_owned_games"),
