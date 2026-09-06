@@ -34,7 +34,7 @@ uv run python -m src.cli settings set enrichment.providers.wikidata.enabled true
   and nothing in the statements says which.
 - Takes a search hit only where `P31` matches the item's content type and, where
   the item carries a year, the entity's own is within three. A wrong entity's
-  ordinal outranks every weaker source, so an ambiguous search writes nothing.
+  ordinal replaces every weaker source's, so an ambiguous search writes nothing.
 - Identifies itself by name and repository in the `User-Agent` of every request,
   and asks for one item a second: Wikidata is donated infrastructure.
 

@@ -292,15 +292,17 @@ def series_names_agree(left: str, right: str) -> bool:
 def reconcile_series(
     existing: Mapping[str, Any], incoming: Mapping[str, Any]
 ) -> dict[str, Any]:
-    """Authority decides the ordinal, but a position only counts within the
-    series it was stated in, so two sources naming different ones settle
-    nothing. A name itself only ever fills an empty slot.
+    """Authority decides the ordinal, but a position only counts within the series
+    it was stated in: one naming a different series, or naming none against a
+    stored name, settles nothing. A name itself only ever fills an empty slot.
     """
     # Narrow on what arrives, broad on what is stored: a provider owns the
     # alias it writes, and one already naming the series is a name to keep.
     name = str(incoming.get(SERIES_NAME_KEY) or "").strip()
     stored_name = get_series_name_from_metadata(existing)
-    if name and stored_name is not None and not series_names_agree(name, stored_name):
+    if stored_name is not None and (
+        not name or not series_names_agree(name, stored_name)
+    ):
         return {}
 
     offered = stored_series_authority(incoming)

@@ -890,10 +890,20 @@ class TestReconcileSeries:
             "series_position_authority": "stated",
         }
 
-        assert reconcile_series(stored, self._authored(3.0)) == {
+        offered = self._authored(3.0, series_name="The Expanse")
+
+        assert reconcile_series(stored, offered) == {
             "series_position": 3.0,
             "series_position_authority": "authored",
         }
+
+    def test_a_position_naming_no_series_never_replaces_one_stored_under_a_name(
+        self,
+    ) -> None:
+        stored = {"series_name": "The Expanse", "series_position": 2.5}
+        offered = {"series_position": 3.0, "series_position_authority": "library"}
+
+        assert reconcile_series(stored, offered) == {}
 
     def test_an_ordinal_stored_before_the_ladder_existed_still_upgrades(self) -> None:
         assert reconcile_series({"series_position": 2.5}, self._authored(3.0)) == {
