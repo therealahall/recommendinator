@@ -3,6 +3,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from src.enrichment.provider_base import EnrichmentProvider
+from src.enrichment.registry import EnrichmentRegistry
 from src.settings.metadata import (
     SettingMetadata,
     all_entries,
@@ -16,6 +18,18 @@ from src.storage.settings_migration import SENSITIVE_LEAF_KEYS
 from src.utils.dotted_path import get_leaf
 
 _EXAMPLE_CONFIG = Path("config/example.yaml")
+
+_BUILTIN_PROVIDER_PACKAGE = "src.enrichment.providers."
+
+
+def _builtin_providers() -> dict[str, EnrichmentProvider]:
+    registry = EnrichmentRegistry()
+    registry.discover_providers()
+    return {
+        name: provider
+        for name, provider in registry.get_all_providers().items()
+        if type(provider).__module__.startswith(_BUILTIN_PROVIDER_PACKAGE)
+    }
 
 
 class TestExampleConfigIsBootstrapOnly:
@@ -70,6 +84,24 @@ class TestEntryShape:
             assert entry.validation.min <= entry.validation.max
 
 
+class TestEveryDiscoveredProviderIsConfigurable:
+    def test_a_provider_has_an_enable_toggle_and_a_masked_entry_for_each_secret(
+        self,
+    ) -> None:
+        toggles: list[str] = []
+        secrets: list[str] = []
+        for name, provider in _builtin_providers().items():
+            toggles.append(f"enrichment.providers.{name}.enabled")
+            secrets += [
+                f"enrichment.providers.{name}.{field.name}"
+                for field in provider.get_config_schema()
+                if field.sensitive
+            ]
+
+        assert [key for key in (*toggles, *secrets) if get_entry(key) is None] == []
+        assert [key for key in secrets if not is_sensitive(key)] == []
+
+
 class TestSensitivity:
     def test_sensitive_registry_leaves_are_flagged(self) -> None:
         sensitive_keys = {
@@ -77,8 +109,6 @@ class TestSensitivity:
             for entry in all_entries()
             if entry.key.rsplit(".", 1)[-1] in SENSITIVE_LEAF_KEYS
         }
-        assert "enrichment.providers.tmdb.api_key" in sensitive_keys
-        assert "enrichment.providers.rawg.api_key" in sensitive_keys
         for key in sensitive_keys:
             entry = get_entry(key)
             assert entry is not None

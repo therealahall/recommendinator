@@ -279,6 +279,27 @@ _REGISTRY: tuple[SettingMetadata, ...] = (
         type="bool",
         default=False,
     ),
+    _entry(
+        "enrichment.providers.hardcover.api_key",
+        label="Hardcover API token",
+        help="Personal access token for the Hardcover enrichment provider.",
+        type="string",
+        default="",
+    ),
+    _entry(
+        "enrichment.providers.hardcover.enabled",
+        label="Hardcover enabled",
+        help="Enable the Hardcover (book series positions) enrichment provider.",
+        type="bool",
+        default=False,
+    ),
+    _entry(
+        "enrichment.providers.wikidata.enabled",
+        label="Wikidata enabled",
+        help="Enable the Wikidata (series positions, all content types) enrichment provider.",
+        type="bool",
+        default=False,
+    ),
     # NOTE: web.host / web.port / web.debug are deliberately absent. They are
     # read by the uvicorn launcher (src/web/main.py) before any database is
     # open, so a database-backed value could never be honoured — see

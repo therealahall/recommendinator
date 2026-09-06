@@ -319,12 +319,18 @@ it after a sync.
 | TMDB | Movies, TV | `belongs_to_collection` |
 | OpenLibrary | Books, no API key | none |
 | RAWG | Video games | `GET /games/{id}/game-series` |
+| Wikidata | All four, no API key | `P179`, positioned by its `P1545` qualifier |
+| Hardcover | Books, series position only | `books.featured_book_series` |
 
 RAWG derives a franchise name from the longest common prefix of the related
 titles, after majority first-word voting drops outliers, and strips DLC suffixes
 before searching. RAWG stores `franchise` and TMDB `series_name` in
 `extra_metadata`. Neither stores a position: both endpoints return an unordered
 related-titles set, so any rank read off one is invented.
+
+Wikidata and Hardcover state a position rather than implying one. Each
+implements `fetch_series_ordinal` alone, so it answers the ordinal pass at
+`authored` authority and never settles an item as matched.
 
 Rules:
 

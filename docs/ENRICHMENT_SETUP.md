@@ -19,13 +19,15 @@ recommendations.
 
 ## Providers
 
-Enable all three for full coverage.
+Enable them all for full coverage.
 
 | Provider | Content | API key | Rate limit |
 |----------|---------|---------|------------|
 | OpenLibrary | Books | None | 1 request/second |
 | TMDB | Movies, TV shows | Free, v3 auth | 40 requests/second |
 | RAWG | Video games | Free | 5 requests/second |
+| Wikidata | All four types, series positions only | None | 1 item/second |
+| Hardcover | Books, series positions only | Free, personal access token | 1 request/second |
 
 **OpenLibrary** matches by ISBN when your source supplies one, otherwise by
 title and author search. It fills genres, description, page count, publisher and
@@ -51,6 +53,20 @@ the franchise a game belongs to. It strips edition suffixes, trademark symbols
 and DLC indicators from a title before searching, so it copes with messy names.
 Get a key from [rawg.io/apidocs](https://rawg.io/apidocs).
 
+**Wikidata** fills nothing but the series position, for all four content types,
+from the ordinal a work's own series statement carries. It runs beside the
+others rather than instead of them: it never matches an item, so the provider
+credited with a book or a game is still OpenLibrary or RAWG. A work Wikidata
+cannot identify beyond doubt, by type and release year, is left unpositioned.
+
+**Hardcover** states which series a book belongs to and where in it the book
+sits, and fills nothing else, so it runs alongside OpenLibrary rather than
+instead of it. It matches on an ISBN where your source supplies one, otherwise
+on title and author, and refuses a title that matches two books rather than
+guess a position. Create a free account at
+[hardcover.app](https://hardcover.app/) and copy the token from
+**Account > API**.
+
 ## Full setup
 
 ```bash
@@ -65,6 +81,11 @@ uv run python -m src.cli settings set-secret enrichment.providers.tmdb.api_key
 
 uv run python -m src.cli settings set enrichment.providers.rawg.enabled true
 uv run python -m src.cli settings set-secret enrichment.providers.rawg.api_key
+
+uv run python -m src.cli settings set enrichment.providers.wikidata.enabled true
+
+uv run python -m src.cli settings set enrichment.providers.hardcover.enabled true
+uv run python -m src.cli settings set-secret enrichment.providers.hardcover.api_key
 ```
 
 `set-secret` prompts with hidden input, or reads `RECOMMENDINATOR_SECRET_VALUE`,
