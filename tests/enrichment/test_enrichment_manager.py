@@ -1668,7 +1668,7 @@ class OrdinalOnlyProvider(EnrichmentProvider):
         self, item: ContentItem, config: dict[str, Any]
     ) -> SeriesOrdinal | None:
         self.ordinal_calls.append(item)
-        return SeriesOrdinal(position=3.0, series="The Matrix Collection")
+        return SeriesOrdinal(position=3.0)
 
 
 class TestTheOrdinalPass:
@@ -1762,6 +1762,134 @@ class TestTheOrdinalPass:
 
         assert provider.ordinal_calls == []
         assert storage_manager.get_content_item(db_id).metadata["series_position"] == 4
+
+    def test_the_stored_series_name_survives_the_ordinal_that_positions_it(
+        self, tmp_path: Path
+    ) -> None:
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        db_id = save_movie(
+            storage_manager, metadata={"series_name": "The Matrix Collection"}
+        )
+
+        self._run(storage_manager, db_id)
+
+        item = storage_manager.get_content_item(db_id)
+        assert item.metadata["series_name"] == "The Matrix Collection"
+        assert item.metadata["series_position"] == 3.0
+        assert item.metadata["series_position_authority"] == "authored"
+
+
+class CollectionNamingProvider(MockProvider):
+    """TMDB names the collection, for every film of it alike."""
+
+    def enrich(
+        self, item: ContentItem, config: dict[str, Any]
+    ) -> EnrichmentResult | None:
+        result = super().enrich(item, config)
+        assert result is not None
+        result.extra_metadata = {"series_name": "The Matrix Collection"}
+        return result
+
+
+class UnevenOrdinalProvider(OrdinalOnlyProvider):
+    """Wikidata holds a P179 for one film of a collection and not the other."""
+
+    def fetch_series_ordinal(
+        self, item: ContentItem, config: dict[str, Any]
+    ) -> SeriesOrdinal | None:
+        self.ordinal_calls.append(item)
+        if item.title.endswith("Revolutions"):
+            return None
+        return SeriesOrdinal(position=2.0)
+
+
+class TestOneCollectionEnrichedFromScratch:
+    def test_the_film_an_ordinal_positioned_keeps_its_collections_name(
+        self, tmp_path: Path
+    ) -> None:
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        films = {
+            title: save_movie(storage_manager, title)
+            for title in ("The Matrix Reloaded", "The Matrix Revolutions")
+        }
+        registry = EnrichmentRegistry()
+        registry._discovered = True
+        registry.register(CollectionNamingProvider())
+        registry.register(UnevenOrdinalProvider())
+        manager = EnrichmentManager(
+            storage_manager,
+            {
+                "enrichment": {
+                    "providers": {
+                        "mock": {"enabled": True},
+                        "ordinal": {"enabled": True},
+                    }
+                }
+            },
+            registry,
+        )
+
+        manager.start_enrichment(content_type=ContentType.MOVIE)
+        assert manager._wait_for_completion()
+
+        enriched = {
+            title: storage_manager.get_content_item(db_id)
+            for title, db_id in films.items()
+        }
+        assert {item.metadata["series_name"] for item in enriched.values()} == {
+            "The Matrix Collection"
+        }
+        assert enriched["The Matrix Reloaded"].metadata["series_position"] == 2.0
+
+
+class TestAnOrdinalIsRefusedWhereNoReaderCouldReadItBack:
+    @pytest.mark.parametrize("position", [1001, -1, float("nan")])
+    def test_a_position_outside_the_range_cannot_be_constructed(
+        self, position: float
+    ) -> None:
+        with pytest.raises(ValueError, match="between 0 and 1000"):
+            SeriesOrdinal(position=position)
+
+    def test_zero_is_a_prequel_rather_than_a_refusal(self) -> None:
+        assert SeriesOrdinal(position=0).as_metadata()["series_position"] == 0
+
+
+class UnreliableOrdinalProvider(OrdinalOnlyProvider):
+    """404s on every other item, as a merged or redirected entity id does."""
+
+    def fetch_series_ordinal(
+        self, item: ContentItem, config: dict[str, Any]
+    ) -> SeriesOrdinal | None:
+        self.ordinal_calls.append(item)
+        if len(self.ordinal_calls) % 2 == 0:
+            raise ProviderError(self.name, "HTTP 404") from http_error(404)
+        return SeriesOrdinal(position=3.0)
+
+
+class TestTheOrdinalPassCountsRejectionsInARow:
+    def test_a_provider_that_keeps_answering_is_never_abandoned_regression(
+        self, tmp_path: Path
+    ) -> None:
+        """Cumulative counting abandoned a provider on its fifth 404 of a run,
+        however many items it had answered in between.
+        """
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        movies = [save_movie(storage_manager, f"Movie {index}") for index in range(20)]
+        provider = UnreliableOrdinalProvider()
+        registry = EnrichmentRegistry()
+        registry._discovered = True
+        registry.register(provider)
+        manager = EnrichmentManager(
+            storage_manager,
+            {"enrichment": {"providers": {"ordinal": {"enabled": True}}}},
+            registry,
+        )
+
+        manager.start_enrichment(content_type=ContentType.MOVIE)
+        assert manager._wait_for_completion()
+
+        assert len(provider.ordinal_calls) == len(movies)
+        assert not any("abandoned" in error for error in manager.get_status().errors)
 
 
 class TestARunReachesTMDBThroughTheGlobalRegistry:

@@ -26,6 +26,7 @@ from src.utils.series import (
     SERIES_RECONCILED_KEYS,
     SeriesAuthority,
     reconcile_series,
+    reconcile_series_ordinal,
     stored_series_authority,
 )
 from src.utils.text import sanitize_for_log
@@ -626,9 +627,13 @@ class EnrichmentManager:
                 self._note_failure(failure)
                 continue
 
+            # An ordinal-only provider never reaches the match loop's reset, so
+            # without this its rejections count cumulatively rather than in a row.
+            self._rejections.pop(provider.name, None)
+
             if ordinal is None:
                 continue
-            settled = reconcile_series(item.metadata, ordinal.as_metadata())
+            settled = reconcile_series_ordinal(item.metadata, ordinal.as_metadata())
             if not settled:
                 continue
             item = item.model_copy(update={"metadata": {**item.metadata, **settled}})

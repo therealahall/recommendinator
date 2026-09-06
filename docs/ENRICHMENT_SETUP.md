@@ -59,11 +59,10 @@ others rather than instead of them: it never matches an item, so the provider
 credited with a book or a game is still OpenLibrary or RAWG. A work Wikidata
 cannot identify beyond doubt, by type and release year, is left unpositioned.
 
-**Hardcover** states which series a book belongs to and where in it the book
-sits, and fills nothing else, so it runs alongside OpenLibrary rather than
-instead of it. It matches on an ISBN where your source supplies one, otherwise
-on title and author, and refuses a title that matches two books rather than
-guess a position. Create a free account at
+**Hardcover** states where in its series a book sits and fills nothing else, not
+even the series name, so it runs alongside OpenLibrary rather than instead of it.
+It matches on an ISBN where your source supplies one, otherwise on title and
+author, and refuses a title that matches two books rather than guess a position. Create a free account at
 [hardcover.app](https://hardcover.app/) and copy the token from
 **Account > API**.
 

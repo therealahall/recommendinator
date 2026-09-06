@@ -314,8 +314,8 @@ and from `private/plugins/`, each with its own token-bucket rate limiter. A
 background worker runs them in configurable batches, and an optional hook fires
 it after a sync.
 
-| Provider | Content | Franchise source |
-|----------|---------|------------------|
+| Provider | Content | Series source |
+|----------|---------|---------------|
 | TMDB | Movies, TV | `belongs_to_collection` |
 | OpenLibrary | Books, no API key | none |
 | RAWG | Video games | `GET /games/{id}/game-series` |
@@ -330,7 +330,10 @@ related-titles set, so any rank read off one is invented.
 
 Wikidata and Hardcover state a position rather than implying one. Each
 implements `fetch_series_ordinal` alone, so it answers the ordinal pass at
-`authored` authority and never settles an item as matched.
+`authored` authority and never settles an item as matched. A `SeriesOrdinal`
+carries no series name: the ordinal pass runs ahead of the match loop, so naming
+the series there would beat TMDB to an empty slot and split "The Godfather
+Collection" into two one-member series.
 
 Rules:
 

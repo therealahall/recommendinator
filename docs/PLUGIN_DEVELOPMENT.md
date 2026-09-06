@@ -203,7 +203,7 @@ these keys out of it, and none of them is a recognised key:
 | Read by | Keys |
 |---|---|
 | [Length scorer](SCORING.md#content-length-preferences), `src/recommendations/content_length.py` | **book** `num_pages`, `number_of_pages`. **TV show** `number_of_seasons`. **video game** `average_playtime_hours` |
-| Series ordering, `src/utils/series.py` | Series name: `series_name`, `series`, `series_title`, `franchise`. Position: `series_position`, `series_number`, `series_num`, `series_index`, `book_number`, `book_num`, `season`, `season_number`, `season_num`, `part`, `part_number`, `episode`, `episode_number`, `movie_number`. Expanding a show into seasons: `number_of_seasons` |
+| Series ordering, `src/utils/series.py` | Series name: `series_name`, or the provider-owned `series_title`, `franchise`. Position: `series_position`, `series_number`, `series_num`, `book_number`, `book_num`, `season`, `season_number`, `season_num`, `part`, `part_number`, `episode`, `episode_number`. Expanding a show into seasons: `number_of_seasons` |
 | Season checklist and the [variety ladder](SCORING.md#variety-after-completion), `src/utils/series.py` | `seasons_watched`, `seasons_watched_dates` |
 | Library export, `src/utils/export.py` | `notes` on every type. **TV show** `seasons_watched`, `seasons_watched_dates`. **video game** `playtime_hours` |
 
@@ -230,7 +230,7 @@ weaker source can replace it.
 ### Shape rules
 
 **Emit the cleanest data your source can give.** A series goes in
-`metadata["series"]` and `metadata["series_index"]`, never crammed into the
+`metadata["series_name"]` and `metadata["series_position"]`, never crammed into the
 title: storage compares two sources' titles to decide they name one work, and
 only you know which words yours appends. A placeholder your source writes where
 it has nothing — `"Unknown"` for an authorless book — is not a value, so send
@@ -559,7 +559,7 @@ class MyEnrichmentProvider(EnrichmentProvider):
         self, item: ContentItem, config: dict[str, Any]
     ) -> SeriesOrdinal | None:
         # None when you have no ordinal for this item; raise on a failure.
-        return SeriesOrdinal(position=3.0, series="The Expanse")
+        return SeriesOrdinal(position=3.0)
 ```
 
 `fetch_series_ordinal` is optional and separate from the match: it is asked only
@@ -567,6 +567,10 @@ while a stronger source has not positioned the item already, and a provider
 implementing it alone never settles an item's provider or quality. Implement one
 of the two or both — a provider implementing neither is refused when its class is
 created.
+
+A `SeriesOrdinal` states a position and no series name. The ordinal pass runs
+ahead of the match loop, so naming the series there would beat the matching
+provider to an empty slot and split one collection across two names.
 
 You return one `EnrichmentResult` instead of yielding `ContentItem`s, the manager
 throttles you from `rate_limit_requests_per_second`, the merge is gap-filling bar
@@ -595,4 +599,6 @@ enrichment:
 
 Each lives at `src/ingestion/sources/<name>/<name>.py`. Enrichment providers:
 `tmdb` (movies and TV), `openlibrary` (books, no API key), `rawg` (video games),
-under `src/enrichment/providers/<name>/<name>.py`.
+`wikidata` (every type, series positions only, no API key) and `hardcover`
+(books, series positions only) — the last two implement `fetch_series_ordinal`
+and no `enrich` at all — under `src/enrichment/providers/<name>/<name>.py`.
