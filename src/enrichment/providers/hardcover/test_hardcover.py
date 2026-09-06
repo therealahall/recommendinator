@@ -8,11 +8,7 @@ import requests
 from src.enrichment.provider_base import ProviderError
 from src.enrichment.providers.hardcover.hardcover import HardcoverProvider
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
-from src.utils.series import (
-    SERIES_AUTHORITY_KEY,
-    SeriesAuthority,
-    reconcile_series_ordinal,
-)
+from src.utils.series import SERIES_AUTHORITY_KEY, SeriesAuthority, reconcile_series
 
 _TOKEN = "hardcover-personal-access-token"
 
@@ -258,7 +254,7 @@ class TestHardcoverSeriesPosition:
             )
 
         assert ordinal is not None
-        settled = reconcile_series_ordinal(stored, ordinal.as_metadata())
+        settled = reconcile_series(stored, ordinal.as_metadata())
         assert settled["series_position"] == 2.5
         assert settled[SERIES_AUTHORITY_KEY] == SeriesAuthority.AUTHORED.value
 

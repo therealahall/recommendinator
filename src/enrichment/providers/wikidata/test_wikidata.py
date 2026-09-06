@@ -18,6 +18,8 @@ _REQUESTS = "src.enrichment.providers.wikidata.wikidata.requests.get"
 
 _FINAL_FANTASY = "Q99416119"
 _DUNE_NOVELS = "Q1493024"
+_STAR_WARS = "Q462"
+_ORIGINAL_TRILOGY = "Q1361932"
 
 _VIDEO_GAME = "Q7889"
 _VIDEO_GAME_REMAKE = "Q4393107"
@@ -37,6 +39,18 @@ def _claim(
     return claim
 
 
+def _series_claim(series: str, ordinal: str | None = None) -> dict[str, Any]:
+    qualifiers: list[dict[str, Any]] = []
+    if ordinal is not None:
+        qualifiers.append(
+            {
+                "property": {"id": "P1545", "data_type": "string"},
+                "value": {"type": "value", "content": ordinal},
+            }
+        )
+    return _claim(series, qualifiers)
+
+
 def _statements(
     instance_of: str,
     year: int | None = None,
@@ -49,15 +63,7 @@ def _statements(
             _claim({"time": f"+{year}-01-01T00:00:00Z", "precision": 9})
         ]
     if series is not None:
-        qualifiers: list[dict[str, Any]] = []
-        if ordinal is not None:
-            qualifiers.append(
-                {
-                    "property": {"id": "P1545", "data_type": "string"},
-                    "value": {"type": "value", "content": ordinal},
-                }
-            )
-        statements["P179"] = [_claim(series, qualifiers)]
+        statements["P179"] = [_series_claim(series, ordinal)]
     return statements
 
 
@@ -151,6 +157,27 @@ class TestWikidataSeriesOrdinal:
             ]
             ordinal = provider.fetch_series_ordinal(
                 _item("Final Fantasy VIII", year=1999), {}
+            )
+
+        assert ordinal is None
+
+    def test_a_work_in_two_series_states_neither_position(
+        self, provider: WikidataProvider
+    ) -> None:
+        statements = _statements(
+            _FILM, year=1980, series=_ORIGINAL_TRILOGY, ordinal="2"
+        )
+        statements["P179"].append(_series_claim(_STAR_WARS, "5"))
+
+        with patch(_REQUESTS) as mock_get:
+            mock_get.side_effect = [
+                _response(
+                    _search({"id": "Q17738", "label": "The Empire Strikes Back"})
+                ),
+                _response(statements),
+            ]
+            ordinal = provider.fetch_series_ordinal(
+                _item("The Empire Strikes Back", ContentType.MOVIE, year=1980), {}
             )
 
         assert ordinal is None
