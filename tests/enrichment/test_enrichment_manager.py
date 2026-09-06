@@ -1717,6 +1717,38 @@ class TestTheOrdinalPass:
         assert item.metadata["series_position"] == 3.0
         assert item.metadata["series_position_authority"] == "authored"
 
+    def test_a_matching_provider_still_owns_the_item_the_ordinal_pass_positioned(
+        self, tmp_path: Path
+    ) -> None:
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        db_id = save_movie(storage_manager)
+        registry = EnrichmentRegistry()
+        registry._discovered = True
+        registry.register(MockProvider())
+        registry.register(OrdinalOnlyProvider())
+        manager = EnrichmentManager(
+            storage_manager,
+            {
+                "enrichment": {
+                    "providers": {
+                        "mock": {"enabled": True},
+                        "ordinal": {"enabled": True},
+                    }
+                }
+            },
+            registry,
+        )
+        manager.start_enrichment(content_type=ContentType.MOVIE)
+        assert manager._wait_for_completion()
+
+        status = storage_manager.enrichment.status(db_id)
+        assert status is not None
+        assert status["enrichment_provider"] == "mock"
+        item = storage_manager.get_content_item(db_id)
+        assert item.metadata["genres"] == ["Action", "Drama"]
+        assert item.metadata["series_position"] == 3.0
+        assert item.metadata["series_position_authority"] == "authored"
+
     def test_an_ordinal_the_library_stated_is_never_asked_about(
         self, tmp_path: Path
     ) -> None:
