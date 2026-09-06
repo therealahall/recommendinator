@@ -18,6 +18,7 @@ from src.recommendations.scorers import (
     extract_genres,
 )
 from src.utils.series import (
+    SeriesOrder,
     build_series_tracking,
     should_recommend_item,
 )
@@ -33,13 +34,15 @@ def _build_context(
     unconsumed = unconsumed or []
     analyzer = PreferenceAnalyzer(min_rating=4)
     preferences = analyzer.analyze(consumed)
-    series_tracking = build_series_tracking(consumed)
+    series_order = SeriesOrder([*consumed, *unconsumed])
+    series_tracking = build_series_tracking(consumed, series_order)
     return ScoringContext(
         preferences=preferences,
         consumed_items=consumed,
         series_tracking=series_tracking,
         content_type=content_type,
         all_unconsumed_items=unconsumed,
+        series_order=series_order,
     )
 
 
@@ -422,6 +425,39 @@ class TestSeriesOrderNextInSequenceEdges:
 
         assert scorer.score(novella, context) == 1.0
         assert scorer.score(book_three, context) == 0.3
+
+
+class TestSeriesOrderScorerOnAPositionlessSeries:
+    @staticmethod
+    def _game(
+        title: str,
+        year: int,
+        status: ConsumptionStatus = ConsumptionStatus.UNREAD,
+        rating: int | None = None,
+    ) -> ContentItem:
+        return make_item(
+            title=title,
+            content_type=ContentType.VIDEO_GAME,
+            status=status,
+            rating=rating,
+            metadata={"franchise": "Final Fantasy", "release_year": year},
+        )
+
+    def test_the_next_released_entry_outscores_the_one_behind_it(self) -> None:
+        consumed = [
+            self._game("Final Fantasy VII", 1997, ConsumptionStatus.COMPLETED, 5)
+        ]
+        eighth = self._game("Final Fantasy VIII", 1999)
+        ninth = self._game("Final Fantasy IX", 2000)
+        context = _build_context(
+            consumed=consumed,
+            unconsumed=[ninth, eighth],
+            content_type=ContentType.VIDEO_GAME,
+        )
+        scorer = SeriesOrderScorer()
+
+        assert scorer.score(eighth, context) > scorer.score(ninth, context)
+        assert scorer.score(ninth, context) < 0.5
 
 
 class TestRatingPatternScorer:

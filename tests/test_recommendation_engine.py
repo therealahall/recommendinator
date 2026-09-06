@@ -29,6 +29,7 @@ from src.recommendations.variety import (
 from src.storage.item_merges import MergeEvidence
 from src.storage.manager import StorageManager
 from src.utils.series import (
+    SeriesOrder,
     expand_tv_shows_to_seasons,
     get_series_item_number,
     get_series_name,
@@ -1592,6 +1593,101 @@ class TestEngineSeriesSubstitutionRegression:
         ), f"FF X should appear exactly once; got {recommended_ids}"
 
 
+class TestPositionlessSeriesOfferedInReleaseOrder:
+    @staticmethod
+    def _game(
+        item_id: str,
+        title: str,
+        year: int,
+        status: ConsumptionStatus = ConsumptionStatus.UNREAD,
+        rating: int | None = None,
+    ) -> ContentItem:
+        return ContentItem(
+            id=item_id,
+            title=title,
+            content_type=ContentType.VIDEO_GAME,
+            status=status,
+            rating=rating,
+            metadata={
+                "franchise": "Final Fantasy",
+                "release_year": year,
+                "genres": ["RPG"],
+            },
+        )
+
+    @staticmethod
+    def _taste() -> ContentItem:
+        return ContentItem(
+            id="taste",
+            title="Chrono Trigger",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            metadata={"genres": ["RPG"]},
+        )
+
+    @staticmethod
+    def _recommended(engine, mock_storage, completed, unconsumed):
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: completed
+        )
+        mock_storage.get_unconsumed_items = Mock(return_value=unconsumed)
+        return engine.generate_recommendations(
+            content_type=ContentType.VIDEO_GAME, count=5
+        )
+
+    @classmethod
+    def _offered(cls, engine, mock_storage, completed, unconsumed) -> list[str]:
+        return [
+            rec.item.id
+            for rec in cls._recommended(engine, mock_storage, completed, unconsumed)
+        ]
+
+    def test_the_earliest_released_entry_is_offered_and_the_rest_held(
+        self, engine, mock_storage
+    ) -> None:
+        seventh = self._game("ff7", "Final Fantasy VII", 1997)
+        eighth = self._game("ff8", "Final Fantasy VIII", 1999)
+        ninth = self._game("ff9", "Final Fantasy IX", 2000)
+
+        offered = self._offered(
+            engine, mock_storage, [self._taste()], [ninth, eighth, seventh]
+        )
+
+        assert offered == ["ff7"]
+
+    def test_the_offered_entry_is_scored_as_a_series_opener(
+        self, engine, mock_storage
+    ) -> None:
+        seventh = self._game("ff7", "Final Fantasy VII", 1997)
+        eighth = self._game("ff8", "Final Fantasy VIII", 1999)
+
+        [offered] = self._recommended(
+            engine, mock_storage, [self._taste()], [eighth, seventh]
+        )
+
+        assert offered.score_breakdown["series_order"] > 0.5
+
+    def test_completing_the_earliest_releases_the_one_after_it(
+        self, engine, mock_storage
+    ) -> None:
+        seventh = self._game(
+            "ff7",
+            "Final Fantasy VII",
+            1997,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+        )
+        eighth = self._game("ff8", "Final Fantasy VIII", 1999)
+        ninth = self._game("ff9", "Final Fantasy IX", 2000)
+
+        offered = self._offered(
+            engine, mock_storage, [self._taste(), seventh], [ninth, eighth]
+        )
+
+        assert offered == ["ff8"]
+
+
 class TestContinuationScorerExclusion:
     """ContinuationScorer is excluded when no candidates are actively consumed."""
 
@@ -2789,7 +2885,9 @@ class TestSeasonSiblingsStayDistinctInEveryMap:
             ScoredCandidate(item=second, aggregate_score=0.5, score_breakdown={}),
         ]
 
-        filtered = engine._apply_series_filtering(pipeline_scored, {}, [first, second])
+        filtered = engine._apply_series_filtering(
+            pipeline_scored, {}, [first, second], SeriesOrder([first, second])
+        )
 
         assert [scored.item.title for scored in filtered] == [
             "Uncharted Depths (Season 1)",

@@ -12,9 +12,10 @@ from src.recommendations.genre_normalizer import extract_and_normalize_genres
 from src.recommendations.identity import candidate_key
 from src.recommendations.preferences import UserPreferences
 from src.utils.series import (
+    SeriesOrder,
     build_series_tracking,
-    extract_series_info,
     is_next_after_consumed,
+    series_entry,
 )
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,7 @@ class ScoringContext:
     series_tracking: dict[str, set[float]]
     content_type: ContentType
     all_unconsumed_items: list[ContentItem]
+    series_order: SeriesOrder = field(default_factory=SeriesOrder)
 
     # Pre-computed lookups (populated by __post_init__)
     consumed_genres: set[str] = field(default_factory=set)
@@ -80,12 +82,9 @@ class ScoringContext:
             if creator:
                 creators.add(creator)
 
-            series_info = extract_series_info(
-                item.title, item.metadata, item.content_type
-            )
-            if series_info and item.rating is not None:
-                series_name, _ = series_info
-                series_ratings[series_name].append(item.rating)
+            entry = series_entry(item)
+            if entry is not None and item.rating is not None:
+                series_ratings[entry[0]].append(item.rating)
 
         self.consumed_genres = genres
         self.consumed_clusters = get_clusters_for_terms(list(genres))
@@ -93,7 +92,7 @@ class ScoringContext:
         self.ratings_by_genre = dict(genre_ratings)
         self.series_ratings = dict(series_ratings)
         self.unconsumed_series_positions = build_series_tracking(
-            self.all_unconsumed_items
+            self.all_unconsumed_items, self.series_order
         )
 
 
@@ -192,13 +191,11 @@ class SeriesOrderScorer(Scorer):
         super().__init__(weight)
 
     def score(self, candidate: ContentItem, context: ScoringContext) -> float:
-        series_info = extract_series_info(
-            candidate.title, candidate.metadata, candidate.content_type
-        )
-        if series_info is None:
+        located = context.series_order.locate(candidate)
+        if located is None:
             return 0.5  # not in a series – neutral
 
-        series_name, item_number = series_info
+        series_name, item_number = located
         consumed_numbers = context.series_tracking.get(series_name, set())
 
         if not consumed_numbers:
@@ -311,14 +308,11 @@ class SeriesAffinityScorer(Scorer):
         super().__init__(weight)
 
     def score(self, candidate: ContentItem, context: ScoringContext) -> float:
-        series_info = extract_series_info(
-            candidate.title, candidate.metadata, candidate.content_type
-        )
-        if series_info is None:
+        entry = series_entry(candidate)
+        if entry is None:
             return 0.5  # not in a series – neutral
 
-        series_name, _ = series_info
-        avg_rating = _average_series_rating(context.series_ratings.get(series_name, []))
+        avg_rating = _average_series_rating(context.series_ratings.get(entry[0], []))
         if avg_rating is None:
             return 0.5  # no consumed entries in this series – neutral
 

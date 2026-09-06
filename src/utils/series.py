@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 import re
 from collections import defaultdict
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import date
 from enum import Enum
 from typing import Any, NamedTuple, TypedDict
@@ -134,72 +134,61 @@ def extract_series_info(
     return None
 
 
+_POSITION_KEYS_BY_TYPE: dict[ContentType, tuple[str, ...]] = {
+    ContentType.TV_SHOW: ("series_position", "season", "season_number", "season_num"),
+    ContentType.MOVIE: (
+        "series_position",
+        "part",
+        "part_number",
+        "episode",
+        "episode_number",
+        "movie_number",
+    ),
+}
+
+_DEFAULT_POSITION_KEYS: tuple[str, ...] = (
+    "series_position",
+    "series_number",
+    "series_num",
+    "series_index",
+    "book_number",
+    "book_num",
+    "part",
+    "part_number",
+)
+
+
+def _stated_series_position(
+    metadata: Mapping[str, Any], content_type: ContentType | None = None
+) -> float | None:
+    keys = (
+        _DEFAULT_POSITION_KEYS
+        if content_type is None
+        else _POSITION_KEYS_BY_TYPE.get(content_type, _DEFAULT_POSITION_KEYS)
+    )
+    for key in keys:
+        if not metadata.get(key):
+            continue
+        try:
+            position = float(metadata[key])
+        except (ValueError, TypeError):
+            continue
+        # ``float()`` accepts "inf"/"nan" where ``int()`` raised; reject non-finite
+        # values explicitly so a malformed metadata position cannot poison ordering.
+        if math.isfinite(position) and 1 <= position <= 1000:
+            return position
+        return None
+    return None
+
+
 def _extract_from_metadata(
     metadata: dict[str, Any], content_type: ContentType | None = None
 ) -> tuple[str, float] | None:
-    series_name = None
-    for key in ["series_name", "series", "series_title", "franchise"]:
-        if key in metadata and metadata[key]:
-            series_name = str(metadata[key]).strip()
-            break
-
+    series_name = get_series_name_from_metadata(metadata)
     if not series_name:
         return None
-
-    item_num: float | None = None
-
-    if content_type == ContentType.TV_SHOW:
-        for key in ["series_position", "season", "season_number", "season_num"]:
-            if key in metadata and metadata[key]:
-                try:
-                    item_num = float(metadata[key])
-                    break
-                except (ValueError, TypeError):
-                    continue
-    elif content_type == ContentType.MOVIE:
-        for key in [
-            "series_position",
-            "part",
-            "part_number",
-            "episode",
-            "episode_number",
-            "movie_number",
-        ]:
-            if key in metadata and metadata[key]:
-                try:
-                    item_num = float(metadata[key])
-                    break
-                except (ValueError, TypeError):
-                    continue
-    else:
-        for key in [
-            "series_position",
-            "series_number",
-            "series_num",
-            "series_index",
-            "book_number",
-            "book_num",
-            "part",
-            "part_number",
-        ]:
-            if key in metadata and metadata[key]:
-                try:
-                    item_num = float(metadata[key])
-                    break
-                except (ValueError, TypeError):
-                    continue
-
-    # ``float()`` accepts "inf"/"nan" where ``int()`` raised; reject non-finite
-    # values explicitly so a malformed metadata position cannot poison ordering.
-    if (
-        series_name
-        and item_num is not None
-        and math.isfinite(item_num)
-        and 1 <= item_num <= 1000
-    ):
-        return (series_name, item_num)
-
-    return None
+    position = _stated_series_position(metadata, content_type)
+    return (series_name, position) if position is not None else None
 
 
 class SeriesAuthority(str, Enum):
@@ -342,6 +331,74 @@ def get_series_item_number(
 ) -> float | None:
     info = _get_series_info(item, title=title)
     return info[1] if info else None
+
+
+def series_entry(item: ContentItem) -> tuple[str, float | None] | None:
+    name = get_series_name_from_metadata(item.metadata)
+    if name is not None:
+        return name, _stated_series_position(item.metadata, item.content_type)
+    return extract_series_info(item.title, item.metadata, item.content_type)
+
+
+_RELEASE_YEAR_KEYS: tuple[str, ...] = ("release_year", "year", "year_published")
+
+
+def _release_year(item: ContentItem) -> int | None:
+    for key in _RELEASE_YEAR_KEYS:
+        try:
+            return int(item.metadata[key])
+        except (KeyError, ValueError, TypeError):
+            continue
+    return None
+
+
+def _dense_ranks(year_by_title: dict[str, int]) -> dict[str, float]:
+    ordered = sorted(year_by_title.items(), key=lambda entry: (entry[1], entry[0]))
+    return {title: float(rank) for rank, (title, _year) in enumerate(ordered, start=1)}
+
+
+class SeriesOrder:
+    """One entry stating no ordinal drops its whole series to release-year ranks:
+    ranking a date against an ordinal is the disorder this prevents (#195). Ranks
+    start at 1, the scale an authored series already reaches every rule on.
+    """
+
+    def __init__(self, items: Iterable[ContentItem] = ()) -> None:
+        stated: dict[str, list[float | None]] = defaultdict(list)
+        years: dict[str, dict[str, int]] = defaultdict(dict)
+        for item in items:
+            entry = series_entry(item)
+            if entry is None:
+                continue
+            name, ordinal = entry
+            stated[name].append(ordinal)
+            year = _release_year(item)
+            if year is not None:
+                known = years[name]
+                known[item.title] = min(year, known.get(item.title, year))
+
+        self._ranks: dict[str, dict[str, float]] = {
+            name: _dense_ranks(years[name])
+            for name, ordinals in stated.items()
+            if None in ordinals
+        }
+
+    def locate(self, item: ContentItem) -> tuple[str, float] | None:
+        entry = series_entry(item)
+        if entry is None:
+            return None
+        name, ordinal = entry
+        ranks = self._ranks.get(name)
+        if ranks is None:
+            return (name, ordinal) if ordinal is not None else None
+        rank = ranks.get(item.title)
+        return None if rank is None else (name, rank)
+
+
+def _order_over(
+    series_order: SeriesOrder | None, items: Iterable[ContentItem]
+) -> SeriesOrder:
+    return SeriesOrder(items) if series_order is None else series_order
 
 
 def inject_seasons_watched_tracking(
@@ -566,14 +623,15 @@ def expand_tv_shows_to_seasons(items: list[ContentItem]) -> list[ContentItem]:
 
 def build_series_tracking(
     items: list[ContentItem],
+    series_order: SeriesOrder | None = None,
 ) -> dict[str, set[float]]:
+    order = _order_over(series_order, items)
     series_tracking: dict[str, set[float]] = defaultdict(set)
 
     for item in items:
-        series_info = extract_series_info(item.title, item.metadata, item.content_type)
-        if series_info:
-            series_name, item_num = series_info
-            series_tracking[series_name].add(item_num)
+        located = order.locate(item)
+        if located is not None:
+            series_tracking[located[0]].add(located[1])
 
     return dict(series_tracking)
 
@@ -604,37 +662,27 @@ def should_recommend_item(
     item: ContentItem,
     series_tracking: dict[str, set[float]],
     unconsumed_items: list[ContentItem] | None = None,
+    series_order: SeriesOrder | None = None,
 ) -> bool:
-    series_info = extract_series_info(item.title, item.metadata, item.content_type)
-    if not series_info:
+    order = _order_over(series_order, [item, *(unconsumed_items or ())])
+    located = order.locate(item)
+    if located is None:
         return True
 
-    series_name, item_num = series_info
+    series_name, item_num = located
     consumed_numbers = series_tracking.get(series_name, set())
 
     unconsumed_item_nums: set[float] = set()
-    if unconsumed_items:
-        for unconsumed in unconsumed_items:
-            unconsumed_series_info = extract_series_info(
-                unconsumed.title, unconsumed.metadata, unconsumed.content_type
-            )
-            if unconsumed_series_info:
-                (
-                    unconsumed_series_name,
-                    unconsumed_item_num,
-                ) = unconsumed_series_info
-                if unconsumed_series_name == series_name:
-                    unconsumed_item_nums.add(unconsumed_item_num)
+    for unconsumed in unconsumed_items or ():
+        other = order.locate(unconsumed)
+        if other is not None and other[0] == series_name:
+            unconsumed_item_nums.add(other[1])
 
     if not consumed_numbers:
-        # User hasn't started this series. Only recommend the first item (#1)
-        # or a prequel (#0); a later entry waits until an earlier one in the
-        # data is consumed.
         if item_num == 1 or item_num == 0:
             return True
         if unconsumed_items is None:
             return False
-        # If any earlier entry exists in the unconsumed data, hold this one.
         return not any(num < item_num for num in unconsumed_item_nums)
 
     # ``max_consumed`` is bounded — series positions are capped at 1000
@@ -651,15 +699,17 @@ def find_earliest_recommendable(
     series_name: str,
     series_tracking: dict[str, set[float]],
     unconsumed_items: list[ContentItem],
+    series_order: SeriesOrder | None = None,
 ) -> ContentItem | None:
     """Used by the engine to substitute a later series entry (e.g., FF XII) with
     the earliest playable entry (e.g., FF X) when ``series_in_order`` is enabled.
     """
+    order = _order_over(series_order, unconsumed_items)
     series_candidates: list[tuple[float, ContentItem]] = []
     for item in unconsumed_items:
-        series_info = extract_series_info(item.title, item.metadata, item.content_type)
-        if series_info and series_info[0] == series_name:
-            series_candidates.append((series_info[1], item))
+        located = order.locate(item)
+        if located is not None and located[0] == series_name:
+            series_candidates.append((located[1], item))
 
     if not series_candidates:
         return None
@@ -668,7 +718,10 @@ def find_earliest_recommendable(
 
     for _item_number, candidate in series_candidates:
         if should_recommend_item(
-            candidate, series_tracking, unconsumed_items=unconsumed_items
+            candidate,
+            series_tracking,
+            unconsumed_items=unconsumed_items,
+            series_order=order,
         ):
             return candidate
 
@@ -679,18 +732,19 @@ def is_active_series_continuation(
     item: ContentItem,
     series_tracking: dict[str, set[float]],
     unconsumed_items: list[ContentItem] | None = None,
+    series_order: SeriesOrder | None = None,
 ) -> bool:
     """The first book of an *unstarted* series and standalone items return False —
     beginning a brand-new series is not a continuation and should not be
     shielded from the variety penalty.
     """
-    series_info = extract_series_info(item.title, item.metadata, item.content_type)
-    if series_info is None:
+    order = _order_over(series_order, [item, *(unconsumed_items or ())])
+    located = order.locate(item)
+    if located is None:
         return False
-    series_name = series_info[0]
-    if not series_tracking.get(series_name):
+    if not series_tracking.get(located[0]):
         return False
-    return should_recommend_item(item, series_tracking, unconsumed_items)
+    return should_recommend_item(item, series_tracking, unconsumed_items, order)
 
 
 _SERIES_MARKER = re.compile(

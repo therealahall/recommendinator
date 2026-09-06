@@ -39,12 +39,13 @@ from src.recommendations.variety import (
 )
 from src.storage.manager import StorageManager
 from src.utils.series import (
+    SeriesOrder,
     build_series_tracking,
     expand_tv_shows_to_seasons,
-    extract_series_info,
     find_earliest_recommendable,
     inject_seasons_watched_tracking,
     is_active_series_continuation,
+    series_entry,
     should_recommend_item,
 )
 
@@ -219,18 +220,22 @@ class RecommendationEngine:
             logger.warning("No unconsumed items found for %s", content_type.value)
             return []
 
-        # Before TV expansion: inject_seasons_watched_tracking needs show-level items.
-        series_tracking = build_series_tracking(consumed_items_of_type)
-
-        # The library stays show-level; season expansion is for scoring only.
+        # The library stays show-level; season expansion is for scoring only, and
+        # seasons_watched lives on the show rather than on an expanded season.
+        show_level_unconsumed = unconsumed_items
         if content_type == ContentType.TV_SHOW:
-            series_tracking = inject_seasons_watched_tracking(
-                unconsumed_items, series_tracking
-            )
             unconsumed_items = expand_tv_shows_to_seasons(unconsumed_items)
             logger.info(
                 "Expanded TV shows to %d season-level candidates",
                 len(unconsumed_items),
+            )
+
+        series_order = SeriesOrder([*consumed_items_of_type, *unconsumed_items])
+        series_tracking = build_series_tracking(consumed_items_of_type, series_order)
+
+        if content_type == ContentType.TV_SHOW:
+            series_tracking = inject_seasons_watched_tracking(
+                show_level_unconsumed, series_tracking
             )
 
         interpreted_prefs: InterpretedPreference | None = None
@@ -288,6 +293,7 @@ class RecommendationEngine:
             series_tracking=series_tracking,
             content_type=content_type,
             all_unconsumed_items=unconsumed_items,
+            series_order=series_order,
             content_length_preferences=content_length_preferences,
             adaptations=adaptations,
         )
@@ -306,7 +312,7 @@ class RecommendationEngine:
 
         if apply_series_rules:
             filtered_candidates = self._apply_series_filtering(
-                pipeline_scored, series_tracking, unconsumed_items
+                pipeline_scored, series_tracking, unconsumed_items, series_order
             )
         else:
             logger.info("Series ordering disabled by user preference")
@@ -337,6 +343,7 @@ class RecommendationEngine:
                 unignored_consumption_of_type,
                 series_tracking,
                 unconsumed_items,
+                series_order,
                 top_penalty=top_penalty_for_preference(
                     user_preference_config.variety_penalty
                 ),
@@ -385,6 +392,7 @@ class RecommendationEngine:
         pipeline_scored: list[ScoredCandidate],
         series_tracking: dict[str, set[float]],
         unconsumed_items: list[ContentItem],
+        series_order: SeriesOrder,
     ) -> list[ScoredCandidate]:
         scored_by_key: dict[str, ScoredCandidate] = {
             candidate_key(scored.item): scored for scored in pipeline_scored
@@ -398,24 +406,22 @@ class RecommendationEngine:
                 scored_candidate.item,
                 series_tracking,
                 unconsumed_items=unconsumed_items,
+                series_order=series_order,
             ):
                 key = candidate_key(scored_candidate.item)
                 if key not in seen_keys:
                     filtered_candidates.append(scored_candidate)
                     seen_keys.add(key)
             else:
-                series_info = extract_series_info(
-                    scored_candidate.item.title,
-                    scored_candidate.item.metadata,
-                    scored_candidate.item.content_type,
-                )
-                if series_info:
-                    candidate_series_name = series_info[0]
+                entry = series_entry(scored_candidate.item)
+                if entry:
+                    candidate_series_name = entry[0]
                     if candidate_series_name not in substituted_series:
                         substitute = find_earliest_recommendable(
                             candidate_series_name,
                             series_tracking,
                             unconsumed_items,
+                            series_order,
                         )
                         if substitute is not None:
                             substitute_key = candidate_key(substitute)
@@ -489,6 +495,7 @@ class RecommendationEngine:
         unignored_consumption_of_type: list[ContentItem],
         series_tracking: dict[str, set[float]],
         unconsumed_items: list[ContentItem],
+        series_order: SeriesOrder,
         *,
         top_penalty: PenaltyFraction,
     ) -> list[_RankedCandidate]:
@@ -501,7 +508,7 @@ class RecommendationEngine:
         penalised: list[_RankedCandidate] = []
         for item, score, _ in ranked_items:
             is_continuation = is_active_series_continuation(
-                item, series_tracking, unconsumed_items
+                item, series_tracking, unconsumed_items, series_order
             )
             penalty = variety_penalty_for(
                 item, ladder, is_series_continuation=is_continuation
