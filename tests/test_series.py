@@ -10,6 +10,7 @@ from src.models.content import (
 )
 from src.utils.series import (
     MAX_SEASONS,
+    SeriesOrder,
     _extract_series_from_title,
     _roman_to_int,
     build_series_tracking,
@@ -695,6 +696,66 @@ class TestSplitSeriesFromTitle:
         self, title: str
     ) -> None:
         assert split_series_from_title(title) == (title, {})
+
+
+class TestPositionlessSeriesOrdersByReleaseDate:
+    @staticmethod
+    def _book(
+        title: str, year: int | None = None, index: float | None = None
+    ) -> ContentItem:
+        metadata: dict[str, object] = {"series": "Silo"}
+        if year is not None:
+            metadata["year_published"] = year
+        if index is not None:
+            metadata["series_index"] = index
+        return ContentItem(
+            id=title,
+            title=title,
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata=metadata,
+        )
+
+    def test_one_entry_without_an_ordinal_dates_the_whole_series(self) -> None:
+        holds_an_ordinal = self._book("Book One", year=2011, index=1.0)
+        states_none = self._book("Book Two", year=2009)
+        unconsumed = [holds_an_ordinal, states_none]
+
+        assert should_recommend_item(states_none, {}, unconsumed) is True
+        assert should_recommend_item(holds_an_ordinal, {}, unconsumed) is False
+
+    def test_an_undated_entry_neither_leads_its_series_nor_blocks_it(self) -> None:
+        dated = self._book("Dated Book", year=2012)
+        undated = self._book("Undated Book")
+        unconsumed = [undated, dated]
+
+        assert find_earliest_recommendable("Silo", {}, unconsumed) is dated
+        assert should_recommend_item(dated, {}, unconsumed) is True
+        assert should_recommend_item(undated, {}, unconsumed) is True
+
+    def test_two_entries_of_one_year_order_by_title_whatever_the_input_order(
+        self,
+    ) -> None:
+        zebra = self._book("Zebra", year=1999)
+        aardvark = self._book("Aardvark", year=1999)
+
+        assert find_earliest_recommendable("Silo", {}, [zebra, aardvark]) is aardvark
+        assert find_earliest_recommendable("Silo", {}, [aardvark, zebra]) is aardvark
+
+    def test_expanded_seasons_keep_ordering_by_season_number(self) -> None:
+        show = ContentItem(
+            id="show",
+            title="The Show",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"total_seasons": 12, "release_year": 2015},
+        )
+        seasons = expand_tv_shows_to_seasons([show])
+        order = SeriesOrder(seasons)
+
+        assert [order.locate(season) for season in seasons] == [
+            ("The Show", float(number)) for number in range(1, 13)
+        ]
 
 
 class TestReconcileSeries:
