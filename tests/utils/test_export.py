@@ -26,7 +26,11 @@ from src.models.templates import (
 )
 from src.storage.sqlite_db import SQLiteDB
 from src.utils.export import export_items_csv, export_items_json
-from src.utils.series import latest_season_watched_date
+from src.utils.series import (
+    SeriesAuthority,
+    latest_season_watched_date,
+    stored_series_authority,
+)
 
 
 class TestExportSerialization:
@@ -353,7 +357,7 @@ class TestSeriesSurvivesAnExport:
         [(CsvImporter(), export_items_csv), (JsonImporter(), export_items_json)],
         ids=["csv", "json"],
     )
-    def test_a_shelved_books_series_survives_an_export_and_its_reimport(
+    def test_a_shelved_books_series_and_its_rank_survive_an_export_and_reimport(
         self,
         tmp_path: Path,
         importer: Importer,
@@ -373,6 +377,7 @@ class TestSeriesSurvivesAnExport:
         assert restored.title == "All Systems Red"
         assert restored.metadata.get("series_name") == "The Murderbot Diaries"
         assert float(restored.metadata["series_position"]) == 1.0
+        assert stored_series_authority(restored.metadata) is SeriesAuthority.STATED
 
     def test_the_exported_file_keeps_the_column_names_it_always_had(self) -> None:
         """The columns are the operator's file format; the keys under them moved."""

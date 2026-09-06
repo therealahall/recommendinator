@@ -13,13 +13,7 @@ from typing import Any
 
 from src.ingestion.importers.base import ImporterError
 from src.utils.dates import parse_iso_timestamp
-from src.utils.series import (
-    MAX_SEASONS,
-    SERIES_AUTHORITY_KEY,
-    SERIES_POSITION_KEY,
-    SeriesAuthority,
-    split_series_from_title,
-)
+from src.utils.series import MAX_SEASONS, split_series_from_title
 from src.utils.text import sanitize_for_log
 
 logger = logging.getLogger(__name__)
@@ -140,14 +134,12 @@ def parse_ignored_field(row: Mapping[str, Any]) -> bool | None:
 
 def fill_series_from_title(title: str, metadata: dict[str, Any]) -> str:
     """The work's own title; a series it states fills what the columns did not.
-    A stated column is the exporting library's own, so it keeps that rank.
+    No importer can tell this app's own export from a library's, so a column is
+    left at the rank it arrives with rather than promoted.
     """
     bare, stated = split_series_from_title(title)
-    from_the_file = SERIES_POSITION_KEY in metadata
     for key, value in stated.items():
         metadata.setdefault(key, value)
-    if from_the_file:
-        metadata[SERIES_AUTHORITY_KEY] = SeriesAuthority.LIBRARY.value
     return bare
 
 

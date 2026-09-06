@@ -223,9 +223,11 @@ own franchise name to `series_name` instead. See
 [ARCHITECTURE.md](../ARCHITECTURE.md).
 
 The series name and position are the other exception: `reconcile_series` decides
-those by rank. Record yours in `series_position_authority` — `library` for an
-ordinal your catalogue states, `stated` for one read out of a title — and no
-weaker source can replace it.
+those by rank, and a position naming no series settles nothing. Record yours in
+`series_position_authority` — `library` for an ordinal your catalogue states,
+`stated` for one read out of a title — and no weaker source can replace it. A
+re-sync of that same catalogue corrects rather than competes, so a series index
+fixed in Calibre-Web lands on the next sync.
 
 ### Shape rules
 

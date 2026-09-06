@@ -236,6 +236,20 @@ def queued_ids(storage_manager: StorageManager) -> set[int]:
     }
 
 
+def manager_over(
+    storage_manager: StorageManager, *providers: EnrichmentProvider
+) -> EnrichmentManager:
+    registry = EnrichmentRegistry()
+    registry._discovered = True
+    enabled: dict[str, dict[str, bool]] = {}
+    for provider in providers:
+        registry.register(provider)
+        enabled[provider.name] = {"enabled": True}
+    return EnrichmentManager(
+        storage_manager, {"enrichment": {"providers": enabled}}, registry
+    )
+
+
 def enrichment_buckets(storage_manager: StorageManager) -> dict[str, int]:
     stats = storage_manager.enrichment.stats()
     buckets = {
@@ -1673,16 +1687,9 @@ class OrdinalOnlyProvider(EnrichmentProvider):
 
 
 class TestTheOrdinalPass:
-    def _run(self, storage_manager: StorageManager, db_id: int) -> OrdinalOnlyProvider:
+    def _run(self, storage_manager: StorageManager) -> OrdinalOnlyProvider:
         provider = OrdinalOnlyProvider()
-        registry = EnrichmentRegistry()
-        registry._discovered = True
-        registry.register(provider)
-        manager = EnrichmentManager(
-            storage_manager,
-            {"enrichment": {"providers": {"ordinal": {"enabled": True}}}},
-            registry,
-        )
+        manager = manager_over(storage_manager, provider)
         manager.start_enrichment(content_type=ContentType.MOVIE)
         assert manager._wait_for_completion()
         return provider
@@ -1693,7 +1700,7 @@ class TestTheOrdinalPass:
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
         db_id = save_movie(storage_manager)
 
-        self._run(storage_manager, db_id)
+        self._run(storage_manager)
 
         status = storage_manager.enrichment.status(db_id)
         assert status is not None
@@ -1711,7 +1718,7 @@ class TestTheOrdinalPass:
             metadata={"series_position": 9, "series_position_authority": "stated"},
         )
 
-        provider = self._run(storage_manager, db_id)
+        provider = self._run(storage_manager)
 
         assert [item.db_id for item in provider.ordinal_calls] == [db_id]
         item = storage_manager.get_content_item(db_id)
@@ -1723,22 +1730,8 @@ class TestTheOrdinalPass:
     ) -> None:
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
         db_id = save_movie(storage_manager)
-        registry = EnrichmentRegistry()
-        registry._discovered = True
-        registry.register(MockProvider())
-        registry.register(OrdinalOnlyProvider())
-        manager = EnrichmentManager(
-            storage_manager,
-            {
-                "enrichment": {
-                    "providers": {
-                        "mock": {"enabled": True},
-                        "ordinal": {"enabled": True},
-                    }
-                }
-            },
-            registry,
-        )
+        manager = manager_over(storage_manager, MockProvider(), OrdinalOnlyProvider())
+
         manager.start_enrichment(content_type=ContentType.MOVIE)
         assert manager._wait_for_completion()
 
@@ -1759,7 +1752,7 @@ class TestTheOrdinalPass:
             metadata={"series_position": 4, "series_position_authority": "library"},
         )
 
-        provider = self._run(storage_manager, db_id)
+        provider = self._run(storage_manager)
 
         assert provider.ordinal_calls == []
         assert storage_manager.get_content_item(db_id).metadata["series_position"] == 4
@@ -1772,7 +1765,7 @@ class TestTheOrdinalPass:
             storage_manager, metadata={"series_name": "The Matrix Collection"}
         )
 
-        self._run(storage_manager, db_id)
+        self._run(storage_manager)
 
         item = storage_manager.get_content_item(db_id)
         assert item.metadata["series_name"] == "The Matrix Collection"
@@ -1800,14 +1793,7 @@ class TestAnOrdinalCountedInAnotherSeries:
             "A New Hope",
             metadata={"series_name": "Star Wars Collection"},
         )
-        registry = EnrichmentRegistry()
-        registry._discovered = True
-        registry.register(SubSeriesOrdinalProvider())
-        manager = EnrichmentManager(
-            storage_manager,
-            {"enrichment": {"providers": {"ordinal": {"enabled": True}}}},
-            registry,
-        )
+        manager = manager_over(storage_manager, SubSeriesOrdinalProvider())
 
         manager.start_enrichment(content_type=ContentType.MOVIE)
         assert manager._wait_for_completion()
@@ -1850,21 +1836,8 @@ class TestOneCollectionEnrichedFromScratch:
             title: save_movie(storage_manager, title)
             for title in ("The Matrix Reloaded", "The Matrix Revolutions")
         }
-        registry = EnrichmentRegistry()
-        registry._discovered = True
-        registry.register(CollectionNamingProvider())
-        registry.register(UnevenOrdinalProvider())
-        manager = EnrichmentManager(
-            storage_manager,
-            {
-                "enrichment": {
-                    "providers": {
-                        "mock": {"enabled": True},
-                        "ordinal": {"enabled": True},
-                    }
-                }
-            },
-            registry,
+        manager = manager_over(
+            storage_manager, CollectionNamingProvider(), UnevenOrdinalProvider()
         )
 
         manager.start_enrichment(content_type=ContentType.MOVIE)
@@ -1920,14 +1893,7 @@ class TestTheOrdinalPassCountsRejectionsInARow:
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
         movies = [save_movie(storage_manager, f"Movie {index}") for index in range(20)]
         provider = UnreliableOrdinalProvider()
-        registry = EnrichmentRegistry()
-        registry._discovered = True
-        registry.register(provider)
-        manager = EnrichmentManager(
-            storage_manager,
-            {"enrichment": {"providers": {"ordinal": {"enabled": True}}}},
-            registry,
-        )
+        manager = manager_over(storage_manager, provider)
 
         manager.start_enrichment(content_type=ContentType.MOVIE)
         assert manager._wait_for_completion()
@@ -1942,21 +1908,10 @@ class TestAnOrdinalProviderBesideAnAbandonedMatcher:
     ) -> None:
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
         db_ids = [save_movie(storage_manager, f"Movie {index}") for index in range(10)]
-        registry = EnrichmentRegistry()
-        registry._discovered = True
-        registry.register(RawRequestErrorProvider(http_error(401)))
-        registry.register(OrdinalOnlyProvider())
-        manager = EnrichmentManager(
+        manager = manager_over(
             storage_manager,
-            {
-                "enrichment": {
-                    "providers": {
-                        "raw_request": {"enabled": True},
-                        "ordinal": {"enabled": True},
-                    }
-                }
-            },
-            registry,
+            RawRequestErrorProvider(http_error(401)),
+            OrdinalOnlyProvider(),
         )
 
         manager.start_enrichment(content_type=ContentType.MOVIE)
@@ -1966,20 +1921,58 @@ class TestAnOrdinalProviderBesideAnAbandonedMatcher:
         assert not manager.get_status().completed
 
 
+class FailingOrdinalProvider(OrdinalOnlyProvider):
+    def __init__(self, error: Exception) -> None:
+        super().__init__()
+        self._error = error
+
+    def fetch_series_ordinal(
+        self, item: ContentItem, config: dict[str, Any]
+    ) -> SeriesOrdinal | None:
+        self.ordinal_calls.append(item)
+        raise self._error
+
+
+class TestAnUnansweredOrdinalPass:
+    def test_a_timed_out_ordinal_leaves_the_matched_item_queued_regression(
+        self, tmp_path: Path
+    ) -> None:
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        db_id = save_movie(storage_manager)
+        ordinal = FailingOrdinalProvider(requests.Timeout("timed out"))
+        manager = manager_over(storage_manager, MockProvider(), ordinal)
+
+        manager.start_enrichment(content_type=ContentType.MOVIE)
+        assert manager._wait_for_completion()
+
+        assert queued_ids(storage_manager) == {db_id}
+        item = storage_manager.get_content_item(db_id)
+        assert item.metadata["genres"] == ["Action", "Drama"]
+
+    def test_an_abandoned_ordinal_provider_leaves_the_rest_of_the_run_queued(
+        self, tmp_path: Path
+    ) -> None:
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        db_ids = [
+            save_movie(storage_manager, f"Movie {index}")
+            for index in range(_MAX_CONSECUTIVE_REJECTIONS + 2)
+        ]
+        ordinal = FailingOrdinalProvider(http_error(401))
+        manager = manager_over(storage_manager, MockProvider(), ordinal)
+
+        manager.start_enrichment(content_type=ContentType.MOVIE)
+        assert manager._wait_for_completion()
+
+        assert queued_ids(storage_manager) == set(db_ids[_MAX_CONSECUTIVE_REJECTIONS:])
+
+
 class TestAFailedOrdinalSave:
     def test_a_locked_database_settles_the_item_rather_than_ending_the_run(
         self, tmp_path: Path
     ) -> None:
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
         db_ids = [save_movie(storage_manager, f"Movie {index}") for index in range(2)]
-        registry = EnrichmentRegistry()
-        registry._discovered = True
-        registry.register(OrdinalOnlyProvider())
-        manager = EnrichmentManager(
-            storage_manager,
-            {"enrichment": {"providers": {"ordinal": {"enabled": True}}}},
-            registry,
-        )
+        manager = manager_over(storage_manager, OrdinalOnlyProvider())
 
         with patch.object(
             storage_manager,
@@ -1994,6 +1987,26 @@ class TestAFailedOrdinalSave:
         assert job_status.items_processed == len(db_ids)
         assert job_status.items_failed == len(db_ids)
         assert queued_ids(storage_manager) == set()
+
+    def test_the_matched_providers_attribution_survives_it_regression(
+        self, tmp_path: Path
+    ) -> None:
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        db_id = save_movie(storage_manager)
+        manager = manager_over(storage_manager, MockProvider(), OrdinalOnlyProvider())
+
+        with patch.object(
+            storage_manager,
+            "save_enrichment_metadata",
+            side_effect=[None, sqlite3.OperationalError("database is locked")],
+        ):
+            manager.start_enrichment(content_type=ContentType.MOVIE)
+            assert manager._wait_for_completion()
+
+        status = storage_manager.enrichment.status(db_id)
+        assert status is not None
+        assert status["enrichment_provider"] == "mock"
+        assert status["enrichment_quality"] == "high"
 
 
 class TestARunReachesTMDBThroughTheGlobalRegistry:

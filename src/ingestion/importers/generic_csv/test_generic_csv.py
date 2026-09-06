@@ -87,7 +87,7 @@ class TestBooks:
         assert parsed[0].metadata["series_position_authority"] == "stated"
         assert parsed[1].metadata["series_name"] == "Expanse Novels"
         assert parsed[1].metadata["series_position"] == "4"
-        assert parsed[1].metadata["series_position_authority"] == "library"
+        assert parsed[1].metadata["series_position_authority"] == "stated"
 
     def test_an_unknown_status_falls_back_to_unread(self) -> None:
         parsed = items("title,status\nTest,something_else\n")

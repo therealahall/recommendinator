@@ -508,6 +508,7 @@ class EnrichmentManager:
             item, available_providers, content_type_str, safe_title
         )
 
+        committed = False
         # One try over every write the item makes, the ordinal pass included: a
         # save is ours to settle, and one escaping here ends the whole run.
         try:
@@ -517,9 +518,22 @@ class EnrichmentManager:
                 self.storage_manager.enrichment.mark_complete(
                     db_id, provider.name, result.match_quality
                 )
-            self._settle_series_ordinal(db_id, item, available_providers)
+                committed = True
+            unanswered = self._settle_series_ordinal(db_id, item, matching_providers)
         except Exception as error:
-            self._settle_storage_failure(db_id, safe_title, error)
+            self._settle_storage_failure(db_id, safe_title, error, committed=committed)
+            return
+
+        if unanswered is not None:
+            logger.info(
+                "[ENRICHMENT] No provider stated an ordinal for %s, will retry: %s",
+                content_type_str,
+                safe_title,
+            )
+            self.storage_manager.enrichment.mark_failed(db_id, unanswered)
+            with self._lock:
+                self._status.items_processed += 1
+                self._status.items_failed += 1
             return
 
         if matched is not None:
@@ -630,18 +644,22 @@ class EnrichmentManager:
         db_id: int,
         item: ContentItem,
         providers: list[EnrichmentProvider],
-    ) -> None:
+    ) -> str | None:
         """Runs after the match loop so an ordinal has the matched provider's
         series name to agree with, and only while an authored one would replace
-        what is stored, so a library's own costs no call.
+        what is stored. Returns why it ended unanswered, or None when answered.
         """
         if not SeriesAuthority.AUTHORED.replaces(
             stored_series_authority(item.metadata)
         ):
-            return
+            return None
 
+        unanswered: list[str] = []
         for provider in providers:
             if not states_a_series_ordinal(provider):
+                continue
+            if provider.name in self._abandoned_providers:
+                unanswered.append(f"{provider.name}: abandoned before it was asked")
                 continue
             try:
                 self._get_rate_limiter(provider.name).acquire()
@@ -656,6 +674,8 @@ class EnrichmentManager:
                     failure.reason,
                 )
                 self._note_failure(failure)
+                if failure.retryable:
+                    unanswered.append(str(failure))
                 continue
 
             # An ordinal-only provider never reaches the match loop's reset, so
@@ -671,13 +691,16 @@ class EnrichmentManager:
                 update={"metadata": {**item.metadata, **settled}}
             )
             self.storage_manager.save_enrichment_metadata(db_id, positioned)
-            return
+            return None
+
+        return "; ".join(unanswered) or None
 
     def _settle_storage_failure(
-        self, db_id: int, safe_title: str, error: Exception
+        self, db_id: int, safe_title: str, error: Exception, *, committed: bool
     ) -> None:
         """Re-fetching spends a third party's quota on a failure of ours that
-        repeating cannot clear.
+        repeating cannot clear. A match already marked complete keeps that status:
+        blanking its provider would hide the item from every targeted reset.
         """
         logger.error(
             "[ENRICHMENT] Saving enrichment failed, not retrying: %s",
@@ -686,7 +709,8 @@ class EnrichmentManager:
         )
         rendered = f"storage: {type(error).__name__}"
         self._record_error(rendered)
-        self.storage_manager.enrichment.mark_settled_failure(db_id, rendered)
+        if not committed:
+            self.storage_manager.enrichment.mark_settled_failure(db_id, rendered)
         with self._lock:
             self._status.items_processed += 1
             self._status.items_failed += 1

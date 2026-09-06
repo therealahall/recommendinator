@@ -398,10 +398,10 @@ def _build_metadata(entry: ElementTree.Element) -> dict[str, Any]:
     series, series_index = _parse_series(entry)
     if series:
         metadata[SERIES_NAME_KEY] = series
-    if series_index is not None:
-        metadata[SERIES_POSITION_KEY] = series_index
-        # The operator's own library, so it outranks a marker in a title.
-        metadata[SERIES_AUTHORITY_KEY] = SeriesAuthority.LIBRARY.value
+        # A position naming no series settles nothing; this index is the operator's.
+        if series_index is not None:
+            metadata[SERIES_POSITION_KEY] = series_index
+            metadata[SERIES_AUTHORITY_KEY] = SeriesAuthority.LIBRARY.value
 
     tags = _parse_tags(entry)
     if tags:
