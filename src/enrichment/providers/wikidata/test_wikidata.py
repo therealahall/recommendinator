@@ -71,8 +71,8 @@ def _search(*hits: dict[str, Any]) -> dict[str, Any]:
     return {"search": list(hits)}
 
 
-def _response(payload: Any) -> MagicMock:
-    return MagicMock(spec=requests.Response, status_code=200, json=lambda: payload)
+def _response(payload: Any, status: int = 200) -> MagicMock:
+    return MagicMock(spec=requests.Response, status_code=status, json=lambda: payload)
 
 
 def _item(
@@ -140,12 +140,34 @@ class TestWikidataSeriesOrdinal:
             mock_get.side_effect = [
                 _response(_search(hit)),
                 _response(statements),
+                _response("Final Fantasy"),
             ]
             ordinal = provider.fetch_series_ordinal(_item(title, year=year), {})
 
         assert ordinal == SeriesOrdinal(
-            position=expected, authority=SeriesAuthority.AUTHORED
+            position=expected,
+            series_name="Final Fantasy",
+            authority=SeriesAuthority.AUTHORED,
         )
+
+    def test_a_series_with_no_english_label_states_no_position(
+        self, provider: WikidataProvider
+    ) -> None:
+        with patch(_REQUESTS) as mock_get:
+            mock_get.side_effect = [
+                _response(_search({"id": "Q245006", "label": "Final Fantasy VIII"})),
+                _response(
+                    _statements(
+                        _VIDEO_GAME, year=1999, series=_FINAL_FANTASY, ordinal="8"
+                    )
+                ),
+                _response(None, status=404),
+            ]
+            ordinal = provider.fetch_series_ordinal(
+                _item("Final Fantasy VIII", year=1999), {}
+            )
+
+        assert ordinal is None
 
     def test_a_series_stating_no_ordinal_leaves_the_position_unwritten(
         self, provider: WikidataProvider
@@ -161,13 +183,14 @@ class TestWikidataSeriesOrdinal:
 
         assert ordinal is None
 
-    def test_a_work_in_two_series_states_neither_position(
-        self, provider: WikidataProvider
+    @pytest.mark.parametrize("franchise_ordinal", ["2", "5"])
+    def test_a_work_positioned_in_two_series_states_neither_position(
+        self, provider: WikidataProvider, franchise_ordinal: str
     ) -> None:
         statements = _statements(
             _FILM, year=1980, series=_ORIGINAL_TRILOGY, ordinal="2"
         )
-        statements["P179"].append(_series_claim(_STAR_WARS, "5"))
+        statements["P179"].append(_series_claim(_STAR_WARS, franchise_ordinal))
 
         with patch(_REQUESTS) as mock_get:
             mock_get.side_effect = [
@@ -227,13 +250,14 @@ class TestWikidataSeriesOrdinal:
                         _LITERARY_WORK, year=1965, series=_DUNE_NOVELS, ordinal="1"
                     )
                 ),
+                _response("Dune"),
             ]
             ordinal = provider.fetch_series_ordinal(
                 _item("Dune", ContentType.BOOK, year=1965), {}
             )
 
         assert ordinal == SeriesOrdinal(
-            position=1.0, authority=SeriesAuthority.AUTHORED
+            position=1.0, series_name="Dune", authority=SeriesAuthority.AUTHORED
         )
 
     def test_a_release_year_that_disagrees_rejects_the_entity(
@@ -277,13 +301,14 @@ class TestWikidataSeriesOrdinal:
                         _LITERARY_WORK, year=1969, series=_DUNE_NOVELS, ordinal="2"
                     )
                 ),
+                _response("Dune"),
             ]
             ordinal = provider.fetch_series_ordinal(
                 _item("Dune Messiah (Dune, #2)", ContentType.BOOK, year=1969), {}
             )
 
         assert ordinal == SeriesOrdinal(
-            position=2.0, authority=SeriesAuthority.AUTHORED
+            position=2.0, series_name="Dune", authority=SeriesAuthority.AUTHORED
         )
 
     def test_a_reprints_year_does_not_reject_the_work_regression(
@@ -303,11 +328,12 @@ class TestWikidataSeriesOrdinal:
                         _LITERARY_WORK, year=1965, series=_DUNE_NOVELS, ordinal="1"
                     )
                 ),
+                _response("Dune"),
             ]
             ordinal = provider.fetch_series_ordinal(reprint, {})
 
         assert ordinal == SeriesOrdinal(
-            position=1.0, authority=SeriesAuthority.AUTHORED
+            position=1.0, series_name="Dune", authority=SeriesAuthority.AUTHORED
         )
 
     def test_a_prequel_stated_as_position_zero_keeps_that_position(
@@ -321,6 +347,7 @@ class TestWikidataSeriesOrdinal:
                         _LITERARY_WORK, year=1999, series=_DUNE_NOVELS, ordinal="0"
                     )
                 ),
+                _response("Dune"),
             ]
             ordinal = provider.fetch_series_ordinal(
                 _item("Dune: House Atreides", ContentType.BOOK, year=1999), {}
@@ -357,10 +384,11 @@ class TestWikidataSeriesOrdinal:
                         _VIDEO_GAME, year=1999, series=_FINAL_FANTASY, ordinal="8"
                     )
                 ),
+                _response("Final Fantasy"),
             ]
             provider.fetch_series_ordinal(_item("Final Fantasy VIII", year=1999), {})
 
-        assert mock_get.call_count == 2
+        assert mock_get.call_count == 3
         for call in mock_get.call_args_list:
             agent = call.kwargs["headers"]["User-Agent"]
             assert agent.startswith(f"Recommendinator/{APP_VERSION}")

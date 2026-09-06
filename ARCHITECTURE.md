@@ -72,7 +72,8 @@ season, never removes one.
 
 The series name and position are the one family it re-decides rather than keeps:
 `reconcile_series` gives them to the better-founded source, recorded in
-`series_position_authority`, whichever wrote first.
+`series_position_authority`. Two outside sources of one standing keep the first
+answer; the operator's own catalogue restating a position corrects it.
 
 One exception to forward-only sits outside that resolution. After the upsert,
 `_handle_tv_season_change` regresses a completed TV show to
@@ -331,9 +332,10 @@ related-titles set, so any rank read off one is invented.
 Wikidata and Hardcover state a position rather than implying one. Each
 implements `fetch_series_ordinal` alone, so it answers the ordinal pass at
 `authored` authority and never settles an item as matched. A `SeriesOrdinal`
-carries no series name: the ordinal pass runs ahead of the match loop, so naming
-the series there would beat TMDB to an empty slot and split "The Godfather
-Collection" into two one-member series.
+names the series its position counts within, and the pass runs after the match
+loop so that name has TMDB's to agree with: Wikidata numbers a film 2 of the
+original trilogy and files it under the franchise too, and only `reconcile_series`
+comparing the two names keeps a trilogy's number out of "Star Wars Collection".
 
 Rules:
 

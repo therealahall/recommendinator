@@ -34,11 +34,16 @@ def _hardcover_book(
     author: str = "James S. A. Corey",
     in_a_series: bool = True,
     position: float | None = 1,
+    series: str | None = "The Expanse",
 ) -> dict[str, Any]:
+    membership = {
+        "position": position,
+        "series": {"name": series} if series is not None else None,
+    }
     return {
         "title": title,
         "contributions": [{"author": {"name": author}}],
-        "featured_book_series": {"position": position} if in_a_series else None,
+        "featured_book_series": membership if in_a_series else None,
     }
 
 
@@ -233,6 +238,39 @@ class TestHardcoverSeriesPosition:
         ) as mock_post:
             mock_post.return_value = _response(_books(_hardcover_book(position=1001)))
             assert provider.fetch_series_ordinal(_book(), _CONFIG) is None
+
+    def test_an_unnamed_series_states_no_ordinal(
+        self, provider: HardcoverProvider
+    ) -> None:
+        with patch(
+            "src.enrichment.providers.hardcover.hardcover.requests.post"
+        ) as mock_post:
+            mock_post.return_value = _response(_books(_hardcover_book(series=None)))
+            assert provider.fetch_series_ordinal(_book(), _CONFIG) is None
+
+    def test_a_featured_sub_series_never_positions_the_stored_parent_series(
+        self, provider: HardcoverProvider
+    ) -> None:
+        stored = {"series_name": "The Expanse"}
+
+        with patch(
+            "src.enrichment.providers.hardcover.hardcover.requests.post"
+        ) as mock_post:
+            mock_post.return_value = _response(
+                _books(
+                    _hardcover_book(
+                        title="Gods of Risk",
+                        position=1,
+                        series="The Expanse: Novellas",
+                    )
+                )
+            )
+            ordinal = provider.fetch_series_ordinal(
+                _book(title="Gods of Risk", **stored), _CONFIG
+            )
+
+        assert ordinal is not None
+        assert reconcile_series(stored, ordinal.as_metadata()) == {}
 
     def test_a_stated_position_keeps_its_value_and_gains_authored_authority(
         self, provider: HardcoverProvider

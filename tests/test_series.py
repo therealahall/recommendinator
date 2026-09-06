@@ -26,6 +26,7 @@ from src.utils.series import (
     latest_season_watched_date,
     reconcile_series,
     series_entry,
+    series_names_agree,
     should_recommend_item,
     split_series_from_title,
 )
@@ -851,6 +852,29 @@ class TestPositionlessSeriesOrdersByReleaseDate:
         ] == [("The Show", 1.0), ("The Show", 2.0), ("The Show", 3.0)]
 
 
+class TestSeriesNamesAgree:
+    @pytest.mark.parametrize(
+        ("left", "right", "agree"),
+        [
+            ("The Matrix", "The Matrix Collection", True),
+            ("Star Wars Collection", "Star Wars", True),
+            ("The Expanse", "The Expanse Series", True),
+            ("Mission: Impossible", "Mission: Impossible Collection", True),
+            ("Star Wars", "Star Wars: Original Trilogy", False),
+            ("Star Wars: Original Trilogy", "Star Wars", False),
+            ("Star Wars Collection", "Star Wars: Original Trilogy", False),
+            ("Dune", "Dune Messiah", False),
+            ("The Expanse", "Star Wars", False),
+            ("Mega Man", "Mega Man X", False),
+            ("Dragon Ball", "Dragon Ball Z", False),
+        ],
+    )
+    def test_a_suffixed_collection_is_the_same_series_but_a_narrowed_one_is_not(
+        self, left: str, right: str, agree: bool
+    ) -> None:
+        assert series_names_agree(left, right) is agree
+
+
 class TestReconcileSeries:
     def _authored(self, position: float, **extra: object) -> dict[str, object]:
         return {
@@ -885,7 +909,9 @@ class TestReconcileSeries:
         assert reconcile_series({"series_position": 2.5}, offered) == {}
 
     @pytest.mark.parametrize("authority", ["stated", "authored"])
-    def test_the_librarys_own_ordinal_is_left_alone(self, authority: str) -> None:
+    def test_the_librarys_own_ordinal_is_left_alone_by_an_outside_source(
+        self, authority: str
+    ) -> None:
         stored = {"series_position": 4.0, "series_position_authority": "library"}
         offered = {"series_position": 5.0, "series_position_authority": authority}
 
@@ -897,15 +923,39 @@ class TestReconcileSeries:
 
         assert reconcile_series(stored, offered) == {}
 
-    def test_two_writers_of_the_same_standing_keep_the_first_ordinal(self) -> None:
+    def test_two_outside_sources_of_the_same_standing_keep_the_first_ordinal(
+        self,
+    ) -> None:
         assert reconcile_series(self._authored(3.0), self._authored(9.0)) == {}
 
-    def test_a_replacing_ordinal_brings_the_series_name_it_states(self) -> None:
-        stored = {"series_name": "Donkey", "series_position": 1}
+    def test_an_agreeing_ordinal_positions_the_item_without_renaming_its_series(
+        self,
+    ) -> None:
+        stored = {"series_name": "The Matrix Collection"}
 
-        assert reconcile_series(stored, self._authored(3.0, series_name="Donkey Kong"))[
-            "series_name"
-        ] == ("Donkey Kong")
+        assert reconcile_series(
+            stored, self._authored(2.0, series_name="The Matrix")
+        ) == {
+            "series_position": 2.0,
+            "series_position_authority": "authored",
+        }
+
+    def test_an_ordinal_counted_in_another_series_writes_neither_name_nor_position(
+        self,
+    ) -> None:
+        stored = {"series_name": "Star Wars Collection"}
+        offered = self._authored(1.0, series_name="Star Wars: Original Trilogy")
+
+        assert reconcile_series(stored, offered) == {}
+
+    def test_an_ordinal_names_the_series_it_counts_in_where_none_is_stored(
+        self,
+    ) -> None:
+        assert reconcile_series({}, self._authored(1.0, series_name="Dune")) == {
+            "series_name": "Dune",
+            "series_position": 1.0,
+            "series_position_authority": "authored",
+        }
 
     def test_a_series_name_arriving_with_no_ordinal_only_fills_a_gap(self) -> None:
         offered = {"series_name": "Alien Collection"}

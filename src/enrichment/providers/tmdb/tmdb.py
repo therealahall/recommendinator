@@ -4,7 +4,6 @@ from typing import Any
 
 import requests
 
-from src.enrichment.matching import best_match_index, year_of
 from src.enrichment.provider_base import (
     ConfigField,
     EnrichmentProvider,
@@ -13,6 +12,7 @@ from src.enrichment.provider_base import (
     log_search_title,
 )
 from src.models.content import ContentItem, ContentType
+from src.utils.matching import best_match_index, year_of
 from src.utils.request_errors import scrub_request_error
 
 logger = logging.getLogger(__name__)

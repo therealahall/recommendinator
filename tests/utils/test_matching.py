@@ -1,6 +1,6 @@
 import pytest
 
-from src.enrichment.matching import best_match_index, normalize_title, title_similarity
+from src.utils.matching import best_match_index, normalize_title, title_similarity
 
 
 class TestNormalizeTitle:

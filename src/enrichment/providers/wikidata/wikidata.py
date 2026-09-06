@@ -6,12 +6,6 @@ from typing import Any
 import requests
 
 from src import __version__ as APP_VERSION
-from src.enrichment.matching import (
-    MINIMUM_TITLE_SIMILARITY,
-    best_match_index,
-    title_similarity,
-    year_of,
-)
 from src.enrichment.provider_base import (
     ConfigField,
     EnrichmentProvider,
@@ -20,6 +14,12 @@ from src.enrichment.provider_base import (
     log_search_title,
 )
 from src.models.content import ContentItem, ContentType
+from src.utils.matching import (
+    MINIMUM_TITLE_SIMILARITY,
+    best_match_index,
+    title_similarity,
+    year_of,
+)
 from src.utils.request_errors import scrub_request_error
 from src.utils.series import split_series_from_title, valid_series_position
 
@@ -148,18 +148,18 @@ def _claim_ordinals(claim: Mapping[str, Any]) -> list[float]:
     ]
 
 
-def _stated_ordinal(statements: Mapping[str, Any]) -> float | None:
+def _stated_ordinal(statements: Mapping[str, Any]) -> tuple[str, float] | None:
     # A series stating no ordinal yields none. Counting the P155/P156
     # preceded-by chain would invent the rank the qualifier exists to state,
     # and it would be written at the authority of one Wikidata does state.
     stated = {
-        position
+        (series_id, position)
         for claim in _undeprecated_claims(statements, PART_OF_THE_SERIES)
         if isinstance(series_id := _stated_value(claim), str) and QID.match(series_id)
         for position in _claim_ordinals(claim)
     }
-    # Refused rather than guessed: the ordinal carries no series name, so a work
-    # Wikidata files in two series has nothing to say which one it counts in.
+    # Star Wars numbers a film in the trilogy and again in the franchise, and
+    # only one of those is the series whose name is stored.
     return stated.pop() if len(stated) == 1 else None
 
 
@@ -193,8 +193,8 @@ class WikidataProvider(EnrichmentProvider):
 
     @property
     def rate_limit_requests_per_second(self) -> float:
-        # One item is a search plus up to three statement reads, and Wikidata is
-        # donated infrastructure rather than a bought quota.
+        # One item is a search, up to three statement reads and a label, and
+        # Wikidata is donated infrastructure rather than a bought quota.
         return 1.0
 
     def get_config_schema(self) -> list[ConfigField]:
@@ -226,8 +226,17 @@ class WikidataProvider(EnrichmentProvider):
         if statements is None:
             return None
 
-        position = _stated_ordinal(statements)
-        return None if position is None else SeriesOrdinal(position=position)
+        stated = _stated_ordinal(statements)
+        if stated is None:
+            return None
+
+        series_id, position = stated
+        series_name = self._label(series_id)
+        return (
+            None
+            if series_name is None
+            else SeriesOrdinal(position=position, series_name=series_name)
+        )
 
     def _matched_entity(
         self, item: ContentItem, search_title: str, content_type: ContentType
@@ -278,7 +287,17 @@ class WikidataProvider(EnrichmentProvider):
         payload = self._get(f"{ITEMS_URL}/{entity_id}/statements")
         return payload if isinstance(payload, dict) else {}
 
-    def _get(self, url: str, params: dict[str, Any] | None = None) -> Any:
+    def _label(self, entity_id: str) -> str | None:
+        payload = self._get(f"{ITEMS_URL}/{entity_id}/labels/en", unnamed_is_none=True)
+        name = payload.strip() if isinstance(payload, str) else ""
+        return name or None
+
+    def _get(
+        self,
+        url: str,
+        params: dict[str, Any] | None = None,
+        unnamed_is_none: bool = False,
+    ) -> Any:
         try:
             response = requests.get(
                 url,
@@ -286,6 +305,8 @@ class WikidataProvider(EnrichmentProvider):
                 headers=REQUEST_HEADERS,
                 timeout=REQUEST_TIMEOUT,
             )
+            if unnamed_is_none and response.status_code == 404:
+                return None
             response.raise_for_status()
             return response.json()
         except requests.RequestException as error:

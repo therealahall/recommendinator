@@ -12,6 +12,7 @@ from src.models.content import ContentItem, ContentType
 from src.utils.series import (
     MAX_SERIES_POSITION,
     SERIES_AUTHORITY_KEY,
+    SERIES_NAME_KEY,
     SERIES_POSITION_KEY,
     SeriesAuthority,
     valid_series_position,
@@ -58,12 +59,13 @@ class EnrichmentResult:
 
 @dataclass(frozen=True)
 class SeriesOrdinal:
-    """A position and no series name: the ordinal pass runs ahead of the match
-    loop, so naming a series here would beat the matching provider to an empty
-    slot and split one collection across two names.
+    """A position and the series it counts within. Naming the series is what
+    lets the merge check that this source and whoever stored the name mean the
+    same one, rather than filing a sub-series' number under its parent.
     """
 
     position: float
+    series_name: str
     authority: SeriesAuthority = SeriesAuthority.AUTHORED
 
     def __post_init__(self) -> None:
@@ -74,9 +76,12 @@ class SeriesOrdinal:
             raise ValueError(
                 f"A series position must be between 0 and {MAX_SERIES_POSITION}"
             )
+        if not self.series_name.strip():
+            raise ValueError("A series position must name the series it counts within")
 
     def as_metadata(self) -> dict[str, Any]:
         return {
+            SERIES_NAME_KEY: self.series_name.strip(),
             SERIES_POSITION_KEY: self.position,
             SERIES_AUTHORITY_KEY: self.authority.value,
         }

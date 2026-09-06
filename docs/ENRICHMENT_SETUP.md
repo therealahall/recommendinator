@@ -57,11 +57,13 @@ Get a key from [rawg.io/apidocs](https://rawg.io/apidocs).
 from the ordinal a work's own series statement carries. It runs beside the
 others rather than instead of them: it never matches an item, so the provider
 credited with a book or a game is still OpenLibrary or RAWG. A work Wikidata
-cannot identify beyond doubt, by type and release year, is left unpositioned.
+cannot identify beyond doubt, by type and release year, is left unpositioned. So
+is one whose series Wikidata names differently from the series already stored —
+a film numbered within a trilogy is not numbered within the wider franchise.
 
-**Hardcover** states where in its series a book sits and fills nothing else, not
-even the series name, so it runs alongside OpenLibrary rather than instead of it.
-It matches on an ISBN where your source supplies one, otherwise on title and
+**Hardcover** states where in its series a book sits and fills nothing else, so
+it runs alongside OpenLibrary rather than instead of it. It matches on an ISBN
+where your source supplies one, otherwise on title and
 author, and refuses a title that matches two books rather than guess a position. Create a free account at
 [hardcover.app](https://hardcover.app/) and copy the token from
 **Account > API**.
