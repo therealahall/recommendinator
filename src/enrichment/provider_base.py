@@ -9,7 +9,13 @@ from typing import Any
 # same way source plugins take it from plugin_base.
 from src.models.config_field import ConfigField as ConfigField
 from src.models.content import ContentItem, ContentType
-from src.utils.series import SERIES_AUTHORITY_KEY, SeriesAuthority
+from src.utils.series import (
+    MAX_SERIES_POSITION,
+    SERIES_AUTHORITY_KEY,
+    SERIES_POSITION_KEY,
+    SeriesAuthority,
+    valid_series_position,
+)
 from src.utils.text import sanitize_for_log
 
 
@@ -52,20 +58,28 @@ class EnrichmentResult:
 
 @dataclass(frozen=True)
 class SeriesOrdinal:
-    """Where a work sits in its series, and how well founded that is."""
+    """A position and no series name: the ordinal pass runs ahead of the match
+    loop, so naming a series here would beat the matching provider to an empty
+    slot and split one collection across two names.
+    """
 
     position: float
-    series: str | None = None
     authority: SeriesAuthority = SeriesAuthority.AUTHORED
 
+    def __post_init__(self) -> None:
+        """One no reader can read back still counts as an ordinal stored, and
+        the authority ladder then never asks for it again.
+        """
+        if not valid_series_position(self.position):
+            raise ValueError(
+                f"A series position must be between 0 and {MAX_SERIES_POSITION}"
+            )
+
     def as_metadata(self) -> dict[str, Any]:
-        fields: dict[str, Any] = {
-            "series_position": self.position,
+        return {
+            SERIES_POSITION_KEY: self.position,
             SERIES_AUTHORITY_KEY: self.authority.value,
         }
-        if self.series:
-            fields["series_name"] = self.series
-        return fields
 
 
 class ProviderError(Exception):

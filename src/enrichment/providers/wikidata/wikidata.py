@@ -1,5 +1,4 @@
 import logging
-import math
 import re
 from collections.abc import Mapping, Sequence
 from typing import Any
@@ -22,7 +21,7 @@ from src.enrichment.provider_base import (
 )
 from src.models.content import ContentItem, ContentType
 from src.utils.request_errors import scrub_request_error
-from src.utils.series import split_series_from_title
+from src.utils.series import split_series_from_title, valid_series_position
 
 logger = logging.getLogger(__name__)
 
@@ -45,8 +44,6 @@ DATE_PROPERTIES = ("P577", "P571", "P580")
 SEARCH_LIMIT = 7
 
 MAX_ENTITY_LOOKUPS = 3
-
-MAX_POSITION = 1000
 
 QID = re.compile(r"^Q[1-9][0-9]*$")
 
@@ -137,12 +134,10 @@ def _ordinal_position(stated: Any) -> float | None:
         position = float(str(stated))
     except ValueError:
         return None
-    if not math.isfinite(position) or not 0 <= position <= MAX_POSITION:
-        return None
-    return position
+    return position if valid_series_position(position) else None
 
 
-def _stated_ordinal(statements: Mapping[str, Any]) -> tuple[str, float] | None:
+def _stated_ordinal(statements: Mapping[str, Any]) -> float | None:
     # A series stating no ordinal yields none. Counting the P155/P156
     # preceded-by chain would invent the rank the qualifier exists to state,
     # and it would be written at the authority of one Wikidata does state.
@@ -158,13 +153,15 @@ def _stated_ordinal(statements: Mapping[str, Any]) -> tuple[str, float] | None:
                 continue
             position = _ordinal_position(_stated_value(qualifier))
             if position is not None:
-                return series_id, position
+                return position
     return None
 
 
 def _item_year(item: ContentItem) -> int | None:
-    metadata = item.metadata or {}
-    return year_of(metadata.get("release_year") or metadata.get("year_published"))
+    """A book's ``year_published`` is its edition's, and a reprint drifts far
+    enough from the work for ``best_match_index`` to reject the right entity.
+    """
+    return year_of((item.metadata or {}).get("release_year"))
 
 
 class WikidataProvider(EnrichmentProvider):
@@ -190,8 +187,8 @@ class WikidataProvider(EnrichmentProvider):
 
     @property
     def rate_limit_requests_per_second(self) -> float:
-        # One item is a search, up to three statement reads and a label, and
-        # Wikidata is donated infrastructure rather than a bought quota.
+        # One item is a search plus up to three statement reads, and Wikidata is
+        # donated infrastructure rather than a bought quota.
         return 1.0
 
     def get_config_schema(self) -> list[ConfigField]:
@@ -223,12 +220,8 @@ class WikidataProvider(EnrichmentProvider):
         if statements is None:
             return None
 
-        stated = _stated_ordinal(statements)
-        if stated is None:
-            return None
-
-        series_id, position = stated
-        return SeriesOrdinal(position=position, series=self._label(series_id))
+        position = _stated_ordinal(statements)
+        return None if position is None else SeriesOrdinal(position=position)
 
     def _matched_entity(
         self, item: ContentItem, search_title: str, content_type: ContentType
@@ -279,17 +272,7 @@ class WikidataProvider(EnrichmentProvider):
         payload = self._get(f"{ITEMS_URL}/{entity_id}/statements")
         return payload if isinstance(payload, dict) else {}
 
-    def _label(self, entity_id: str) -> str | None:
-        payload = self._get(f"{ITEMS_URL}/{entity_id}/labels/en", unnamed_is_none=True)
-        name = payload.strip() if isinstance(payload, str) else ""
-        return name or None
-
-    def _get(
-        self,
-        url: str,
-        params: dict[str, Any] | None = None,
-        unnamed_is_none: bool = False,
-    ) -> Any:
+    def _get(self, url: str, params: dict[str, Any] | None = None) -> Any:
         try:
             response = requests.get(
                 url,
@@ -297,8 +280,6 @@ class WikidataProvider(EnrichmentProvider):
                 headers=REQUEST_HEADERS,
                 timeout=REQUEST_TIMEOUT,
             )
-            if unnamed_is_none and response.status_code == 404:
-                return None
             response.raise_for_status()
             return response.json()
         except requests.RequestException as error:

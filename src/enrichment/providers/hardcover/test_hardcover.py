@@ -8,7 +8,11 @@ import requests
 from src.enrichment.provider_base import ProviderError
 from src.enrichment.providers.hardcover.hardcover import HardcoverProvider
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
-from src.utils.series import SERIES_AUTHORITY_KEY, SeriesAuthority, reconcile_series
+from src.utils.series import (
+    SERIES_AUTHORITY_KEY,
+    SeriesAuthority,
+    reconcile_series_ordinal,
+)
 
 _TOKEN = "hardcover-personal-access-token"
 
@@ -32,17 +36,13 @@ def _book(
 def _hardcover_book(
     title: str = "Leviathan Wakes",
     author: str = "James S. A. Corey",
-    series: str | None = "The Expanse",
+    in_a_series: bool = True,
     position: float | None = 1,
 ) -> dict[str, Any]:
     return {
         "title": title,
         "contributions": [{"author": {"name": author}}],
-        "featured_book_series": (
-            None
-            if series is None
-            else {"position": position, "series": {"name": series}}
-        ),
+        "featured_book_series": {"position": position} if in_a_series else None,
     }
 
 
@@ -134,8 +134,8 @@ class TestHardcoverMatching:
         ) as mock_post:
             mock_post.return_value = _response(
                 _books(
-                    _hardcover_book(series="The Expanse", position=1),
-                    _hardcover_book(series="Expanse Novellas", position=4),
+                    _hardcover_book(position=1),
+                    _hardcover_book(position=4),
                 )
             )
             assert provider.fetch_series_ordinal(_book(), _CONFIG) is None
@@ -154,11 +154,7 @@ class TestHardcoverMatching:
     def test_a_book_whose_two_authors_share_one_stored_field_still_matches(
         self, provider: HardcoverProvider
     ) -> None:
-        illuminae = _hardcover_book(
-            title="Illuminae",
-            author="Amie Kaufman",
-            series="The Illuminae Files",
-        )
+        illuminae = _hardcover_book(title="Illuminae", author="Amie Kaufman")
         illuminae["contributions"].append({"author": {"name": "Jay Kristoff"}})
 
         with patch(
@@ -170,7 +166,6 @@ class TestHardcoverMatching:
             )
 
         assert ordinal is not None
-        assert ordinal.series == "The Illuminae Files"
 
     def test_an_isbn_column_holding_no_digits_falls_back_to_the_title(
         self, provider: HardcoverProvider
@@ -212,7 +207,6 @@ class TestHardcoverSeriesPosition:
 
         assert ordinal is not None
         assert ordinal.position == 1.0
-        assert ordinal.series == "The Expanse"
         assert ordinal.authority is SeriesAuthority.AUTHORED
 
     def test_a_book_in_no_series_states_no_ordinal(
@@ -221,7 +215,9 @@ class TestHardcoverSeriesPosition:
         with patch(
             "src.enrichment.providers.hardcover.hardcover.requests.post"
         ) as mock_post:
-            mock_post.return_value = _response(_books(_hardcover_book(series=None)))
+            mock_post.return_value = _response(
+                _books(_hardcover_book(in_a_series=False))
+            )
             assert provider.fetch_series_ordinal(_book(), _CONFIG) is None
 
     def test_a_series_membership_with_no_position_states_no_ordinal(
@@ -233,12 +229,21 @@ class TestHardcoverSeriesPosition:
             mock_post.return_value = _response(_books(_hardcover_book(position=None)))
             assert provider.fetch_series_ordinal(_book(), _CONFIG) is None
 
+    def test_a_position_no_reader_could_read_back_is_never_stated(
+        self, provider: HardcoverProvider
+    ) -> None:
+        with patch(
+            "src.enrichment.providers.hardcover.hardcover.requests.post"
+        ) as mock_post:
+            mock_post.return_value = _response(_books(_hardcover_book(position=1001)))
+            assert provider.fetch_series_ordinal(_book(), _CONFIG) is None
+
     def test_a_stated_position_keeps_its_value_and_gains_authored_authority(
         self, provider: HardcoverProvider
     ) -> None:
         stored = {
-            "series": "The Expanse",
-            "series_index": 2.5,
+            "series_name": "The Expanse",
+            "series_position": 2.5,
             SERIES_AUTHORITY_KEY: SeriesAuthority.STATED.value,
         }
 
@@ -253,8 +258,8 @@ class TestHardcoverSeriesPosition:
             )
 
         assert ordinal is not None
-        settled = reconcile_series(stored, ordinal.as_metadata())
-        assert settled["series_index"] == 2.5
+        settled = reconcile_series_ordinal(stored, ordinal.as_metadata())
+        assert settled["series_position"] == 2.5
         assert settled[SERIES_AUTHORITY_KEY] == SeriesAuthority.AUTHORED.value
 
 

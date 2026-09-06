@@ -1,5 +1,4 @@
 import logging
-import math
 import re
 from typing import Any
 from urllib.parse import urljoin
@@ -26,7 +25,7 @@ from src.ingestion.urls import (
 )
 from src.models.content import ContentItem, ContentType
 from src.utils.request_errors import scrub_request_error
-from src.utils.series import split_series_from_title
+from src.utils.series import split_series_from_title, valid_series_position
 from src.utils.text import sanitize_for_log
 
 logger = logging.getLogger(__name__)
@@ -38,7 +37,7 @@ query BookSeriesPosition($where: books_bool_exp!, $limit: Int!) {
   books(where: $where, limit: $limit, order_by: {users_count: desc}) {
     title
     contributions { author { name } }
-    featured_book_series { position series { name } }
+    featured_book_series { position }
   }
 }
 """
@@ -112,10 +111,9 @@ def _series_ordinal(book: dict[str, Any]) -> SeriesOrdinal | None:
         position = float(stated)
     except (TypeError, ValueError):
         return None
-    if not math.isfinite(position):
+    if not valid_series_position(position):
         return None
-    name = str((membership.get("series") or {}).get("name") or "").strip()
-    return SeriesOrdinal(position=position, series=name or None)
+    return SeriesOrdinal(position=position)
 
 
 def _refusals(errors: Any) -> str:
