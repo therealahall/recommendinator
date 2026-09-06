@@ -2289,6 +2289,29 @@ class TestDetailTableFillOnly:
         assert retrieved.metadata["series_position"] == 7.0
         assert retrieved.metadata["series_position_authority"] == "authored"
 
+    def test_a_re_sync_replaces_the_library_ordinal_the_last_sync_stored(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        def shelved(position: float) -> ContentItem:
+            return ContentItem(
+                id="calibre_ordinal",
+                title="Leviathan Falls",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+                metadata={
+                    "series_name": "The Expanse",
+                    "series_position": position,
+                    "series_position_authority": "library",
+                },
+            )
+
+        db_id = temp_db.save_content_item(shelved(8.0))
+        temp_db.save_content_item(shelved(9.0))
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.metadata["series_position"] == 9.0
+
 
 class TestUpdateItemFromUi:
     def test_update_status_backward(self, temp_db: SQLiteDB) -> None:

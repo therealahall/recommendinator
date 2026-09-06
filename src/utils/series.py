@@ -10,6 +10,7 @@ from typing import Any, NamedTuple, TypedDict
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.utils.dates import local_date_from_iso_timestamp
+from src.utils.matching import normalize_title
 
 MAX_SEASONS = 200
 
@@ -208,9 +209,9 @@ def _extract_from_metadata(
 
 
 class SeriesAuthority(str, Enum):
-    """How well founded a series ordinal is, weakest first. A strictly higher
-    authority replaces a stored ordinal; an equal one leaves it, so two sources
-    of the same standing keep the first answer.
+    """How well founded a series ordinal is, weakest first. A higher authority
+    replaces a stored ordinal; equal standing keeps the stored one, unless it is
+    the operator's own catalogue restating it, which is a correction.
     """
 
     #: A marker in the title, or a number parsed out of a game's title.
@@ -222,9 +223,18 @@ class SeriesAuthority(str, Enum):
     #: Set by hand in the app.
     MANUAL = "manual"
 
-    def outranks(self, other: SeriesAuthority | None) -> bool:
+    def replaces(self, other: SeriesAuthority | None) -> bool:
+        if other is None:
+            return True
+        if self is other:
+            return self in _SELF_CORRECTING
         order = list(SeriesAuthority)
-        return other is None or order.index(self) > order.index(other)
+        return order.index(self) > order.index(other)
+
+
+#: A re-sync of the operator's own catalogue restates rather than competes: the
+#: series index they just fixed in Calibre has to land on the next sync.
+_SELF_CORRECTING = frozenset({SeriesAuthority.LIBRARY, SeriesAuthority.MANUAL})
 
 
 #: Where the ordinal's authority is recorded, beside the ordinal itself.
@@ -250,26 +260,58 @@ def stored_series_authority(
         return SeriesAuthority.STATED
 
 
+#: A suffix a provider adds to the series it is already naming — TMDB files
+#: "The Matrix" as "The Matrix Collection".
+_SERIES_NAME_SUFFIX = re.compile(r"\s+(?:collection|series|saga)$")
+
+
+def _bare_series_name(name: str) -> str:
+    return _SERIES_NAME_SUFFIX.sub("", normalize_title(name))
+
+
+def _narrows(name: str, broader: str) -> bool:
+    """Whether *name* is *broader* narrowed by a colon: the Star Wars original
+    trilogy counts its own three films, never the franchise's.
+    """
+    prefix, colon, rest = name.partition(":")
+    if not colon or not rest.strip():
+        return False
+    return _bare_series_name(prefix) == _bare_series_name(broader)
+
+
+def series_names_agree(left: str, right: str) -> bool:
+    """Whether two sources mean one series, so a position counted in one counts
+    in the other. Exact past the suffix, because "Mega Man X" numbers its own
+    games and filing X4 under "Mega Man" collides with Mega Man 4.
+    """
+    if _narrows(left, right) or _narrows(right, left):
+        return False
+    return _bare_series_name(left) == _bare_series_name(right)
+
+
 def reconcile_series(
     existing: Mapping[str, Any], incoming: Mapping[str, Any]
 ) -> dict[str, Any]:
-    """Authority alone decides the ordinal, and a matched source's series name
-    follows it. A name arriving beside an ordinal too weak to replace anything
-    only fills a gap.
+    """Authority decides the ordinal, but a position only counts within the
+    series it was stated in, so two sources naming different ones settle
+    nothing. A name itself only ever fills an empty slot.
     """
-    offered = stored_series_authority(incoming)
-    replacing = (
-        offered
-        if offered is not None and offered.outranks(stored_series_authority(existing))
-        else None
-    )
-
-    fields: dict[str, Any] = {}
     # Narrow on what arrives, broad on what is stored: a provider owns the
     # alias it writes, and one already naming the series is a name to keep.
     name = str(incoming.get(SERIES_NAME_KEY) or "").strip()
     stored_name = get_series_name_from_metadata(existing)
-    if name and (stored_name is None or replacing is not None):
+    if name and stored_name is not None and not series_names_agree(name, stored_name):
+        return {}
+
+    offered = stored_series_authority(incoming)
+    replacing = (
+        offered
+        if offered is not None and offered.replaces(stored_series_authority(existing))
+        else None
+    )
+
+    fields: dict[str, Any] = {}
+    if name and stored_name is None:
         fields[SERIES_NAME_KEY] = name
     if replacing is not None:
         fields[SERIES_POSITION_KEY] = get_series_position_from_metadata(incoming)

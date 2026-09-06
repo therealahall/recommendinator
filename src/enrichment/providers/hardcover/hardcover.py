@@ -5,11 +5,6 @@ from urllib.parse import urljoin
 
 import requests
 
-from src.enrichment.matching import (
-    MINIMUM_TITLE_SIMILARITY,
-    best_match_index,
-    title_similarity,
-)
 from src.enrichment.provider_base import (
     ConfigField,
     EnrichmentProvider,
@@ -24,6 +19,11 @@ from src.ingestion.urls import (
     same_origin,
 )
 from src.models.content import ContentItem, ContentType
+from src.utils.matching import (
+    MINIMUM_TITLE_SIMILARITY,
+    best_match_index,
+    title_similarity,
+)
 from src.utils.request_errors import scrub_request_error
 from src.utils.series import split_series_from_title, valid_series_position
 from src.utils.text import sanitize_for_log
@@ -37,7 +37,7 @@ query BookSeriesPosition($where: books_bool_exp!, $limit: Int!) {
   books(where: $where, limit: $limit, order_by: {users_count: desc}) {
     title
     contributions { author { name } }
-    featured_book_series { position }
+    featured_book_series { position series { name } }
   }
 }
 """
@@ -105,7 +105,10 @@ def _sole_close_title(
 def _series_ordinal(book: dict[str, Any]) -> SeriesOrdinal | None:
     membership: dict[str, Any] = book.get("featured_book_series") or {}
     stated = membership.get("position")
-    if stated is None:
+    # Hardcover features a novella's own sub-series, so an unnamed position has
+    # nothing to say it counts in the series another provider stored.
+    name = str((membership.get("series") or {}).get("name") or "").strip()
+    if stated is None or not name:
         return None
     try:
         position = float(stated)
@@ -113,7 +116,7 @@ def _series_ordinal(book: dict[str, Any]) -> SeriesOrdinal | None:
         return None
     if not valid_series_position(position):
         return None
-    return SeriesOrdinal(position=position)
+    return SeriesOrdinal(position=position, series_name=name)
 
 
 def _refusals(errors: Any) -> str:

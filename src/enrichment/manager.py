@@ -43,6 +43,9 @@ _RETRYABLE_HTTP_STATUSES = frozenset({408, 429})
 
 _MAX_CONSECUTIVE_REJECTIONS = 5
 
+#: The provider the first-success loop settled an item on, and what it said.
+_Match = tuple[EnrichmentProvider, EnrichmentResult]
+
 
 @dataclass(frozen=True)
 class _ProviderFailure:
@@ -482,7 +485,15 @@ class EnrichmentManager:
             for provider in matching_providers
             if provider.name not in self._abandoned_providers
         ]
-        if not available_providers:
+        # An ordinal-only provider survives the abandonment that took every
+        # matcher, and settling the item on it alone buries it under not_found.
+        matchers_existed = any(
+            states_a_match(provider) for provider in matching_providers
+        )
+        if not available_providers or (
+            matchers_existed
+            and not any(states_a_match(provider) for provider in available_providers)
+        ):
             # Deliberately no write: the item keeps the status it arrived with,
             # so the run after the credential is fixed picks it up untouched.
             self._skipped_for_abandonment = True
@@ -493,70 +504,37 @@ class EnrichmentManager:
             )
             return
 
-        item = self._settle_series_ordinal(db_id, item, available_providers)
+        matched, failures = self._first_match(
+            item, available_providers, content_type_str, safe_title
+        )
 
-        failures: list[_ProviderFailure] = []
-
-        for provider in available_providers:
-            if not states_a_match(provider):
-                continue
-            try:
-                limiter = self._get_rate_limiter(provider.name)
-                limiter.acquire()
-
-                provider_config = self._get_provider_config(provider.name)
-
-                logger.debug(
-                    "[ENRICHMENT] Trying %s for %s: %s",
-                    provider.name,
-                    content_type_str,
-                    safe_title,
+        # One try over every write the item makes, the ordinal pass included: a
+        # save is ours to settle, and one escaping here ends the whole run.
+        try:
+            if matched is not None:
+                provider, result = matched
+                item = self._apply_enrichment(db_id, item, result)
+                self.storage_manager.enrichment.mark_complete(
+                    db_id, provider.name, result.match_quality
                 )
+            self._settle_series_ordinal(db_id, item, available_providers)
+        except Exception as error:
+            self._settle_storage_failure(db_id, safe_title, error)
+            return
 
-                # The try covers the provider call and nothing else: a failed
-                # save is ours, and blaming a provider re-fetched it forever.
-                result = provider.enrich(item, provider_config)
-
-            except Exception as error:
-                # One branch for every exception, because a bare ValueError
-                # quoting the item's title leaked through the catch-all that
-                # used to sit beside the ProviderError one.
-                failure = _classify_failure(provider.name, error)
-                logger.warning(
-                    "[ENRICHMENT] Provider %s failed: %s", provider.name, failure.reason
-                )
-                failures.append(failure)
-                self._note_failure(failure)
-                continue
-
-            self._rejections.pop(provider.name, None)
-
-            if result and result.match_quality != "not_found":
-                try:
-                    self._apply_enrichment(db_id, item, result)
-                    self.storage_manager.enrichment.mark_complete(
-                        db_id, provider.name, result.match_quality
-                    )
-                except Exception as error:
-                    self._settle_storage_failure(db_id, safe_title, error)
-                    return
-                logger.info(
-                    "[ENRICHMENT] Enriched %s via %s (quality=%s): %s",
-                    content_type_str,
-                    provider.name,
-                    result.match_quality,
-                    safe_title,
-                )
-                with self._lock:
-                    self._status.items_processed += 1
-                    self._status.items_enriched += 1
-                return
-
-            logger.debug(
-                "[ENRICHMENT] %s returned not_found: %s",
+        if matched is not None:
+            provider, result = matched
+            logger.info(
+                "[ENRICHMENT] Enriched %s via %s (quality=%s): %s",
+                content_type_str,
                 provider.name,
+                result.match_quality,
                 safe_title,
             )
+            with self._lock:
+                self._status.items_processed += 1
+                self._status.items_enriched += 1
+            return
 
         if failures:
             reported = "; ".join(str(failure) for failure in failures)
@@ -593,20 +571,74 @@ class EnrichmentManager:
             self._status.items_processed += 1
             self._status.items_not_found += 1
 
+    def _first_match(
+        self,
+        item: ContentItem,
+        providers: list[EnrichmentProvider],
+        content_type_str: str,
+        safe_title: str,
+    ) -> tuple[_Match | None, list[_ProviderFailure]]:
+        failures: list[_ProviderFailure] = []
+
+        for provider in providers:
+            if not states_a_match(provider):
+                continue
+            try:
+                limiter = self._get_rate_limiter(provider.name)
+                limiter.acquire()
+
+                provider_config = self._get_provider_config(provider.name)
+
+                logger.debug(
+                    "[ENRICHMENT] Trying %s for %s: %s",
+                    provider.name,
+                    content_type_str,
+                    safe_title,
+                )
+
+                # The try covers the provider call and nothing else: a failed
+                # save is ours, and blaming a provider re-fetched it forever.
+                result = provider.enrich(item, provider_config)
+
+            except Exception as error:
+                # One branch for every exception, because a bare ValueError
+                # quoting the item's title leaked through the catch-all that
+                # used to sit beside the ProviderError one.
+                failure = _classify_failure(provider.name, error)
+                logger.warning(
+                    "[ENRICHMENT] Provider %s failed: %s", provider.name, failure.reason
+                )
+                failures.append(failure)
+                self._note_failure(failure)
+                continue
+
+            self._rejections.pop(provider.name, None)
+
+            if result and result.match_quality != "not_found":
+                return (provider, result), failures
+
+            logger.debug(
+                "[ENRICHMENT] %s returned not_found: %s",
+                provider.name,
+                safe_title,
+            )
+
+        return None, failures
+
     def _settle_series_ordinal(
         self,
         db_id: int,
         item: ContentItem,
         providers: list[EnrichmentProvider],
-    ) -> ContentItem:
-        """An ordinal is not a match, so it is asked for separately — and only
-        while an authored one would still outrank what is stored, so a library's
-        own ordinal costs no call at all.
+    ) -> None:
+        """Runs after the match loop so an ordinal has the matched provider's
+        series name to agree with, and only while an authored one would replace
+        what is stored, so a library's own costs no call.
         """
-        if not SeriesAuthority.AUTHORED.outranks(
+        if not SeriesAuthority.AUTHORED.replaces(
             stored_series_authority(item.metadata)
         ):
-            return item
+            return
 
         for provider in providers:
             if not states_a_series_ordinal(provider):
@@ -635,11 +667,11 @@ class EnrichmentManager:
             settled = reconcile_series(item.metadata, ordinal.as_metadata())
             if not settled:
                 continue
-            item = item.model_copy(update={"metadata": {**item.metadata, **settled}})
-            self.storage_manager.save_enrichment_metadata(db_id, item)
-            return item
-
-        return item
+            positioned = item.model_copy(
+                update={"metadata": {**item.metadata, **settled}}
+            )
+            self.storage_manager.save_enrichment_metadata(db_id, positioned)
+            return
 
     def _settle_storage_failure(
         self, db_id: int, safe_title: str, error: Exception
@@ -733,16 +765,15 @@ class EnrichmentManager:
         db_id: int,
         item: ContentItem,
         result: EnrichmentResult,
-    ) -> None:
-        self.storage_manager.save_enrichment_metadata(
-            db_id,
-            item.model_copy(
-                update={
-                    "metadata": merge_enrichment(item.metadata, result),
-                    "cover_url": item.cover_url or result.cover_url,
-                }
-            ),
+    ) -> ContentItem:
+        enriched = item.model_copy(
+            update={
+                "metadata": merge_enrichment(item.metadata, result),
+                "cover_url": item.cover_url or result.cover_url,
+            }
         )
+        self.storage_manager.save_enrichment_metadata(db_id, enriched)
+        return enriched
 
 
 def merge_enrichment(

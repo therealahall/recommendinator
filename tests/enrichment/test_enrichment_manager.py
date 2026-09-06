@@ -1,4 +1,5 @@
 import logging
+import sqlite3
 import threading
 from collections.abc import Iterator
 from pathlib import Path
@@ -1668,7 +1669,7 @@ class OrdinalOnlyProvider(EnrichmentProvider):
         self, item: ContentItem, config: dict[str, Any]
     ) -> SeriesOrdinal | None:
         self.ordinal_calls.append(item)
-        return SeriesOrdinal(position=3.0)
+        return SeriesOrdinal(position=3.0, series_name="The Matrix")
 
 
 class TestTheOrdinalPass:
@@ -1779,6 +1780,43 @@ class TestTheOrdinalPass:
         assert item.metadata["series_position_authority"] == "authored"
 
 
+class SubSeriesOrdinalProvider(OrdinalOnlyProvider):
+    """Wikidata numbers a Star Wars film within its trilogy, not the franchise."""
+
+    def fetch_series_ordinal(
+        self, item: ContentItem, config: dict[str, Any]
+    ) -> SeriesOrdinal | None:
+        self.ordinal_calls.append(item)
+        return SeriesOrdinal(position=1.0, series_name="Star Wars: Original Trilogy")
+
+
+class TestAnOrdinalCountedInAnotherSeries:
+    def test_a_sub_series_position_is_never_filed_under_the_stored_collection(
+        self, tmp_path: Path
+    ) -> None:
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        db_id = save_movie(
+            storage_manager,
+            "A New Hope",
+            metadata={"series_name": "Star Wars Collection"},
+        )
+        registry = EnrichmentRegistry()
+        registry._discovered = True
+        registry.register(SubSeriesOrdinalProvider())
+        manager = EnrichmentManager(
+            storage_manager,
+            {"enrichment": {"providers": {"ordinal": {"enabled": True}}}},
+            registry,
+        )
+
+        manager.start_enrichment(content_type=ContentType.MOVIE)
+        assert manager._wait_for_completion()
+
+        item = storage_manager.get_content_item(db_id)
+        assert item.metadata["series_name"] == "Star Wars Collection"
+        assert "series_position" not in item.metadata
+
+
 class CollectionNamingProvider(MockProvider):
     """TMDB names the collection, for every film of it alike."""
 
@@ -1800,7 +1838,7 @@ class UnevenOrdinalProvider(OrdinalOnlyProvider):
         self.ordinal_calls.append(item)
         if item.title.endswith("Revolutions"):
             return None
-        return SeriesOrdinal(position=2.0)
+        return SeriesOrdinal(position=2.0, series_name="The Matrix")
 
 
 class TestOneCollectionEnrichedFromScratch:
@@ -1848,10 +1886,16 @@ class TestAnOrdinalIsRefusedWhereNoReaderCouldReadItBack:
         self, position: float
     ) -> None:
         with pytest.raises(ValueError, match="between 0 and 1000"):
-            SeriesOrdinal(position=position)
+            SeriesOrdinal(position=position, series_name="The Matrix")
 
     def test_zero_is_a_prequel_rather_than_a_refusal(self) -> None:
-        assert SeriesOrdinal(position=0).as_metadata()["series_position"] == 0
+        ordinal = SeriesOrdinal(position=0, series_name="The Matrix")
+
+        assert ordinal.as_metadata()["series_position"] == 0
+
+    def test_a_position_naming_no_series_cannot_be_constructed(self) -> None:
+        with pytest.raises(ValueError, match="must name the series"):
+            SeriesOrdinal(position=3.0, series_name="  ")
 
 
 class UnreliableOrdinalProvider(OrdinalOnlyProvider):
@@ -1863,7 +1907,7 @@ class UnreliableOrdinalProvider(OrdinalOnlyProvider):
         self.ordinal_calls.append(item)
         if len(self.ordinal_calls) % 2 == 0:
             raise ProviderError(self.name, "HTTP 404") from http_error(404)
-        return SeriesOrdinal(position=3.0)
+        return SeriesOrdinal(position=3.0, series_name="The Matrix")
 
 
 class TestTheOrdinalPassCountsRejectionsInARow:
@@ -1890,6 +1934,66 @@ class TestTheOrdinalPassCountsRejectionsInARow:
 
         assert len(provider.ordinal_calls) == len(movies)
         assert not any("abandoned" in error for error in manager.get_status().errors)
+
+
+class TestAnOrdinalProviderBesideAnAbandonedMatcher:
+    def test_the_items_no_surviving_matcher_reached_stay_queued_regression(
+        self, tmp_path: Path
+    ) -> None:
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        db_ids = [save_movie(storage_manager, f"Movie {index}") for index in range(10)]
+        registry = EnrichmentRegistry()
+        registry._discovered = True
+        registry.register(RawRequestErrorProvider(http_error(401)))
+        registry.register(OrdinalOnlyProvider())
+        manager = EnrichmentManager(
+            storage_manager,
+            {
+                "enrichment": {
+                    "providers": {
+                        "raw_request": {"enabled": True},
+                        "ordinal": {"enabled": True},
+                    }
+                }
+            },
+            registry,
+        )
+
+        manager.start_enrichment(content_type=ContentType.MOVIE)
+        assert manager._wait_for_completion()
+
+        assert queued_ids(storage_manager) == set(db_ids[_MAX_CONSECUTIVE_REJECTIONS:])
+        assert not manager.get_status().completed
+
+
+class TestAFailedOrdinalSave:
+    def test_a_locked_database_settles_the_item_rather_than_ending_the_run(
+        self, tmp_path: Path
+    ) -> None:
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        db_ids = [save_movie(storage_manager, f"Movie {index}") for index in range(2)]
+        registry = EnrichmentRegistry()
+        registry._discovered = True
+        registry.register(OrdinalOnlyProvider())
+        manager = EnrichmentManager(
+            storage_manager,
+            {"enrichment": {"providers": {"ordinal": {"enabled": True}}}},
+            registry,
+        )
+
+        with patch.object(
+            storage_manager,
+            "save_enrichment_metadata",
+            side_effect=sqlite3.OperationalError("database is locked"),
+        ):
+            manager.start_enrichment(content_type=ContentType.MOVIE)
+            assert manager._wait_for_completion()
+
+        job_status = manager.get_status()
+        assert job_status.completed
+        assert job_status.items_processed == len(db_ids)
+        assert job_status.items_failed == len(db_ids)
+        assert queued_ids(storage_manager) == set()
 
 
 class TestARunReachesTMDBThroughTheGlobalRegistry:

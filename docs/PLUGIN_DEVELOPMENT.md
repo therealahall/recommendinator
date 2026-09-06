@@ -559,7 +559,7 @@ class MyEnrichmentProvider(EnrichmentProvider):
         self, item: ContentItem, config: dict[str, Any]
     ) -> SeriesOrdinal | None:
         # None when you have no ordinal for this item; raise on a failure.
-        return SeriesOrdinal(position=3.0)
+        return SeriesOrdinal(position=3.0, series_name="The Expanse")
 ```
 
 `fetch_series_ordinal` is optional and separate from the match: it is asked only
@@ -568,9 +568,10 @@ implementing it alone never settles an item's provider or quality. Implement one
 of the two or both — a provider implementing neither is refused when its class is
 created.
 
-A `SeriesOrdinal` states a position and no series name. The ordinal pass runs
-ahead of the match loop, so naming the series there would beat the matching
-provider to an empty slot and split one collection across two names.
+Name the series your position counts within. The pass runs after the match loop,
+and the position is taken only where your name agrees with the one already
+stored — a sub-series' number is refused rather than filed under its parent. Your
+name is written only where nothing has named the series yet.
 
 You return one `EnrichmentResult` instead of yielding `ContentItem`s, the manager
 throttles you from `rate_limit_requests_per_second`, the merge is gap-filling bar
