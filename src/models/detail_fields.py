@@ -446,7 +446,8 @@ RELEASE_YEAR_FIELDS: dict[str, DetailField] = {
 
 
 #: A provider replaces these rather than filling them. Only a key with a single
-#: writer qualifies: ``series_name`` also comes from ingestion and would be lost.
+#: writer qualifies; the series fields have several, so ``reconcile_series``
+#: decides those by authority instead.
 PROVIDER_OWNED_METADATA_KEYS = frozenset({"franchise"})
 
 

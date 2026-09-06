@@ -15,7 +15,7 @@ from src.models.detail_fields import (
 )
 from src.utils.dates import merge_seasons_watched_dates
 from src.utils.list_merge import merge_string_lists
-from src.utils.series import reconcile_seasons
+from src.utils.series import reconcile_seasons, reconcile_series
 from src.utils.sorting import FUZZY_MATCH_THRESHOLD
 
 __all__ = [
@@ -534,6 +534,10 @@ def _merge_detail_metadata(
     # Exception: the season fields, reconciled as the save path reconciles them,
     # so the absorbed row's larger season size is not dropped for the kept one.
     merged.update(reconcile_seasons(keep_meta, dup_meta))
+
+    # Exception: the series fields, on the same terms — the absorbed row's
+    # better-founded ordinal is not dropped for the kept row's guess.
+    merged.update(reconcile_series(keep_meta, dup_meta))
 
     # Exception: seasons_watched_dates keeps the later date per season, so an
     # earlier duplicate never overwrites the kept row's. A None result — both

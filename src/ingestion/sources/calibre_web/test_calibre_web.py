@@ -346,6 +346,7 @@ class TestCalibreWebSeries:
 
         assert items[0].metadata["series"] == "The Lord of the Rings"
         assert items[0].metadata["series_index"] == 1.0
+        assert items[0].metadata["series_position_authority"] == "library"
 
     def test_bare_series_elements_fallback(
         self, plugin: CalibreWebPlugin, config: dict[str, object]

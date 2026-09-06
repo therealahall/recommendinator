@@ -19,6 +19,7 @@ from src.enrichment.provider_base import (
     EnrichmentProvider,
     EnrichmentResult,
     ProviderError,
+    SeriesOrdinal,
 )
 from src.enrichment.registry import EnrichmentRegistry
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
@@ -209,13 +210,18 @@ def http_error(status_code: int, message: str = "") -> requests.HTTPError:
     return requests.HTTPError(message or f"{status_code} Error", response=response)
 
 
-def save_movie(storage_manager: StorageManager, title: str = "The Matrix") -> int:
+def save_movie(
+    storage_manager: StorageManager,
+    title: str = "The Matrix",
+    metadata: dict[str, Any] | None = None,
+) -> int:
     return storage_manager.save_content_item(
         ContentItem(
             id=title.lower().replace(" ", "-"),
             title=title,
             content_type=ContentType.MOVIE,
             status=ConsumptionStatus.UNREAD,
+            metadata=metadata or {},
         )
     )
 
@@ -1626,6 +1632,104 @@ class TestEnrichmentWritesTheRowItWasHandedRegression:
 
         assert "genres" in storage_manager.get_content_item(newer).metadata
         assert "genres" not in storage_manager.get_content_item(older).metadata
+
+
+class OrdinalOnlyProvider(EnrichmentProvider):
+    def __init__(self) -> None:
+        self.ordinal_calls: list[ContentItem] = []
+
+    @property
+    def name(self) -> str:
+        return "ordinal"
+
+    @property
+    def display_name(self) -> str:
+        return "Ordinal Only Provider"
+
+    @property
+    def content_types(self) -> list[ContentType]:
+        return [ContentType.MOVIE]
+
+    @property
+    def requires_api_key(self) -> bool:
+        return False
+
+    @property
+    def rate_limit_requests_per_second(self) -> float:
+        return 100.0
+
+    def get_config_schema(self) -> list[ConfigField]:
+        return []
+
+    def validate_config(self, config: dict[str, Any]) -> list[str]:
+        return []
+
+    def fetch_series_ordinal(
+        self, item: ContentItem, config: dict[str, Any]
+    ) -> SeriesOrdinal | None:
+        self.ordinal_calls.append(item)
+        return SeriesOrdinal(position=3.0, series="The Matrix Collection")
+
+
+class TestTheOrdinalPass:
+    def _run(self, storage_manager: StorageManager, db_id: int) -> OrdinalOnlyProvider:
+        provider = OrdinalOnlyProvider()
+        registry = EnrichmentRegistry()
+        registry._discovered = True
+        registry.register(provider)
+        manager = EnrichmentManager(
+            storage_manager,
+            {"enrichment": {"providers": {"ordinal": {"enabled": True}}}},
+            registry,
+        )
+        manager.start_enrichment(content_type=ContentType.MOVIE)
+        assert manager._wait_for_completion()
+        return provider
+
+    def test_a_provider_stating_only_an_ordinal_is_never_the_items_match(
+        self, tmp_path: Path
+    ) -> None:
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        db_id = save_movie(storage_manager)
+
+        self._run(storage_manager, db_id)
+
+        status = storage_manager.enrichment.status(db_id)
+        assert status is not None
+        assert status["enrichment_provider"] == "none"
+        item = storage_manager.get_content_item(db_id)
+        assert item.metadata["series_position"] == 3.0
+        assert item.metadata["series_position_authority"] == "authored"
+
+    def test_an_ordinal_a_title_marker_stated_is_asked_about_and_replaced(
+        self, tmp_path: Path
+    ) -> None:
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        db_id = save_movie(
+            storage_manager,
+            metadata={"series_position": 9, "series_position_authority": "stated"},
+        )
+
+        provider = self._run(storage_manager, db_id)
+
+        assert [item.db_id for item in provider.ordinal_calls] == [db_id]
+        item = storage_manager.get_content_item(db_id)
+        assert item.metadata["series_position"] == 3.0
+        assert item.metadata["series_position_authority"] == "authored"
+
+    def test_an_ordinal_the_library_stated_is_never_asked_about(
+        self, tmp_path: Path
+    ) -> None:
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        db_id = save_movie(
+            storage_manager,
+            metadata={"series_position": 4, "series_position_authority": "library"},
+        )
+
+        provider = self._run(storage_manager, db_id)
+
+        assert provider.ordinal_calls == []
+        assert storage_manager.get_content_item(db_id).metadata["series_position"] == 4
 
 
 class TestARunReachesTMDBThroughTheGlobalRegistry:

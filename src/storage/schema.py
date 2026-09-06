@@ -83,7 +83,7 @@ class SyncRunDict(TypedDict):
 # Changing ``normalize_title_for_matching``, ``get_sort_title`` or
 # ``build_search_text`` needs a bump and a step to rewrite what the old one
 # stored, or dedup lookups stop matching and duplicates accumulate in silence.
-_SCHEMA_VERSION = 21
+_SCHEMA_VERSION = 22
 
 # Rows for these keys are unreachable from the app but would still
 # be overlaid onto config, so they are pruned once on upgrade.
@@ -394,6 +394,8 @@ def create_schema(conn: sqlite3.Connection) -> None:
         _fold_stranded_company_names(cursor)
         _renormalize_titles(cursor)
         _clear_derived_columns(cursor)
+    if stored_version < 22:
+        _clear_guessed_series_positions(cursor)
 
     # Filled after the repair, which recovers a creator that existed only in a
     # blob. Unguarded because the fill selects the rows that need it rather
@@ -740,6 +742,50 @@ def _split_crammed_series_titles(cursor: sqlite3.Cursor) -> None:
             "UPDATE book_details SET metadata = ? WHERE content_item_id = ?",
             (json.dumps({**series, **blob}), row["id"]),
         )
+
+
+#: Written by a provider ordering a collection by release date, and by a plugin
+#: reading a number out of a title. Neither is the work's place in its series.
+_GUESSED_POSITION_KEYS = ("series_position", "movie_number")
+
+
+def _clear_guessed_series_positions(cursor: sqlite3.Cursor) -> None:
+    """A book's ``series_index`` and a season number stay: a source stated those.
+
+    The blob keeps existing keys, so a guessed ordinal only leaves on a
+    re-fetch, which is why each cleared item is queued for one.
+    """
+    for table in ("movie_details", "video_game_details"):
+        cursor.execute(
+            f"SELECT content_item_id, metadata FROM {table}"
+            " WHERE metadata IS NOT NULL"
+        )
+        for row in cursor.fetchall():
+            try:
+                blob = json.loads(row["metadata"])
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if not isinstance(blob, dict) or not any(
+                key in blob for key in _GUESSED_POSITION_KEYS
+            ):
+                continue
+            for key in _GUESSED_POSITION_KEYS:
+                blob.pop(key, None)
+            cursor.execute(
+                f"UPDATE {table} SET metadata = ? WHERE content_item_id = ?",
+                (json.dumps(blob) if blob else None, row["content_item_id"]),
+            )
+            _queue_for_enrichment(cursor, row["content_item_id"])
+
+
+def _queue_for_enrichment(cursor: sqlite3.Cursor, content_item_id: int) -> None:
+    cursor.execute(
+        "INSERT INTO enrichment_status (content_item_id, needs_enrichment)"
+        " VALUES (?, 1)"
+        " ON CONFLICT(content_item_id) DO UPDATE SET needs_enrichment = 1,"
+        " enrichment_quality = NULL, enrichment_error = NULL",
+        (content_item_id,),
+    )
 
 
 def _clear_placeholder_authors(cursor: sqlite3.Cursor) -> None:

@@ -1,8 +1,11 @@
+from __future__ import annotations
+
 import math
 import re
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from datetime import date
+from enum import Enum
 from typing import Any, NamedTuple, TypedDict
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
@@ -199,10 +202,101 @@ def _extract_from_metadata(
     return None
 
 
-def get_series_name_from_metadata(metadata: dict[str, Any] | None) -> str | None:
+class SeriesAuthority(str, Enum):
+    """How well founded a series ordinal is, weakest first. A strictly higher
+    authority replaces a stored ordinal; an equal one leaves it, so two sources
+    of the same standing keep the first answer.
+    """
+
+    #: A marker in the title, or a number parsed out of a game's title.
+    STATED = "stated"
+    #: An external provider stating the ordinal as a fact about the work.
+    AUTHORED = "authored"
+    #: The operator's own library: a Calibre series index, an import column.
+    LIBRARY = "library"
+    #: Set by hand in the app.
+    MANUAL = "manual"
+
+    def outranks(self, other: SeriesAuthority | None) -> bool:
+        order = list(SeriesAuthority)
+        return other is None or order.index(self) > order.index(other)
+
+
+#: Where the ordinal's authority is recorded, beside the ordinal itself.
+SERIES_AUTHORITY_KEY = "series_position_authority"
+
+SERIES_NAME_KEYS: tuple[str, ...] = ("series_name", "series")
+SERIES_POSITION_KEYS: tuple[str, ...] = ("series_position", "series_index")
+
+#: Every key :func:`reconcile_series` decides, so no other rule may touch them.
+SERIES_RECONCILED_KEYS = frozenset(
+    (*SERIES_NAME_KEYS, *SERIES_POSITION_KEYS, SERIES_AUTHORITY_KEY)
+)
+
+
+def stored_series_authority(
+    metadata: Mapping[str, Any] | None,
+) -> SeriesAuthority | None:
+    """None when no ordinal is stored. One written before the ladder existed
+    reads as ``stated``, so a better-founded source can still correct it.
+    """
+    if not metadata or get_series_position_from_metadata(metadata) is None:
+        return None
+    try:
+        return SeriesAuthority(str(metadata.get(SERIES_AUTHORITY_KEY)))
+    except ValueError:
+        return SeriesAuthority.STATED
+
+
+def _stated_series_name(metadata: Mapping[str, Any]) -> str | None:
+    for key in SERIES_NAME_KEYS:
+        name = str(metadata.get(key) or "").strip()
+        if name:
+            return name
+    return None
+
+
+def reconcile_series(
+    existing: Mapping[str, Any], incoming: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Authority alone decides the ordinal. The name follows it, and otherwise
+    only fills a gap: a stored name is no worse than one arriving beside an
+    ordinal too weak to replace anything.
+    """
+    offered = stored_series_authority(incoming)
+    replacing = (
+        offered
+        if offered is not None and offered.outranks(stored_series_authority(existing))
+        else None
+    )
+
+    fields: dict[str, Any] = {}
+    name = _stated_series_name(incoming)
+    if name and (replacing or not _stated_series_name(existing)):
+        fields.update(_written_keys(existing, incoming, SERIES_NAME_KEYS, name))
+    if replacing is not None:
+        position = get_series_position_from_metadata(incoming)
+        fields.update(_written_keys(existing, incoming, SERIES_POSITION_KEYS, position))
+        fields[SERIES_AUTHORITY_KEY] = replacing.value
+    return fields
+
+
+def _written_keys(
+    existing: Mapping[str, Any],
+    incoming: Mapping[str, Any],
+    keys: tuple[str, ...],
+    value: Any,
+) -> dict[str, Any]:
+    """Every key either side used, so the loser is corrected rather than left
+    beside the winner for the next reader to pick instead.
+    """
+    return {key: value for key in keys if key in existing or key in incoming}
+
+
+def get_series_name_from_metadata(metadata: Mapping[str, Any] | None) -> str | None:
     if not metadata:
         return None
-    for key in ("series_name", "series", "series_title", "franchise"):
+    for key in (*SERIES_NAME_KEYS, "series_title", "franchise"):
         val = metadata.get(key)
         if val is not None:
             stripped = str(val).strip()
@@ -211,10 +305,12 @@ def get_series_name_from_metadata(metadata: dict[str, Any] | None) -> str | None
     return None
 
 
-def get_series_position_from_metadata(metadata: dict[str, Any] | None) -> float | None:
+def get_series_position_from_metadata(
+    metadata: Mapping[str, Any] | None,
+) -> float | None:
     if not metadata:
         return None
-    for key in ("series_position", "series_index"):
+    for key in SERIES_POSITION_KEYS:
         try:
             position = float(metadata[key])
         except (KeyError, ValueError, TypeError):
@@ -607,6 +703,7 @@ _SERIES_MARKER = re.compile(
 class SeriesFields(TypedDict, total=False):
     series: str
     series_index: float
+    series_position_authority: str
 
 
 def split_series_from_title(title: str) -> tuple[str, SeriesFields]:
@@ -618,4 +715,8 @@ def split_series_from_title(title: str) -> tuple[str, SeriesFields]:
     series = match.group(1).strip()
     if not bare or not series:
         return title, {}
-    return bare, {"series": series, "series_index": float(match.group(2))}
+    return bare, {
+        "series": series,
+        "series_index": float(match.group(2)),
+        "series_position_authority": SeriesAuthority.STATED.value,
+    }

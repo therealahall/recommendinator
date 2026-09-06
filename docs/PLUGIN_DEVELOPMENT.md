@@ -214,13 +214,18 @@ files. Beyond it and the recognised keys, the blob is yours.
 warning and no error at any layer.** Your own `number_of_seasons` re-classifies
 the show's length. Your own `franchise` re-orders a series.
 
-Enrichment writes into the blob too. RAWG writes `average_playtime_hours`,
-`franchise` and `series_position`, TMDB writes `series_name`, `series_position`
-and `tmdb_collection_id`. `merge_enrichment` (`src/enrichment/manager.py`) fills
+Enrichment writes into the blob too. RAWG writes `average_playtime_hours` and
+`franchise`, TMDB writes `series_name` and `tmdb_collection_id`. Neither writes a
+position. `merge_enrichment` (`src/enrichment/manager.py`) fills
 each only where the key is missing or empty, so it never overwrites you — except
 `franchise`, which RAWG replaces because it is that key's only writer. Write your
 own franchise name to `series_name` instead. See
 [ARCHITECTURE.md](../ARCHITECTURE.md).
+
+The series name and position are the other exception: `reconcile_series` decides
+those by rank. Record yours in `series_position_authority` — `library` for an
+ordinal your catalogue states, `stated` for one read out of a title — and no
+weaker source can replace it.
 
 ### Shape rules
 
@@ -549,12 +554,24 @@ class MyEnrichmentProvider(EnrichmentProvider):
             match_quality="high",  # "high", "medium", or "not_found"
             provider=self.name,
         )
+
+    def fetch_series_ordinal(
+        self, item: ContentItem, config: dict[str, Any]
+    ) -> SeriesOrdinal | None:
+        # None when you have no ordinal for this item; raise on a failure.
+        return SeriesOrdinal(position=3.0, series="The Expanse")
 ```
+
+`fetch_series_ordinal` is optional and separate from the match: it is asked only
+while a stronger source has not positioned the item already, and a provider
+implementing it alone never settles an item's provider or quality. Implement one
+of the two or both — a provider implementing neither is refused when its class is
+created.
 
 You return one `EnrichmentResult` instead of yielding `ContentItem`s, the manager
 throttles you from `rate_limit_requests_per_second`, the merge is gap-filling bar
-`franchise`, and config lives under `enrichment.providers.<name>` rather than
-`inputs`.
+`franchise` and the series fields, and config lives under
+`enrichment.providers.<name>` rather than `inputs`.
 
 ```yaml
 enrichment:

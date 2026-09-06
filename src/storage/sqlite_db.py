@@ -75,6 +75,7 @@ from src.utils.list_merge import merge_string_lists
 from src.utils.series import (
     all_seasons_watched,
     reconcile_seasons,
+    reconcile_series,
     seasons_watched_for_completed,
     status_for_seasons_watched,
 )
@@ -822,6 +823,11 @@ class SQLiteDB:
         # Exception: the season fields, which no one source can state alone.
         merged_remaining.update(
             reconcile_seasons(existing_remaining, remaining_metadata)
+        )
+        # Exception: the series fields, where the better-founded source wins
+        # rather than the first one to write.
+        merged_remaining.update(
+            reconcile_series(existing_remaining, remaining_metadata)
         )
         # Exception: seasons_watched_dates merges per season, keeping the
         # later watch date — an earlier sync date never overwrites a
