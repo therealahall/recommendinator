@@ -366,14 +366,34 @@ class TestSeriesSurvivesAnExport:
             ContentType.BOOK,
         )[0]
         stored = _store_and_read_back(tmp_path, shelved)
+        exported = export([stored], ContentType.BOOK)
 
-        restored = _reimport(
-            importer, export([stored], ContentType.BOOK), ContentType.BOOK
-        )[0]
+        restored = _reimport(importer, exported, ContentType.BOOK)[0]
 
         assert restored.title == "All Systems Red"
-        assert restored.metadata.get("series") == "The Murderbot Diaries"
-        assert float(restored.metadata["series_index"]) == 1.0
+        assert restored.metadata.get("series_name") == "The Murderbot Diaries"
+        assert float(restored.metadata["series_position"]) == 1.0
+
+    def test_the_exported_file_keeps_the_column_names_it_always_had(self) -> None:
+        """The columns are the operator's file format; the keys under them moved."""
+        book = ContentItem(
+            id="1",
+            title="All Systems Red",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={
+                "series_name": "The Murderbot Diaries",
+                "series_position": 1.0,
+            },
+        )
+
+        exported_csv = export_items_csv([book], ContentType.BOOK)
+        [row] = list(csv.DictReader(io.StringIO(exported_csv)))
+        [entry] = json.loads(export_items_json([book], ContentType.BOOK))
+
+        assert row["series"] == entry["series"] == "The Murderbot Diaries"
+        assert row["series_index"] == "1.0"
+        assert entry["series_index"] == 1.0
 
 
 class TestCreatorExportEdges:

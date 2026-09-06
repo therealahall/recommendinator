@@ -586,8 +586,8 @@ class TestUpgradingALibraryWrittenUnderTheOldTitleRules:
             get_sort_title("The Gate of the Feral Gods"),
             "Matt Dinniman",
             {
-                "series": "Dungeon Crawler Carl",
-                "series_index": 4.0,
+                "series_name": "Dungeon Crawler Carl",
+                "series_position": 4.0,
                 "series_position_authority": "stated",
             },
         )
@@ -631,16 +631,16 @@ class TestUpgradingALibraryWrittenUnderTheOldTitleRules:
             (
                 {"series": "DCC", "series_index": 4.5},
                 {
-                    "series": "DCC",
-                    "series_index": 4.5,
+                    "series_name": "DCC",
+                    "series_position": 4.5,
                     "series_position_authority": "stated",
                 },
             ),
             (
                 {"series": "DCC"},
                 {
-                    "series": "DCC",
-                    "series_index": 4.0,
+                    "series_name": "DCC",
+                    "series_position": 4.0,
                     "series_position_authority": "stated",
                 },
             ),

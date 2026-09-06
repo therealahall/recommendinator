@@ -1,6 +1,6 @@
 """Global settings secrets — registry leaves flagged ``sensitive=True`` (today
-``enrichment.providers.tmdb.api_key`` and ``enrichment.providers.rawg.api_key``)
-— must never be persisted in plaintext: not in ``config.yaml`` and not in the
+the ``api_key`` of the tmdb, rawg and hardcover enrichment providers) — must
+never be persisted in plaintext: not in ``config.yaml`` and not in the
 ``settings`` table.
 """
 

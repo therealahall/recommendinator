@@ -67,12 +67,14 @@ weight nothing.
 With **"Recommend series in order"** on, the default, a book 3 you cannot yet
 read is replaced by the earliest available entry in its series. A position comes
 from series metadata, or from the title — a number, a Roman numeral, a season
-indicator — where no metadata names the series. Half-numbered entries such as
+indicator — where the metadata states none. Half-numbered entries such as
 `(The Expanse, #2.5)` order as fractions, so the novella waits for book `#2`.
 
 Where any entry of a series states no position, the whole series orders by
 release year instead: one entry's date is never ranked against another's number.
-An entry with no year recorded sits out of that order rather than leading it.
+Entries with no year recorded rank after the dated ones, by title — which is how
+a whole book series orders, since a book's stored year is its edition's rather
+than the work's.
 
 ## Content length preferences
 

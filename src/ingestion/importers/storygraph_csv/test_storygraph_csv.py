@@ -76,8 +76,8 @@ class TestExport:
         )
 
         assert parsed[0].title == "All Systems Red"
-        assert parsed[0].metadata["series"] == "The Murderbot Diaries"
-        assert parsed[0].metadata["series_index"] == 1.0
+        assert parsed[0].metadata["series_name"] == "The Murderbot Diaries"
+        assert parsed[0].metadata["series_position"] == 1.0
 
     def test_an_unknown_read_status_falls_back_to_unread(self) -> None:
         parsed = items("Mystery Status,Some Author,,,,wishlist," + "," * 16 + "\n")

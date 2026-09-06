@@ -276,8 +276,8 @@ class TestGoodreadsRssPluginFetch:
         items = list(plugin.fetch({"user_id": "12345", "shelves": ["read"]}))
 
         assert items[0].title == "All Systems Red"
-        assert items[0].metadata["series"] == "The Murderbot Diaries"
-        assert items[0].metadata["series_index"] == 1.0
+        assert items[0].metadata["series_name"] == "The Murderbot Diaries"
+        assert items[0].metadata["series_position"] == 1.0
         assert items[0].metadata["series_position_authority"] == "stated"
 
     def test_pages_from_nested_book_element(

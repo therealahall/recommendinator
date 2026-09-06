@@ -666,20 +666,20 @@ class TestSeriesAffinityScorer:
             make_item(
                 title="Final Fantasy I",
                 content_type=ContentType.VIDEO_GAME,
-                metadata={"series": "Final Fantasy", "series_number": 1},
+                metadata={"series_name": "Final Fantasy", "series_number": 1},
                 rating=5,
             ),
             make_item(
                 title="Final Fantasy V",
                 content_type=ContentType.VIDEO_GAME,
-                metadata={"series": "Final Fantasy", "series_number": 5},
+                metadata={"series_name": "Final Fantasy", "series_number": 5},
                 rating=4,
             ),
         ]
         candidate = make_item(
             title="Final Fantasy VII",
             content_type=ContentType.VIDEO_GAME,
-            metadata={"series": "Final Fantasy", "series_number": 7},
+            metadata={"series_name": "Final Fantasy", "series_number": 7},
             status=ConsumptionStatus.UNREAD,
         )
         context = _build_context(consumed=consumed)
@@ -691,20 +691,20 @@ class TestSeriesAffinityScorer:
             make_item(
                 title="Final Fantasy I",
                 content_type=ContentType.VIDEO_GAME,
-                metadata={"series": "Final Fantasy", "series_number": 1},
+                metadata={"series_name": "Final Fantasy", "series_number": 1},
                 rating=2,
             ),
             make_item(
                 title="Final Fantasy V",
                 content_type=ContentType.VIDEO_GAME,
-                metadata={"series": "Final Fantasy", "series_number": 5},
+                metadata={"series_name": "Final Fantasy", "series_number": 5},
                 rating=3,
             ),
         ]
         candidate = make_item(
             title="Final Fantasy VII",
             content_type=ContentType.VIDEO_GAME,
-            metadata={"series": "Final Fantasy", "series_number": 7},
+            metadata={"series_name": "Final Fantasy", "series_number": 7},
             status=ConsumptionStatus.UNREAD,
         )
         context = _build_context(consumed=consumed)
@@ -725,13 +725,13 @@ class TestSeriesAffinityScorer:
         consumed = [
             make_item(
                 title="Dune (Dune, #1)",
-                metadata={"series": "Dune", "series_number": 1},
+                metadata={"series_name": "Dune", "series_number": 1},
                 rating=4,
             ),
         ]
         candidate = make_item(
             title="Dune (Dune, #2)",
-            metadata={"series": "Dune", "series_number": 2},
+            metadata={"series_name": "Dune", "series_number": 2},
             status=ConsumptionStatus.UNREAD,
         )
         context = _build_context(consumed=consumed)
@@ -743,20 +743,20 @@ class TestSeriesAffinityScorer:
             make_item(
                 title="Final Fantasy I",
                 content_type=ContentType.VIDEO_GAME,
-                metadata={"series": "Final Fantasy", "series_number": 1},
+                metadata={"series_name": "Final Fantasy", "series_number": 1},
                 rating=5,
             ),
             make_item(
                 title="Final Fantasy II",
                 content_type=ContentType.VIDEO_GAME,
-                metadata={"series": "Final Fantasy", "series_number": 2},
+                metadata={"series_name": "Final Fantasy", "series_number": 2},
                 rating=None,
             ),
         ]
         candidate = make_item(
             title="Final Fantasy VII",
             content_type=ContentType.VIDEO_GAME,
-            metadata={"series": "Final Fantasy", "series_number": 7},
+            metadata={"series_name": "Final Fantasy", "series_number": 7},
             status=ConsumptionStatus.UNREAD,
         )
         context = _build_context(consumed=consumed)

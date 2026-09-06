@@ -82,11 +82,11 @@ class TestBooks:
         )
 
         assert [item.title for item in parsed] == ["All Systems Red", "Leviathan Wakes"]
-        assert parsed[0].metadata["series"] == "The Murderbot Diaries"
-        assert parsed[0].metadata["series_index"] == 1.0
+        assert parsed[0].metadata["series_name"] == "The Murderbot Diaries"
+        assert parsed[0].metadata["series_position"] == 1.0
         assert parsed[0].metadata["series_position_authority"] == "stated"
-        assert parsed[1].metadata["series"] == "Expanse Novels"
-        assert parsed[1].metadata["series_index"] == "4"
+        assert parsed[1].metadata["series_name"] == "Expanse Novels"
+        assert parsed[1].metadata["series_position"] == "4"
         assert parsed[1].metadata["series_position_authority"] == "library"
 
     def test_an_unknown_status_falls_back_to_unread(self) -> None:

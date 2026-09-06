@@ -77,7 +77,7 @@ class TestLibraryList:
             _make_item(db_id=1, title="Book One", author="Author A", rating=5),
             _make_item(db_id=2, title="Book Two", author="Author B", rating=3),
         ]
-        items[0].metadata = {"series": "The Expanse", "series_index": 2.0}
+        items[0].metadata = {"series_name": "The Expanse", "series_position": 2.0}
         mock_storage = make_storage_mock()
         mock_storage.get_content_items.return_value = items
 
@@ -414,7 +414,10 @@ class TestLibraryShow:
         self, cli_runner: CliRunner
     ) -> None:
         item = _make_item(db_id=42, title="All Systems Red")
-        item.metadata = {"series": "The Murderbot Diaries", "series_index": 1.0}
+        item.metadata = {
+            "series_name": "The Murderbot Diaries",
+            "series_position": 1.0,
+        }
         mock_storage = make_storage_mock()
         mock_storage.get_content_item.return_value = item
 

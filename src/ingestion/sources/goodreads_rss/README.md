@@ -42,7 +42,7 @@ your user ID. You can paste either the bare number or the whole URL into
 - Metadata keys: `book_id`, `isbn`, `pages`, and `year_published` are shared
   with the [Goodreads CSV importer](../../importers/goodreads_csv/README.md).
   It also carries `average_rating`, `description` and `shelf`, the shelf it
-  came from, plus `series` and `series_index` when the feed's title states a
+  came from, plus `series_name` and `series_position` when the feed's title states a
   series — the marker is taken out of the title. `isbn13` and `publisher` are
   **not** provided: RSS does not expose them, so those keys are absent rather
   than empty.

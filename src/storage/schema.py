@@ -16,7 +16,13 @@ from src.storage.merge import (
     normalize_creator_for_matching,
     normalize_title_for_matching,
 )
-from src.utils.series import split_series_from_title
+from src.utils.series import (
+    SERIES_AUTHORITY_KEY,
+    SERIES_NAME_KEY,
+    SERIES_POSITION_KEY,
+    SeriesAuthority,
+    split_series_from_title,
+)
 
 
 class EnrichmentStatusDict(TypedDict):
@@ -83,7 +89,7 @@ class SyncRunDict(TypedDict):
 # Changing ``normalize_title_for_matching``, ``get_sort_title`` or
 # ``build_search_text`` needs a bump and a step to rewrite what the old one
 # stored, or dedup lookups stop matching and duplicates accumulate in silence.
-_SCHEMA_VERSION = 22
+_SCHEMA_VERSION = 23
 
 # Rows for these keys are unreachable from the app but would still
 # be overlaid onto config, so they are pruned once on upgrade.
@@ -385,6 +391,11 @@ def create_schema(conn: sqlite3.Connection) -> None:
     if stored_version < 16:
         _reduce_non_scalar_list_columns(cursor)
         _clear_quality_on_requeued_items(cursor)
+    if stored_version < 23:
+        # Ahead of the step below, which merges a title-stated series into the
+        # blob key by key: the stored series only wins that once both spell
+        # their keys the same way.
+        _fold_series_aliases(cursor)
     if stored_version < 17:
         # An upgraded library does not collapse its duplicates on open. It
         # rewrites their keys; the save door decides each pair on the next
@@ -750,7 +761,7 @@ _GUESSED_POSITION_KEYS = ("series_position", "movie_number")
 
 
 def _clear_guessed_series_positions(cursor: sqlite3.Cursor) -> None:
-    """A book's ``series_index`` and a season number stay: a source stated those.
+    """A book's own ordinal and a season number stay: a source stated those.
 
     The blob keeps existing keys, so a guessed ordinal only leaves on a
     re-fetch, which is why each cleared item is queued for one.
@@ -776,6 +787,48 @@ def _clear_guessed_series_positions(cursor: sqlite3.Cursor) -> None:
                 (json.dumps(blob) if blob else None, row["content_item_id"]),
             )
             _queue_for_enrichment(cursor, row["content_item_id"])
+
+
+#: The canonical key wins where both are stored: readers already preferred it.
+_SERIES_ALIASES = {"series": SERIES_NAME_KEY, "series_index": SERIES_POSITION_KEY}
+
+
+def _folded_series(blob: dict[str, Any]) -> dict[str, Any] | None:
+    """None when the row already holds the canonical pair and nothing else."""
+    if not any(alias in blob for alias in _SERIES_ALIASES):
+        return None
+    folded = {key: value for key, value in blob.items() if key not in _SERIES_ALIASES}
+    for alias, canonical in _SERIES_ALIASES.items():
+        if blob.get(alias) is not None and folded.get(canonical) is None:
+            folded[canonical] = blob[alias]
+    if folded.get(SERIES_POSITION_KEY) is not None:
+        folded.setdefault(SERIES_AUTHORITY_KEY, SeriesAuthority.STATED.value)
+    return folded
+
+
+def _fold_series_aliases(cursor: sqlite3.Cursor) -> None:
+    """Ingestion wrote one spelling and enrichment the other, so a blob could
+    hold an ordinal the authority ladder had refused, and readers took it.
+    """
+    for spec in DETAIL_FIELDS.values():
+        cursor.execute(
+            f"SELECT content_item_id, metadata FROM {spec.table}"
+            " WHERE metadata IS NOT NULL"
+        )
+        for row in cursor.fetchall():
+            try:
+                blob = json.loads(row["metadata"])
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if not isinstance(blob, dict):
+                continue
+            folded = _folded_series(blob)
+            if folded is None:
+                continue
+            cursor.execute(
+                f"UPDATE {spec.table} SET metadata = ? WHERE content_item_id = ?",
+                (json.dumps(folded) if folded else None, row["content_item_id"]),
+            )
 
 
 def _queue_for_enrichment(cursor: sqlite3.Cursor, content_item_id: int) -> None:

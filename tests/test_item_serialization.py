@@ -68,9 +68,9 @@ def test_unknown_enriched_serializes_as_false() -> None:
 @pytest.mark.parametrize(
     ("metadata", "expected"),
     [
-        ({"series": "The Murderbot Diaries", "series_index": 1.0}, 1.0),
-        ({"series": "The Murderbot Diaries"}, None),
-        ({"series": "The Murderbot Diaries", "series_index": "nonsense"}, None),
+        ({"series_name": "The Murderbot Diaries", "series_position": 1.0}, 1.0),
+        ({"series_name": "The Murderbot Diaries"}, None),
+        ({"series_name": "The Murderbot Diaries", "series_position": "nonsense"}, None),
         ({"franchise": "The Murderbot Diaries"}, None),
     ],
     ids=["stated", "no-position", "unreadable-position", "franchise-only"],

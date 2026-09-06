@@ -13,7 +13,7 @@ https://www.goodreads.com/review/import. Books only.
 - `My Rating` of `0` means unrated.
 - `Date Read` is `YYYY/MM/DD`; anything else reads as no date.
 - `Book Id` becomes the item's external id.
-- Metadata carries `series` and `series_index` when the title states a series —
+- Metadata carries `series_name` and `series_position` when the title states a series —
   the marker is taken out of the title.
 
 ## Skipped lines

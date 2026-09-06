@@ -624,7 +624,7 @@ def test_a_survivor_gains_the_series_the_absorbed_row_states(db: SQLiteDB) -> No
         "2",
         title="All Systems Red: A Murderbot Novella",
         content_type=ContentType.BOOK,
-        metadata={"series": "The Murderbot Diaries", "series_index": 1},
+        metadata={"series_name": "The Murderbot Diaries", "series_position": 1},
     )
 
     db.merge_content_items(survivor_id, absorbed_id, MergeEvidence.MANUAL)
@@ -632,3 +632,38 @@ def test_a_survivor_gains_the_series_the_absorbed_row_states(db: SQLiteDB) -> No
     survivor = db.get_content_item(survivor_id)
     assert get_series_name(survivor) == "The Murderbot Diaries"
     assert get_series_item_number(survivor) == 1.0
+
+
+def test_a_survivor_keeps_the_better_founded_of_two_ordinals(db: SQLiteDB) -> None:
+    """The blob merge carries every key the reconciliation did not decide."""
+    survivor_id = _save(
+        db,
+        "calibre_web",
+        "1",
+        title="Persepolis Rising",
+        content_type=ContentType.BOOK,
+        metadata={
+            "series_name": "The Expanse",
+            "series_position": 5,
+            "series_position_authority": "library",
+        },
+    )
+    absorbed_id = _save(
+        db,
+        "goodreads_rss",
+        "2",
+        title="Persepolis Rising: An Expanse Novel",
+        content_type=ContentType.BOOK,
+        metadata={
+            "series_name": "The Expanse",
+            "series_position": 7,
+            "series_position_authority": "authored",
+        },
+    )
+
+    db.merge_content_items(survivor_id, absorbed_id, MergeEvidence.MANUAL)
+
+    survivor = db.get_content_item(survivor_id)
+    assert get_series_item_number(survivor) == 5.0
+    assert survivor.metadata["series_position_authority"] == "library"
+    assert 7 not in survivor.metadata.values()

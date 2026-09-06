@@ -110,7 +110,7 @@ change depends on the field, and is usually less than you expect:
 | `genre` | Merge in. An import never removes a genre |
 | `total_seasons` | Raise it. A smaller number is discarded |
 | `seasons_watched` | Merge in. An import adds a season, never removes one. Unticking one in the season checklist or with `library edit --seasons-watched` holds only until a source reports that season again, so to drop it for good remove it at the source (unwatch the season in Trakt, say) |
-| `year_published`, `pages`, `isbn`, `runtime_minutes`, `platform`, `hours_played`, `notes`, `series`, `series_index` | Fill an empty value, and nothing else ever. There is no edit surface for these either, so fix them at the source they came from |
+| `year_published`, `pages`, `isbn`, `runtime_minutes`, `platform`, `hours_played`, `notes`, `series_name`, `series_position` | Fill an empty value, and nothing else ever. There is no edit surface for these either, so fix them at the source they came from |
 | `year` and the creator: `author`, `director`, `creator`, `developer` | Fill an empty value. The edit modal and `library edit --release-year`/`--creator` replace one |
 
 Every row this app exports carries a real `true` or `false` in `ignored`, never

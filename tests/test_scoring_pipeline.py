@@ -12,7 +12,7 @@ from src.recommendations.scorers import (
     TagOverlapScorer,
 )
 from src.recommendations.scoring_pipeline import ScoringPipeline
-from src.utils.series import build_series_tracking
+from src.utils.series import SeriesOrder, build_series_tracking
 from tests.factories import make_item
 
 
@@ -25,13 +25,14 @@ def _build_context(
     unconsumed = unconsumed or []
     analyzer = PreferenceAnalyzer(min_rating=4)
     preferences = analyzer.analyze(consumed)
-    series_tracking = build_series_tracking(consumed)
+    series_order = SeriesOrder([*consumed, *unconsumed])
     return ScoringContext(
         preferences=preferences,
         consumed_items=consumed,
-        series_tracking=series_tracking,
+        series_tracking=build_series_tracking(consumed, series_order),
         content_type=content_type,
         all_unconsumed_items=unconsumed,
+        series_order=series_order,
     )
 
 

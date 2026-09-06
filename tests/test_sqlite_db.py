@@ -1182,7 +1182,10 @@ class TestGetContentItemsSearch:
                 author="Martha Wells",
                 content_type=ContentType.BOOK,
                 status=ConsumptionStatus.COMPLETED,
-                metadata={"series": "The Murderbot Diaries", "series_index": 1.0},
+                metadata={
+                    "series_name": "The Murderbot Diaries",
+                    "series_position": 1.0,
+                },
             )
         )
         results = temp_db.get_content_items(search="Murderbot Diaries")
@@ -2261,8 +2264,8 @@ class TestDetailTableFillOnly:
             content_type=ContentType.BOOK,
             status=ConsumptionStatus.UNREAD,
             metadata={
-                "series": "The Expanse",
-                "series_index": 2.5,
+                "series_name": "The Expanse",
+                "series_position": 2.5,
                 "series_position_authority": "stated",
             },
         )
@@ -2283,7 +2286,7 @@ class TestDetailTableFillOnly:
 
         retrieved = temp_db.get_content_item(db_id)
         assert retrieved is not None
-        assert retrieved.metadata["series_index"] == 7.0
+        assert retrieved.metadata["series_position"] == 7.0
         assert retrieved.metadata["series_position_authority"] == "authored"
 
 
