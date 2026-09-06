@@ -27,7 +27,7 @@ _STALL_TIMEOUT_SECONDS = 5.0
 
 _BLOCKED_GRACE_SECONDS = 0.5
 
-_BUILTIN_PROVIDER_NAMES = {"tmdb", "openlibrary", "rawg"}
+_BUILTIN_PROVIDER_NAMES = {"tmdb", "openlibrary", "rawg", "wikidata", "hardcover"}
 
 
 def _private_module_names() -> list[str]:
@@ -283,7 +283,7 @@ class TestEnrichmentRegistryIntegration:
     def reset_registry(self) -> None:
         EnrichmentRegistry.reset_instance()
 
-    def test_the_three_builtin_provider_folders_are_discovered(self) -> None:
+    def test_every_builtin_provider_folder_is_discovered(self) -> None:
         registry = get_enrichment_registry()
 
         assert _BUILTIN_PROVIDER_NAMES <= set(registry.get_all_providers())
