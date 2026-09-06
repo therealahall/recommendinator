@@ -22,6 +22,7 @@ _FLAGS_NOTHING_SUPPORTED = json.dumps(
 
 _STAMPED_BY_AN_EARLIER_BUILD = 15
 _BEFORE_THE_ORDINAL_LADDER = 21
+_BEFORE_THE_SERIES_ALIASES_FOLDED = 22
 
 
 def _needs_enrichment(db: SQLiteDB, db_id: int) -> int:
@@ -703,7 +704,7 @@ class TestGuessedSeriesPositionsMigration:
 
         book = db.get_content_item(seeded["book"])
         assert book is not None
-        assert book.metadata["series_index"] == 2.5
+        assert book.metadata["series_position"] == 2.5
         assert _needs_enrichment(db, seeded["book"]) == 0
         show = db.get_content_item(seeded["show"])
         assert show is not None
@@ -722,6 +723,85 @@ class TestGuessedSeriesPositionsMigration:
         assert standalone is not None
         assert standalone.metadata["tmdb_collection_id"] == 422837
         assert _needs_enrichment(db, seeded["standalone_movie"]) == 0
+
+
+class TestSeriesAliasesFoldIntoOnePair:
+    """A refused ordinal could be read back off the alias key beside it."""
+
+    def _upgraded(self, tmp_path: Path, blob: dict[str, Any]) -> dict[str, Any]:
+        db_path = tmp_path / "test.db"
+        db = SQLiteDB(db_path)
+        db_id = db.save_content_item(
+            ContentItem(
+                id="gr:1",
+                title="Caliban's War",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+                metadata=blob,
+            )
+        )
+        with db.connection() as conn:
+            conn.execute(f"PRAGMA user_version = {_BEFORE_THE_SERIES_ALIASES_FOLDED}")
+            conn.commit()
+
+        item = SQLiteDB(db_path).get_content_item(db_id)
+        assert item is not None
+        return item.metadata
+
+    def test_a_title_marker_becomes_the_canonical_pair_at_stated(
+        self, tmp_path: Path
+    ) -> None:
+        assert self._upgraded(
+            tmp_path, {"series": "The Expanse", "series_index": 2.5}
+        ) == {
+            "series_name": "The Expanse",
+            "series_position": 2.5,
+            "series_position_authority": "stated",
+        }
+
+    def test_the_authority_a_stored_ordinal_carried_is_kept(
+        self, tmp_path: Path
+    ) -> None:
+        folded = self._upgraded(
+            tmp_path,
+            {
+                "series": "The Expanse",
+                "series_index": 4.0,
+                "series_position_authority": "library",
+            },
+        )
+
+        assert folded["series_position_authority"] == "library"
+
+    def test_the_canonical_value_outlives_the_alias_beside_it(
+        self, tmp_path: Path
+    ) -> None:
+        folded = self._upgraded(
+            tmp_path,
+            {
+                "series_name": "The Expanse",
+                "series_position": 5.0,
+                "series_position_authority": "library",
+                "series": "Expanse Novels",
+                "series_index": 7.0,
+            },
+        )
+
+        assert folded == {
+            "series_name": "The Expanse",
+            "series_position": 5.0,
+            "series_position_authority": "library",
+        }
+
+    def test_a_provider_owned_name_is_left_where_it_was(self, tmp_path: Path) -> None:
+        folded = self._upgraded(
+            tmp_path, {"franchise": "The Witcher", "series_title": "The Witcher Saga"}
+        )
+
+        assert folded == {
+            "franchise": "The Witcher",
+            "series_title": "The Witcher Saga",
+        }
 
 
 class TestOnlyTheDeclaredShapesAreRepaired:

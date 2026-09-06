@@ -228,9 +228,11 @@ DETAIL_FIELDS: dict[str, ContentTypeFields] = {
                 select_alias="book_author",
                 template_column="author",
             ),
-            DetailField("series", FieldKind.FREE_FORM, template_column="series"),
+            # The headers keep the spelling every exported file has used; the
+            # library stores the one pair src/utils/series.py reads.
+            DetailField("series_name", FieldKind.FREE_FORM, template_column="series"),
             DetailField(
-                "series_index", FieldKind.FREE_FORM, template_column="series_index"
+                "series_position", FieldKind.FREE_FORM, template_column="series_index"
             ),
             DetailField("isbn", FieldKind.TEXT, column="isbn", template_column="isbn"),
             DetailField(

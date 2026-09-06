@@ -134,23 +134,42 @@ def extract_series_info(
     return None
 
 
+#: The one name key and the one position key every writer stores. ``series`` and
+#: ``series_index`` are template column headers only — see
+#: :mod:`src.models.detail_fields` — and schema 23 folded the stored ones in.
+SERIES_NAME_KEY = "series_name"
+SERIES_POSITION_KEY = "series_position"
+
+MAX_SERIES_POSITION = 1000
+
+
+def valid_series_position(position: float) -> bool:
+    """Zero is Wikidata's convention for a prequel, and one every reader here
+    understands. ``float()`` takes "inf"/"nan", which poison every comparison.
+    """
+    return math.isfinite(position) and 0 <= position <= MAX_SERIES_POSITION
+
+
 _POSITION_KEYS_BY_TYPE: dict[ContentType, tuple[str, ...]] = {
-    ContentType.TV_SHOW: ("series_position", "season", "season_number", "season_num"),
+    ContentType.TV_SHOW: (
+        SERIES_POSITION_KEY,
+        "season",
+        "season_number",
+        "season_num",
+    ),
     ContentType.MOVIE: (
-        "series_position",
+        SERIES_POSITION_KEY,
         "part",
         "part_number",
         "episode",
         "episode_number",
-        "movie_number",
     ),
 }
 
 _DEFAULT_POSITION_KEYS: tuple[str, ...] = (
-    "series_position",
+    SERIES_POSITION_KEY,
     "series_number",
     "series_num",
-    "series_index",
     "book_number",
     "book_num",
     "part",
@@ -167,17 +186,14 @@ def _stated_series_position(
         else _POSITION_KEYS_BY_TYPE.get(content_type, _DEFAULT_POSITION_KEYS)
     )
     for key in keys:
-        if not metadata.get(key):
+        value = metadata.get(key)
+        if value is None:
             continue
         try:
-            position = float(metadata[key])
+            position = float(value)
         except (ValueError, TypeError):
             continue
-        # ``float()`` accepts "inf"/"nan" where ``int()`` raised; reject non-finite
-        # values explicitly so a malformed metadata position cannot poison ordering.
-        if math.isfinite(position) and 1 <= position <= 1000:
-            return position
-        return None
+        return position if valid_series_position(position) else None
     return None
 
 
@@ -214,12 +230,9 @@ class SeriesAuthority(str, Enum):
 #: Where the ordinal's authority is recorded, beside the ordinal itself.
 SERIES_AUTHORITY_KEY = "series_position_authority"
 
-SERIES_NAME_KEYS: tuple[str, ...] = ("series_name", "series")
-SERIES_POSITION_KEYS: tuple[str, ...] = ("series_position", "series_index")
-
 #: Every key :func:`reconcile_series` decides, so no other rule may touch them.
 SERIES_RECONCILED_KEYS = frozenset(
-    (*SERIES_NAME_KEYS, *SERIES_POSITION_KEYS, SERIES_AUTHORITY_KEY)
+    (SERIES_NAME_KEY, SERIES_POSITION_KEY, SERIES_AUTHORITY_KEY)
 )
 
 
@@ -237,21 +250,29 @@ def stored_series_authority(
         return SeriesAuthority.STATED
 
 
-def _stated_series_name(metadata: Mapping[str, Any]) -> str | None:
-    for key in SERIES_NAME_KEYS:
-        name = str(metadata.get(key) or "").strip()
-        if name:
-            return name
-    return None
-
-
 def reconcile_series(
     existing: Mapping[str, Any], incoming: Mapping[str, Any]
 ) -> dict[str, Any]:
-    """Authority alone decides the ordinal. The name follows it, and otherwise
-    only fills a gap: a stored name is no worse than one arriving beside an
-    ordinal too weak to replace anything.
+    """Authority alone decides the ordinal, and a matched source's series name
+    follows it. A name arriving beside an ordinal too weak to replace anything
+    only fills a gap.
     """
+    return _settled_series(existing, incoming, renames=True)
+
+
+def reconcile_series_ordinal(
+    existing: Mapping[str, Any], incoming: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Wikidata labels the series 'The Godfather' where TMDB's collection is
+    'The Godfather Collection', so renaming on the strength of an ordinal alone
+    would split one collection into two one-member series.
+    """
+    return _settled_series(existing, incoming, renames=False)
+
+
+def _settled_series(
+    existing: Mapping[str, Any], incoming: Mapping[str, Any], *, renames: bool
+) -> dict[str, Any]:
     offered = stored_series_authority(incoming)
     replacing = (
         offered
@@ -260,32 +281,23 @@ def reconcile_series(
     )
 
     fields: dict[str, Any] = {}
-    name = _stated_series_name(incoming)
-    if name and (replacing or not _stated_series_name(existing)):
-        fields.update(_written_keys(existing, incoming, SERIES_NAME_KEYS, name))
+    # Narrow on what arrives, broad on what is stored: a provider owns the
+    # alias it writes, and one already naming the series is a name to keep.
+    name = str(incoming.get(SERIES_NAME_KEY) or "").strip()
+    stored_name = get_series_name_from_metadata(existing)
+    if name and (stored_name is None or (renames and replacing is not None)):
+        fields[SERIES_NAME_KEY] = name
     if replacing is not None:
-        position = get_series_position_from_metadata(incoming)
-        fields.update(_written_keys(existing, incoming, SERIES_POSITION_KEYS, position))
+        fields[SERIES_POSITION_KEY] = get_series_position_from_metadata(incoming)
         fields[SERIES_AUTHORITY_KEY] = replacing.value
     return fields
 
 
-def _written_keys(
-    existing: Mapping[str, Any],
-    incoming: Mapping[str, Any],
-    keys: tuple[str, ...],
-    value: Any,
-) -> dict[str, Any]:
-    """Every key either side used, so the loser is corrected rather than left
-    beside the winner for the next reader to pick instead.
-    """
-    return {key: value for key in keys if key in existing or key in incoming}
-
-
 def get_series_name_from_metadata(metadata: Mapping[str, Any] | None) -> str | None:
+    """The trailing two are read aliases a provider owns and only it writes."""
     if not metadata:
         return None
-    for key in (*SERIES_NAME_KEYS, "series_title", "franchise"):
+    for key in (SERIES_NAME_KEY, "series_title", "franchise"):
         val = metadata.get(key)
         if val is not None:
             stripped = str(val).strip()
@@ -299,14 +311,11 @@ def get_series_position_from_metadata(
 ) -> float | None:
     if not metadata:
         return None
-    for key in SERIES_POSITION_KEYS:
-        try:
-            position = float(metadata[key])
-        except (KeyError, ValueError, TypeError):
-            continue
-        if math.isfinite(position):
-            return position
-    return None
+    try:
+        position = float(metadata[SERIES_POSITION_KEY])
+    except (KeyError, ValueError, TypeError):
+        return None
+    return position if valid_series_position(position) else None
 
 
 def _get_series_info(
@@ -334,13 +343,21 @@ def get_series_item_number(
 
 
 def series_entry(item: ContentItem) -> tuple[str, float | None] | None:
+    """A name with no position falls through to the title: RAWG names a
+    franchise for every game, and 'Halo 3' states its own number.
+    """
     name = get_series_name_from_metadata(item.metadata)
-    if name is not None:
-        return name, _stated_series_position(item.metadata, item.content_type)
-    return extract_series_info(item.title, item.metadata, item.content_type)
+    position = _stated_series_position(item.metadata, item.content_type)
+    if name is not None and position is not None:
+        return name, position
+    parsed = extract_series_info(item.title, item.metadata, item.content_type)
+    if parsed is not None:
+        return parsed
+    return None if name is None else (name, None)
 
 
-_RELEASE_YEAR_KEYS: tuple[str, ...] = ("release_year", "year", "year_published")
+#: No ``year_published``: an edition's year is not the work's (detail_fields.py).
+_RELEASE_YEAR_KEYS: tuple[str, ...] = ("release_year", "year")
 
 
 def _release_year(item: ContentItem) -> int | None:
@@ -352,9 +369,26 @@ def _release_year(item: ContentItem) -> int | None:
     return None
 
 
-def _dense_ranks(year_by_title: dict[str, int]) -> dict[str, float]:
-    ordered = sorted(year_by_title.items(), key=lambda entry: (entry[1], entry[0]))
-    return {title: float(rank) for rank, (title, _year) in enumerate(ordered, start=1)}
+class _Placed(NamedTuple):
+    """Keyed by id, so a collection holding both Lion Kings ranks them apart."""
+
+    key: str
+    year: int | None
+    title: str
+
+
+def _rank_key(placed: _Placed) -> tuple[bool, int, str]:
+    return (placed.year is None, placed.year or 0, placed.title)
+
+
+def _dense_ranks(placed: Iterable[_Placed]) -> dict[str, float]:
+    """An undated entry ranks last, by title — which is every book in a series."""
+    ordered = sorted(placed, key=_rank_key)
+    return {entry.key: float(rank) for rank, entry in enumerate(ordered, start=1)}
+
+
+def _placement_key(item: ContentItem) -> str:
+    return item.id or item.title
 
 
 class SeriesOrder:
@@ -365,20 +399,18 @@ class SeriesOrder:
 
     def __init__(self, items: Iterable[ContentItem] = ()) -> None:
         stated: dict[str, list[float | None]] = defaultdict(list)
-        years: dict[str, dict[str, int]] = defaultdict(dict)
+        placed: dict[str, dict[str, _Placed]] = defaultdict(dict)
         for item in items:
             entry = series_entry(item)
             if entry is None:
                 continue
             name, ordinal = entry
             stated[name].append(ordinal)
-            year = _release_year(item)
-            if year is not None:
-                known = years[name]
-                known[item.title] = min(year, known.get(item.title, year))
+            key = _placement_key(item)
+            placed[name][key] = _Placed(key, _release_year(item), item.title)
 
         self._ranks: dict[str, dict[str, float]] = {
-            name: _dense_ranks(years[name])
+            name: _dense_ranks(placed[name].values())
             for name, ordinals in stated.items()
             if None in ordinals
         }
@@ -391,7 +423,7 @@ class SeriesOrder:
         ranks = self._ranks.get(name)
         if ranks is None:
             return (name, ordinal) if ordinal is not None else None
-        rank = ranks.get(item.title)
+        rank = ranks.get(_placement_key(item))
         return None if rank is None else (name, rank)
 
 
@@ -755,8 +787,8 @@ _SERIES_MARKER = re.compile(
 
 
 class SeriesFields(TypedDict, total=False):
-    series: str
-    series_index: float
+    series_name: str
+    series_position: float
     series_position_authority: str
 
 
@@ -770,7 +802,7 @@ def split_series_from_title(title: str) -> tuple[str, SeriesFields]:
     if not bare or not series:
         return title, {}
     return bare, {
-        "series": series,
-        "series_index": float(match.group(2)),
+        "series_name": series,
+        "series_position": float(match.group(2)),
         "series_position_authority": SeriesAuthority.STATED.value,
     }

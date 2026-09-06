@@ -163,8 +163,8 @@ class TestCalibreWebFetch:
         assert item.metadata["language"] == "en"
         assert item.metadata["published"] == "1937-09-21"
         assert item.metadata["isbn"] == "9780261103283"
-        assert item.metadata["series"] == "Middle-earth"
-        assert item.metadata["series_index"] == 1.0
+        assert item.metadata["series_name"] == "Middle-earth"
+        assert item.metadata["series_position"] == 1.0
         assert item.metadata["tags"] == ["Fantasy"]
         assert "cover_url" not in item.metadata
 
@@ -344,8 +344,8 @@ class TestCalibreWebSeries:
         with patch("requests.get", side_effect=responses):
             items = list(plugin.fetch(config))
 
-        assert items[0].metadata["series"] == "The Lord of the Rings"
-        assert items[0].metadata["series_index"] == 1.0
+        assert items[0].metadata["series_name"] == "The Lord of the Rings"
+        assert items[0].metadata["series_position"] == 1.0
         assert items[0].metadata["series_position_authority"] == "library"
 
     def test_bare_series_elements_fallback(
@@ -360,8 +360,8 @@ class TestCalibreWebSeries:
         with patch("requests.get", side_effect=responses):
             items = list(plugin.fetch(config))
 
-        assert items[0].metadata["series"] == "Discworld"
-        assert items[0].metadata["series_index"] == 5.0
+        assert items[0].metadata["series_name"] == "Discworld"
+        assert items[0].metadata["series_position"] == 5.0
 
 
 class TestCalibreWebEdgeCases:

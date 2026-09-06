@@ -16,7 +16,12 @@ from src.ingestion.plugin_base import (
 )
 from src.ingestion.urls import source_url_error
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
-from src.utils.series import SERIES_AUTHORITY_KEY, SeriesAuthority
+from src.utils.series import (
+    SERIES_AUTHORITY_KEY,
+    SERIES_NAME_KEY,
+    SERIES_POSITION_KEY,
+    SeriesAuthority,
+)
 from src.utils.text import sanitize_for_log
 
 if TYPE_CHECKING:
@@ -392,9 +397,9 @@ def _build_metadata(entry: ElementTree.Element) -> dict[str, Any]:
 
     series, series_index = _parse_series(entry)
     if series:
-        metadata["series"] = series
+        metadata[SERIES_NAME_KEY] = series
     if series_index is not None:
-        metadata["series_index"] = series_index
+        metadata[SERIES_POSITION_KEY] = series_index
         # The operator's own library, so it outranks a marker in a title.
         metadata[SERIES_AUTHORITY_KEY] = SeriesAuthority.LIBRARY.value
 

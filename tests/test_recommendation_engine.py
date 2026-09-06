@@ -372,11 +372,9 @@ class TestCustomRulesIntegration:
 class TestTwinnedSeriesEntryRegression:
     """Reported: a run offered book #2 while #1 sat unread, both rows counting."""
 
-    @pytest.mark.parametrize("position_key", ["series_position", "series_index"])
     def test_a_merged_twin_takes_one_place_in_its_series_regression(
-        self, real_engine, real_storage, position_key
+        self, real_engine, real_storage
     ):
-        """Calibre-Web writes ``series_index``, the providers ``series_position``."""
         _save_book(
             real_storage,
             item_id="taste",
@@ -389,14 +387,14 @@ class TestTwinnedSeriesEntryRegression:
             item_id="calibre-1",
             title="All Systems Red: A Murderbot Novella",
             status=ConsumptionStatus.UNREAD,
-            metadata={"series": "The Murderbot Diaries", position_key: 1},
+            metadata={"series_name": "The Murderbot Diaries", "series_position": 1},
         )
         goodreads_id = _save_book(
             real_storage,
             item_id="goodreads-1",
             title="All Systems Red",
             status=ConsumptionStatus.UNREAD,
-            metadata={"series": "The Murderbot Diaries", "series_index": 1},
+            metadata={"series_name": "The Murderbot Diaries", "series_position": 1},
         )
         for position, title in ((2, "Artificial Condition"), (3, "Rogue Protocol")):
             _save_book(
@@ -1594,6 +1592,10 @@ class TestEngineSeriesSubstitutionRegression:
 
 
 class TestPositionlessSeriesOfferedInReleaseOrder:
+    """A franchise whose titles carry no number at all, so release year is the
+    only order there is.
+    """
+
     @staticmethod
     def _game(
         item_id: str,
@@ -1609,7 +1611,7 @@ class TestPositionlessSeriesOfferedInReleaseOrder:
             status=status,
             rating=rating,
             metadata={
-                "franchise": "Final Fantasy",
+                "franchise": "The Legend of Zelda",
                 "release_year": year,
                 "genres": ["RPG"],
             },
@@ -1646,24 +1648,24 @@ class TestPositionlessSeriesOfferedInReleaseOrder:
     def test_the_earliest_released_entry_is_offered_and_the_rest_held(
         self, engine, mock_storage
     ) -> None:
-        seventh = self._game("ff7", "Final Fantasy VII", 1997)
-        eighth = self._game("ff8", "Final Fantasy VIII", 1999)
-        ninth = self._game("ff9", "Final Fantasy IX", 2000)
+        earliest = self._game("ocarina", "The Legend of Zelda: Ocarina of Time", 1998)
+        middle = self._game("wind-waker", "The Legend of Zelda: The Wind Waker", 2002)
+        latest = self._game("twilight", "The Legend of Zelda: Twilight Princess", 2006)
 
         offered = self._offered(
-            engine, mock_storage, [self._taste()], [ninth, eighth, seventh]
+            engine, mock_storage, [self._taste()], [latest, middle, earliest]
         )
 
-        assert offered == ["ff7"]
+        assert offered == ["ocarina"]
 
     def test_the_offered_entry_is_scored_as_a_series_opener(
         self, engine, mock_storage
     ) -> None:
-        seventh = self._game("ff7", "Final Fantasy VII", 1997)
-        eighth = self._game("ff8", "Final Fantasy VIII", 1999)
+        earliest = self._game("ocarina", "The Legend of Zelda: Ocarina of Time", 1998)
+        later = self._game("wind-waker", "The Legend of Zelda: The Wind Waker", 2002)
 
         [offered] = self._recommended(
-            engine, mock_storage, [self._taste()], [eighth, seventh]
+            engine, mock_storage, [self._taste()], [later, earliest]
         )
 
         assert offered.score_breakdown["series_order"] > 0.5
@@ -1671,21 +1673,21 @@ class TestPositionlessSeriesOfferedInReleaseOrder:
     def test_completing_the_earliest_releases_the_one_after_it(
         self, engine, mock_storage
     ) -> None:
-        seventh = self._game(
-            "ff7",
-            "Final Fantasy VII",
-            1997,
+        earliest = self._game(
+            "ocarina",
+            "The Legend of Zelda: Ocarina of Time",
+            1998,
             status=ConsumptionStatus.COMPLETED,
             rating=5,
         )
-        eighth = self._game("ff8", "Final Fantasy VIII", 1999)
-        ninth = self._game("ff9", "Final Fantasy IX", 2000)
+        middle = self._game("wind-waker", "The Legend of Zelda: The Wind Waker", 2002)
+        latest = self._game("twilight", "The Legend of Zelda: Twilight Princess", 2006)
 
         offered = self._offered(
-            engine, mock_storage, [self._taste(), seventh], [ninth, eighth]
+            engine, mock_storage, [self._taste(), earliest], [latest, middle]
         )
 
-        assert offered == ["ff8"]
+        assert offered == ["wind-waker"]
 
 
 class TestContinuationScorerExclusion:

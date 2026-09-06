@@ -120,7 +120,9 @@ def _book(
         author=author,
         content_type=ContentType.BOOK,
         status=ConsumptionStatus.UNREAD,
-        metadata={"series": series[0], "series_index": series[1]} if series else {},
+        metadata=(
+            {"series_name": series[0], "series_position": series[1]} if series else {}
+        ),
     )
 
 

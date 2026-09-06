@@ -25,6 +25,8 @@ from src.utils.series import (
     is_next_after_consumed,
     latest_season_watched_date,
     reconcile_series,
+    reconcile_series_ordinal,
+    series_entry,
     should_recommend_item,
     split_series_from_title,
 )
@@ -53,7 +55,7 @@ def test_extract_series_info():
 
 
 def test_extract_series_info_from_metadata():
-    metadata_tv = {"series": "The Expanse", "season": 2}
+    metadata_tv = {"series_name": "The Expanse", "season": 2}
     assert extract_series_info("The Expanse", metadata_tv, ContentType.TV_SHOW) == (
         "The Expanse",
         2,
@@ -112,7 +114,7 @@ def test_get_series_name():
         title="Show",
         content_type=ContentType.TV_SHOW,
         status=ConsumptionStatus.UNREAD,
-        metadata={"series": "Breaking Bad", "season": 1},
+        metadata={"series_name": "Breaking Bad", "season": 1},
     )
     assert get_series_name(item=item_with_metadata) == "Breaking Bad"
 
@@ -195,7 +197,7 @@ def test_is_first_item_in_series():
         title="Movie",
         content_type=ContentType.MOVIE,
         status=ConsumptionStatus.UNREAD,
-        metadata={"series": "Star Wars", "episode": 1},
+        metadata={"series_name": "Star Wars", "episode": 1},
     )
     assert is_first_item_in_series(item=item_with_metadata) is True
 
@@ -568,6 +570,48 @@ class TestSeriesPositionMetadataRegression:
         result = extract_series_info("ME2", metadata, ContentType.VIDEO_GAME)
         assert result == ("Mass Effect", 2)
 
+    def test_movie_with_series_position_from_tmdb_regression(self) -> None:
+        metadata = {"series_name": "The Godfather Collection", "series_position": 2}
+        result = extract_series_info(
+            "The Godfather Part II", metadata, ContentType.MOVIE
+        )
+        assert result == ("The Godfather Collection", 2)
+
+    def test_game_with_series_position_and_franchise_regression(self) -> None:
+        metadata = {"franchise": "Dragon Age", "series_position": 3}
+        result = extract_series_info(
+            "Dragon Age Inquisition", metadata, ContentType.VIDEO_GAME
+        )
+        assert result == ("Dragon Age", 3)
+
+    def test_a_zero_position_reads_back_as_the_prequel_it_states_regression(
+        self,
+    ) -> None:
+        """P1545 states 0 for a prequel, and a falsy read skipped it silently."""
+        metadata = {"series_name": "Dune", "series_position": 0}
+        assert extract_series_info("Dune Prequel", metadata, ContentType.BOOK) == (
+            "Dune",
+            0,
+        )
+
+
+class TestAFranchiseWithNoStatedPosition:
+    @staticmethod
+    def _game(title: str) -> ContentItem:
+        return ContentItem(
+            id=title,
+            title=title,
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"franchise": "Halo"},
+        )
+
+    def test_a_rawg_franchise_still_takes_the_position_its_title_states(self) -> None:
+        assert series_entry(self._game("Halo 3")) == ("Halo", 3.0)
+
+    def test_a_title_stating_no_number_keeps_the_franchise_it_names(self) -> None:
+        assert series_entry(self._game("Halo Wars")) == ("Halo", None)
+
 
 class TestFindEarliestRecommendable:
     def test_finds_earliest_item_by_series_number(self) -> None:
@@ -670,8 +714,8 @@ class TestSplitSeriesFromTitle:
         assert split_series_from_title(f"All Systems Red {marker}") == (
             "All Systems Red",
             {
-                "series": "Murderbot",
-                "series_index": index,
+                "series_name": "Murderbot",
+                "series_position": index,
                 "series_position_authority": "stated",
             },
         )
@@ -682,8 +726,8 @@ class TestSplitSeriesFromTitle:
         assert split_series_from_title("Dune (Dune, #1) (1965)") == (
             "Dune (1965)",
             {
-                "series": "Dune",
-                "series_index": 1.0,
+                "series_name": "Dune",
+                "series_position": 1.0,
                 "series_position_authority": "stated",
             },
         )
@@ -700,47 +744,80 @@ class TestSplitSeriesFromTitle:
 
 class TestPositionlessSeriesOrdersByReleaseDate:
     @staticmethod
-    def _book(
-        title: str, year: int | None = None, index: float | None = None
+    def _film(
+        title: str, year: int | None = None, position: float | None = None
     ) -> ContentItem:
-        metadata: dict[str, object] = {"series": "Silo"}
+        metadata: dict[str, object] = {"series_name": "Alien Collection"}
         if year is not None:
-            metadata["year_published"] = year
-        if index is not None:
-            metadata["series_index"] = index
+            metadata["release_year"] = year
+        if position is not None:
+            metadata["series_position"] = position
+        return ContentItem(
+            id=title,
+            title=title,
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+            metadata=metadata,
+        )
+
+    @staticmethod
+    def _book(title: str, edition_year: int) -> ContentItem:
         return ContentItem(
             id=title,
             title=title,
             content_type=ContentType.BOOK,
             status=ConsumptionStatus.UNREAD,
-            metadata=metadata,
+            metadata={"series_name": "Dune", "year_published": edition_year},
         )
 
     def test_one_entry_without_an_ordinal_dates_the_whole_series(self) -> None:
-        holds_an_ordinal = self._book("Book One", year=2011, index=1.0)
-        states_none = self._book("Book Two", year=2009)
+        holds_an_ordinal = self._film("Film One", year=2011, position=1.0)
+        states_none = self._film("Film Two", year=2009)
         unconsumed = [holds_an_ordinal, states_none]
 
         assert should_recommend_item(states_none, {}, unconsumed) is True
         assert should_recommend_item(holds_an_ordinal, {}, unconsumed) is False
 
-    def test_an_undated_entry_neither_leads_its_series_nor_blocks_it(self) -> None:
-        dated = self._book("Dated Book", year=2012)
-        undated = self._book("Undated Book")
+    def test_an_undated_entry_ranks_after_the_dated_ones(self) -> None:
+        dated = self._film("Dated Film", year=2012)
+        undated = self._film("Undated Film")
         unconsumed = [undated, dated]
 
-        assert find_earliest_recommendable("Silo", {}, unconsumed) is dated
+        assert find_earliest_recommendable("Alien Collection", {}, unconsumed) is dated
         assert should_recommend_item(dated, {}, unconsumed) is True
-        assert should_recommend_item(undated, {}, unconsumed) is True
+        assert should_recommend_item(undated, {}, unconsumed) is False
 
     def test_two_entries_of_one_year_order_by_title_whatever_the_input_order(
         self,
     ) -> None:
-        zebra = self._book("Zebra", year=1999)
-        aardvark = self._book("Aardvark", year=1999)
+        zebra = self._film("Zebra", year=1999)
+        aardvark = self._film("Aardvark", year=1999)
 
-        assert find_earliest_recommendable("Silo", {}, [zebra, aardvark]) is aardvark
-        assert find_earliest_recommendable("Silo", {}, [aardvark, zebra]) is aardvark
+        order = ("Alien Collection", {})
+        assert find_earliest_recommendable(*order, [zebra, aardvark]) is aardvark
+        assert find_earliest_recommendable(*order, [aardvark, zebra]) is aardvark
+
+    def test_two_films_of_one_title_keep_ranks_of_their_own_regression(self) -> None:
+        """Both Lion Kings shared a rank, so completing one consumed the other."""
+        original = self._film("The Lion King", year=1994)
+        remake = self._film("The Lion King", year=2019)
+        remake.id = "remake"
+
+        order = SeriesOrder([original, remake])
+
+        assert order.locate(original) == ("Alien Collection", 1.0)
+        assert order.locate(remake) == ("Alien Collection", 2.0)
+
+    def test_a_reprints_year_does_not_order_a_book_series_regression(self) -> None:
+        """A mass-market Dune reprinted in 2011 must not follow a 1969 first
+        print of its sequel: an edition's year is not the work's, so a book
+        series orders by title.
+        """
+        reprinted_first = self._book("Dune", edition_year=2011)
+        first_printed_sequel = self._book("Dune Messiah", edition_year=1969)
+        unconsumed = [first_printed_sequel, reprinted_first]
+
+        assert find_earliest_recommendable("Dune", {}, unconsumed) is reprinted_first
 
     def test_expanded_seasons_keep_ordering_by_season_number(self) -> None:
         show = ContentItem(
@@ -768,20 +845,18 @@ class TestReconcileSeries:
 
     def test_an_authored_ordinal_replaces_one_a_title_marker_stated(self) -> None:
         stored = {
-            "series": "The Expanse",
-            "series_index": 2.5,
+            "series_name": "The Expanse",
+            "series_position": 2.5,
             "series_position_authority": "stated",
         }
 
         assert reconcile_series(stored, self._authored(3.0)) == {
-            "series_index": 3.0,
             "series_position": 3.0,
             "series_position_authority": "authored",
         }
 
     def test_an_ordinal_stored_before_the_ladder_existed_still_upgrades(self) -> None:
-        assert reconcile_series({"series_index": 2.5}, self._authored(3.0)) == {
-            "series_index": 3.0,
+        assert reconcile_series({"series_position": 2.5}, self._authored(3.0)) == {
             "series_position": 3.0,
             "series_position_authority": "authored",
         }
@@ -791,18 +866,18 @@ class TestReconcileSeries:
     ) -> None:
         offered = {"series_position": 3.0, "series_position_authority": "stated"}
 
-        assert reconcile_series({"series_index": 2.5}, offered) == {}
+        assert reconcile_series({"series_position": 2.5}, offered) == {}
 
     @pytest.mark.parametrize("authority", ["stated", "authored"])
     def test_the_librarys_own_ordinal_is_left_alone(self, authority: str) -> None:
-        stored = {"series_index": 4.0, "series_position_authority": "library"}
+        stored = {"series_position": 4.0, "series_position_authority": "library"}
         offered = {"series_position": 5.0, "series_position_authority": authority}
 
         assert reconcile_series(stored, offered) == {}
 
     def test_an_authored_ordinal_is_not_replaced_by_a_title_marker(self) -> None:
         stored = self._authored(3.0)
-        offered = {"series_index": 2.5, "series_position_authority": "stated"}
+        offered = {"series_position": 2.5, "series_position_authority": "stated"}
 
         assert reconcile_series(stored, offered) == {}
 
@@ -821,6 +896,36 @@ class TestReconcileSeries:
 
         assert reconcile_series({}, offered) == {"series_name": "Alien Collection"}
         assert reconcile_series({"series_name": "Alien"}, offered) == {}
+
+
+class TestReconcileSeriesOrdinal:
+    """Wikidata positioning one film of a collection and not the other split it
+    in two, because it renamed 'The Godfather Collection' on the way through.
+    """
+
+    _WIKIDATA = {
+        "series_position": 2.0,
+        "series_name": "The Godfather",
+        "series_position_authority": "authored",
+    }
+
+    def test_a_stated_name_survives_the_ordinal_that_positions_it(self) -> None:
+        stored = {"series_name": "The Godfather Collection"}
+
+        assert reconcile_series_ordinal(stored, self._WIKIDATA) == {
+            "series_position": 2.0,
+            "series_position_authority": "authored",
+        }
+
+    def test_a_franchise_names_the_series_as_surely_as_the_canonical_key(self) -> None:
+        stored = {"franchise": "Halo"}
+
+        assert "series_name" not in reconcile_series_ordinal(stored, self._WIKIDATA)
+
+    def test_a_series_with_no_name_takes_the_one_the_ordinal_states(self) -> None:
+        assert reconcile_series_ordinal({}, self._WIKIDATA)["series_name"] == (
+            "The Godfather"
+        )
 
 
 class TestDecimalSeriesOrderingRegression:

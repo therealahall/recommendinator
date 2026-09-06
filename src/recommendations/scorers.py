@@ -49,7 +49,8 @@ class ScoringContext:
     series_tracking: dict[str, set[float]]
     content_type: ContentType
     all_unconsumed_items: list[ContentItem]
-    series_order: SeriesOrder = field(default_factory=SeriesOrder)
+    #: Required: an empty one silently hides every series with no ordinal.
+    series_order: SeriesOrder
 
     # Pre-computed lookups (populated by __post_init__)
     consumed_genres: set[str] = field(default_factory=set)

@@ -16,7 +16,7 @@ from src.utils.dates import parse_iso_timestamp
 from src.utils.series import (
     MAX_SEASONS,
     SERIES_AUTHORITY_KEY,
-    SERIES_POSITION_KEYS,
+    SERIES_POSITION_KEY,
     SeriesAuthority,
     split_series_from_title,
 )
@@ -143,7 +143,7 @@ def fill_series_from_title(title: str, metadata: dict[str, Any]) -> str:
     A stated column is the exporting library's own, so it keeps that rank.
     """
     bare, stated = split_series_from_title(title)
-    from_the_file = any(key in metadata for key in SERIES_POSITION_KEYS)
+    from_the_file = SERIES_POSITION_KEY in metadata
     for key, value in stated.items():
         metadata.setdefault(key, value)
     if from_the_file:
