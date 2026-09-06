@@ -1,6 +1,20 @@
 # CHANGELOG
 
 
+## v0.53.1 (2026-09-06)
+
+### Bug Fixes
+
+- **enrichment**: Let a re-enrich replace a stored series name
+  ([`2e5eb1e`](https://github.com/therealahall/recommendinator/commit/2e5eb1eed68d2a50c477cc51d5e48408c7106336))
+
+- **enrichment**: Stop RAWG guessing, and keep whole series names
+  ([`23139c9`](https://github.com/therealahall/recommendinator/commit/23139c9cbea4abc0bf42fb3a72a7e17f1828ce15))
+
+- **enrichment**: Stop taking whatever TMDB ranked first
+  ([`ab6646d`](https://github.com/therealahall/recommendinator/commit/ab6646d237e45fa0857f26773f883a7cfc0afdb7))
+
+
 ## v0.53.0 (2026-09-05)
 
 ### Bug Fixes
