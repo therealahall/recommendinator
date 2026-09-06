@@ -21,6 +21,16 @@ _FLAGS_NOTHING_SUPPORTED = json.dumps(
 )
 
 _STAMPED_BY_AN_EARLIER_BUILD = 15
+_BEFORE_THE_ORDINAL_LADDER = 21
+
+
+def _needs_enrichment(db: SQLiteDB, db_id: int) -> int:
+    with db.connection() as conn:
+        row = conn.execute(
+            "SELECT needs_enrichment FROM enrichment_status WHERE content_item_id = ?",
+            (db_id,),
+        ).fetchone()
+    return int(row["needs_enrichment"])
 
 
 def _mark_written_before_the_repair(
@@ -594,6 +604,124 @@ class TestStrandedPlatformFlagsMigration:
 
         assert resynced_id == db_id
         assert json.loads(_stored_platforms(db, db_id)) == ["Windows"]
+
+
+class TestGuessedSeriesPositionsMigration:
+    def _seed(self, db_path: Path) -> dict[str, int]:
+        db = SQLiteDB(db_path)
+        seeded = {
+            "movie": db.save_content_item(
+                ContentItem(
+                    id="tmdb:1726",
+                    title="Iron Man",
+                    content_type=ContentType.MOVIE,
+                    status=ConsumptionStatus.COMPLETED,
+                    metadata={"series_name": "MCU", "series_position": 7},
+                )
+            ),
+            "game": db.save_content_item(
+                ContentItem(
+                    id="rawg:3328",
+                    title="The Witcher III",
+                    content_type=ContentType.VIDEO_GAME,
+                    status=ConsumptionStatus.UNREAD,
+                    metadata={"franchise": "The Witcher", "series_position": 3},
+                )
+            ),
+            "counted_movie": db.save_content_item(
+                ContentItem(
+                    id="tmdb:11",
+                    title="Star Wars",
+                    content_type=ContentType.MOVIE,
+                    status=ConsumptionStatus.COMPLETED,
+                    metadata={"series_name": "Star Wars", "movie_number": 4},
+                )
+            ),
+            "standalone_movie": db.save_content_item(
+                ContentItem(
+                    id="tmdb:78",
+                    title="Blade Runner",
+                    content_type=ContentType.MOVIE,
+                    status=ConsumptionStatus.COMPLETED,
+                    metadata={"tmdb_collection_id": 422837},
+                )
+            ),
+            "book": db.save_content_item(
+                ContentItem(
+                    id="gr:1",
+                    title="Caliban's War",
+                    content_type=ContentType.BOOK,
+                    status=ConsumptionStatus.UNREAD,
+                    metadata={"series": "The Expanse", "series_index": 2.5},
+                )
+            ),
+            "show": db.save_content_item(
+                ContentItem(
+                    id="trakt:1",
+                    title="Andor",
+                    content_type=ContentType.TV_SHOW,
+                    status=ConsumptionStatus.UNREAD,
+                    metadata={"series_name": "Andor", "season_number": 2},
+                )
+            ),
+        }
+        with db.connection() as conn:
+            for db_id in seeded.values():
+                conn.execute(
+                    "INSERT INTO enrichment_status"
+                    " (content_item_id, enrichment_provider, enrichment_quality,"
+                    " needs_enrichment) VALUES (?, 'tmdb', 'high', 0)",
+                    (db_id,),
+                )
+            conn.execute(f"PRAGMA user_version = {_BEFORE_THE_ORDINAL_LADDER}")
+            conn.commit()
+        return seeded
+
+    def test_a_guessed_ordinal_is_cleared_and_the_item_queued_for_a_re_fetch(
+        self, tmp_path: Path
+    ) -> None:
+        db_path = tmp_path / "test.db"
+        seeded = self._seed(db_path)
+
+        db = SQLiteDB(db_path)
+
+        for db_id in (seeded["movie"], seeded["game"], seeded["counted_movie"]):
+            item = db.get_content_item(db_id)
+            assert item is not None
+            assert "series_position" not in item.metadata
+            assert "movie_number" not in item.metadata
+            assert _needs_enrichment(db, db_id) == 1
+        movie = db.get_content_item(seeded["movie"])
+        assert movie is not None
+        assert movie.metadata["series_name"] == "MCU"
+
+    def test_an_ordinal_a_source_stated_is_left_alone(self, tmp_path: Path) -> None:
+        db_path = tmp_path / "test.db"
+        seeded = self._seed(db_path)
+
+        db = SQLiteDB(db_path)
+
+        book = db.get_content_item(seeded["book"])
+        assert book is not None
+        assert book.metadata["series_index"] == 2.5
+        assert _needs_enrichment(db, seeded["book"]) == 0
+        show = db.get_content_item(seeded["show"])
+        assert show is not None
+        assert show.metadata["season_number"] == 2
+        assert _needs_enrichment(db, seeded["show"]) == 0
+
+    def test_an_item_with_no_guessed_ordinal_is_not_queued_for_a_re_fetch(
+        self, tmp_path: Path
+    ) -> None:
+        db_path = tmp_path / "test.db"
+        seeded = self._seed(db_path)
+
+        db = SQLiteDB(db_path)
+
+        standalone = db.get_content_item(seeded["standalone_movie"])
+        assert standalone is not None
+        assert standalone.metadata["tmdb_collection_id"] == 422837
+        assert _needs_enrichment(db, seeded["standalone_movie"]) == 0
 
 
 class TestOnlyTheDeclaredShapesAreRepaired:

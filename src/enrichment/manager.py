@@ -9,7 +9,12 @@ from typing import TYPE_CHECKING, Any
 
 import requests
 
-from src.enrichment.provider_base import EnrichmentResult
+from src.enrichment.provider_base import (
+    EnrichmentProvider,
+    EnrichmentResult,
+    states_a_match,
+    states_a_series_ordinal,
+)
 from src.enrichment.rate_limiter import RateLimiter
 from src.enrichment.registry import EnrichmentRegistry, get_enrichment_registry
 from src.models.content import ContentItem, ContentType, get_enum_value
@@ -17,6 +22,12 @@ from src.models.detail_fields import PROVIDER_OWNED_METADATA_KEYS
 from src.storage.enrichment_jobs import EnrichmentJobRecord
 from src.storage.global_secrets import read_secret
 from src.utils.request_errors import scrub_request_error
+from src.utils.series import (
+    SERIES_RECONCILED_KEYS,
+    SeriesAuthority,
+    reconcile_series,
+    stored_series_authority,
+)
 from src.utils.text import sanitize_for_log
 
 if TYPE_CHECKING:
@@ -482,9 +493,13 @@ class EnrichmentManager:
             )
             return
 
+        item = self._settle_series_ordinal(db_id, item, available_providers)
+
         failures: list[_ProviderFailure] = []
 
         for provider in available_providers:
+            if not states_a_match(provider):
+                continue
             try:
                 limiter = self._get_rate_limiter(provider.name)
                 limiter.acquire()
@@ -577,6 +592,50 @@ class EnrichmentManager:
         with self._lock:
             self._status.items_processed += 1
             self._status.items_not_found += 1
+
+    def _settle_series_ordinal(
+        self,
+        db_id: int,
+        item: ContentItem,
+        providers: list[EnrichmentProvider],
+    ) -> ContentItem:
+        """An ordinal is not a match, so it is asked for separately — and only
+        while an authored one would still outrank what is stored, so a library's
+        own ordinal costs no call at all.
+        """
+        if not SeriesAuthority.AUTHORED.outranks(
+            stored_series_authority(item.metadata)
+        ):
+            return item
+
+        for provider in providers:
+            if not states_a_series_ordinal(provider):
+                continue
+            try:
+                self._get_rate_limiter(provider.name).acquire()
+                ordinal = provider.fetch_series_ordinal(
+                    item, self._get_provider_config(provider.name)
+                )
+            except Exception as error:
+                failure = _classify_failure(provider.name, error)
+                logger.warning(
+                    "[ENRICHMENT] Provider %s failed to state an ordinal: %s",
+                    provider.name,
+                    failure.reason,
+                )
+                self._note_failure(failure)
+                continue
+
+            if ordinal is None:
+                continue
+            settled = reconcile_series(item.metadata, ordinal.as_metadata())
+            if not settled:
+                continue
+            item = item.model_copy(update={"metadata": {**item.metadata, **settled}})
+            self.storage_manager.save_enrichment_metadata(db_id, item)
+            return item
+
+        return item
 
     def _settle_storage_failure(
         self, db_id: int, safe_title: str, error: Exception
@@ -686,7 +745,9 @@ def merge_enrichment(
     existing_metadata: dict[str, Any],
     result: EnrichmentResult,
 ) -> dict[str, Any]:
-    """Fills fields that are missing or empty, and replaces the provider-owned ones."""
+    """Fills fields that are missing or empty, replaces the provider-owned ones,
+    and settles the series fields by authority.
+    """
     merged = dict(existing_metadata)
 
     if result.genres:
@@ -719,6 +780,8 @@ def merge_enrichment(
         merged["description"] = result.description
 
     for key, value in result.extra_metadata.items():
+        if key in SERIES_RECONCILED_KEYS:
+            continue
         if (
             key in PROVIDER_OWNED_METADATA_KEYS
             or key not in merged
@@ -726,6 +789,8 @@ def merge_enrichment(
             or merged[key] == ""
         ):
             merged[key] = value
+
+    merged.update(reconcile_series(merged, result.extra_metadata))
 
     if result.external_id:
         merged["enrichment_id"] = result.external_id

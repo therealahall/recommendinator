@@ -70,6 +70,10 @@ SQLite holds everything.
 `seasons_watched` is the one metadata key the sync door unions: a sync adds a
 season, never removes one.
 
+The series name and position are the one family it re-decides rather than keeps:
+`reconcile_series` gives them to the better-founded source, recorded in
+`series_position_authority`, whichever wrote first.
+
 One exception to forward-only sits outside that resolution. After the upsert,
 `_handle_tv_season_change` regresses a completed TV show to
 `currently_consuming` when the season count rises above the seasons the
@@ -312,14 +316,15 @@ it after a sync.
 
 | Provider | Content | Franchise source |
 |----------|---------|------------------|
-| TMDB | Movies, TV | `belongs_to_collection`, position by release date |
+| TMDB | Movies, TV | `belongs_to_collection` |
 | OpenLibrary | Books, no API key | none |
-| RAWG | Video games | `GET /games/{id}/game-series`, position by release date |
+| RAWG | Video games | `GET /games/{id}/game-series` |
 
 RAWG derives a franchise name from the longest common prefix of the related
 titles, after majority first-word voting drops outliers, and strips DLC suffixes
-before searching. RAWG stores `franchise` and TMDB `series_name`, both alongside
-`series_position` in `extra_metadata`, for series ordering.
+before searching. RAWG stores `franchise` and TMDB `series_name` in
+`extra_metadata`. Neither stores a position: both endpoints return an unordered
+related-titles set, so any rank read off one is invented.
 
 Rules:
 

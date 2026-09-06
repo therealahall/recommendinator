@@ -23,6 +23,7 @@ from src.utils.series import (
     is_first_item_in_series,
     is_next_after_consumed,
     latest_season_watched_date,
+    reconcile_series,
     should_recommend_item,
     split_series_from_title,
 )
@@ -557,23 +558,6 @@ class TestTitleEmbeddedSeriesDetection:
 
 
 class TestSeriesPositionMetadataRegression:
-    """Bug reported: TMDB movies store series position as "series_position" in
-    extra_metadata, but _extract_from_metadata() didn't check that key."""
-
-    def test_movie_with_series_position_from_tmdb_regression(self) -> None:
-        metadata = {"series_name": "The Godfather Collection", "series_position": 2}
-        result = extract_series_info(
-            "The Godfather Part II", metadata, ContentType.MOVIE
-        )
-        assert result == ("The Godfather Collection", 2)
-
-    def test_game_with_series_position_and_franchise_regression(self) -> None:
-        metadata = {"franchise": "Dragon Age", "series_position": 3}
-        result = extract_series_info(
-            "Dragon Age Inquisition", metadata, ContentType.VIDEO_GAME
-        )
-        assert result == ("Dragon Age", 3)
-
     def test_series_position_takes_priority_over_other_keys(self) -> None:
         metadata = {
             "series_name": "Mass Effect",
@@ -684,7 +668,11 @@ class TestSplitSeriesFromTitle:
     ) -> None:
         assert split_series_from_title(f"All Systems Red {marker}") == (
             "All Systems Red",
-            {"series": "Murderbot", "series_index": index},
+            {
+                "series": "Murderbot",
+                "series_index": index,
+                "series_position_authority": "stated",
+            },
         )
 
     def test_a_marker_ahead_of_the_titles_own_parenthetical_still_leaves_it(
@@ -692,7 +680,11 @@ class TestSplitSeriesFromTitle:
     ) -> None:
         assert split_series_from_title("Dune (Dune, #1) (1965)") == (
             "Dune (1965)",
-            {"series": "Dune", "series_index": 1.0},
+            {
+                "series": "Dune",
+                "series_index": 1.0,
+                "series_position_authority": "stated",
+            },
         )
 
     @pytest.mark.parametrize(
@@ -703,6 +695,71 @@ class TestSplitSeriesFromTitle:
         self, title: str
     ) -> None:
         assert split_series_from_title(title) == (title, {})
+
+
+class TestReconcileSeries:
+    def _authored(self, position: float, **extra: object) -> dict[str, object]:
+        return {
+            "series_position": position,
+            "series_position_authority": "authored",
+            **extra,
+        }
+
+    def test_an_authored_ordinal_replaces_one_a_title_marker_stated(self) -> None:
+        stored = {
+            "series": "The Expanse",
+            "series_index": 2.5,
+            "series_position_authority": "stated",
+        }
+
+        assert reconcile_series(stored, self._authored(3.0)) == {
+            "series_index": 3.0,
+            "series_position": 3.0,
+            "series_position_authority": "authored",
+        }
+
+    def test_an_ordinal_stored_before_the_ladder_existed_still_upgrades(self) -> None:
+        assert reconcile_series({"series_index": 2.5}, self._authored(3.0)) == {
+            "series_index": 3.0,
+            "series_position": 3.0,
+            "series_position_authority": "authored",
+        }
+
+    def test_an_ordinal_stored_before_the_ladder_is_not_replaced_by_a_title_marker(
+        self,
+    ) -> None:
+        offered = {"series_position": 3.0, "series_position_authority": "stated"}
+
+        assert reconcile_series({"series_index": 2.5}, offered) == {}
+
+    @pytest.mark.parametrize("authority", ["stated", "authored"])
+    def test_the_librarys_own_ordinal_is_left_alone(self, authority: str) -> None:
+        stored = {"series_index": 4.0, "series_position_authority": "library"}
+        offered = {"series_position": 5.0, "series_position_authority": authority}
+
+        assert reconcile_series(stored, offered) == {}
+
+    def test_an_authored_ordinal_is_not_replaced_by_a_title_marker(self) -> None:
+        stored = self._authored(3.0)
+        offered = {"series_index": 2.5, "series_position_authority": "stated"}
+
+        assert reconcile_series(stored, offered) == {}
+
+    def test_two_writers_of_the_same_standing_keep_the_first_ordinal(self) -> None:
+        assert reconcile_series(self._authored(3.0), self._authored(9.0)) == {}
+
+    def test_a_replacing_ordinal_brings_the_series_name_it_states(self) -> None:
+        stored = {"series_name": "Donkey", "series_position": 1}
+
+        assert reconcile_series(stored, self._authored(3.0, series_name="Donkey Kong"))[
+            "series_name"
+        ] == ("Donkey Kong")
+
+    def test_a_series_name_arriving_with_no_ordinal_only_fills_a_gap(self) -> None:
+        offered = {"series_name": "Alien Collection"}
+
+        assert reconcile_series({}, offered) == {"series_name": "Alien Collection"}
+        assert reconcile_series({"series_name": "Alien"}, offered) == {}
 
 
 class TestDecimalSeriesOrderingRegression:

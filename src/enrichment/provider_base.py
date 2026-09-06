@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -7,6 +9,7 @@ from typing import Any
 # same way source plugins take it from plugin_base.
 from src.models.config_field import ConfigField as ConfigField
 from src.models.content import ContentItem, ContentType
+from src.utils.series import SERIES_AUTHORITY_KEY, SeriesAuthority
 from src.utils.text import sanitize_for_log
 
 
@@ -45,6 +48,24 @@ class EnrichmentResult:
     match_quality: str = "high"
 
     provider: str = ""
+
+
+@dataclass(frozen=True)
+class SeriesOrdinal:
+    """Where a work sits in its series, and how well founded that is."""
+
+    position: float
+    series: str | None = None
+    authority: SeriesAuthority = SeriesAuthority.AUTHORED
+
+    def as_metadata(self) -> dict[str, Any]:
+        fields: dict[str, Any] = {
+            "series_position": self.position,
+            SERIES_AUTHORITY_KEY: self.authority.value,
+        }
+        if self.series:
+            fields["series_name"] = self.series
+        return fields
 
 
 class ProviderError(Exception):
@@ -87,7 +108,43 @@ class EnrichmentProvider(ABC):
     @abstractmethod
     def validate_config(self, config: dict[str, Any]) -> list[str]: ...
 
-    @abstractmethod
     def enrich(
         self, item: ContentItem, config: dict[str, Any]
-    ) -> EnrichmentResult | None: ...
+    ) -> EnrichmentResult | None:
+        """The item's whole metadata; None when this provider has no match.
+
+        Not abstract, so a provider can state only an ordinal — and one that
+        states nothing at all is refused when its class is created.
+        """
+        return None
+
+    def fetch_series_ordinal(
+        self, item: ContentItem, config: dict[str, Any]
+    ) -> SeriesOrdinal | None:
+        """The item's place in its series, asked of every provider that states
+        one. None means no ordinal for this item; a failure raises, as
+        :meth:`enrich` does.
+        """
+        return None
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        if not (_overrides(cls, "enrich") or _overrides(cls, "fetch_series_ordinal")):
+            raise TypeError(
+                f"{cls.__name__} implements neither enrich nor fetch_series_ordinal,"
+                " so enrichment has nothing to ask it"
+            )
+
+
+def _overrides(provider_class: type[EnrichmentProvider], method: str) -> bool:
+    return getattr(provider_class, method) is not getattr(EnrichmentProvider, method)
+
+
+def states_a_match(provider: EnrichmentProvider) -> bool:
+    """Whether the first-success loop may settle an item on this provider."""
+    return _overrides(type(provider), "enrich")
+
+
+def states_a_series_ordinal(provider: EnrichmentProvider) -> bool:
+    """Whether the ordinal pass has anything to ask this provider."""
+    return _overrides(type(provider), "fetch_series_ordinal")

@@ -2223,7 +2223,7 @@ class TestDetailTableFillOnly:
         assert retrieved.metadata.get("custom_key_1") == "original_value"
         assert retrieved.metadata.get("custom_key_2") == "new_value"
 
-    def test_a_re_enrich_corrects_a_truncated_franchise_but_not_a_series_name(
+    def test_a_re_enrich_corrects_a_truncated_franchise_but_not_an_equal_series_name(
         self, temp_db: SQLiteDB
     ) -> None:
         stored = ContentItem(
@@ -2251,6 +2251,40 @@ class TestDetailTableFillOnly:
         assert retrieved is not None
         assert retrieved.metadata["franchise"] == "Donkey Kong"
         assert retrieved.metadata["series_name"] == "Donkey"
+
+    def test_a_re_enrich_replaces_a_series_ordinal_a_weaker_source_stated(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        stored = ContentItem(
+            id="detail_ordinal",
+            title="Persepolis Rising",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={
+                "series": "The Expanse",
+                "series_index": 2.5,
+                "series_position_authority": "stated",
+            },
+        )
+        db_id = temp_db.save_content_item(stored)
+
+        temp_db.save_enrichment_metadata(
+            db_id,
+            stored.model_copy(
+                update={
+                    "metadata": {
+                        "series_name": "The Expanse",
+                        "series_position": 7.0,
+                        "series_position_authority": "authored",
+                    }
+                }
+            ),
+        )
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.metadata["series_index"] == 7.0
+        assert retrieved.metadata["series_position_authority"] == "authored"
 
 
 class TestUpdateItemFromUi:

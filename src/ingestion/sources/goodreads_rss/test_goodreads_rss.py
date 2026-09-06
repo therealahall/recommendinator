@@ -278,6 +278,7 @@ class TestGoodreadsRssPluginFetch:
         assert items[0].title == "All Systems Red"
         assert items[0].metadata["series"] == "The Murderbot Diaries"
         assert items[0].metadata["series_index"] == 1.0
+        assert items[0].metadata["series_position_authority"] == "stated"
 
     def test_pages_from_nested_book_element(
         self, plugin: GoodreadsRssPlugin, monkeypatch: pytest.MonkeyPatch
