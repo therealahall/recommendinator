@@ -125,7 +125,7 @@ describe('LibraryCard', () => {
     },
   )
 
-  it('speaks each source badge with context, never a bare id', () => {
+  it('names the group holding the source badges, so none is announced as a bare id', () => {
     const wrapper = mount(LibraryCard, {
       props: {
         item: {
@@ -135,8 +135,27 @@ describe('LibraryCard', () => {
       },
     })
 
-    const badge = wrapper.get('[data-testid="source-badge"]')
-    expect(badge.get('.sr-only').text()).not.toBe('')
+    const list = wrapper.get('[data-testid="source-badge"]').element.closest('ul')!
+    const labelId = list.getAttribute('aria-labelledby')
+    const label = [...wrapper.element.querySelectorAll('[id]')].find((el) => el.id === labelId)
+    expect(label?.textContent?.trim()).toBeTruthy()
+  })
+
+  it('keeps a source badge out of the row carrying the in-progress status', () => {
+    const wrapper = mount(LibraryCard, {
+      props: {
+        item: {
+          ...baseItem,
+          status: 'currently_consuming',
+          external_ids: [{ source: 'steam', external_id: '440', display_name: 'Steam' }],
+        },
+      },
+    })
+
+    const status = wrapper.get('[data-testid="status-badge"]').element
+    const source = wrapper.get('[data-testid="source-badge"]').element
+    expect(status.parentElement!.contains(source)).toBe(false)
+    expect(source.parentElement!.contains(status)).toBe(false)
   })
 
   it('gains the source a merge added when the row is refreshed under it', async () => {

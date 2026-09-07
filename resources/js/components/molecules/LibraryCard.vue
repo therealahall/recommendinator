@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, useId } from 'vue'
 import type { ContentItemResponse } from '@/types/api'
 import AppIcon from '@/components/atoms/AppIcon.vue'
 import ItemCover from '@/components/atoms/ItemCover.vue'
@@ -22,6 +22,8 @@ const sources = computed(() => {
   }
   return [...named].map(([id, name]) => ({ id, name }))
 })
+
+const sourcesLabelId = useId()
 
 const emit = defineEmits<{
   edit: [dbId: number]
@@ -62,18 +64,11 @@ function statusTone(status: string): string | undefined {
       </div>
     </div>
     <div class="library-meta">
-      <span class="badge" :data-tone="statusTone(item.status)">
+      <span class="badge" :data-tone="statusTone(item.status)" data-testid="status-badge">
         {{ formatStatusForContentType(item.status, item.content_type) }}
       </span>
       <span v-if="!item.enriched" class="badge">Not enriched</span>
       <span v-if="item.ignored" class="badge" data-tone="warning">Ignored</span>
-      <span
-        v-for="source in sources"
-        :key="source.id"
-        class="badge"
-        data-tone="accent"
-        data-testid="source-badge"
-      >{{ source.name }}<span class="sr-only"> — data source</span></span>
     </div>
     <div v-if="item.rating !== null" class="library-meta-secondary">
       <span v-if="item.rating !== null" class="rating-stars">
@@ -88,6 +83,14 @@ function statusTone(status: string): string | undefined {
         <span class="value" aria-hidden="true">{{ item.rating }}/5</span>
         <span class="sr-only">Rated {{ item.rating }} out of 5</span>
       </span>
+    </div>
+    <div v-if="sources.length > 0" class="library-sources">
+      <span :id="sourcesLabelId" class="library-sources-label">Data sources</span>
+      <ul class="library-source-list" role="list" :aria-labelledby="sourcesLabelId">
+        <li v-for="source in sources" :key="source.id">
+          <span class="badge" data-testid="source-badge">{{ source.name }}</span>
+        </li>
+      </ul>
     </div>
     <div v-if="item.db_id" class="library-item-actions">
       <button
