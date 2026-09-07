@@ -487,9 +487,7 @@ class EnrichmentManager:
         ]
         # An ordinal-only provider survives the abandonment that took every
         # matcher, and settling the item on it alone buries it under not_found.
-        matchers_existed = any(
-            states_a_match(provider) for provider in matching_providers
-        )
+        matchers_existed = any(map(states_a_match, matching_providers))
         if not available_providers or (
             matchers_existed
             and not any(states_a_match(provider) for provider in available_providers)
@@ -524,7 +522,7 @@ class EnrichmentManager:
             self._settle_storage_failure(db_id, safe_title, error, committed=committed)
             return
 
-        if unanswered is not None:
+        if unanswered is not None and not committed:
             logger.info(
                 "[ENRICHMENT] No provider stated an ordinal for %s, will retry: %s",
                 content_type_str,
@@ -659,7 +657,6 @@ class EnrichmentManager:
             if not states_a_series_ordinal(provider):
                 continue
             if provider.name in self._abandoned_providers:
-                unanswered.append(f"{provider.name}: abandoned before it was asked")
                 continue
             try:
                 self._get_rate_limiter(provider.name).acquire()
