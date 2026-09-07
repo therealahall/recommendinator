@@ -79,6 +79,54 @@ describe('LibraryCard', () => {
     expect(wrapper.text()).toContain('Unwatched')
   })
 
+  it.each<[string, { source: string; external_id: string }[], string[]]>([
+    ['one source', [{ source: 'steam', external_id: '440' }], ['steam']],
+    [
+      'a merge of two',
+      [
+        { source: 'gog', external_id: 'x' },
+        { source: 'steam', external_id: '440' },
+      ],
+      ['gog', 'steam'],
+    ],
+    [
+      'two ids from one source',
+      [
+        { source: 'steam', external_id: '440' },
+        { source: 'steam', external_id: '620' },
+      ],
+      ['steam'],
+    ],
+    ['nothing', [], []],
+  ])('names each contributing source once, in the order sent: %s', (_case, external_ids, shown) => {
+    const wrapper = mount(LibraryCard, { props: { item: { ...baseItem, external_ids } } })
+
+    const badges = wrapper.findAll('[data-testid="source-badge"]')
+    expect(badges.map((badge) => badge.text())).toEqual(
+      shown.map((source) => expect.stringContaining(source)),
+    )
+  })
+
+  it('speaks each source badge with context, never a bare id', () => {
+    const wrapper = mount(LibraryCard, {
+      props: { item: { ...baseItem, external_ids: [{ source: 'steam', external_id: '440' }] } },
+    })
+
+    const badge = wrapper.get('[data-testid="source-badge"]')
+    expect(badge.get('.sr-only').text()).not.toBe('')
+  })
+
+  it('gains the source a merge added when the row is refreshed under it', async () => {
+    const item = { ...baseItem, external_ids: [{ source: 'steam', external_id: '440' }] }
+    const wrapper = mount(LibraryCard, { props: { item } })
+
+    const merged = [...item.external_ids, { source: 'gog', external_id: 'x' }]
+    await wrapper.setProps({ item: { ...item, external_ids: merged } })
+
+    expect(wrapper.findAll('[data-testid="source-badge"]')).toHaveLength(2)
+    expect(wrapper.text()).toContain('gog')
+  })
+
   it('titles a card at the level a recommendation of the same work is titled', () => {
     const library = mount(LibraryCard, { props: { item: baseItem } })
     const rec = mount(RecCard, {
