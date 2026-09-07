@@ -1,6 +1,48 @@
 # CHANGELOG
 
 
+## v0.54.0 (2026-09-07)
+
+### Bug Fixes
+
+- **enrichment**: Keep a matched item settled when its ordinal goes unanswered
+  ([`04ae6ca`](https://github.com/therealahall/recommendinator/commit/04ae6ca7846b4a7caf051d798dc778b1826f9171))
+
+- **enrichment**: Keep the series name off the ordinal contract
+  ([`d9243f5`](https://github.com/therealahall/recommendinator/commit/d9243f5ab6d709aa283070a08cddad341eeadea7))
+
+- **enrichment**: Stop a library rank being claimed by a writer that has not earned it
+  ([`480ffad`](https://github.com/therealahall/recommendinator/commit/480ffad13f144cca2073a0f9dfe7e0b2c246c91f))
+
+- **enrichment**: Stop deriving a series position from a release-date sort
+  ([`8025722`](https://github.com/therealahall/recommendinator/commit/80257222a37798f0d0848360996bebf131eed629))
+
+- **enrichment**: Stop one series' ordinal placing a work in another
+  ([`e80630d`](https://github.com/therealahall/recommendinator/commit/e80630dfb4f88d8317f046045cc337a65e19b267))
+
+- **enrichment**: Take an ordinal only from a source naming the same series
+  ([`55e4fa8`](https://github.com/therealahall/recommendinator/commit/55e4fa88f1db8063e053ebdcd3c118668ab4409a))
+
+### Features
+
+- **enrichment**: Rank series ordinals by authority
+  ([`06d1546`](https://github.com/therealahall/recommendinator/commit/06d15469c0083a532ad152f9aa8336f36e3fcf49))
+
+- **enrichment**: State a book series position from Hardcover
+  ([`76131a1`](https://github.com/therealahall/recommendinator/commit/76131a1701ca62dd06b49e223cd8eae322033741))
+
+- **enrichment**: State a series position from Wikidata
+  ([`dd053ee`](https://github.com/therealahall/recommendinator/commit/dd053eec097a64e5d4bc76581571b319a294822c))
+
+- **recommendations**: Order a series with no ordinals by release date
+  ([`fc58df1`](https://github.com/therealahall/recommendinator/commit/fc58df14fc796e2670b19e9ae3870d705720286a))
+
+### Refactoring
+
+- **storage**: Store a series under one canonical pair of keys
+  ([`199408b`](https://github.com/therealahall/recommendinator/commit/199408b55318009eddf30651e07775abf104f86e))
+
+
 ## v0.53.1 (2026-09-06)
 
 ### Bug Fixes
