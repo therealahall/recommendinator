@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { groupIdOf, groupSettings } from './settingsGroups'
+import { groupSettings } from './settingsGroups'
 import type { SettingView } from '@/types/api'
 
 function setting(key: string, label: string): SettingView {
@@ -27,6 +27,7 @@ describe('groupSettings', () => {
       setting('enrichment.enabled', 'Enrichment enabled'),
       setting('enrichment.batch_size', 'Enrichment batch size'),
       setting('enrichment.providers.tmdb.api_key', 'TMDB API key'),
+      setting('enrichment.providers.tmdb.language', 'TMDB language'),
     ])
 
     expect(ungrouped.map((entry) => entry.key)).toEqual([
@@ -36,6 +37,7 @@ describe('groupSettings', () => {
     expect(groups).toHaveLength(1)
     expect(groups[0].settings.map((entry) => entry.key)).toEqual([
       'enrichment.providers.tmdb.api_key',
+      'enrichment.providers.tmdb.language',
     ])
   })
 
@@ -44,6 +46,7 @@ describe('groupSettings', () => {
       setting('enrichment.providers.tmdb.api_key', 'TMDB API key'),
       setting('enrichment.providers.rawg.enabled', 'RAWG enabled'),
       setting('enrichment.providers.tmdb.language', 'TMDB language'),
+      setting('enrichment.providers.rawg.api_key', 'RAWG API key'),
       setting('enrichment.providers.tmdb.include_keywords', 'TMDB keywords as tags'),
     ])
 
@@ -53,7 +56,22 @@ describe('groupSettings', () => {
       'enrichment.providers.tmdb.language',
       'enrichment.providers.tmdb.include_keywords',
     ])
-    expect(groups[1].settings).toHaveLength(1)
+    expect(groups[1].settings).toHaveLength(2)
+  })
+
+  it('folds a provider holding one setting back in among the ungrouped ones', () => {
+    const { ungrouped, groups } = groupSettings([
+      setting('enrichment.enabled', 'Enrichment enabled'),
+      setting('enrichment.providers.openlibrary.enabled', 'Open Library enabled'),
+      setting('enrichment.batch_size', 'Enrichment batch size'),
+    ])
+
+    expect(groups).toHaveLength(0)
+    expect(ungrouped.map((entry) => entry.key)).toEqual([
+      'enrichment.enabled',
+      'enrichment.providers.openlibrary.enabled',
+      'enrichment.batch_size',
+    ])
   })
 
   it('groups a provider this file has never been told about', () => {
@@ -70,7 +88,9 @@ describe('groupSettings', () => {
   it('takes the heading spelling from the labels rather than the key segment', () => {
     const { groups } = groupSettings([
       setting('enrichment.providers.tmdb.api_key', 'TMDB API key'),
+      setting('enrichment.providers.tmdb.language', 'TMDB language'),
       setting('enrichment.providers.openlibrary.enabled', 'Open Library enabled'),
+      setting('enrichment.providers.openlibrary.timeout', 'Open Library timeout'),
     ])
 
     expect(groups.map((group) => group.label)).toEqual(['TMDB', 'Open Library'])
@@ -84,19 +104,5 @@ describe('groupSettings', () => {
 
     expect(groups).toHaveLength(1)
     expect(groups[0].label).toBe('Scorer Weights')
-  })
-})
-
-describe('groupIdOf', () => {
-  it('names the group a refused key has to be revealed inside', () => {
-    const { groups } = groupSettings([
-      setting('enrichment.providers.tmdb.language', 'TMDB language'),
-    ])
-
-    expect(groupIdOf('enrichment.providers.tmdb.language')).toBe(groups[0].id)
-  })
-
-  it('names no group for a section-level key', () => {
-    expect(groupIdOf('enrichment.enabled')).toBe('')
   })
 })

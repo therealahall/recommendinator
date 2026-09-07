@@ -299,6 +299,39 @@ describe('SettingsSection', () => {
       expect(reachable(wrapper, 'setting-enrichment.providers.zzztest.region')).toBe(true)
     })
 
+    it('renders a provider holding one setting inline, not behind a disclosure of one', () => {
+      const wrapper = renderSection(
+        {
+          section: 'enrichment',
+          settings: [
+            textSetting('enrichment.enabled', 'on'),
+            textSetting('enrichment.providers.openlibrary.enabled', 'on'),
+          ],
+        },
+        true,
+      )
+
+      expect(reachable(wrapper, 'setting-enrichment.providers.openlibrary.enabled')).toBe(true)
+      expect(wrapper.findAll('button.accordion-trigger')).toHaveLength(1)
+    })
+
+    it('renders an all-advanced section in its panel, with no empty list above it', () => {
+      const wrapper = renderSection(
+        {
+          section: 'logging',
+          settings: [
+            textSetting('logging.level', 'INFO', { advanced: true }),
+            textSetting('logging.file', 'app.log', { advanced: true }),
+          ],
+        },
+        true,
+      )
+
+      expect(reachable(wrapper, 'setting-logging.level')).toBe(true)
+      expect(reachable(wrapper, 'setting-logging.file')).toBe(true)
+      expect(wrapper.findAll('.settings-field-list')).toHaveLength(1)
+    })
+
     it('nests every subgroup heading one level under the section heading', () => {
       const wrapper = renderSection(ZZZTEST, true)
 

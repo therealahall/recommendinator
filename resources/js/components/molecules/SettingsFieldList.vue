@@ -9,17 +9,12 @@ const props = withDefaults(
   defineProps<{
     settings: SettingView[]
     values: Record<string, SettingBufferValue>
+    errors: Record<string, string>
+    resetting: Record<string, boolean>
+    secretBusy: Record<string, boolean>
     disabled?: boolean
-    errors?: Record<string, string>
-    resetting?: Record<string, boolean>
-    secretBusy?: Record<string, boolean>
   }>(),
-  {
-    disabled: false,
-    errors: () => ({}),
-    resetting: () => ({}),
-    secretBusy: () => ({}),
-  },
+  { disabled: false },
 )
 
 const emit = defineEmits<{
@@ -43,7 +38,7 @@ const secrets = computed(() =>
       v-for="setting in controls"
       :key="setting.key"
       :setting="setting"
-      :model-value="values[setting.key] ?? null"
+      :model-value="values[setting.key]"
       :disabled="disabled"
       :error="errors[setting.key] ?? ''"
       :resetting="resetting[setting.key] ?? false"
