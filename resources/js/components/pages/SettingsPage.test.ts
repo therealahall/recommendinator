@@ -119,9 +119,11 @@ describe('SettingsPage account section', () => {
     return auth
   }
 
+  /** The account block arrives shut, so every account test opens its way in. */
   async function openSettings(): Promise<VueWrapper> {
     const wrapper = mount(SettingsPage)
     await flushPromises()
+    await wrapper.find('#accordion-account-trigger').trigger('click')
     return wrapper
   }
 

@@ -1,10 +1,12 @@
 <script setup lang="ts">
+import { nextTick, ref, watch } from 'vue'
+import Accordion from '@/components/atoms/Accordion.vue'
 import AccountProfileForm from '@/components/molecules/AccountProfileForm.vue'
 import PasswordChangeForm from '@/components/molecules/PasswordChangeForm.vue'
 import { PASSWORD_MIN_LENGTH } from '@/constants/auth'
 import type { UserResponse, UserUpdateRequest, PasswordChangeRequest } from '@/types/api'
 
-withDefaults(
+const props = withDefaults(
   defineProps<{
     user: UserResponse
     /** The two forms are saved by separate requests, so each owns its own state. */
@@ -33,11 +35,50 @@ const emit = defineEmits<{
   'change-password': [change: PasswordChangeRequest]
   'sign-out': []
 }>()
+
+const expanded = ref(false)
+
+// Every report either form makes lives in the panel, and a shut panel is
+// `hidden`: its status region is out of the accessibility tree, so an outcome
+// landing after the operator closed it reaches nobody.
+function reveal(refusedFieldId?: string): void {
+  if (expanded.value) return
+  expanded.value = true
+  if (!refusedFieldId) return
+  // Focus carries the refusal: the field it lands on is described by the very
+  // status line the shut panel swallowed.
+  void nextTick().then(() => document.getElementById(refusedFieldId)?.focus())
+}
+
+watch(
+  () => props.profileError,
+  (error) => {
+    if (error) reveal('account-username')
+  },
+)
+watch(
+  () => props.passwordError,
+  (error) => {
+    if (error) reveal('account-current-password')
+  },
+)
+watch([() => props.profileSaved, () => props.passwordSaved], ([profile, password]) => {
+  if (profile || password) reveal()
+})
 </script>
 
 <template>
-  <section class="card" aria-labelledby="account-heading">
-    <h3 id="account-heading" class="section-title">Account</h3>
+  <Accordion
+    id="account"
+    class="account-section"
+    :heading-level="3"
+    :expanded="expanded"
+    @update:expanded="expanded = $event"
+  >
+    <template #header>
+      <span class="settings-section-name">Account</span>
+    </template>
+
     <p class="auth-lede account-intro">How you sign in to this instance.</p>
 
     <AccountProfileForm
@@ -72,10 +113,14 @@ const emit = defineEmits<{
         Sign out
       </button>
     </div>
-  </section>
+  </Accordion>
 </template>
 
 <style scoped>
+.account-section {
+  margin-bottom: var(--space-4);
+}
+
 .account-intro {
   margin-bottom: var(--space-5);
 }
