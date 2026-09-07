@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
+import { mount, flushPromises, enableAutoUnmount, type VueWrapper } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import { reactive } from 'vue'
 import SettingsSection from './SettingsSection.vue'
@@ -64,8 +64,38 @@ function numberSetting(key: string, value: number): SettingView {
 
 enableAutoUnmount(afterEach)
 
-function mountSection(section: SettingsSectionType) {
-  return mount(SettingsSection, { props: { section }, attachTo: document.body })
+/** Every panel is shut on arrival, so a test that drives a control opens its
+ *  way in the way the operator does. Collapsed panels are hidden, not
+ *  unmounted, so one pass reaches the nested triggers too. */
+async function openEverything(wrapper: VueWrapper): Promise<void> {
+  for (const trigger of wrapper.findAll('button[aria-expanded="false"]')) {
+    await trigger.trigger('click')
+  }
+}
+
+function renderSection(section: SettingsSectionType, initiallyExpanded = false): VueWrapper {
+  return mount(SettingsSection, {
+    props: { section, initiallyExpanded },
+    attachTo: document.body,
+  })
+}
+
+async function mountSection(section: SettingsSectionType): Promise<VueWrapper> {
+  const wrapper = renderSection(section)
+  await openEverything(wrapper)
+  return wrapper
+}
+
+/** What the operator can actually reach: a collapsed panel carries `hidden`. */
+function reachable(wrapper: VueWrapper, testid: string): boolean {
+  const found = wrapper.find(`[data-testid="${testid}"]`)
+  return found.exists() && found.element.closest('[hidden]') === null
+}
+
+function accordionTrigger(wrapper: VueWrapper, label: string) {
+  const found = wrapper.findAll('button').find((button) => button.text().includes(label))
+  if (!found) throw new Error(`no accordion trigger labelled ${label}`)
+  return found
 }
 
 describe('SettingsSection', () => {
@@ -85,7 +115,7 @@ describe('SettingsSection', () => {
         numberSetting('enrichment.batch_size', 50),
       ],
     }
-    const wrapper = mountSection(section)
+    const wrapper = await mountSection(section)
 
     expect(wrapper.find('[data-testid="save-enrichment"]').text()).toBe('Save Enrichment')
     await wrapper.find('[data-testid="setting-enrichment.providers.tmdb.language"]').setValue('de-DE')
@@ -97,7 +127,7 @@ describe('SettingsSection', () => {
 
   it('announces each landed save through the region already mounted for it', async () => {
     mockPut.mockResolvedValue({ sections: [] })
-    const wrapper = mountSection({
+    const wrapper = await mountSection({
       section: 'enrichment',
       settings: [textSetting('enrichment.providers.tmdb.language', 'en-US')],
     })
@@ -142,7 +172,7 @@ describe('SettingsSection', () => {
       section: 'enrichment',
       settings: [textSetting('enrichment.providers.tmdb.language', 'en-US')],
     }
-    const wrapper = mountSection(section)
+    const wrapper = await mountSection(section)
 
     await wrapper.find('[data-testid="setting-enrichment.providers.tmdb.language"]').setValue('!!')
     await wrapper.find('[data-testid="save-enrichment"]').trigger('click')
@@ -155,7 +185,7 @@ describe('SettingsSection', () => {
   })
 
   it('does not PUT or claim a save when nothing was edited', async () => {
-    const wrapper = mountSection({
+    const wrapper = await mountSection({
       section: 'enrichment',
       settings: [textSetting('enrichment.providers.tmdb.language', 'en-US')],
     })
@@ -179,7 +209,7 @@ describe('SettingsSection', () => {
         }),
       ],
     }
-    const wrapper = mountSection(section)
+    const wrapper = await mountSection(section)
 
     await wrapper.find('[data-testid="reset-enrichment.providers.tmdb.language"]').trigger('click')
     await flushPromises()
@@ -199,7 +229,7 @@ describe('SettingsSection', () => {
       overridden.has_stored_value = false
       return { sections: [] }
     })
-    const wrapper = mountSection({ section: 'enrichment', settings: [overridden] })
+    const wrapper = await mountSection({ section: 'enrichment', settings: [overridden] })
     const reset = wrapper.get('[data-testid="reset-enrichment.providers.tmdb.language"]')
     ;(reset.element as HTMLButtonElement).focus()
 
@@ -236,7 +266,7 @@ describe('SettingsSection', () => {
         } as SettingView,
       ],
     }
-    const wrapper = mountSection(section)
+    const wrapper = await mountSection(section)
 
     expect(wrapper.find('.source-form-secrets legend').text()).toBe('Secrets')
     await wrapper.find('[data-testid="secret-replace-enrichment.providers.tmdb.api_key"]').trigger('click')
@@ -247,21 +277,96 @@ describe('SettingsSection', () => {
     expect(mockPut).toHaveBeenCalledWith('/settings/secret', { key: 'enrichment.providers.tmdb.api_key', value: 'sk-999' })
   })
 
+  describe('grouping', () => {
+    const ZZZTEST: SettingsSectionType = {
+      section: 'enrichment',
+      settings: [
+        textSetting('enrichment.enabled', 'on'),
+        textSetting('enrichment.providers.zzztest.language', 'en-US'),
+        textSetting('enrichment.providers.zzztest.region', 'us'),
+      ],
+    }
+
+    it('groups a provider no frontend code names, leaving section keys above it', async () => {
+      const wrapper = renderSection(ZZZTEST, true)
+
+      expect(reachable(wrapper, 'setting-enrichment.enabled')).toBe(true)
+      expect(reachable(wrapper, 'setting-enrichment.providers.zzztest.language')).toBe(false)
+
+      await accordionTrigger(wrapper, 'Zzztest').trigger('click')
+
+      expect(reachable(wrapper, 'setting-enrichment.providers.zzztest.language')).toBe(true)
+      expect(reachable(wrapper, 'setting-enrichment.providers.zzztest.region')).toBe(true)
+    })
+
+    it('nests every subgroup heading one level under the section heading', () => {
+      const wrapper = renderSection(ZZZTEST, true)
+
+      const levels = wrapper
+        .findAll('button.accordion-trigger')
+        .map((trigger) => Number(trigger.element.closest('h1,h2,h3,h4,h5,h6')?.tagName.slice(1)))
+      const [section, ...subgroups] = levels
+
+      expect(subgroups.length).toBeGreaterThan(0)
+      expect(subgroups.every((level) => level === section + 1)).toBe(true)
+    })
+
+    it('keeps an opened subgroup open when the saved section comes back as a new object', async () => {
+      const key = 'enrichment.providers.zzztest.language'
+      mockPut.mockResolvedValue({ sections: [] })
+      const wrapper = renderSection(ZZZTEST, true)
+      await accordionTrigger(wrapper, 'Zzztest').trigger('click')
+      await wrapper.find(`[data-testid="setting-${key}"]`).setValue('de-DE')
+
+      await wrapper.find('[data-testid="save-enrichment"]').trigger('click')
+      await flushPromises()
+      // The store replaces `sections` with the PUT response, so the section
+      // arrives as a fresh object every time a write lands.
+      await wrapper.setProps({ section: structuredClone(ZZZTEST) })
+
+      expect(reachable(wrapper, `setting-${key}`)).toBe(true)
+    })
+
+    it('opens the shut group holding a value the server refused', async () => {
+      const key = 'enrichment.providers.zzztest.language'
+      mockPut.mockRejectedValue(
+        new MockApiError(422, 'Unprocessable Entity', {
+          detail: { key, reason: 'invalid language tag' },
+        }),
+      )
+      const wrapper = renderSection(ZZZTEST, true)
+      const group = accordionTrigger(wrapper, 'Zzztest')
+      await group.trigger('click')
+      await wrapper.find(`[data-testid="setting-${key}"]`).setValue('!!')
+      await group.trigger('click')
+      expect(reachable(wrapper, `setting-${key}`)).toBe(false)
+
+      await wrapper.find('[data-testid="save-enrichment"]').trigger('click')
+      await flushPromises()
+
+      expect(reachable(wrapper, `setting-${key}`)).toBe(true)
+      expect(reachable(wrapper, `setting-error-${key}`)).toBe(true)
+      expect(document.activeElement).toBe(
+        wrapper.find(`[data-testid="setting-${key}"]`).element,
+      )
+    })
+  })
+
   describe('advanced caution copy', () => {
-    function mountAdvanced(section: string, key: string) {
-      return mountSection({
+    async function noteFor(section: string, key: string) {
+      const wrapper = await mountSection({
         section,
         settings: [textSetting(key, 'x', { advanced: true })],
       })
+      return wrapper.find('[role="note"]')
     }
 
-    it('warns about CORS in the web panel', () => {
-      const note = mountAdvanced('web', 'web.allowed_origins').find('[role="note"]')
-      expect(note.text()).toContain('CORS')
+    it('warns about CORS in the web panel', async () => {
+      expect((await noteFor('web', 'web.allowed_origins')).text()).toContain('CORS')
     })
 
-    it('does not mention CORS in the logging panel', () => {
-      const note = mountAdvanced('logging', 'logging.level').find('[role="note"]')
+    it('does not mention CORS in the logging panel', async () => {
+      const note = await noteFor('logging', 'logging.level')
       expect(note.text()).not.toContain('CORS')
       expect(note.text()).toContain('records')
     })
@@ -300,7 +405,7 @@ describe('SettingsSection', () => {
 
     it('announces a failed reset instead of doing nothing', async () => {
       mockDelete.mockRejectedValue(new MockApiError(503, 'Service Unavailable'))
-      const wrapper = mountSection(OVERRIDDEN)
+      const wrapper = await mountSection(OVERRIDDEN)
 
       const reset = wrapper.get('[data-testid="reset-enrichment.providers.tmdb.language"]')
       const pressed = reset.element as HTMLButtonElement
@@ -316,7 +421,7 @@ describe('SettingsSection', () => {
 
     it('announces a failed secret save instead of doing nothing', async () => {
       mockPut.mockRejectedValue(new MockApiError(503, 'Service Unavailable'))
-      const wrapper = mountSection(SECRET)
+      const wrapper = await mountSection(SECRET)
 
       await wrapper.find('[data-testid="secret-replace-enrichment.providers.tmdb.api_key"]').trigger('click')
       await wrapper.find('#secret-input-enrichment\\.providers\\.tmdb\\.api_key').setValue('sk-999')
@@ -328,7 +433,7 @@ describe('SettingsSection', () => {
 
     it('announces a failed secret clear instead of doing nothing', async () => {
       mockDelete.mockRejectedValue(new MockApiError(503, 'Service Unavailable'))
-      const wrapper = mountSection(SECRET)
+      const wrapper = await mountSection(SECRET)
 
       await wrapper.find('[data-testid="secret-clear-enrichment.providers.tmdb.api_key"]').trigger('click')
       await flushPromises()

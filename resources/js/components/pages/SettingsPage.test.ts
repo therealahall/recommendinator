@@ -79,6 +79,19 @@ describe('SettingsPage', () => {
     await flushPromises()
     expect(mockGet).toHaveBeenCalledTimes(2)
   })
+
+  it('opens the first section so the page never arrives with nothing showing', async () => {
+    mockGet.mockResolvedValue({ sections: [section('web'), section('logging')] })
+    const wrapper = mount(SettingsPage)
+    await flushPromises()
+
+    const sections = wrapper.findAll('h3 button[aria-expanded]')
+    expect(sections.map((trigger) => trigger.attributes('aria-expanded'))).toEqual([
+      'true',
+      'false',
+    ])
+    expect(wrapper.find('[data-testid="setting-web.host"]').element.closest('[hidden]')).toBeNull()
+  })
 })
 
 const AARON: UserResponse = {

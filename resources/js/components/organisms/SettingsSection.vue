@@ -1,6 +1,6 @@
 <script lang="ts">
 // Module scope, not <script setup>: setup runs per component instance, and the
-// Settings page renders one section card per registry section, so a constant map
+// Settings page renders one section per registry section, so a constant map
 // declared there would be rebuilt for each.
 const CAUTION_BY_SECTION: Record<string, string> = {
   web: 'this setting controls who can reach this instance. Widening the allowed CORS origins lets other sites in your browser read and modify your data.',
@@ -9,182 +9,84 @@ const CAUTION_BY_SECTION: Record<string, string> = {
 </script>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { computed, nextTick, reactive, ref } from 'vue'
 import Accordion from '@/components/atoms/Accordion.vue'
-import SettingControl from '@/components/molecules/SettingControl.vue'
-import SettingSecret from '@/components/molecules/SettingSecret.vue'
+import SettingsFieldList from '@/components/molecules/SettingsFieldList.vue'
+import { useAnnouncer } from '@/composables/useAnnouncer'
+import { useSectionSave } from '@/composables/useSectionSave'
+import { useSettingsBuffer, type SettingBufferValue } from '@/composables/useSettingsBuffer'
 import { useSettingsStore } from '@/stores/settings'
 import { rescueFocus } from '@/utils/focus'
 import { humanizeSection } from '@/utils/format'
-import type {
-  SettingsSection,
-  SettingView,
-  SettingViewSecret,
-  SettingViewValue,
-} from '@/types/api'
+import { groupIdOf, groupSettings } from '@/utils/settingsGroups'
+import type { SettingsSection, SettingViewValue } from '@/types/api'
 
-const props = defineProps<{
-  section: SettingsSection
-}>()
+const props = withDefaults(
+  defineProps<{
+    section: SettingsSection
+    initiallyExpanded?: boolean
+  }>(),
+  { initiallyExpanded: false },
+)
 
 const store = useSettingsStore()
 
-type BufferValue = string | number | boolean | string[]
-
-function isValue(setting: SettingView): setting is SettingViewValue {
-  return !setting.sensitive
-}
-function isSecret(setting: SettingView): setting is SettingViewSecret {
-  return setting.sensitive
-}
-
-const valueSettings = computed(() => props.section.settings.filter(isValue))
-const nonAdvanced = computed(() => valueSettings.value.filter((setting) => !setting.advanced))
-const advanced = computed(() => valueSettings.value.filter((setting) => setting.advanced))
-const secrets = computed(() => props.section.settings.filter(isSecret))
-
-const title = computed(() => humanizeSection(props.section.section))
-const sectionKey = computed(() => props.section.section)
-const groupId = computed(() => `settings-group-${sectionKey.value}`)
-const headingId = computed(() => `settings-heading-${sectionKey.value}`)
-
-const advancedExpanded = ref(false)
-
-// The service's pattern message is deictic ("see this setting's help"), and the
-// banner sits in the section footer naming no field. Prefix the offending label
-// so the pointer has a referent from here too.
-const saveErrorText = computed(() => {
-  const message = saveError.value || 'failed to save'
-  const offending = valueSettings.value.find(
-    (setting) => store.fieldErrors[setting.key],
-  )
-  return offending ? `${offending.label}: ${message}` : message
-})
-
-const cautionText = computed(
-  () =>
-    CAUTION_BY_SECTION[sectionKey.value] ??
-    'these settings change how this instance runs.',
+const valueSettings = computed(() =>
+  props.section.settings.filter((setting): setting is SettingViewValue => !setting.sensitive),
+)
+// The two halves partition the section: a setting the registry marks advanced
+// is never also offered above, and none can fall out of both and go unrendered.
+const advanced = computed(() => props.section.settings.filter((setting) => setting.advanced))
+const grouped = computed(() =>
+  groupSettings(props.section.settings.filter((setting) => !setting.advanced)),
 )
 
-// Server truth lives in the store; the buffer is this section's working copy.
-const buffer = reactive<Record<string, BufferValue>>({})
-const original = reactive<Record<string, BufferValue>>({})
+const sectionKey = computed(() => props.section.section)
+const title = computed(() => humanizeSection(sectionKey.value))
 
-function coerce(setting: SettingViewValue): BufferValue {
-  const rawValue = setting.value
-  switch (setting.type) {
-    case 'bool':
-      return Boolean(rawValue)
-    case 'int':
-    case 'float': {
-      if (typeof rawValue === 'number') return rawValue
-      const parsedNumber = Number(rawValue)
-      return Number.isFinite(parsedNumber) ? parsedNumber : 0
-    }
-    case 'list':
-      return Array.isArray(rawValue) ? rawValue.map(String) : []
-    default:
-      return rawValue == null ? '' : String(rawValue)
-  }
-}
+const expanded = ref(props.initiallyExpanded)
+const advancedExpanded = ref(false)
+const expandedGroups = reactive<Record<string, boolean>>({})
 
-function syncBuffer(): void {
-  for (const setting of valueSettings.value) {
-    const coerced = coerce(setting)
-    buffer[setting.key] = coerced
-    original[setting.key] = coerced
-  }
-}
+const { buffer, changedUpdates } = useSettingsBuffer(() => valueSettings.value)
+const { message: actionMessage, announce, report } = useAnnouncer()
 
-watch(() => props.section, syncBuffer, { immediate: true, deep: true })
+const { saving, saveStatus, saveErrorText, save } = useSectionSave(
+  () => sectionKey.value,
+  () => valueSettings.value,
+  changedUpdates,
+  announce,
+)
 
-const saving = computed(() => store.saving[sectionKey.value] ?? false)
-const saveStatus = computed(() => store.saveStatus[sectionKey.value] ?? 'idle')
-const saveError = computed(() => store.saveError[sectionKey.value] ?? '')
+const cautionText = computed(
+  () => CAUTION_BY_SECTION[sectionKey.value] ?? 'these settings change how this instance runs.',
+)
 
 const resetting = reactive<Record<string, boolean>>({})
 const secretBusy = reactive<Record<string, boolean>>({})
-const actionMessage = ref('')
 
-let saveStatusTimer: ReturnType<typeof setTimeout> | null = null
-
-function clearSaveTimer(): void {
-  if (saveStatusTimer) {
-    clearTimeout(saveStatusTimer)
-    saveStatusTimer = null
-  }
-}
-
-// A persistent role="status" region only fires the screen reader when its text
-// actually changes, so a repeated identical action (e.g. two resets in a row)
-// would be dropped.
-async function announce(message: string): Promise<void> {
-  // Blank the region first, then set the message, forcing a mutation the AT
-  // re-announces every time.
-  actionMessage.value = ''
-  await nextTick()
-  actionMessage.value = message
-}
-
-function changedUpdates(): Record<string, unknown> {
-  const updates: Record<string, unknown> = {}
-  for (const setting of valueSettings.value) {
-    const key = setting.key
-    if (JSON.stringify(buffer[key]) !== JSON.stringify(original[key])) {
-      updates[key] = buffer[key]
-    }
-  }
-  return updates
+// A refused value inside a collapsed accordion is an error nobody can see.
+function reveal(setting: SettingViewValue): void {
+  expanded.value = true
+  if (setting.advanced) advancedExpanded.value = true
+  const groupId = groupIdOf(setting.key)
+  if (groupId) expandedGroups[groupId] = true
 }
 
 async function onSave(): Promise<void> {
-  // Guard re-entry here so the button can stay focusable (aria-disabled does not
-  // block activation), which keeps focus where the user left it on the success
-  // path (WCAG 2.4.3).
-  if (saving.value) return
-  clearSaveTimer()
-  const updates = changedUpdates()
-  // Nothing edited: don't PUT an empty object and then claim "Saved ✓", which
-  // tells the user a write happened that did not.
-  if (Object.keys(updates).length === 0) {
-    await announce('No changes to save.')
-    return
-  }
-  const ok = await store.saveSection(sectionKey.value, updates)
-  if (ok) {
-    // Focus stays on Save, whose label reverts to what it was: without this the
-    // write lands in silence.
-    await announce(`${title.value} saved.`)
-    saveStatusTimer = setTimeout(() => {
-      store.clearSaveStatus(sectionKey.value)
-      saveStatusTimer = null
-    }, 2500)
-    return
-  }
-  // Move focus to the first offending field so keyboard/AT users land on it.
-  const offending = valueSettings.value.find((setting) => store.fieldErrors[setting.key])
-  if (offending) {
-    if (offending.advanced) advancedExpanded.value = true
-    await nextTick()
-    document.getElementById(`setting-${offending.key}`)?.focus()
-  }
-}
-
-function failureText(error: unknown, fallback: string): string {
-  return error instanceof Error ? `${fallback} ${error.message}` : fallback
+  const refused = await save()
+  if (!refused) return
+  // Focus follows the disclosure, so keyboard and AT users land on the field
+  // that was rejected rather than on the panel that opened.
+  reveal(refused)
+  await nextTick()
+  document.getElementById(`setting-${refused.key}`)?.focus()
 }
 
 async function onReset(key: string): Promise<void> {
   resetting[key] = true
-  try {
-    await store.resetSetting(key)
-    await announce('Reset to default.')
-  } catch (error) {
-    await announce(failureText(error, 'Reset failed.'))
-  } finally {
-    resetting[key] = false
-  }
+  await report(() => store.resetSetting(key), 'Reset to default.', 'Reset failed.')
+  resetting[key] = false
   // Only a landed reset strands anyone: its button unmounts with the override it
   // removed. A refused one is aria-disabled, so it keeps both its place and the
   // operator's focus, and the seam declines (WCAG 2.4.3).
@@ -192,67 +94,96 @@ async function onReset(key: string): Promise<void> {
   rescueFocus(document.getElementById(`setting-${key}`))
 }
 
-async function onSetSecret(key: string, value: string): Promise<void> {
+async function onSecret(
+  key: string,
+  action: () => Promise<void>,
+  done: string,
+  failed: string,
+): Promise<void> {
   secretBusy[key] = true
-  try {
-    await store.setSecret(key, value)
-    await announce('Secret saved.')
-  } catch (error) {
-    await announce(failureText(error, 'Saving the secret failed.'))
-  } finally {
-    secretBusy[key] = false
-  }
+  await report(action, done, failed)
+  secretBusy[key] = false
 }
 
-async function onClearSecret(key: string): Promise<void> {
-  secretBusy[key] = true
-  try {
-    await store.clearSecret(key)
-    await announce('Secret cleared.')
-  } catch (error) {
-    await announce(failureText(error, 'Clearing the secret failed.'))
-  } finally {
-    secretBusy[key] = false
-  }
+function onSetSecret(key: string, value: string): Promise<void> {
+  const failed = 'Saving the secret failed.'
+  return onSecret(key, () => store.setSecret(key, value), 'Secret saved.', failed)
 }
 
-onBeforeUnmount(clearSaveTimer)
+function onClearSecret(key: string): Promise<void> {
+  const failed = 'Clearing the secret failed.'
+  return onSecret(key, () => store.clearSecret(key), 'Secret cleared.', failed)
+}
+
+function onUpdate(key: string, value: SettingBufferValue): void {
+  buffer[key] = value
+}
 </script>
 
 <template>
-  <div class="card">
-    <h3 :id="headingId" class="section-title">{{ title }}</h3>
+  <div class="settings-section">
+    <Accordion
+      :id="`section-${sectionKey}`"
+      :heading-level="3"
+      :expanded="expanded"
+      @update:expanded="expanded = $event"
+    >
+      <template #header>
+        <span class="settings-section-header">
+          <span class="settings-section-name">{{ title }}</span>
+          <span class="settings-section-count">
+            {{ section.settings.length }} setting{{ section.settings.length === 1 ? '' : 's' }}
+          </span>
+        </span>
+      </template>
 
-    <div :id="groupId" role="group" :aria-labelledby="headingId">
-      <SettingControl
-        v-for="setting in nonAdvanced"
-        :key="setting.key"
-        :setting="setting"
-        v-model="buffer[setting.key]"
+      <SettingsFieldList
+        :settings="grouped.ungrouped"
+        :values="buffer"
         :disabled="saving"
-        :error="store.fieldErrors[setting.key] ?? ''"
-        :resetting="resetting[setting.key] ?? false"
-        @reset="onReset(setting.key)"
+        :errors="store.fieldErrors"
+        :resetting="resetting"
+        :secret-busy="secretBusy"
+        @update="onUpdate"
+        @reset="onReset"
+        @set-secret="onSetSecret"
+        @clear-secret="onClearSecret"
       />
 
-      <fieldset v-if="secrets.length > 0" class="source-form-secrets">
-        <legend>Secrets</legend>
-        <SettingSecret
-          v-for="setting in secrets"
-          :key="setting.key"
-          :setting="setting"
-          :verbs-locked="saving"
-          :busy="secretBusy[setting.key] ?? false"
-          @set="onSetSecret(setting.key, $event)"
-          @clear="onClearSecret(setting.key)"
+      <Accordion
+        v-for="group in grouped.groups"
+        :id="`group-${group.id}`"
+        :key="group.id"
+        :heading-level="4"
+        :expanded="expandedGroups[group.id] ?? false"
+        class="settings-subgroup"
+        @update:expanded="expandedGroups[group.id] = $event"
+      >
+        <template #header>
+          {{ group.label }} · {{ group.settings.length }} setting{{
+            group.settings.length === 1 ? '' : 's'
+          }}
+        </template>
+        <SettingsFieldList
+          :settings="group.settings"
+          :values="buffer"
+          :disabled="saving"
+          :errors="store.fieldErrors"
+          :resetting="resetting"
+          :secret-busy="secretBusy"
+          @update="onUpdate"
+          @reset="onReset"
+          @set-secret="onSetSecret"
+          @clear-secret="onClearSecret"
         />
-      </fieldset>
+      </Accordion>
 
       <Accordion
         v-if="advanced.length > 0"
         :id="`adv-${sectionKey}`"
         :heading-level="4"
         :expanded="advancedExpanded"
+        class="settings-subgroup"
         @update:expanded="advancedExpanded = $event"
       >
         <template #header>Advanced · {{ advanced.length }} setting{{ advanced.length === 1 ? '' : 's' }}</template>
@@ -260,61 +191,90 @@ onBeforeUnmount(clearSaveTimer)
           <strong>Caution:</strong> {{ cautionText }} Change these only if you
           understand the impact.
         </p>
-        <SettingControl
-          v-for="setting in advanced"
-          :key="setting.key"
-          :setting="setting"
-          v-model="buffer[setting.key]"
+        <SettingsFieldList
+          :settings="advanced"
+          :values="buffer"
           :disabled="saving"
-          :error="store.fieldErrors[setting.key] ?? ''"
-          :resetting="resetting[setting.key] ?? false"
-          @reset="onReset(setting.key)"
+          :errors="store.fieldErrors"
+          :resetting="resetting"
+          :secret-busy="secretBusy"
+          @update="onUpdate"
+          @reset="onReset"
+          @set-secret="onSetSecret"
+          @clear-secret="onClearSecret"
         />
       </Accordion>
-    </div>
 
-    <div v-if="valueSettings.length > 0" class="settings-section-actions">
-      <!-- Deliberately NOT a live region: the error span below is one already,
-           and aria-atomic here drags the button's own label into every
-           announcement. The saved pill is visible text; the region at the foot
-           of the card speaks for it. -->
-      <div class="settings-section-save-group">
-        <span
-          v-if="saveStatus === 'saved'"
-          class="badge"
-          data-tone="success"
-          :data-testid="`save-status-${sectionKey}`"
-        >Saved ✓</span>
-        <span
-          v-else-if="saveStatus === 'error'"
-          class="badge badge--wrap"
-          data-tone="error"
-          :data-testid="`save-status-${sectionKey}`"
-          role="alert"
-        >Error: {{ saveErrorText }}</span>
-        <!-- aria-disabled, not disabled: disabling the button the user just
-             activated blurs it and drops focus to <body> for the whole save.
-             onSave guards re-entry instead. -->
-        <button
-          type="button"
-          class="btn btn-primary"
-          :data-testid="`save-${sectionKey}`"
-          :aria-disabled="saving || undefined"
-          @click="onSave"
-        >{{ saving ? 'Saving…' : `Save ${title}` }}</button>
+      <div v-if="valueSettings.length > 0" class="settings-section-actions">
+        <!-- Deliberately NOT a live region: the error span below is one already,
+             and aria-atomic here drags the button's own label into every
+             announcement. The saved pill is visible text; the region at the foot
+             of the section speaks for it. -->
+        <div class="settings-section-save-group">
+          <span
+            v-if="saveStatus === 'saved'"
+            class="badge"
+            data-tone="success"
+            :data-testid="`save-status-${sectionKey}`"
+          >Saved ✓</span>
+          <span
+            v-else-if="saveStatus === 'error'"
+            class="badge badge--wrap"
+            data-tone="error"
+            :data-testid="`save-status-${sectionKey}`"
+            role="alert"
+          >Error: {{ saveErrorText }}</span>
+          <!-- aria-disabled, not disabled: disabling the button the user just
+               activated blurs it and drops focus to <body> for the whole save.
+               useSectionSave guards re-entry instead. -->
+          <button
+            type="button"
+            class="btn btn-primary"
+            :data-testid="`save-${sectionKey}`"
+            :aria-disabled="saving || undefined"
+            @click="onSave"
+          >{{ saving ? 'Saving…' : `Save ${title}` }}</button>
+        </div>
       </div>
-    </div>
+    </Accordion>
 
-    <!-- Persistent live region: every save, reset and secret outcome lands here. -->
+    <!-- Outside the accordion: a collapsed panel is `hidden`, which takes the
+         region out of the accessibility tree and silences every announcement. -->
     <p class="sr-only" role="status" aria-live="polite" aria-atomic="true">{{ actionMessage }}</p>
   </div>
 </template>
 
 <style scoped>
-/* Shared .source-form-secrets primitives live in base.css; this section only
-   needs the vertical spacing that separates the fieldset from its neighbours. */
-.source-form-secrets {
-  margin: var(--space-3) 0;
+.settings-section {
+  margin-bottom: var(--space-4);
+}
+
+.settings-section-header {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.settings-section-name {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+}
+
+/* How much is behind a collapsed row, so the page can be scanned shut. */
+.settings-section-count {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+}
+
+/* Flat: a nested card carrying the same elevation as the section around it
+   reads as a sibling of that section rather than as its contents. The border
+   stays --border-default, which is the 3:1 edge that identifies an accordion. */
+.settings-subgroup {
+  margin-top: var(--space-3);
+  box-shadow: var(--elevation-0);
 }
 
 .settings-caution {
@@ -345,5 +305,4 @@ onBeforeUnmount(clearSaveTimer)
   gap: var(--space-3);
   margin-left: auto;
 }
-
 </style>
