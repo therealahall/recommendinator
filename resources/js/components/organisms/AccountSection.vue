@@ -38,15 +38,12 @@ const emit = defineEmits<{
 
 const expanded = ref(false)
 
-// Every report either form makes lives in the panel, and a shut panel is
-// `hidden`: its status region is out of the accessibility tree, so an outcome
-// landing after the operator closed it reaches nobody.
-function reveal(refusedFieldId?: string): void {
+// Only a refusal opens the panel, and focus is what carries it: the status line
+// describing that field is a region unhidden with text already in it, which no
+// screen reader announces. A landed save asks nothing of the operator.
+function reveal(refusedFieldId: string): void {
   if (expanded.value) return
   expanded.value = true
-  if (!refusedFieldId) return
-  // Focus carries the refusal: the field it lands on is described by the very
-  // status line the shut panel swallowed.
   void nextTick().then(() => document.getElementById(refusedFieldId)?.focus())
 }
 
@@ -62,9 +59,6 @@ watch(
     if (error) reveal('account-current-password')
   },
 )
-watch([() => props.profileSaved, () => props.passwordSaved], ([profile, password]) => {
-  if (profile || password) reveal()
-})
 </script>
 
 <template>

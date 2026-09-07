@@ -50,19 +50,11 @@ class TestHumanizeSourceIdAcronyms:
         [
             ("finished_tv_shows", "Finished TV Shows"),
             ("gog_api", "GOG API"),
-        ],
-    )
-    def test_acronym_within_multi_word_id(self, source_id: str, expected: str) -> None:
-        assert humanize_source_id(source_id) == expected
-
-    @pytest.mark.parametrize(
-        ("source_id", "expected"),
-        [
             ("goodreads_rss", "Goodreads RSS"),
             ("roms", "ROMs"),
         ],
     )
-    def test_a_source_id_a_plugin_prefills_reads_as_its_acronym(
+    def test_an_acronym_word_comes_from_the_map_not_from_capitalize(
         self, source_id: str, expected: str
     ) -> None:
         assert humanize_source_id(source_id) == expected

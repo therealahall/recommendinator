@@ -196,12 +196,13 @@ describe('the item a sync is working on', () => {
 })
 
 describe('library card divider (issue #108)', () => {
-  it('spaces the badges off the divider whether or not the card is rated', () => {
+  it('spaces every row that can be the last one off the divider', () => {
     const source = readBase()
     const gap = declaration(ruleBlock(source, '.library-meta'), 'margin-bottom')
 
     expect(gap).not.toBe('0')
     expect(declaration(ruleBlock(source, '.library-meta-secondary'), 'margin-bottom')).toBe(gap)
+    expect(declaration(ruleBlock(source, '.library-sources'), 'margin-bottom')).toBe(gap)
   })
 })
 

@@ -88,8 +88,7 @@ async function mountSection(section: SettingsSectionType): Promise<VueWrapper> {
 
 /** What the operator can actually reach: a collapsed panel carries `hidden`. */
 function reachable(wrapper: VueWrapper, testid: string): boolean {
-  const found = wrapper.find(`[data-testid="${testid}"]`)
-  return found.exists() && found.element.closest('[hidden]') === null
+  return wrapper.get(`[data-testid="${testid}"]`).element.closest('[hidden]') === null
 }
 
 function accordionTrigger(wrapper: VueWrapper, label: string) {
