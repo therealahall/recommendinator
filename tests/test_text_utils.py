@@ -55,6 +55,18 @@ class TestHumanizeSourceIdAcronyms:
     def test_acronym_within_multi_word_id(self, source_id: str, expected: str) -> None:
         assert humanize_source_id(source_id) == expected
 
+    @pytest.mark.parametrize(
+        ("source_id", "expected"),
+        [
+            ("goodreads_rss", "Goodreads RSS"),
+            ("roms", "ROMs"),
+        ],
+    )
+    def test_a_source_id_a_plugin_prefills_reads_as_its_acronym(
+        self, source_id: str, expected: str
+    ) -> None:
+        assert humanize_source_id(source_id) == expected
+
 
 class TestSanitizeRuleText:
     """Rules are stripped, not allowlisted: an allowlist ate the ``+`` from
