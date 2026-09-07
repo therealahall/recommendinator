@@ -330,7 +330,7 @@ def test_sync_sources_endpoint(client, mock_config):
     assert len(sources) == 1
     goodreads = next((s for s in sources if s["id"] == "goodreads_rss"), None)
     assert goodreads is not None
-    assert goodreads["display_name"] == "Goodreads Rss"
+    assert goodreads["display_name"] == "Goodreads RSS"
 
 
 def test_sync_sources_lists_all_with_enabled_flag(client):
@@ -764,7 +764,7 @@ def test_update_all_refuses_with_a_4xx_when_every_source_is_misconfigured(
     assert response.status_code == 400
     detail = response.json()["detail"]
     assert (
-        "Goodreads Rss: Source is not properly configured — "
+        "Goodreads RSS: Source is not properly configured — "
         "check its 'user_id' setting." in detail
     )
     assert (
@@ -2393,7 +2393,7 @@ class TestUpdateEndpoint409Conflict:
 
             assert response.status_code == 409
             assert response.json()["detail"] == "A sync is already in progress"
-            assert mock_manager.start_sync.call_args.args[0] == "Goodreads Rss"
+            assert mock_manager.start_sync.call_args.args[0] == "Goodreads RSS"
 
     def test_update_allows_different_sources_concurrently(
         self, client: TestClient, mock_components: dict
@@ -2412,7 +2412,7 @@ class TestUpdateEndpoint409Conflict:
             with patch(
                 "src.web.sync_dispatch.execute_multi_source_sync",
                 return_value=[
-                    SyncJob(source="Goodreads Rss", status=SyncStatus.RUNNING)
+                    SyncJob(source="Goodreads RSS", status=SyncStatus.RUNNING)
                 ],
             ):
                 response = client.post("/api/update", json={"source": "goodreads_rss"})
@@ -2420,7 +2420,7 @@ class TestUpdateEndpoint409Conflict:
         assert response.status_code == 200, response.text
         assert "Sync started" in response.json()["message"]
         assert manager.is_running("Steam") is True
-        assert "Goodreads Rss" in {
+        assert "Goodreads RSS" in {
             job["source"] for job in manager.get_status()["jobs"]
         }
 

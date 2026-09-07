@@ -47,6 +47,7 @@ _UPPERCASE_WORDS: dict[str, str] = {
     "id": "ID",
     "csv": "CSV",
     "json": "JSON",
+    "rss": "RSS",
 }
 
 
