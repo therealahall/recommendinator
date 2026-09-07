@@ -40,23 +40,14 @@ const advanced = computed(() => props.section.settings.filter((setting) => setti
 const grouped = computed(() =>
   groupSettings(props.section.settings.filter((setting) => !setting.advanced)),
 )
-// The Advanced disclosure hides advanced settings among ordinary ones. A section
-// that is nothing but advanced has none to hide them from, so the disclosure is
-// pure cost: its settings render in the section panel like any others.
-const nestAdvanced = computed(
-  () =>
-    advanced.value.length > 0 &&
-    (grouped.value.ungrouped.length > 0 || grouped.value.groups.length > 0),
-)
-const panelSettings = computed(() =>
-  nestAdvanced.value ? grouped.value.ungrouped : [...grouped.value.ungrouped, ...advanced.value],
-)
+// Advanced settings sit last in the panel: the caution note above covers them,
+// so a disclosure of their own would only add a click.
+const panelSettings = computed(() => [...grouped.value.ungrouped, ...advanced.value])
 
 const sectionKey = computed(() => props.section.section)
 const title = computed(() => humanizeSection(sectionKey.value))
 
 const expanded = ref(props.initiallyExpanded)
-const advancedExpanded = ref(false)
 const expandedGroups = reactive<Record<string, boolean>>({})
 
 const { buffer, changedUpdates } = useSettingsBuffer(() => valueSettings.value)
@@ -79,7 +70,6 @@ const secretBusy = reactive<Record<string, boolean>>({})
 // A refused value inside a collapsed accordion is an error nobody can see.
 function reveal(setting: SettingViewValue): void {
   expanded.value = true
-  if (setting.advanced) advancedExpanded.value = true
   const group = grouped.value.groups.find((entry) =>
     entry.settings.some((member) => member.key === setting.key),
   )
@@ -150,7 +140,7 @@ function onUpdate(key: string, value: SettingBufferValue): void {
         </span>
       </template>
 
-      <p v-if="!nestAdvanced && advanced.length > 0" class="settings-caution" role="note">
+      <p v-if="advanced.length > 0" class="settings-caution" role="note">
         <strong>Caution:</strong> {{ cautionText }} Change these only if you
         understand the impact.
       </p>
@@ -178,39 +168,10 @@ function onUpdate(key: string, value: SettingBufferValue): void {
         @update:expanded="expandedGroups[group.id] = $event"
       >
         <template #header>
-          {{ group.label }} · {{ group.settings.length }} setting{{
-            group.settings.length === 1 ? '' : 's'
-          }}
+          {{ group.label }} · {{ group.settings.length }} settings
         </template>
         <SettingsFieldList
           :settings="group.settings"
-          :values="buffer"
-          :disabled="saving"
-          :errors="store.fieldErrors"
-          :resetting="resetting"
-          :secret-busy="secretBusy"
-          @update="onUpdate"
-          @reset="onReset"
-          @set-secret="onSetSecret"
-          @clear-secret="onClearSecret"
-        />
-      </Accordion>
-
-      <Accordion
-        v-if="nestAdvanced"
-        :id="`adv-${sectionKey}`"
-        :heading-level="4"
-        :expanded="advancedExpanded"
-        class="settings-subgroup"
-        @update:expanded="advancedExpanded = $event"
-      >
-        <template #header>Advanced · {{ advanced.length }} setting{{ advanced.length === 1 ? '' : 's' }}</template>
-        <p class="settings-caution" role="note">
-          <strong>Caution:</strong> {{ cautionText }} Change these only if you
-          understand the impact.
-        </p>
-        <SettingsFieldList
-          :settings="advanced"
           :values="buffer"
           :disabled="saving"
           :errors="store.fieldErrors"
