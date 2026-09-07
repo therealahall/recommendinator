@@ -67,9 +67,10 @@ function changePassword(change: PasswordChangeRequest) {
 
     <template v-else>
       <SettingsSection
-        v-for="section in store.sections"
+        v-for="(section, index) in store.sections"
         :key="section.section"
         :section="section"
+        :initially-expanded="index === 0"
       />
     </template>
 
