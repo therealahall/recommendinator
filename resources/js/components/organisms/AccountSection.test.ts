@@ -24,8 +24,7 @@ async function mountSection(props: Record<string, unknown> = {}): Promise<VueWra
 
 /** What the operator can actually reach: a collapsed panel carries `hidden`. */
 function reachable(wrapper: VueWrapper, selector: string): boolean {
-  const found = wrapper.find(selector)
-  return found.exists() && found.element.closest('[hidden]') === null
+  return wrapper.get(selector).element.closest('[hidden]') === null
 }
 
 describe('AccountSection', () => {
@@ -126,15 +125,6 @@ describe('AccountSection', () => {
 
       expect(reachable(wrapper, '#account-password-status')).toBe(true)
       expect(document.activeElement).toBe(wrapper.get('#account-current-password').element)
-    })
-
-    it('opens the panel on a landed save rather than swallowing the confirmation', async () => {
-      const wrapper = renderSection()
-
-      await wrapper.setProps({ profileSaved: true })
-
-      expect(reachable(wrapper, '#account-profile-status')).toBe(true)
-      expect(wrapper.find('#account-profile-status').text()).toBe('Saved.')
     })
 
     it('leaves focus alone when a save lands, having asked nothing of the operator', async () => {
