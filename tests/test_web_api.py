@@ -1600,7 +1600,13 @@ def test_get_single_item(client, mock_components):
     assert response.status_code == 200
     data = response.json()
     assert data["db_id"] == 42
-    assert data["external_ids"] == [{"source": "goodreads_csv", "external_id": "ext_1"}]
+    assert data["external_ids"] == [
+        {
+            "source": "goodreads_csv",
+            "external_id": "ext_1",
+            "display_name": "Goodreads CSV",
+        }
+    ]
     assert data["title"] == "Test Book"
     assert data["rating"] == 4
     assert data["review"] == "Great"

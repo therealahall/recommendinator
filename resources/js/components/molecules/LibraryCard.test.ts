@@ -2,9 +2,12 @@ import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import LibraryCard from './LibraryCard.vue'
 import RecCard from './RecCard.vue'
+import type { ExternalId } from '@/types/api'
 
 const baseItem = {
-  external_ids: [{ source: 'goodreads', external_id: 'test-1' }],
+  external_ids: [
+    { source: 'goodreads', external_id: 'test-1', display_name: 'Goodreads' },
+  ],
   db_id: 1,
   title: 'Test Book',
   author: 'Author',
@@ -79,37 +82,57 @@ describe('LibraryCard', () => {
     expect(wrapper.text()).toContain('Unwatched')
   })
 
-  it.each<[string, { source: string; external_id: string }[], string[]]>([
-    ['one source', [{ source: 'steam', external_id: '440' }], ['steam']],
+  it.each<[string, ExternalId[], string[]]>([
+    [
+      'one source',
+      [{ source: 'gog_work', external_id: 'x', display_name: 'GOG Work' }],
+      ['GOG Work'],
+    ],
     [
       'a merge of two',
       [
-        { source: 'gog', external_id: 'x' },
-        { source: 'steam', external_id: '440' },
+        { source: 'gog_work', external_id: 'x', display_name: 'GOG Work' },
+        { source: 'steam', external_id: '440', display_name: 'Steam' },
       ],
-      ['gog', 'steam'],
+      ['GOG Work', 'Steam'],
     ],
     [
       'two ids from one source',
       [
-        { source: 'steam', external_id: '440' },
-        { source: 'steam', external_id: '620' },
+        { source: 'steam', external_id: '440', display_name: 'Steam' },
+        { source: 'steam', external_id: '620', display_name: 'Steam' },
       ],
-      ['steam'],
+      ['Steam'],
+    ],
+    [
+      'two sources whose names collide',
+      [
+        { source: 'gog_api', external_id: 'x', display_name: 'GOG API' },
+        { source: 'gog-api', external_id: 'y', display_name: 'GOG API' },
+      ],
+      ['GOG API', 'GOG API'],
     ],
     ['nothing', [], []],
-  ])('names each contributing source once, in the order sent: %s', (_case, external_ids, shown) => {
-    const wrapper = mount(LibraryCard, { props: { item: { ...baseItem, external_ids } } })
+  ])(
+    'names each contributing source once by display name, keyed on its id: %s',
+    (_case, external_ids, shown) => {
+      const wrapper = mount(LibraryCard, { props: { item: { ...baseItem, external_ids } } })
 
-    const badges = wrapper.findAll('[data-testid="source-badge"]')
-    expect(badges.map((badge) => badge.text())).toEqual(
-      shown.map((source) => expect.stringContaining(source)),
-    )
-  })
+      const badges = wrapper.findAll('[data-testid="source-badge"]')
+      expect(badges.map((badge) => badge.text())).toEqual(
+        shown.map((name) => expect.stringContaining(name)),
+      )
+    },
+  )
 
   it('speaks each source badge with context, never a bare id', () => {
     const wrapper = mount(LibraryCard, {
-      props: { item: { ...baseItem, external_ids: [{ source: 'steam', external_id: '440' }] } },
+      props: {
+        item: {
+          ...baseItem,
+          external_ids: [{ source: 'steam', external_id: '440', display_name: 'Steam' }],
+        },
+      },
     })
 
     const badge = wrapper.get('[data-testid="source-badge"]')
@@ -117,14 +140,20 @@ describe('LibraryCard', () => {
   })
 
   it('gains the source a merge added when the row is refreshed under it', async () => {
-    const item = { ...baseItem, external_ids: [{ source: 'steam', external_id: '440' }] }
+    const item = {
+      ...baseItem,
+      external_ids: [{ source: 'steam', external_id: '440', display_name: 'Steam' }],
+    }
     const wrapper = mount(LibraryCard, { props: { item } })
 
-    const merged = [...item.external_ids, { source: 'gog', external_id: 'x' }]
+    const merged = [
+      ...item.external_ids,
+      { source: 'gog_work', external_id: 'x', display_name: 'GOG Work' },
+    ]
     await wrapper.setProps({ item: { ...item, external_ids: merged } })
 
     expect(wrapper.findAll('[data-testid="source-badge"]')).toHaveLength(2)
-    expect(wrapper.text()).toContain('gog')
+    expect(wrapper.text()).toContain('GOG Work')
   })
 
   it('titles a card at the level a recommendation of the same work is titled', () => {

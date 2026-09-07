@@ -14,8 +14,14 @@ const series = computed(() => formatSeries(props.item.series, props.item.series_
 const glyph = computed(() => contentTypeGlyph(props.item.content_type))
 
 // A merge can leave two ids from one source, but that is still one place to go
-// and fix the data, so the source is named once. Order arrives sorted.
-const sources = computed(() => [...new Set(props.item.external_ids.map((id) => id.source))])
+// and fix the data, so the source is named once — keyed on the id, not the name.
+const sources = computed(() => {
+  const named = new Map<string, string>()
+  for (const entry of props.item.external_ids) {
+    named.set(entry.source, entry.display_name)
+  }
+  return [...named].map(([id, name]) => ({ id, name }))
+})
 
 const emit = defineEmits<{
   edit: [dbId: number]
@@ -63,11 +69,11 @@ function statusTone(status: string): string | undefined {
       <span v-if="item.ignored" class="badge" data-tone="warning">Ignored</span>
       <span
         v-for="source in sources"
-        :key="source"
+        :key="source.id"
         class="badge"
         data-tone="accent"
         data-testid="source-badge"
-      >{{ source }}<span class="sr-only"> — data source</span></span>
+      >{{ source.name }}<span class="sr-only"> — data source</span></span>
     </div>
     <div v-if="item.rating !== null" class="library-meta-secondary">
       <span v-if="item.rating !== null" class="rating-stars">

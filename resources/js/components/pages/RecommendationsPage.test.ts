@@ -29,7 +29,7 @@ function makeRec(overrides: Partial<RecommendationResponse> = {}): Recommendatio
 
 function makeFullItem(overrides: Partial<ContentItemResponse> = {}): ContentItemResponse {
   return {
-    external_ids: [{ source: 'goodreads', external_id: 'test-1' }],
+    external_ids: [{ source: 'goodreads', external_id: 'test-1', display_name: 'Goodreads' }],
     db_id: 1,
     title: 'A',
     author: 'Author',

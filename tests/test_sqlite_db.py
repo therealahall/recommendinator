@@ -3779,7 +3779,7 @@ class TestEachSourceHoldsItsOwnExternalId:
         stored = temp_db.get_content_item(db_id)
         assert stored is not None
         assert item_to_dict(stored)["external_ids"] == [
-            {"source": "gog", "external_id": "doom-gog"}
+            {"source": "gog", "external_id": "doom-gog", "display_name": "GOG"}
         ]
 
         temp_db.save_content_item(stored)
@@ -3819,7 +3819,11 @@ class TestEachSourceHoldsItsOwnExternalId:
         assert stored is not None
         assert stored.id == awkward
         assert item_to_dict(stored)["external_ids"] == [
-            {"source": "generic_csv", "external_id": awkward}
+            {
+                "source": "generic_csv",
+                "external_id": awkward,
+                "display_name": "Generic CSV",
+            }
         ]
 
 
