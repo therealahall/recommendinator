@@ -500,6 +500,7 @@ const TINTED_TEXT: [string, string, string, string][] = [
   ['a preferences save that failed', PREFERENCES_PAGE, '.text-error', '--bg-card'],
   ['a preferences save that landed', PREFERENCES_PAGE, '.text-success', '--bg-card'],
   ['the number of a watched season', SEASON_CHECKLIST, '.season-checkbox.checked', '--bg-card'],
+  ['the label separating sources from status', BASE, '.library-sources-label', '--bg-card'],
   ['a sync that failed', BASE, '.sync-status-error', '--bg-card'],
   ['a sync still running', BASE, '.sync-status-info', '--bg-card'],
   ['a sync that finished', BASE, '.sync-status-success', '--bg-card'],

@@ -1084,6 +1084,13 @@ button.badge[aria-checked='true']:hover {
   margin-bottom: var(--space-3);
 }
 
+/* The name on a Settings accordion row, shared by the registry sections and the
+   account block so a shut page reads as one column of equals. */
+.settings-section-name {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+}
+
 .section-subtitle,
 .pref-section h4 {
   font-size: var(--text-xs);
@@ -1722,6 +1729,32 @@ button.rec-score {
   align-items: center;
   gap: var(--space-2);
   margin-bottom: var(--space-1);
+}
+
+/* Provenance is a labelled section of its own, never a cell in the status row:
+   sharing that row, a source name read as one more state of the item. */
+.library-sources {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  margin-bottom: var(--space-1);
+}
+
+.library-sources-label {
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-widest);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.library-source-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  list-style: none;
 }
 
 /* Rating is a plain value (no badge chrome): filled/outlined stars convey the
