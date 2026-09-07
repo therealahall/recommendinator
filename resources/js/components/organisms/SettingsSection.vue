@@ -235,11 +235,6 @@ function onUpdate(key: string, value: SettingBufferValue): void {
   flex-wrap: wrap;
 }
 
-.settings-section-name {
-  font-size: var(--text-lg);
-  font-weight: var(--weight-semibold);
-}
-
 /* How much is behind a collapsed row, so the page can be scanned shut. */
 .settings-section-count {
   font-size: var(--text-xs);
