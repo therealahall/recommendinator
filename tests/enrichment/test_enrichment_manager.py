@@ -1887,9 +1887,6 @@ class TestTheOrdinalPassCountsRejectionsInARow:
     def test_a_provider_that_keeps_answering_is_never_abandoned_regression(
         self, tmp_path: Path
     ) -> None:
-        """Cumulative counting abandoned a provider on its fifth 404 of a run,
-        however many items it had answered in between.
-        """
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
         movies = [save_movie(storage_manager, f"Movie {index}") for index in range(20)]
         provider = UnreliableOrdinalProvider()
@@ -1934,7 +1931,7 @@ class FailingOrdinalProvider(OrdinalOnlyProvider):
 
 
 class TestAnUnansweredOrdinalPass:
-    def test_a_timed_out_ordinal_leaves_the_matched_item_queued_regression(
+    def test_a_timed_out_ordinal_keeps_the_matched_item_settled_regression(
         self, tmp_path: Path
     ) -> None:
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
@@ -1945,25 +1942,31 @@ class TestAnUnansweredOrdinalPass:
         manager.start_enrichment(content_type=ContentType.MOVIE)
         assert manager._wait_for_completion()
 
-        assert queued_ids(storage_manager) == {db_id}
-        item = storage_manager.get_content_item(db_id)
-        assert item.metadata["genres"] == ["Action", "Drama"]
+        assert queued_ids(storage_manager) == set()
+        status = storage_manager.enrichment.status(db_id)
+        assert status is not None
+        assert status["enrichment_provider"] == "mock"
+        assert status["enrichment_quality"] == "high"
 
-    def test_an_abandoned_ordinal_provider_leaves_the_rest_of_the_run_queued(
-        self, tmp_path: Path
+    @pytest.mark.parametrize(
+        ("error", "queues"),
+        [(requests.Timeout("timed out"), True), (http_error(401), False)],
+    )
+    def test_only_a_retryable_ordinal_failure_requeues_an_unmatched_item_regression(
+        self, tmp_path: Path, error: Exception, queues: bool
     ) -> None:
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
-        db_ids = [
-            save_movie(storage_manager, f"Movie {index}")
-            for index in range(_MAX_CONSECUTIVE_REJECTIONS + 2)
-        ]
-        ordinal = FailingOrdinalProvider(http_error(401))
-        manager = manager_over(storage_manager, MockProvider(), ordinal)
+        titles = [f"Movie {index}" for index in range(_MAX_CONSECUTIVE_REJECTIONS + 2)]
+        db_ids = {save_movie(storage_manager, title) for title in titles}
+        ordinal = FailingOrdinalProvider(error)
+        manager = manager_over(
+            storage_manager, MockProvider(should_not_find=True), ordinal
+        )
 
         manager.start_enrichment(content_type=ContentType.MOVIE)
         assert manager._wait_for_completion()
 
-        assert queued_ids(storage_manager) == set(db_ids[_MAX_CONSECUTIVE_REJECTIONS:])
+        assert queued_ids(storage_manager) == (db_ids if queues else set())
 
 
 class TestAFailedOrdinalSave:
