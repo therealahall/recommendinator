@@ -43,8 +43,8 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   /** Fetch the settings view and apply it in place (no `loading` toggle), so the
-   *  keyed section tree stays mounted — preserving focus and the Advanced
-   *  accordion state across refreshes (WCAG 2.4.3). */
+   *  keyed section tree stays mounted — preserving focus and accordion state
+   *  across refreshes (WCAG 2.4.3). */
   async function refreshSections(): Promise<void> {
     const data = await api.get<SettingsResponse>('/settings')
     sections.value = data.sections
@@ -110,8 +110,8 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   // Secrets are write-only: PUT/DELETE return 204, then refresh in place so
-  // SettingsPage keeps the keyed section tree mounted (focus + Advanced accordion
-  // state preserved — WCAG 2.4.3).
+  // SettingsPage keeps the keyed section tree mounted (focus + accordion state
+  // preserved — WCAG 2.4.3).
   async function setSecret(key: string, value: string): Promise<void> {
     await api.put('/settings/secret', { key, value })
     await refreshSections()

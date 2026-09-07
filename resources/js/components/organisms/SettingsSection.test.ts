@@ -332,6 +332,28 @@ describe('SettingsSection', () => {
       expect(wrapper.findAll('.settings-field-list')).toHaveLength(1)
     })
 
+    it('opens the shut section holding an advanced value the server refused', async () => {
+      const key = 'logging.level'
+      mockPut.mockRejectedValue(
+        new MockApiError(422, 'Unprocessable Entity', {
+          detail: { key, reason: 'unknown level' },
+        }),
+      )
+      const wrapper = renderSection(
+        { section: 'logging', settings: [textSetting(key, 'INFO', { advanced: true })] },
+        true,
+      )
+      await wrapper.find(`[data-testid="setting-${key}"]`).setValue('LOUD')
+      await accordionTrigger(wrapper, 'Logging').trigger('click')
+      expect(reachable(wrapper, `setting-${key}`)).toBe(false)
+
+      await wrapper.find('[data-testid="save-logging"]').trigger('click')
+      await flushPromises()
+
+      expect(reachable(wrapper, `setting-${key}`)).toBe(true)
+      expect(document.activeElement).toBe(wrapper.find(`[data-testid="setting-${key}"]`).element)
+    })
+
     it('nests every subgroup heading one level under the section heading', () => {
       const wrapper = renderSection(ZZZTEST, true)
 
