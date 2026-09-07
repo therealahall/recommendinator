@@ -90,10 +90,10 @@ def test_a_series_the_title_no_longer_states_reaches_both_interfaces(
     ("sources", "expected"),
     [
         (["gog_work"], ["GOG Work"]),
-        (["goodreads_rss"], ["Goodreads Rss"]),
+        (["goodreads_rss"], ["Goodreads RSS"]),
         (["gog_work", "calibre_web"], ["GOG Work", "Calibre Web"]),
     ],
-    ids=["acronym", "no-acronym", "merged"],
+    ids=["acronym", "two-word-acronym", "merged"],
 )
 def test_each_external_id_names_its_source_the_way_the_rest_of_the_ui_does(
     sources: list[str], expected: list[str]
