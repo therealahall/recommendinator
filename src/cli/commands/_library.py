@@ -313,7 +313,8 @@ def library_show(
             [
                 "External IDs",
                 ", ".join(
-                    f"{pair.source}: {pair.external_id}" for pair in item.external_ids
+                    f"{pair.display_name}: {pair.external_id}"
+                    for pair in item.external_ids
                 )
                 or "N/A",
             ],

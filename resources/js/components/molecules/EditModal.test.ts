@@ -9,7 +9,7 @@ vi.mock('@/composables/useApi', () => ({
 }))
 
 const defaultItem = {
-  external_ids: [{ source: 'goodreads', external_id: 'test-1' }],
+  external_ids: [{ source: 'goodreads', external_id: 'test-1', display_name: 'Goodreads' }],
   db_id: 1,
   title: 'Test Book',
   content_type: 'book',

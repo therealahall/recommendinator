@@ -2,6 +2,7 @@
 export interface ExternalId {
   source: string
   external_id: string
+  display_name: string
 }
 
 export interface ContentItemResponse {

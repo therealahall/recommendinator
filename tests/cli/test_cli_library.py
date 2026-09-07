@@ -355,10 +355,14 @@ class TestLibraryShow:
         assert parsed["review"] == "Masterpiece"
         assert parsed["date_completed"] is None
         assert parsed["external_ids"] == [
-            {"source": "goodreads_csv", "external_id": "ext-42"}
+            {
+                "source": "goodreads_csv",
+                "external_id": "ext-42",
+                "display_name": "Goodreads CSV",
+            }
         ]
 
-    def test_show_table_names_the_source_behind_each_id(
+    def test_show_table_names_the_source_behind_each_id_as_the_data_page_does(
         self, cli_runner: CliRunner
     ) -> None:
         item = _make_item(db_id=42)
@@ -371,8 +375,8 @@ class TestLibraryShow:
         )
 
         assert result.exit_code == 0
-        assert "goodreads_csv: ext-42" in result.output
-        assert "steam: 440" in result.output
+        assert "Goodreads CSV: ext-42" in result.output
+        assert "Steam: 440" in result.output
 
     def test_show_table_states_the_year_a_correction_would_replace(
         self, cli_runner: CliRunner
