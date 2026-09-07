@@ -18,7 +18,7 @@ import { useSettingsBuffer, type SettingBufferValue } from '@/composables/useSet
 import { useSettingsStore } from '@/stores/settings'
 import { rescueFocus } from '@/utils/focus'
 import { humanizeSection } from '@/utils/format'
-import { groupIdOf, groupSettings } from '@/utils/settingsGroups'
+import { groupSettings } from '@/utils/settingsGroups'
 import type { SettingsSection, SettingViewValue } from '@/types/api'
 
 const props = withDefaults(
@@ -39,6 +39,17 @@ const valueSettings = computed(() =>
 const advanced = computed(() => props.section.settings.filter((setting) => setting.advanced))
 const grouped = computed(() =>
   groupSettings(props.section.settings.filter((setting) => !setting.advanced)),
+)
+// The Advanced disclosure hides advanced settings among ordinary ones. A section
+// that is nothing but advanced has none to hide them from, so the disclosure is
+// pure cost: its settings render in the section panel like any others.
+const nestAdvanced = computed(
+  () =>
+    advanced.value.length > 0 &&
+    (grouped.value.ungrouped.length > 0 || grouped.value.groups.length > 0),
+)
+const panelSettings = computed(() =>
+  nestAdvanced.value ? grouped.value.ungrouped : [...grouped.value.ungrouped, ...advanced.value],
 )
 
 const sectionKey = computed(() => props.section.section)
@@ -69,8 +80,10 @@ const secretBusy = reactive<Record<string, boolean>>({})
 function reveal(setting: SettingViewValue): void {
   expanded.value = true
   if (setting.advanced) advancedExpanded.value = true
-  const groupId = groupIdOf(setting.key)
-  if (groupId) expandedGroups[groupId] = true
+  const group = grouped.value.groups.find((entry) =>
+    entry.settings.some((member) => member.key === setting.key),
+  )
+  if (group) expandedGroups[group.id] = true
 }
 
 async function onSave(): Promise<void> {
@@ -137,8 +150,13 @@ function onUpdate(key: string, value: SettingBufferValue): void {
         </span>
       </template>
 
+      <p v-if="!nestAdvanced && advanced.length > 0" class="settings-caution" role="note">
+        <strong>Caution:</strong> {{ cautionText }} Change these only if you
+        understand the impact.
+      </p>
       <SettingsFieldList
-        :settings="grouped.ungrouped"
+        v-if="panelSettings.length > 0"
+        :settings="panelSettings"
         :values="buffer"
         :disabled="saving"
         :errors="store.fieldErrors"
@@ -179,7 +197,7 @@ function onUpdate(key: string, value: SettingBufferValue): void {
       </Accordion>
 
       <Accordion
-        v-if="advanced.length > 0"
+        v-if="nestAdvanced"
         :id="`adv-${sectionKey}`"
         :heading-level="4"
         :expanded="advancedExpanded"

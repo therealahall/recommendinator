@@ -24,11 +24,6 @@ function slug(path: string): string {
   return path.replace(/[^a-zA-Z0-9_-]/g, '-')
 }
 
-export function groupIdOf(key: string): string {
-  const path = groupPath(key)
-  return path === '' ? '' : slug(path)
-}
-
 const NON_ALNUM = /[^a-z0-9]/g
 
 function normalize(value: string): string {
@@ -56,21 +51,21 @@ function labelFor(path: string, settings: SettingView[]): string {
 }
 
 export function groupSettings(settings: SettingView[]): GroupedSettings {
-  const ungrouped: SettingView[] = []
   const byPath = new Map<string, SettingView[]>()
   for (const setting of settings) {
     const path = groupPath(setting.key)
-    if (path === '') {
-      ungrouped.push(setting)
-      continue
-    }
+    if (path === '') continue
     const members = byPath.get(path)
     if (members) members.push(setting)
     else byPath.set(path, [setting])
   }
+  // A disclosure around a single control costs two tab stops and a click to
+  // reach it, and hides it from find-in-page. It only pays for a pair.
+  const kept = Array.from(byPath).filter(([, members]) => members.length > 1)
+  const keptPaths = new Set(kept.map(([path]) => path))
   return {
-    ungrouped,
-    groups: Array.from(byPath, ([path, members]) => ({
+    ungrouped: settings.filter((setting) => !keptPaths.has(groupPath(setting.key))),
+    groups: kept.map(([path, members]) => ({
       id: slug(path),
       label: labelFor(path, members),
       settings: members,
