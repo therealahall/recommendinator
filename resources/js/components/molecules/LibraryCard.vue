@@ -85,7 +85,7 @@ function statusTone(status: string): string | undefined {
       </span>
     </div>
     <div v-if="sources.length > 0" class="library-sources">
-      <span :id="sourcesLabelId" class="library-sources-label">Data sources</span>
+      <span :id="sourcesLabelId" class="sr-only">Data sources</span>
       <ul class="library-source-list" role="list" :aria-labelledby="sourcesLabelId">
         <li v-for="source in sources" :key="source.id">
           <span class="badge" data-testid="source-badge">{{ source.name }}</span>

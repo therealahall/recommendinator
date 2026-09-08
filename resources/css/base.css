@@ -1092,8 +1092,7 @@ button.badge[aria-checked='true']:hover {
 }
 
 .section-subtitle,
-.pref-section h4,
-.library-sources-label {
+.pref-section h4 {
   font-size: var(--text-xs);
   font-weight: var(--weight-semibold);
   letter-spacing: var(--tracking-widest);
