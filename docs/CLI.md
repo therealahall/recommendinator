@@ -222,6 +222,7 @@ uv run python -m src.cli library unignore --id 42 --format json
 ```bash
 uv run python -m src.cli library duplicates --type book --limit 25
 uv run python -m src.cli library merge --survivor 42 --absorbed 77
+uv run python -m src.cli library merge --survivor-title "Amelie" --absorbed-title "Le Fabuleux Destin d'Amelie Poulain"
 uv run python -m src.cli library merges
 uv run python -m src.cli library unmerge --merge-id 3
 uv run python -m src.cli library decline-duplicate --one 42 --other 77 --other 91
@@ -243,6 +244,13 @@ state.
 A merge keeps `--survivor` and folds the other row into it; run it once per
 copy, from the one listing. Nothing is deleted, and `unmerge` puts the absorbed
 row back — newest merge first, refusing any other order.
+
+`--survivor-title` and `--absorbed-title` name a side by title instead, for the
+same work held under two names, which nothing above ever offers because the two
+share no title key. Each is searched as `library list --search` searches, and a
+term matching more than one row is refused with those rows listed rather than
+resolved to the best-ranked one. The web reaches the same merge from an item's
+**Merge** action, which searches, then asks which side survives.
 
 A show's season sizes survive on both sides: each season takes the largest count
 either row stated.

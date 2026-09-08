@@ -1283,6 +1283,7 @@ def _save_book(
     external_id: str,
     title: str,
     author: str | None = None,
+    content_type: ContentType = ContentType.BOOK,
 ) -> int:
     return storage.save_content_item(
         ContentItem(
@@ -1290,7 +1291,7 @@ def _save_book(
             source=source,
             title=title,
             author=author,
-            content_type=ContentType.BOOK,
+            content_type=content_type,
             status=ConsumptionStatus.UNREAD,
         ),
         user_id=1,
@@ -1612,6 +1613,137 @@ class TestLibraryMerge:
 
         assert result.exit_code != 0
         assert f"Merge {oldest} cannot be undone before merge {newest}" in result.output
+
+
+def _amelie_library(tmp_path: Path) -> StorageManager:
+    """One film under two names, which no suggestion ever pairs: the keys the
+    detector groups on share nothing."""
+    storage = StorageManager(sqlite_path=tmp_path / "hand-picked.db")
+    _save_book(storage, "trakt", "1", "Amelie", content_type=ContentType.MOVIE)
+    _save_book(
+        storage,
+        "letterboxd_csv",
+        "2",
+        "Le Fabuleux Destin d'Amelie Poulain",
+        content_type=ContentType.MOVIE,
+    )
+    return storage
+
+
+class TestLibraryMergeByName:
+    def test_a_pair_no_suggestion_offers_merges_by_title_and_unmerges_back(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        storage = _amelie_library(tmp_path)
+        before = _json(cli_runner, storage, ["library", "list"])
+
+        offered = _json(cli_runner, storage, ["library", "duplicates"])
+        merged = _invoke_with_mocks(
+            cli_runner,
+            ["library", "merge", "--survivor-title", "Amelie", "--absorbed-title"]
+            + ["Le Fabuleux Destin d'Amelie Poulain"],
+            storage,
+        )
+        after = _json(cli_runner, storage, ["library", "list"])
+
+        assert offered["suggestions"] == []
+        assert merged.exit_code == 0, merged.output
+        assert "Le Fabuleux Destin d'Amelie Poulain (#" in merged.output
+        (kept,) = after
+        assert kept["title"] == "Amelie"
+        assert sorted(pair["source"] for pair in kept["external_ids"]) == [
+            "letterboxd_csv",
+            "trakt",
+        ]
+
+        merge_id = _json(cli_runner, storage, ["library", "merges"])[0]["id"]
+        undone = _invoke_with_mocks(
+            cli_runner, ["library", "unmerge", "--merge-id", str(merge_id)], storage
+        )
+
+        assert undone.exit_code == 0, undone.output
+        assert _json(cli_runner, storage, ["library", "list"]) == before
+
+    def test_a_title_naming_more_than_one_row_lists_them_instead_of_guessing(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        storage = _amelie_library(tmp_path)
+        _save_book(
+            storage, "tmdb", "3", "Amelie Rising", content_type=ContentType.MOVIE
+        )
+
+        several = _invoke_with_mocks(
+            cli_runner,
+            ["library", "merge", "--survivor-title", "Amelie R", "--absorbed-title"]
+            + ["Le Fabuleux Destin d'Amelie Poulain"],
+            storage,
+        )
+        unknown = _invoke_with_mocks(
+            cli_runner,
+            ["library", "merge", "--survivor-title", "Amelie", "--absorbed-title"]
+            + ["Delicatessen"],
+            storage,
+        )
+
+        assert several.exit_code != 0
+        assert "matches more than one item" in several.output
+        assert "Amelie Rising (N/A, tmdb)" in several.output
+        assert "Amelie (N/A, trakt)" in several.output
+        assert unknown.exit_code != 0
+        assert (
+            "No library item matches --absorbed-title 'Delicatessen'." in unknown.output
+        )
+        assert _json(cli_runner, storage, ["library", "merges"]) == []
+
+    def test_a_side_named_twice_or_not_at_all_is_refused_before_any_search(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        storage = _amelie_library(tmp_path)
+        absorbed = ["--absorbed-title", "Le Fabuleux Destin d'Amelie Poulain"]
+
+        both = _invoke_with_mocks(
+            cli_runner,
+            ["library", "merge", "--survivor", "1", "--survivor-title", "Amelie"]
+            + absorbed,
+            storage,
+        )
+        neither = _invoke_with_mocks(
+            cli_runner, ["library", "merge", *absorbed], storage
+        )
+
+        assert both.exit_code != 0
+        assert "Pass --survivor or --survivor-title, not both." in both.output
+        assert neither.exit_code != 0
+        assert "Pass --survivor or --survivor-title." in neither.output
+        assert _json(cli_runner, storage, ["library", "merges"]) == []
+
+    def test_naming_one_row_twice_and_naming_two_types_are_both_refused(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        storage = _amelie_library(tmp_path)
+        book = _save_book(storage, "calibre", "4", "Delicatessen")
+
+        itself = _invoke_with_mocks(
+            cli_runner,
+            ["library", "merge", "--survivor-title", "Amelie"]
+            + ["--absorbed-title", "Amelie"],
+            storage,
+        )
+        crossed = _invoke_with_mocks(
+            cli_runner,
+            ["library", "merge", "--survivor-title", "Amelie"]
+            + ["--absorbed-title", "Delicatessen"],
+            storage,
+        )
+
+        assert itself.exit_code != 0
+        assert "cannot absorb itself." in itself.output
+        assert crossed.exit_code != 0
+        assert "A movie cannot absorb a book." in crossed.output
+        assert _json(cli_runner, storage, ["library", "merges"]) == []
+        assert book in [
+            item["db_id"] for item in _json(cli_runner, storage, ["library", "list"])
+        ]
 
 
 class TestDuplicateJsonIsTheSharedSerializer:

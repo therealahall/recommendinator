@@ -2,8 +2,8 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { useApi } from '@/composables/useApi'
 import { useAppStore } from '@/stores/app'
-import { DEFAULT_SORT, MAX_SEARCH_LENGTH } from '@/constants/library'
-import type { ContentItemResponse, ItemEditRequest } from '@/types/api'
+import { DEFAULT_SORT, MAX_SEARCH_LENGTH, MERGE_CANDIDATE_LIMIT } from '@/constants/library'
+import type { ContentItemResponse, ItemEditRequest, MergeRecord } from '@/types/api'
 
 const PAGE_SIZE = 50
 const SEARCH_DEBOUNCE_MS = 250
@@ -37,6 +37,17 @@ export const useLibraryStore = defineStore('library', () => {
   const editSaving = ref(false)
   const editError = ref('')
 
+  // The item a merge is picked from. Its content type scopes the candidate
+  // search, which is what puts a cross-type merge out of the picker's reach.
+  const mergeAnchor = ref<ContentItemResponse | null>(null)
+  const mergeQuery = ref('')
+  const mergeCandidates = ref<ContentItemResponse[]>([])
+  const mergeSearching = ref(false)
+  const merging = ref(false)
+  const mergeError = ref('')
+  const mergeAnnouncement = ref('')
+  let mergeTimer: ReturnType<typeof setTimeout> | null = null
+
   const totalLoaded = computed(() => items.value.length)
 
   function resetAndLoad() {
@@ -44,6 +55,8 @@ export const useLibraryStore = defineStore('library', () => {
     items.value = []
     hasMore.value = true
     error.value = ''
+    // Cleared before the load a merge triggers, which sets it again afterwards.
+    mergeAnnouncement.value = ''
     return load(true)
   }
 
@@ -127,6 +140,10 @@ export const useLibraryStore = defineStore('library', () => {
     if (searchTimer) {
       clearTimeout(searchTimer)
       searchTimer = null
+    }
+    if (mergeTimer) {
+      clearTimeout(mergeTimer)
+      mergeTimer = null
     }
   }
 
@@ -212,6 +229,80 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
+  function openMerge(dbId: number) {
+    mergeAnchor.value = items.value.find((one) => one.db_id === dbId) ?? null
+    mergeQuery.value = ''
+    mergeCandidates.value = []
+    mergeError.value = ''
+    mergeAnnouncement.value = ''
+  }
+
+  function closeMerge() {
+    if (mergeTimer) {
+      clearTimeout(mergeTimer)
+      mergeTimer = null
+    }
+    mergeAnchor.value = null
+    mergeSearching.value = false
+    merging.value = false
+  }
+
+  function setMergeQuery(value: string) {
+    mergeQuery.value = value.slice(0, MAX_SEARCH_LENGTH)
+    if (mergeTimer) clearTimeout(mergeTimer)
+    mergeTimer = setTimeout(() => {
+      mergeTimer = null
+      findMergeCandidates()
+    }, SEARCH_DEBOUNCE_MS)
+  }
+
+  async function findMergeCandidates(): Promise<void> {
+    const anchor = mergeAnchor.value
+    if (!anchor || !mergeQuery.value.trim()) {
+      mergeCandidates.value = []
+      return
+    }
+    mergeSearching.value = true
+    mergeError.value = ''
+    try {
+      const found = await api.get<ContentItemResponse[]>('/items', {
+        user_id: useAppStore().currentUserId,
+        search: mergeQuery.value,
+        type: anchor.content_type,
+        include_ignored: true,
+        limit: MERGE_CANDIDATE_LIMIT,
+      })
+      // The anchor matches its own title, and no item may absorb itself.
+      mergeCandidates.value = found.filter((one) => one.db_id !== anchor.db_id)
+    } catch (err) {
+      mergeError.value = err instanceof Error ? err.message : 'Failed to search'
+      mergeCandidates.value = []
+    } finally {
+      mergeSearching.value = false
+    }
+  }
+
+  async function mergeInto(survivorId: number, absorbedId: number) {
+    merging.value = true
+    mergeError.value = ''
+    try {
+      const record = await api.post<MergeRecord>(
+        '/merges',
+        { survivor_id: survivorId, absorbed_id: absorbedId },
+        { user_id: useAppStore().currentUserId },
+      )
+      closeMerge()
+      await resetAndLoad()
+      mergeAnnouncement.value =
+        `Merged “${record.absorbed_title}” into “${record.survivor_title}”.` +
+        ' Undo it from Review duplicates.'
+    } catch (err) {
+      mergeError.value = err instanceof Error ? err.message : 'Failed to merge'
+    } finally {
+      merging.value = false
+    }
+  }
+
   async function toggleIgnore(dbId: number, ignored: boolean) {
     const app = useAppStore()
     try {
@@ -260,6 +351,13 @@ export const useLibraryStore = defineStore('library', () => {
     editingItem,
     editSaving,
     editError,
+    mergeAnchor,
+    mergeQuery,
+    mergeCandidates,
+    mergeSearching,
+    merging,
+    mergeError,
+    mergeAnnouncement,
     totalLoaded,
     resetAndLoad,
     load,
@@ -270,6 +368,10 @@ export const useLibraryStore = defineStore('library', () => {
     openEdit,
     closeEdit,
     saveEdit,
+    openMerge,
+    closeMerge,
+    setMergeQuery,
+    mergeInto,
     toggleIgnore,
     exportUrl,
     exportLibrary,

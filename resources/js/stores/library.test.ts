@@ -5,11 +5,12 @@ import { MAX_SEARCH_LENGTH } from '@/constants/library'
 
 const mockGet = vi.fn()
 const mockPatch = vi.fn()
+const mockPost = vi.fn()
 
 vi.mock('@/composables/useApi', () => ({
   useApi: () => ({
     get: (...args: unknown[]) => mockGet(...args),
-    post: vi.fn(),
+    post: (...args: unknown[]) => mockPost(...args),
     put: vi.fn(),
     patch: (...args: unknown[]) => mockPatch(...args),
     delete: vi.fn(),
@@ -21,6 +22,7 @@ describe('useLibraryStore', () => {
     setActivePinia(createPinia())
     mockGet.mockReset()
     mockPatch.mockReset()
+    mockPost.mockReset()
   })
 
   it('resetAndLoad fetches items', async () => {
@@ -281,6 +283,70 @@ describe('useLibraryStore', () => {
     expect(body).toMatchObject({ genres: ['Sci-Fi'], tags: ['classic'], description: 'A tale.' })
     expect(store.items[0].enriched).toBe(true)
     expect(store.items[0].genres).toEqual(['Sci-Fi'])
+  })
+
+  it('the merge search is scoped to the anchor type and never offers the anchor itself', async () => {
+    vi.useFakeTimers()
+    try {
+      const amelie = { db_id: 1, title: 'Amelie', content_type: 'movie', status: 'unread', ignored: false }
+      const french = { db_id: 2, title: 'Le Fabuleux Destin d’Amelie Poulain', content_type: 'movie', status: 'unread', ignored: false }
+      mockGet.mockResolvedValue([amelie, french])
+      const store = useLibraryStore()
+      await store.resetAndLoad()
+
+      store.openMerge(1)
+      store.setMergeQuery('amelie')
+      await vi.runAllTimersAsync()
+
+      expect(store.mergeAnchor).toMatchObject({ db_id: 1 })
+      expect(mockGet.mock.lastCall![1]).toMatchObject({
+        search: 'amelie',
+        type: 'movie',
+        include_ignored: true,
+      })
+      expect(store.mergeCandidates.map((one) => one.db_id)).toEqual([2])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('mergeInto posts the pair, reloads the grid and announces which item survived', async () => {
+    const amelie = { db_id: 1, title: 'Amelie', content_type: 'movie', status: 'unread', ignored: false }
+    mockGet.mockResolvedValue([amelie])
+    const store = useLibraryStore()
+    await store.resetAndLoad()
+    store.openMerge(1)
+
+    mockPost.mockResolvedValue({
+      id: 7,
+      survivor_id: 1,
+      survivor_title: 'Amelie',
+      absorbed_id: 2,
+      absorbed_title: 'Le Fabuleux Destin d’Amelie Poulain',
+    })
+    await store.mergeInto(1, 2)
+
+    expect(mockPost.mock.lastCall![0]).toBe('/merges')
+    expect(mockPost.mock.lastCall![1]).toEqual({ survivor_id: 1, absorbed_id: 2 })
+    expect(store.mergeAnchor).toBeNull()
+    expect(store.mergeAnnouncement).toContain('Merged “Le Fabuleux Destin d’Amelie Poulain” into “Amelie”')
+    expect(store.items.map((one) => one.db_id)).toEqual([1])
+  })
+
+  it('mergeInto keeps a refused merge on the picker, leaving it open to correct', async () => {
+    const book = { db_id: 1, title: 'Delicatessen', content_type: 'book', status: 'unread', ignored: false }
+    mockGet.mockResolvedValue([book])
+    const store = useLibraryStore()
+    await store.resetAndLoad()
+    store.openMerge(1)
+
+    mockPost.mockRejectedValue(new Error('A book cannot absorb a movie.'))
+    await store.mergeInto(1, 2)
+
+    expect(store.mergeError).toBe('A book cannot absorb a movie.')
+    expect(store.mergeAnchor).not.toBeNull()
+    expect(store.merging).toBe(false)
+    expect(store.mergeAnnouncement).toBe('')
   })
 
   it('openEdit refreshes the card behind the dialog', async () => {
