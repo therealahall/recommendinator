@@ -13,6 +13,10 @@ export const SORT_OPTIONS = [
 
 export const DEFAULT_SORT = 'title'
 
+// Mirrors MERGE_CANDIDATE_LIMIT in src/cli/commands/_library.py, which bounds
+// the same search for the same reason: exact matches lead the ranking.
+export const MERGE_CANDIDATE_LIMIT = 10
+
 export const MAX_CREATOR_LENGTH = 500
 export const MAX_TITLE_LENGTH = 500
 export const RELEASE_YEAR_TYPES: readonly string[] = ['movie', 'tv_show', 'video_game']

@@ -27,6 +27,7 @@ const sourcesLabelId = useId()
 
 const emit = defineEmits<{
   edit: [dbId: number]
+  merge: [dbId: number]
   toggleIgnore: [dbId: number, ignored: boolean]
 }>()
 
@@ -98,6 +99,11 @@ function statusTone(status: string): string | undefined {
         :aria-label="`Edit: ${item.title}`"
         @click="emit('edit', item.db_id!)"
       >Edit</button>
+      <button
+        class="btn btn-small btn-secondary"
+        :aria-label="`Merge another item into: ${item.title}`"
+        @click="emit('merge', item.db_id!)"
+      >Merge</button>
       <button
         class="btn btn-small"
         :class="item.ignored ? 'btn-unignore' : 'btn-ignore'"

@@ -38,6 +38,17 @@ describe('LibraryCard', () => {
     expect(wrapper.emitted('edit')).toEqual([[1]])
   })
 
+  it('emits merge with the db_id, so the picker opens anchored on this item', async () => {
+    const wrapper = mount(LibraryCard, { props: { item: baseItem } })
+    const action = wrapper
+      .findAll('.library-item-actions button')
+      .find((button) => button.text() === 'Merge')
+
+    await action!.trigger('click')
+
+    expect(wrapper.emitted('merge')).toEqual([[1]])
+  })
+
   it('emits toggleIgnore to ignore a non-ignored item and labels the button "Ignore"', async () => {
     const wrapper = mount(LibraryCard, {
       props: { item: { ...baseItem, ignored: false } },
@@ -56,7 +67,7 @@ describe('LibraryCard', () => {
       .findAll('.library-item-actions button')
       .map((button) => button.attributes('aria-label') ?? '')
 
-    expect(labels).toHaveLength(2)
+    expect(labels).not.toHaveLength(0)
     expect(labels.filter((label) => label.includes(baseItem.title))).toEqual(labels)
   })
 

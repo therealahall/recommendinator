@@ -4,6 +4,7 @@ import { createTestingPinia } from '@pinia/testing'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import LibraryPage from './LibraryPage.vue'
 import EditModal from '@/components/molecules/EditModal.vue'
+import MergePickerModal from '@/components/molecules/MergePickerModal.vue'
 import LoadingRows from '@/components/molecules/LoadingRows.vue'
 import { useLibraryStore } from '@/stores/library'
 import { useDataStore } from '@/stores/data'
@@ -39,6 +40,7 @@ function mountPage(overrides: Record<string, unknown> = {}, attachTo?: HTMLEleme
         LibraryFilters: true,
         LibraryCard: true,
         EditModal: true,
+        MergePickerModal: true,
       },
     },
   })
@@ -227,6 +229,26 @@ describe('LibraryPage search behaviour', () => {
       wrapper.unmount()
     },
   )
+
+  it('lands the keyboard on the heading when a merge takes the opening card away', async () => {
+    const amelie = { db_id: 1, title: 'Amelie', content_type: 'movie', status: 'unread' }
+    const { wrapper, lib } = mountPage(
+      { items: [amelie], loading: false, mergeAnchor: amelie },
+      document.body,
+    )
+    vi.mocked(lib.mergeInto).mockImplementation(async () => {
+      lib.mergeAnchor = null
+      lib.items = []
+    })
+    await wrapper.vm.$nextTick()
+
+    wrapper.findComponent(MergePickerModal).vm.$emit('merge', 1, 2)
+    await flushPromises()
+
+    expect(lib.mergeInto).toHaveBeenCalledWith(1, 2)
+    expect(document.activeElement).toBe(wrapper.get('h2').element)
+    wrapper.unmount()
+  })
 
   it('still sends an empty library to sync when Show ignored is on', async () => {
     const { wrapper } = mountPage({ items: [], loading: false, showIgnored: true })

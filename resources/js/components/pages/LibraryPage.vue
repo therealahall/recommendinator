@@ -8,12 +8,14 @@ import LibraryFilters from '@/components/organisms/LibraryFilters.vue'
 import LibraryCard from '@/components/molecules/LibraryCard.vue'
 import LoadingRows from '@/components/molecules/LoadingRows.vue'
 import EditModal from '@/components/molecules/EditModal.vue'
+import MergePickerModal from '@/components/molecules/MergePickerModal.vue'
 import AppIcon from '@/components/atoms/AppIcon.vue'
 
 const lib = useLibraryStore()
 const data = useDataStore()
 const sentinel = ref<HTMLDivElement | null>(null)
 const editTrigger = ref<HTMLElement | null>(null)
+const mergeTrigger = ref<HTMLElement | null>(null)
 const heading = ref<HTMLElement | null>(null)
 
 // Not showIgnored: it only ever adds rows, so it cannot be what emptied the list.
@@ -28,6 +30,7 @@ const counted = computed(() =>
 // The skeleton is aria-hidden and the empty states carry their own words, so without this a load and every filter change are silent.
 const loadAnnouncement = computed(() => {
   if (lib.loading) return 'Loading library…'
+  if (lib.mergeAnnouncement) return lib.mergeAnnouncement
   if (lib.items.length === 0) return ''
   if (lib.searchAnnouncement) return lib.searchAnnouncement
   return lib.hasMore ? `${counted.value} loaded` : `All ${counted.value} loaded`
@@ -78,6 +81,30 @@ function onEdit(dbId: number) {
 function onCloseEdit() {
   lib.closeEdit()
   editTrigger.value?.focus()
+}
+
+function onMerge(dbId: number) {
+  const active = document.activeElement
+  mergeTrigger.value = active instanceof HTMLElement && active !== document.body ? active : null
+  lib.openMerge(dbId)
+}
+
+// A merge rebuilds the grid, taking the button that opened the picker with it,
+// so the keyboard lands on the heading rather than <body> (WCAG 2.4.3).
+async function returnFromMerge() {
+  await nextTick()
+  const back = mergeTrigger.value
+  rescueFocus(back?.isConnected ? back : heading.value)
+}
+
+function onCloseMerge() {
+  lib.closeMerge()
+  void returnFromMerge()
+}
+
+async function onMergeInto(survivorId: number, absorbedId: number) {
+  await lib.mergeInto(survivorId, absorbedId)
+  if (!lib.mergeAnchor) await returnFromMerge()
 }
 
 let observer: IntersectionObserver | null = null
@@ -189,6 +216,7 @@ onUnmounted(() => {
         :key="item.db_id ?? index"
         :item="item"
         @edit="onEdit"
+        @merge="onMerge"
         @toggle-ignore="(dbId: number, ignored: boolean) => lib.toggleIgnore(dbId, ignored)"
       />
     </div>
@@ -211,6 +239,19 @@ onUnmounted(() => {
       @save="lib.saveEdit"
       @clear-manual="onClearManual"
       @close="onCloseEdit"
+    />
+
+    <MergePickerModal
+      v-if="lib.mergeAnchor"
+      :anchor="lib.mergeAnchor"
+      :query="lib.mergeQuery"
+      :candidates="lib.mergeCandidates"
+      :searching="lib.mergeSearching"
+      :merging="lib.merging"
+      :merge-error="lib.mergeError"
+      @search="lib.setMergeQuery"
+      @merge="onMergeInto"
+      @close="onCloseMerge"
     />
   </div>
 </template>

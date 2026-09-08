@@ -42,6 +42,7 @@ from src.storage.manager import (
     DuplicateSuggestion,
     MergeError,
     MergeEvidence,
+    StorageManager,
     UncorrectableFieldError,
     unset_if_none,
 )
@@ -58,7 +59,7 @@ from src.utils.duplicate_serialization import (
 from src.utils.export import export_items_csv, export_items_json
 from src.utils.item_serialization import ignore_result_to_dict, item_to_dict
 from src.utils.series import MAX_SEASONS
-from src.utils.sorting import MAX_SEARCH_LENGTH
+from src.utils.sorting import MAX_SEARCH_LENGTH, normalize_for_search
 
 
 @click.group()
@@ -900,20 +901,83 @@ def library_duplicates(
     click.echo(f"{counted} {skipped}" if skipped else counted)
 
 
+#: Exact matches lead the ranking, so a name that names one row finds it within
+#: this many; it also bounds the list a refusal prints.
+MERGE_CANDIDATE_LIMIT = 10
+
+
+def _match_summary(item: ContentItem) -> str:
+    return (
+        f"  #{item.db_id} {item.title}"
+        f" ({item.author or 'N/A'}, {item.source or 'N/A'})"
+    )
+
+
+def _named_row(storage: StorageManager, name: str, user_id: int, option: str) -> int:
+    """The one row this name finds, in the search ``library list`` runs. Several
+    matches abort rather than taking the best-ranked: which rows are one work is
+    the operator's judgement, and the ranking is not it.
+    """
+    matches = storage.get_content_items(
+        user_id=user_id,
+        search=name,
+        limit=MERGE_CANDIDATE_LIMIT,
+        include_ignored=True,
+    )
+    needle = normalize_for_search(name)
+    titled = [item for item in matches if normalize_for_search(item.title) == needle]
+    found = titled or matches
+    if len(found) == 1:
+        return cast(int, found[0].db_id)
+    if not found:
+        abort_with(f"No library item matches {option} {name!r}.")
+    listed = "\n".join(_match_summary(item) for item in found)
+    abort_with(
+        f"{option} {name!r} matches more than one item. Name one of these more"
+        f" fully, or pass its ID:\n{listed}"
+    )
+
+
+def _merge_side(
+    storage: StorageManager,
+    db_id: int | None,
+    name: str | None,
+    user_id: int,
+    option: str,
+) -> int:
+    if db_id is not None and name is not None:
+        abort_with(f"Pass --{option} or --{option}-title, not both.")
+    if db_id is not None:
+        return db_id
+    if name is None:
+        abort_with(f"Pass --{option} or --{option}-title.")
+    return _named_row(storage, name, user_id, f"--{option}-title")
+
+
 @library.command("merge")
 @click.option(
     "--survivor",
     "survivor_id",
     type=int,
-    required=True,
+    default=None,
     help="Database ID of the item to keep",
+)
+@click.option(
+    "--survivor-title",
+    default=None,
+    help="Title of the item to keep, searched as library list --search does",
 )
 @click.option(
     "--absorbed",
     "absorbed_id",
     type=int,
-    required=True,
+    default=None,
     help="Database ID of the item merged into it",
+)
+@click.option(
+    "--absorbed-title",
+    default=None,
+    help="Title of the item merged into it, searched the same way",
 )
 @click.option(
     "--format",
@@ -932,17 +996,23 @@ def library_duplicates(
 @click.pass_context
 def library_merge(
     ctx: click.Context,
-    survivor_id: int,
-    absorbed_id: int,
+    survivor_id: int | None,
+    survivor_title: str | None,
+    absorbed_id: int | None,
+    absorbed_title: str | None,
     output_format: str,
     user_id: int,
 ) -> None:
-    """Merge one item into another, keeping --survivor."""
+    """Merge one item into another, keeping the survivor. Name each side by
+    database ID or by title."""
     storage = ctx.obj["storage"]
+
+    survivor = _merge_side(storage, survivor_id, survivor_title, user_id, "survivor")
+    absorbed = _merge_side(storage, absorbed_id, absorbed_title, user_id, "absorbed")
 
     try:
         record = storage.merge_content_items(
-            survivor_id, absorbed_id, MergeEvidence.MANUAL, user_id=user_id
+            survivor, absorbed, MergeEvidence.MANUAL, user_id=user_id
         )
     except MergeError as error:
         abort_with(str(error))
