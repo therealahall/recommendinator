@@ -8,10 +8,16 @@ from src.storage.manager import StorageManager
 
 
 def _seed_manually_enriched_db(
-    path: Path, *, genres: list[str] | None, emptied: bool = False
+    path: Path,
+    *,
+    genres: list[str] | None,
+    emptied: bool = False,
+    value_holding: str | None = None,
+    version: int = 23,
 ) -> int:
     """A library on the last version before per-field holds, carrying the
-    item-level ``manual`` provider an edit used to write."""
+    item-level ``manual`` provider an edit used to write. *value_holding* names a
+    field held in the shape that stored the values beside it."""
     storage = StorageManager(sqlite_path=path)
     db_id = storage.save_content_item(
         ContentItem(
@@ -29,13 +35,24 @@ def _seed_manually_enriched_db(
     conn = sqlite3.connect(path)
     try:
         conn.execute("DELETE FROM content_item_manual_fields")
+        if value_holding is not None:
+            conn.execute("DROP TABLE content_item_manual_fields")
+            conn.execute(
+                "CREATE TABLE content_item_manual_fields (content_item_id INTEGER"
+                " NOT NULL, field TEXT NOT NULL, manual_value TEXT NOT NULL,"
+                " source_value TEXT NOT NULL, PRIMARY KEY (content_item_id, field))"
+            )
+            conn.execute(
+                "INSERT INTO content_item_manual_fields VALUES (?, ?, ?, ?)",
+                (db_id, value_holding, '"Anything"', '"Anything else"'),
+            )
         conn.execute(
             "INSERT OR REPLACE INTO enrichment_status (content_item_id,"
             " enrichment_provider, enrichment_quality, needs_enrichment)"
             " VALUES (?, 'manual', 'high', 0)",
             (db_id,),
         )
-        conn.execute("PRAGMA user_version = 23")
+        conn.execute(f"PRAGMA user_version = {version}")
         conn.commit()
     finally:
         conn.close()
@@ -52,10 +69,41 @@ def test_a_past_correction_becomes_a_hold_on_the_fields_it_could_have_touched(
 
     assert item is not None
     assert item.metadata["genres"] == ["Sci-Fi", "Drama"]
-    assert [
-        (held.field, held.value, held.source_value, held.drifted)
-        for held in item.manual_fields
-    ] == [("genres", "Sci-Fi, Drama", "Sci-Fi, Drama", False)]
+    assert item.manual_fields == ["genres"]
+
+
+def test_a_hold_that_stored_values_keeps_its_field_through_both_steps(
+    tmp_path: Path,
+) -> None:
+    """The two run in sequence on one open, so the values are dropped before the
+    provider step inserts into the table it left behind."""
+    db_path = tmp_path / "boolean.db"
+    db_id = _seed_manually_enriched_db(
+        db_path, genres=["Sci-Fi"], value_holding="title"
+    )
+
+    item = StorageManager(sqlite_path=db_path).get_content_item(db_id, user_id=1)
+
+    assert item is not None
+    assert item.manual_fields == ["genres", "title"]
+
+
+def test_the_version_that_stored_the_values_keeps_its_holds_and_takes_new_ones(
+    tmp_path: Path,
+) -> None:
+    """The upgrade an existing library actually runs: it is already past the
+    provider step, so only the column guard reaches the values it stored."""
+    db_path = tmp_path / "stored_values.db"
+    db_id = _seed_manually_enriched_db(
+        db_path, genres=["Sci-Fi"], value_holding="title", version=24
+    )
+
+    storage = StorageManager(sqlite_path=db_path)
+
+    assert storage.update_item_from_ui(db_id=db_id, rating=5, user_id=1) is True
+    item = storage.get_content_item(db_id, user_id=1)
+    assert item is not None
+    assert item.manual_fields == ["rating", "title"]
 
 
 def test_the_upgraded_item_rejoins_the_automatic_queue(tmp_path: Path) -> None:
@@ -93,7 +141,7 @@ def test_a_list_the_operator_emptied_is_held_at_empty_not_refilled(
     item = storage.get_content_item(db_id, user_id=1)
 
     assert item is not None
-    assert [held.field for held in item.manual_fields] == ["genres"]
+    assert item.manual_fields == ["genres"]
 
     storage.save_enrichment_metadata(
         db_id,

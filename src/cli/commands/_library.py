@@ -253,17 +253,6 @@ def library_list(
     click.echo(tabulate(table_data, headers=headers, tablefmt="grid"))
 
 
-def _manual_fields_label(item: ContentItem) -> str:
-    """One line per held field, naming the source's value where it disagrees."""
-    lines = []
-    for held in item.manual_fields:
-        line = f"{held.field}: {held.value or 'N/A'}"
-        if held.drifted:
-            line += f" (source says: {held.source_value or 'N/A'})"
-        lines.append(line)
-    return "\n".join(lines) or "N/A"
-
-
 @library.command("show")
 @click.option("--id", "item_id", type=int, required=True, help="Item database ID")
 @click.option(
@@ -327,7 +316,7 @@ def library_show(
             ],
             ["Ignored", "Yes" if item.ignored else "No"],
             ["Enriched", "Yes" if item.enriched else "No"],
-            ["Manual Fields", _manual_fields_label(item)],
+            ["Manual Fields", "\n".join(item.manual_fields) or "N/A"],
             ["Genres", ", ".join(cast(list[str], genres)) or "N/A"],
             ["Tags", ", ".join(cast(list[str], tags)) or "N/A"],
             ["Description", description or "N/A"],
@@ -627,7 +616,7 @@ def library_edit(
     "--field",
     type=click.Choice(sorted(MANUAL_FIELDS), case_sensitive=False),
     required=True,
-    help="Field to stop holding, which then takes the source's value",
+    help="Field to stop holding against its source",
 )
 @click.option(
     "--format",
@@ -647,7 +636,7 @@ def library_edit(
 def library_clear_manual(
     ctx: click.Context, item_id: int, field: str, output_format: str, user_id: int
 ) -> None:
-    """Drop a field's manual hold, applying what its source states."""
+    """Stop holding a field, leaving what it says alone."""
     storage = ctx.obj["storage"]
 
     if not storage.clear_manual_field(item_id, field, user_id=user_id):
@@ -659,9 +648,7 @@ def library_clear_manual(
             abort_with(f"Item {item_id} not found after update.")
         return item_to_dict(cleared)
 
-    emit_view(
-        output_format, refreshed, f"Cleared the manual {field} on item {item_id}."
-    )
+    emit_view(output_format, refreshed, f"Stopped holding {field} on item {item_id}.")
 
 
 def _apply_ignored(

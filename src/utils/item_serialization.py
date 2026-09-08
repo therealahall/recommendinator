@@ -75,7 +75,7 @@ def item_to_dict(item: ContentItem) -> dict[str, object]:
         # None means the state is unknown (an item not read back from storage),
         # which the wire type presents as "not enriched".
         "enriched": bool(item.enriched),
-        "manual_fields": [held.model_dump() for held in item.manual_fields],
+        "manual_fields": list(item.manual_fields),
         "release_year": to_int(metadata.get("release_year")),
         "series": get_series_name_from_metadata(metadata),
         "series_index": get_series_position_from_metadata(metadata),

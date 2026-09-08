@@ -23,7 +23,6 @@ from src.models.content import (
     ContentItem,
     ContentType,
     ExternalId,
-    ManualField,
 )
 from src.storage.duplicates import GROUP_MEMBER_MAX, MAX_DECLINE_OTHERS
 from src.storage.manager import (
@@ -322,16 +321,9 @@ class TestLibraryShow:
         assert "Famous Author" in result.output
         assert "Excellent!" in result.output
 
-    def test_show_names_each_held_field_and_what_its_source_now_says(
-        self, cli_runner: CliRunner
-    ) -> None:
+    def test_show_names_each_held_field(self, cli_runner: CliRunner) -> None:
         item = _make_item(db_id=42)
-        item.manual_fields = [
-            ManualField(
-                field="creator", value="Capcom", source_value="CAPCOM Co., Ltd."
-            ),
-            ManualField(field="rating", value="5", source_value="5"),
-        ]
+        item.manual_fields = ["creator", "rating"]
         mock_storage = make_storage_mock()
         mock_storage.get_content_item.return_value = item
 
@@ -340,10 +332,8 @@ class TestLibraryShow:
         )
 
         assert result.exit_code == 0
-        assert "creator: Capcom (source says: CAPCOM Co., Ltd.)" in result.output
-        assert "rating: 5" in result.output
-        # Rating agrees with its source, so only the creator carries the note.
-        assert result.output.count("source says:") == 1
+        assert "creator" in result.output
+        assert "rating" in result.output
 
     def test_show_item_not_found(self, cli_runner: CliRunner) -> None:
         mock_storage = make_storage_mock()
@@ -2067,7 +2057,7 @@ class TestLibraryEditCorrections:
 
 
 class TestLibraryClearManual:
-    def test_clear_manual_applies_the_source_value_and_emits_the_item(
+    def test_clear_manual_keeps_the_value_and_emits_the_unheld_item(
         self, cli_runner: CliRunner, tmp_path: Path
     ) -> None:
         storage = StorageManager(sqlite_path=tmp_path / "hold.db")
@@ -2101,7 +2091,7 @@ class TestLibraryClearManual:
 
         assert result.exit_code == 0, result.output
         parsed = json.loads(result.output)
-        assert parsed["author"] == "CAPCOM Co., Ltd."
+        assert parsed["author"] == "Capcom"
         assert parsed["manual_fields"] == []
 
     def test_clear_manual_names_a_field_no_hold_covers(

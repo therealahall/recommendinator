@@ -1948,14 +1948,14 @@ def test_rating_alone_keeps_the_item_in_the_not_enriched_filter_regression(
     saved = client.patch(f"/api/items/{db_id}?user_id=1", json={"rating": 4})
 
     assert saved.status_code == 200, saved.text
-    assert [held["field"] for held in saved.json()["manual_fields"]] == ["rating"]
+    assert saved.json()["manual_fields"] == ["rating"]
     listed = client.get("/api/items?user_id=1&enrichment=not_enriched").json()
     assert [item["db_id"] for item in listed] == [db_id]
     assert listed[0]["rating"] == 4
     assert listed[0]["genres"] == ["Sci-Fi"]
 
 
-def test_an_emptied_description_clears_and_the_hold_hands_it_back(
+def test_an_emptied_description_clears_and_holds_the_field_until_told_otherwise(
     mock_components, tmp_path
 ):
     storage = StorageManager(sqlite_path=tmp_path / "clear.db")
@@ -1975,23 +1975,18 @@ def test_an_emptied_description_clears_and_the_hold_hands_it_back(
 
     assert cleared.status_code == 200, cleared.text
     assert not cleared.json()["description"]
-    assert cleared.json()["manual_fields"] == [
-        {
-            "field": "description",
-            "value": None,
-            "source_value": "A linguist.",
-            "drifted": True,
-        }
-    ]
+    assert cleared.json()["manual_fields"] == ["description"]
 
-    restored = client.delete(f"/api/items/{db_id}/manual-fields/description?user_id=1")
+    unheld = client.delete(f"/api/items/{db_id}/manual-fields/description?user_id=1")
 
-    assert restored.status_code == 200, restored.text
-    assert restored.json()["description"] == "A linguist."
-    assert restored.json()["manual_fields"] == []
+    assert unheld.status_code == 200, unheld.text
+    assert not unheld.json()["description"]
+    assert unheld.json()["manual_fields"] == []
 
 
-def test_a_renamed_item_holds_its_title_and_hands_it_back(mock_components, tmp_path):
+def test_a_renamed_item_holds_its_title_until_the_hold_is_dropped(
+    mock_components, tmp_path
+):
     """``title`` was offered for clearing while no door could ever hold one."""
     storage = StorageManager(sqlite_path=tmp_path / "rename.db")
     db_id = storage.save_content_item(
@@ -2012,15 +2007,15 @@ def test_a_renamed_item_holds_its_title_and_hands_it_back(mock_components, tmp_p
 
     assert renamed.status_code == 200, renamed.text
     assert renamed.json()["title"] == "The Hobbit"
-    assert [held["field"] for held in renamed.json()["manual_fields"]] == ["title"]
+    assert renamed.json()["manual_fields"] == ["title"]
     found = client.get("/api/items?user_id=1&search=The+Hobbit").json()
     assert [item["db_id"] for item in found] == [db_id]
 
-    restored = client.delete(f"/api/items/{db_id}/manual-fields/title?user_id=1")
+    unheld = client.delete(f"/api/items/{db_id}/manual-fields/title?user_id=1")
 
-    assert restored.status_code == 200, restored.text
-    assert restored.json()["title"] == "The Hobbit, or There and Back Again"
-    assert restored.json()["manual_fields"] == []
+    assert unheld.status_code == 200, unheld.text
+    assert unheld.json()["title"] == "The Hobbit"
+    assert unheld.json()["manual_fields"] == []
 
 
 def test_clearing_a_field_nobody_holds_is_a_404(mock_components, tmp_path):

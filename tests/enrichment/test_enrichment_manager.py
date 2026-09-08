@@ -1605,7 +1605,7 @@ class TestManualEditEnrichmentProtectionRegression:
         assert manual.metadata.get("tags") == ["slow-burn"]
         assert manual.metadata.get("description") == "Hand written synopsis."
         assert manual.enriched is True
-        assert {held.field for held in manual.manual_fields} == {
+        assert set(manual.manual_fields) == {
             "status",
             "genres",
             "tags",

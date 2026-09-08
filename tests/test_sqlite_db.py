@@ -2547,18 +2547,17 @@ class TestUpdateItemFromUi:
         retrieved = temp_db.get_content_item(db_id)
         assert retrieved is not None
         assert retrieved.status == ConsumptionStatus.UNREAD
-        held = {field.field: field for field in retrieved.manual_fields}
-        assert held["status"].source_value == "completed"
-        assert held["status"].drifted is True
+        assert "status" in retrieved.manual_fields
 
 
 class TestEditDoorNeverStoresABlankReview:
     """Bug: ``update_item_from_ui`` wrote whatever string it was handed, so a
     blank ``review`` landed in the column as ``""``."""
 
-    @staticmethod
-    def _reviewed(temp_db: SQLiteDB) -> int:
-        return temp_db.save_content_item(
+    def test_a_review_cleared_this_way_stays_cleared_through_a_sync(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        db_id = temp_db.save_content_item(
             ContentItem(
                 id="ui_blank_review",
                 title="Dune",
@@ -2567,11 +2566,6 @@ class TestEditDoorNeverStoresABlankReview:
                 review="Loved it",
             )
         )
-
-    def test_a_review_cleared_this_way_stays_cleared_and_is_recoverable(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        db_id = self._reviewed(temp_db)
         temp_db.update_item_from_ui(db_id=db_id, status="completed", review="   ")
 
         temp_db.save_content_item(
@@ -2587,19 +2581,7 @@ class TestEditDoorNeverStoresABlankReview:
         retrieved = temp_db.get_content_item(db_id)
         assert retrieved is not None
         assert retrieved.review is None
-        assert [
-            (held.field, held.value, held.source_value)
-            for held in retrieved.manual_fields
-        ] == [
-            ("review", None, "Imported from Goodreads"),
-            ("status", "completed", "completed"),
-        ]
-
-        temp_db.clear_manual_field(db_id, "review")
-
-        recovered = temp_db.get_content_item(db_id)
-        assert recovered is not None
-        assert recovered.review == "Imported from Goodreads"
+        assert retrieved.manual_fields == ["review", "status"]
 
 
 class TestUpdateItemFromUiRegression:
@@ -4690,8 +4672,8 @@ class TestCoverArtOnAnItem:
 
 
 class TestManualFieldHolds:
-    """A correction outlives every later sync, and the item still says what its
-    source has come to state instead."""
+    """A correction outlives every later sync, and the item reports which of its
+    fields are held."""
 
     @staticmethod
     def _steam_game(temp_db: SQLiteDB, creator: str) -> int:
@@ -4706,7 +4688,7 @@ class TestManualFieldHolds:
             )
         )
 
-    def test_sync_keeps_a_corrected_creator_and_records_what_the_source_says(
+    def test_sync_keeps_a_corrected_creator_and_still_reports_it_held(
         self, temp_db: SQLiteDB
     ) -> None:
         db_id = self._steam_game(temp_db, "Valve")
@@ -4717,23 +4699,21 @@ class TestManualFieldHolds:
         stored = temp_db.get_content_item(db_id)
         assert stored is not None
         assert stored.author == "Capcom"
-        assert [
-            (held.field, held.value, held.source_value, held.drifted)
-            for held in stored.manual_fields
-        ] == [("creator", "Capcom", "CAPCOM Co., Ltd.", True)]
+        assert stored.manual_fields == ["creator"]
 
-    def test_clearing_the_hold_applies_the_source_value_with_no_resync(
+    def test_clearing_the_hold_leaves_the_operators_value_standing(
         self, temp_db: SQLiteDB
     ) -> None:
+        """Nothing is handed back: the hold recorded that the field was held,
+        never what it displaced."""
         db_id = self._steam_game(temp_db, "Valve")
         temp_db.update_item_from_ui(db_id=db_id, creator="Capcom")
-        self._steam_game(temp_db, "CAPCOM Co., Ltd.")
 
         assert temp_db.clear_manual_field(db_id, "creator") is True
 
         stored = temp_db.get_content_item(db_id)
         assert stored is not None
-        assert stored.author == "CAPCOM Co., Ltd."
+        assert stored.author == "Capcom"
         assert stored.manual_fields == []
 
     def test_clearing_refuses_a_field_no_hold_names(self, temp_db: SQLiteDB) -> None:
@@ -4741,11 +4721,9 @@ class TestManualFieldHolds:
 
         assert temp_db.clear_manual_field(db_id, "creator") is False
 
-    def test_completing_an_item_leaves_no_hold_claiming_the_old_status(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """The completion door writes the status itself, as the season checklist
-        does, so the hold it overrules must stop reporting the value it names."""
+    def test_completing_an_item_keeps_its_status_held(self, temp_db: SQLiteDB) -> None:
+        """The completion door is the operator's own, so the status it writes
+        stays held rather than dropping back to what a source may state."""
         db_id = self._steam_game(temp_db, "Valve")
         temp_db.update_item_from_ui(db_id=db_id, status="unread")
 
@@ -4762,8 +4740,7 @@ class TestManualFieldHolds:
         stored = temp_db.get_content_item(db_id)
         assert stored is not None
         assert stored.status == ConsumptionStatus.COMPLETED
-        held = {field.field: field.value for field in stored.manual_fields}
-        assert held.get("status", "completed") == "completed"
+        assert stored.manual_fields == ["status"]
 
     def test_a_held_title_survives_a_sync_stating_another_one(
         self, temp_db: SQLiteDB
@@ -4786,29 +4763,12 @@ class TestManualFieldHolds:
         stored = temp_db.get_content_item(db_id)
         assert stored is not None
         assert stored.title == "Portal 2: The Final Hours"
-        assert [(held.value, held.source_value) for held in stored.manual_fields] == [
-            ("Portal 2: The Final Hours", "Portal 2 - Deluxe")
-        ]
+        assert stored.manual_fields == ["title"]
 
-    def test_a_second_correction_leaves_the_recorded_source_value_alone(
+    def test_a_sync_carrying_no_genres_leaves_the_held_ones_standing(
         self, temp_db: SQLiteDB
     ) -> None:
-        """The value a re-edit displaces is the operator's own, never a source's."""
-        db_id = self._steam_game(temp_db, "Valve")
-        temp_db.update_item_from_ui(db_id=db_id, creator="Capcom")
-        temp_db.update_item_from_ui(db_id=db_id, creator="Capcom USA")
-
-        stored = temp_db.get_content_item(db_id)
-        assert stored is not None
-        assert [(held.value, held.source_value) for held in stored.manual_fields] == [
-            ("Capcom USA", "Valve")
-        ]
-
-    def test_a_sync_stating_nothing_leaves_the_last_source_value_standing(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """A source carrying no genres has not cleared them, and must not be
-        reported as saying so."""
+        """A source carrying no genres has not cleared them."""
         db_id = temp_db.save_content_item(
             ContentItem(
                 id="620",
@@ -4834,15 +4794,13 @@ class TestManualFieldHolds:
         stored = temp_db.get_content_item(db_id)
         assert stored is not None
         assert stored.metadata["genres"] == ["Puzzle-Platformer"]
-        assert [(held.value, held.source_value) for held in stored.manual_fields] == [
-            ("Puzzle-Platformer", "Puzzle")
-        ]
+        assert stored.manual_fields == ["genres"]
 
-    def test_ticking_every_season_leaves_no_hold_claiming_the_old_status(
+    def test_ticking_every_season_keeps_the_derived_status_held(
         self, temp_db: SQLiteDB
     ) -> None:
-        """The checklist derives the status the same way ``_handle_tv_season_change``
-        does, so the hold it overrules must stop reporting the value it names."""
+        """The checklist is the operator stating the status, so the hold an
+        earlier edit took covers the status this edit derives."""
         db_id = temp_db.save_content_item(
             ContentItem(
                 id="1399",
@@ -4860,13 +4818,47 @@ class TestManualFieldHolds:
         stored = temp_db.get_content_item(db_id)
         assert stored is not None
         assert stored.status == ConsumptionStatus.COMPLETED
-        assert stored.manual_fields == []
+        assert stored.manual_fields == ["status"]
 
-    def test_absorbing_a_duplicate_leaves_no_hold_claiming_the_old_status(
+    def test_a_sync_finding_a_new_season_cannot_take_the_status_hold_off(
         self, temp_db: SQLiteDB
     ) -> None:
-        """A merge carries the duplicate's status across, so the hold it overrules
-        must stop offering to restore a value the item never held."""
+        """Only the clear door ends a hold, so a season count a source raised
+        must not leave the status open to whatever the next sync states."""
+        db_id = temp_db.save_content_item(
+            ContentItem(
+                id="1399",
+                title="Severance",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.UNREAD,
+                source="trakt",
+                metadata={"seasons": 2},
+            )
+        )
+        temp_db.update_item_from_ui(
+            db_id=db_id, status="completed", seasons_watched=[1, 2]
+        )
+
+        temp_db.save_content_item(
+            ContentItem(
+                id="1399",
+                title="Severance",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.UNREAD,
+                source="trakt",
+                metadata={"seasons": 3},
+            )
+        )
+
+        stored = temp_db.get_content_item(db_id)
+        assert stored is not None
+        assert stored.manual_fields == ["status"]
+
+    def test_absorbing_a_duplicate_keeps_the_status_held(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """A merge is the operator's own action, so the status it carries across
+        stays as held as the one it replaced."""
         kept = self._steam_game(temp_db, "Valve")
         temp_db.update_item_from_ui(db_id=kept, status="unread")
         absorbed = temp_db.save_content_item(
@@ -4884,7 +4876,7 @@ class TestManualFieldHolds:
         stored = temp_db.get_content_item(kept)
         assert stored is not None
         assert stored.status == ConsumptionStatus.COMPLETED
-        assert stored.manual_fields == []
+        assert stored.manual_fields == ["status"]
 
     def test_undoing_that_merge_hands_the_status_back_still_held(
         self, temp_db: SQLiteDB
@@ -4909,9 +4901,7 @@ class TestManualFieldHolds:
         stored = temp_db.get_content_item(kept)
         assert stored is not None
         assert stored.status == ConsumptionStatus.UNREAD
-        assert [(held.field, held.value) for held in stored.manual_fields] == [
-            ("status", "unread")
-        ]
+        assert stored.manual_fields == ["status"]
 
 
 class TestRenamingAnItem:
@@ -4954,44 +4944,26 @@ class TestRenamingAnItem:
         stored = temp_db.get_content_item(db_id)
         assert stored is not None
         assert stored.title == "The Hobbit"
-        assert [
-            (held.field, held.source_value, held.drifted)
-            for held in stored.manual_fields
-        ] == [("title", "The Hobbit, or There and Back Again", True)]
+        assert stored.manual_fields == ["title"]
 
-    def test_clearing_the_hold_puts_the_source_title_back_into_search(
+    def test_clearing_the_hold_lets_the_next_sync_state_its_own_title_again(
         self, temp_db: SQLiteDB
     ) -> None:
+        """Clearing hands nothing back; it stops refusing the source, which the
+        next sync is what acts on."""
         db_id = self._hobbit(temp_db)
         temp_db.update_item_from_ui(db_id=db_id, title="The Hobbit")
 
         assert temp_db.clear_manual_field(db_id, "title") is True
+
+        cleared = temp_db.get_content_item(db_id)
+        assert cleared is not None
+        assert cleared.title == "The Hobbit"
+
+        self._hobbit(temp_db)
 
         stored = temp_db.get_content_item(db_id)
         assert stored is not None
         assert stored.title == "The Hobbit, or There and Back Again"
         found = temp_db.get_content_items(search="There and Back Again")
         assert [item.db_id for item in found] == [db_id]
-
-    def test_completing_it_by_its_new_name_is_not_the_source_restating_one(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """The completion door carries the title the operator typed, so
-        recording it would leave the hold with nothing to hand back."""
-        db_id = self._hobbit(temp_db)
-        temp_db.update_item_from_ui(db_id=db_id, title="The Hobbit")
-
-        temp_db.complete_content_item(
-            ContentItem(
-                id=None,
-                title="The Hobbit",
-                content_type=ContentType.BOOK,
-                status=ConsumptionStatus.COMPLETED,
-                author="J. R. R. Tolkien",
-            )
-        )
-
-        assert temp_db.clear_manual_field(db_id, "title") is True
-        stored = temp_db.get_content_item(db_id)
-        assert stored is not None
-        assert stored.title == "The Hobbit, or There and Back Again"
