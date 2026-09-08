@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, watch } from 'vue'
 import type { ContentItemResponse, ItemEditRequest } from '@/types/api'
-import { MAX_CREATOR_LENGTH, RELEASE_YEAR_TYPES } from '@/constants/library'
+import { MAX_CREATOR_LENGTH, MAX_TITLE_LENGTH, RELEASE_YEAR_TYPES } from '@/constants/library'
 import { formatContentType, formatStatusForContentType } from '@/utils/format'
 import { useDiscardGuard } from '@/composables/useDiscardGuard'
 import { rescueFocus } from '@/utils/focus'
@@ -31,6 +31,7 @@ const modalContent = computed(() => dialog.value?.surface ?? null)
 
 const isTvShow = computed(() => props.item.content_type === 'tv_show' && props.item.total_seasons)
 
+const title = ref(props.item.title)
 const status = ref(props.initialStatus || props.item.status)
 const rating = ref<number | null>(props.item.rating)
 const review = ref(props.item.review || '')
@@ -42,6 +43,7 @@ const tags = ref<string[]>([...(props.item.tags ?? [])])
 const description = ref(props.item.description ?? '')
 
 const loaded = {
+  title: title.value.trim(),
   status: props.item.status,
   rating: props.item.rating,
   review: review.value.trim(),
@@ -87,6 +89,7 @@ watch(
 )
 
 const REFUSED_FIELDS: [string, string][] = [
+  ['Title', 'edit-title'],
   ['Review', 'edit-review'],
   ['Creator', 'edit-creator'],
   ['Release year', 'edit-release-year'],
@@ -147,6 +150,7 @@ function sameList(one: readonly (string | number)[], other: readonly (string | n
 // source, so an untouched box must not travel with a rating.
 const edits = computed<ItemEditRequest>(() => {
   const data: ItemEditRequest = {}
+  if (title.value.trim() !== loaded.title) data.title = title.value.trim()
   if (status.value !== loaded.status) data.status = status.value
   if (rating.value !== loaded.rating) data.rating = rating.value
   if (review.value.trim() !== loaded.review) data.review = review.value.trim() || null
@@ -184,6 +188,18 @@ function save() {
     <div class="edit-modal-subtitle">
       <span v-if="item.author">{{ item.author }} </span>
       <span class="badge" data-tone="accent">{{ formatContentType(item.content_type) }}</span>
+    </div>
+
+    <div class="edit-field">
+      <label for="edit-title">Title</label>
+      <input
+        id="edit-title"
+        v-model="title"
+        type="text"
+        class="field"
+        :maxlength="MAX_TITLE_LENGTH"
+        v-bind="refusalFor('edit-title')"
+      >
     </div>
 
     <div class="edit-field">

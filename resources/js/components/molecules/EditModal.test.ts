@@ -221,6 +221,23 @@ describe('EditModal', () => {
     wrapper.unmount()
   })
 
+  it('a rename is sent trimmed, and an untouched title never travels', async () => {
+    const wrapper = mount(EditModal, {
+      props: { item: defaultItem, saving: false, saveError: '' },
+      attachTo: document.body,
+    })
+
+    await wrapper.get('[aria-label="4 stars"]').trigger('click')
+    await wrapper.findAll('.btn-primary').find(b => b.text().includes('Save'))!.trigger('click')
+    expect(wrapper.emitted('save')![0][1]).not.toHaveProperty('title')
+
+    await wrapper.find('#edit-title').setValue('  The Hobbit  ')
+    await wrapper.findAll('.btn-primary').find(b => b.text().includes('Save'))!.trigger('click')
+
+    expect((wrapper.emitted('save')![1][1] as ItemEditRequest).title).toBe('The Hobbit')
+    wrapper.unmount()
+  })
+
   it('a rating alone sends the rating alone', async () => {
     const item = { ...defaultItem, genres: ['Sci-Fi'], tags: ['classic'], description: 'A tale.' }
     const wrapper = mount(EditModal, {
@@ -441,6 +458,7 @@ describe('EditModal', () => {
   })
 
   it.each([
+    ['Title cannot be empty.', '#edit-title'],
     ['Review must be at most 10000 characters.', '#edit-review'],
     ['Creator cannot be empty.', '#edit-creator'],
     ['Release year must be a number between 1800 and 2100.', '#edit-release-year'],

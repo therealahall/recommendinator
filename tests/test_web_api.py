@@ -40,6 +40,7 @@ from src.models.content import (
     MAX_CREATOR_LENGTH,
     MAX_RELEASE_YEAR,
     MAX_REVIEW_LENGTH,
+    MAX_TITLE_LENGTH,
     MIN_RELEASE_YEAR,
     ConsumptionStatus,
     ContentItem,
@@ -1643,6 +1644,7 @@ def test_edit_item_status(client, mock_components):
 
     mock_components["storage"].update_item_from_ui.assert_called_once_with(
         db_id=42,
+        title=UNSET,
         status="unread",
         rating=UNSET,
         review=UNSET,
@@ -1679,6 +1681,7 @@ def test_edit_tv_show_seasons(client, mock_components):
 
     mock_components["storage"].update_item_from_ui.assert_called_once_with(
         db_id=42,
+        title=UNSET,
         status="currently_consuming",
         rating=UNSET,
         review=UNSET,
@@ -1912,6 +1915,7 @@ def test_edit_item_manual_metadata(client, mock_components):
 
     mock_components["storage"].update_item_from_ui.assert_called_once_with(
         db_id=7,
+        title=UNSET,
         status="unread",
         rating=UNSET,
         review=UNSET,
@@ -1984,6 +1988,38 @@ def test_an_emptied_description_clears_and_the_hold_hands_it_back(
 
     assert restored.status_code == 200, restored.text
     assert restored.json()["description"] == "A linguist."
+    assert restored.json()["manual_fields"] == []
+
+
+def test_a_renamed_item_holds_its_title_and_hands_it_back(mock_components, tmp_path):
+    """``title`` was offered for clearing while no door could ever hold one."""
+    storage = StorageManager(sqlite_path=tmp_path / "rename.db")
+    db_id = storage.save_content_item(
+        ContentItem(
+            id="5907",
+            title="The Hobbit, or There and Back Again",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            source="storygraph_csv",
+        ),
+        user_id=1,
+    )
+    client = _client_on(mock_components["app"], storage)
+
+    renamed = client.patch(
+        f"/api/items/{db_id}?user_id=1", json={"title": "The Hobbit"}
+    )
+
+    assert renamed.status_code == 200, renamed.text
+    assert renamed.json()["title"] == "The Hobbit"
+    assert [held["field"] for held in renamed.json()["manual_fields"]] == ["title"]
+    found = client.get("/api/items?user_id=1&search=The+Hobbit").json()
+    assert [item["db_id"] for item in found] == [db_id]
+
+    restored = client.delete(f"/api/items/{db_id}/manual-fields/title?user_id=1")
+
+    assert restored.status_code == 200, restored.text
+    assert restored.json()["title"] == "The Hobbit, or There and Back Again"
     assert restored.json()["manual_fields"] == []
 
 
@@ -4979,6 +5015,9 @@ def test_edit_item_rejects_a_correction_outside_the_shared_bounds(
         ({"release_year": "9" * 5000}, str(MAX_RELEASE_YEAR)),
         ({"creator": "x" * (MAX_CREATOR_LENGTH + 1)}, str(MAX_CREATOR_LENGTH)),
         ({"creator": "   "}, "empty"),
+        ({"title": "x" * (MAX_TITLE_LENGTH + 1)}, str(MAX_TITLE_LENGTH)),
+        ({"title": "   "}, "empty"),
+        ({"title": None}, "empty"),
         ({"review": "x" * (MAX_REVIEW_LENGTH + 1)}, str(MAX_REVIEW_LENGTH)),
     ):
         response = client.patch(

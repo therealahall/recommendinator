@@ -633,7 +633,9 @@ def _hold_manually_enriched_metadata(cursor: sqlite3.Cursor) -> None:
         for row in cursor.fetchall():
             for field in fields:
                 value = field.codec.load(row[field.column])
-                if value:
+                # Not truthiness: a stored ``[]`` or ``""`` is a field the
+                # operator emptied, which enrichment refills unless it is held.
+                if value is not None:
                     # Nothing has been stated since the edit, so the source
                     # value the clear would apply is the held value itself.
                     encoded = json.dumps(value)

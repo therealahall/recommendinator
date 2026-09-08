@@ -23,6 +23,7 @@ from src.models.content import (
     MAX_RELEASE_YEAR,
     MAX_REVIEW_LENGTH,
     MAX_TAGS,
+    MAX_TITLE_LENGTH,
     MIN_RELEASE_YEAR,
     ConsumptionStatus,
     ContentItem,
@@ -336,6 +337,11 @@ def library_show(
 @library.command("edit")
 @click.option("--id", "item_id", type=int, required=True, help="Item database ID")
 @click.option(
+    "--title",
+    default=None,
+    help="Rename the item, keeping it findable under the new name",
+)
+@click.option(
     "--status",
     "status_str",
     type=click.Choice(
@@ -428,6 +434,7 @@ def library_show(
 def library_edit(
     ctx: click.Context,
     item_id: int,
+    title: str | None,
     status_str: str | None,
     rating: int | None,
     clear_rating: bool,
@@ -445,9 +452,10 @@ def library_edit(
     output_format: str,
     user_id: int,
 ) -> None:
-    """Edit an item's status, rating, review, release year, creator or metadata."""
+    """Edit an item's title, status, rating, review, year, creator or metadata."""
     if (
-        status_str is None
+        title is None
+        and status_str is None
         and rating is None
         and not clear_rating
         and review is None
@@ -463,10 +471,10 @@ def library_edit(
         and creator is None
     ):
         click.echo(
-            "Error: Provide at least one of --status, --rating, --clear-rating, "
-            "--review, --clear-review, --seasons-watched, --clear-seasons, "
-            "--genre, --clear-genres, --tag, --clear-tags, --description, "
-            "--release-year, --creator.",
+            "Error: Provide at least one of --title, --status, --rating, "
+            "--clear-rating, --review, --clear-review, --seasons-watched, "
+            "--clear-seasons, --genre, --clear-genres, --tag, --clear-tags, "
+            "--description, --release-year, --creator.",
             err=True,
         )
         raise click.Abort()
@@ -501,6 +509,12 @@ def library_edit(
             err=True,
         )
         raise click.Abort()
+    if title is not None:
+        title = title.strip()
+        if not title:
+            abort_with("--title cannot be empty.")
+        if len(title) > MAX_TITLE_LENGTH:
+            abort_with(f"--title must be at most {MAX_TITLE_LENGTH} characters.")
     if creator is not None:
         creator = creator.strip()
         if not creator:
@@ -578,6 +592,7 @@ def library_edit(
     try:
         updated = storage.update_item_from_ui(
             db_id=item_id,
+            title=unset_if_none(title),
             status=unset_if_none(status_str),
             rating=None if clear_rating else unset_if_none(rating),
             review=None if clear_review else unset_if_none(review),
