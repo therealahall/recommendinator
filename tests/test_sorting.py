@@ -4,20 +4,25 @@ from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.sqlite_db import SQLiteDB
 from src.utils.sorting import (
     FUZZY_MATCH_THRESHOLD,
+    SearchMatchTier,
     _best_window_ratio,
     build_search_text,
     get_sort_title,
     normalize_for_search,
-    search_text_matches,
+    search_text_match_tier,
     titles_similar,
 )
 
 
-def title_matches(title: str, term: str) -> bool:
+def title_tier(title: str, term: str) -> SearchMatchTier | None:
     """Match a term against a title the way a library search does."""
-    return search_text_matches(
+    return search_text_match_tier(
         build_search_text(title, None), normalize_for_search(term)
     )
+
+
+def title_matches(title: str, term: str) -> bool:
+    return title_tier(title, term) is not None
 
 
 class TestGetSortTitle:
@@ -103,17 +108,27 @@ class TestNormalizeForSearch:
 
 
 class TestTheMatchingTiers:
-    """Every search runs all three: ``search_text_matches`` is the match, and
-    ``title_matches`` above hands it the same stored text the read hands it."""
+    """Every search runs all three, and ranks by which one answered, so the tier is
+    the result — ``title_tier`` above hands it the stored text the read hands it."""
 
     def test_exact_match(self) -> None:
-        assert title_matches("Die Hard", "die hard") is True
+        assert title_tier("Die Hard", "die hard") is SearchMatchTier.EXACT
 
     def test_partial_substring_match(self) -> None:
-        assert title_matches("Die Hard (1988)", "Die Hard") is True
+        assert title_tier("Die Hard (1988)", "Die Hard") is SearchMatchTier.SUBSTRING
 
     def test_fuzzy_typo_match(self) -> None:
-        assert title_matches("Die Hard (1988)", "Die Heard") is True
+        assert title_tier("Die Hard (1988)", "Die Heard") is SearchMatchTier.FUZZY
+
+    def test_a_part_matching_exactly_beats_another_matching_loosely(self) -> None:
+        """One part is the term and another only resembles it, so a tier resolved a
+        part at a time rather than a tier at a time would report the looser one."""
+        text = build_search_text("Marshalls", "Marshals")
+
+        assert (
+            search_text_match_tier(text, normalize_for_search("Marshals"))
+            is SearchMatchTier.EXACT
+        )
 
     def test_fuzzy_below_threshold_does_not_match(self) -> None:
         """ "Inception" vs "Insepton" scores ~0.75, below FUZZY_MATCH_THRESHOLD
@@ -227,28 +242,33 @@ class TestUnicodeSearch:
 class TestTheStoredSearchText:
     def test_a_row_with_no_stored_text_matches_nothing(self) -> None:
         """A NULL column is not a haystack, and matching it is not an error."""
-        assert search_text_matches(None, normalize_for_search("die hard")) is False
+        assert search_text_match_tier(None, normalize_for_search("die hard")) is None
 
     def test_a_term_matches_the_creator_half(self) -> None:
         text = build_search_text("Die Hard (1988)", "John McTiernan")
 
-        assert search_text_matches(text, normalize_for_search("McTiernan")) is True
+        assert (
+            search_text_match_tier(text, normalize_for_search("McTiernan"))
+            is SearchMatchTier.SUBSTRING
+        )
 
     def test_a_term_cannot_match_across_the_title_and_the_creator(self) -> None:
         """Their separator is a character search normalization can never produce, so
         a substring found in the joined text always lies inside one half."""
         text = build_search_text("Alpha", "Omega")
 
-        assert search_text_matches(text, normalize_for_search("alpha")) is True
-        assert search_text_matches(text, normalize_for_search("omega")) is True
-        assert search_text_matches(text, normalize_for_search("alpha omega")) is False
+        assert search_text_match_tier(text, normalize_for_search("alpha")) is not None
+        assert search_text_match_tier(text, normalize_for_search("omega")) is not None
+        assert search_text_match_tier(text, normalize_for_search("alpha omega")) is None
 
     def test_an_item_with_no_creator_matches_on_its_title_alone(self) -> None:
         """A missing creator is an empty half, not a half that matches anything."""
         text = build_search_text("Untitled Manuscript", None)
 
-        assert search_text_matches(text, normalize_for_search("manuscript")) is True
-        assert search_text_matches(text, normalize_for_search("Tolkien")) is False
+        assert (
+            search_text_match_tier(text, normalize_for_search("manuscript")) is not None
+        )
+        assert search_text_match_tier(text, normalize_for_search("Tolkien")) is None
 
 
 class TestBestWindowRatio:

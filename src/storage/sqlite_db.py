@@ -79,7 +79,11 @@ from src.utils.series import (
     seasons_watched_for_completed,
     status_for_seasons_watched,
 )
-from src.utils.sorting import normalize_for_search, search_text_matches
+from src.utils.sorting import (
+    SearchMatchTier,
+    normalize_for_search,
+    search_text_match_tier,
+)
 from src.utils.text import escape_lone_surrogates
 
 
@@ -1088,9 +1092,8 @@ class SQLiteDB:
         offset: int,
         search_term: str,
     ) -> list[ContentItem]:
-        """A search has one matched set, whichever tier of
-        :func:`~src.utils.sorting.search_text_matches` an item answers on, so
-        the offset means one thing throughout and the pages of a search
+        """One matched set, ranked by the tier each item answered on. The rank is
+        a property of the whole set, not of a page, so the pages of a search
         concatenate into the unpaged answer.
         """
         needle = normalize_for_search(search_term)
@@ -1106,14 +1109,16 @@ class SQLiteDB:
         page_end = start + limit if limit and limit > 0 else None
 
         cursor.execute(f"{_SEARCH_CANDIDATE_SELECT}{where} ORDER BY {order_by}", params)
-        matched: list[int] = []
+        matched: list[tuple[SearchMatchTier, int]] = []
         for row in cursor:
-            if search_text_matches(row["search_text"], needle):
-                matched.append(row["id"])
-                if page_end is not None and len(matched) == page_end:
-                    break
+            tier = search_text_match_tier(row["search_text"], needle)
+            if tier is not None:
+                matched.append((tier, row["id"]))
 
-        page = matched[start:]
+        # Keyed on the tier alone, and stable, so the caller's sort still orders
+        # the items within one.
+        matched.sort(key=lambda match: match[0])
+        page = [db_id for _, db_id in matched[start:page_end]]
         return self._items_by_db_ids(cursor, page) if page else []
 
     def get_unconsumed_items(
