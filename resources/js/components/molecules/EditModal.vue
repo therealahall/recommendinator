@@ -67,15 +67,7 @@ watch(
   },
 )
 
-// Pre-computed rather than formatted in the v-for, which re-runs every render.
-const heldFields = computed(() =>
-  (props.item.manual_fields ?? []).map((held) => ({
-    field: held.field,
-    label: held.drifted
-      ? `${held.field}: ${held.value ?? 'nothing'} — its source now says ${held.source_value ?? 'nothing'}`
-      : `${held.field}: ${held.value ?? 'nothing'}`,
-  })),
-)
+const heldFields = computed(() => props.item.manual_fields ?? [])
 
 // A cleared row takes its button with it, so focus lands on the line above
 // rather than dropping to <body> (WCAG 2.4.3).
@@ -298,14 +290,14 @@ function save() {
            populated reads as content rather than a status change (4.1.3). -->
       <p ref="manualNote" class="edit-modal-note focus-fallback" role="status" tabindex="-1">
         {{ heldFields.length
-          ? 'A sync records what its source says about these, and leaves them alone.'
+          ? 'A sync and enrichment leave these alone.'
           : 'Editing a field above holds it against its source.' }}
       </p>
       <ul class="edit-manual-list">
-        <li v-for="held in heldFields" :key="held.field" class="edit-manual-held">
-          <span>{{ held.label }}</span>
-          <button class="btn btn-secondary" @click="emit('clearManual', item.db_id!, held.field)">
-            Use the source's value
+        <li v-for="field in heldFields" :key="field" class="edit-manual-held">
+          <span>{{ field }}</span>
+          <button class="btn btn-secondary" @click="emit('clearManual', item.db_id!, field)">
+            Stop holding this field
           </button>
         </li>
       </ul>

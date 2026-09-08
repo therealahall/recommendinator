@@ -30,13 +30,6 @@ const defaultItem = {
   description: null,
 }
 
-const HELD_CREATOR = {
-  field: 'creator',
-  value: 'Capcom',
-  source_value: 'CAPCOM Co., Ltd.',
-  drifted: true,
-}
-
 const tvItem = {
   ...defaultItem,
   title: 'Test Show',
@@ -139,26 +132,26 @@ describe('EditModal', () => {
     wrapper.unmount()
   })
 
-  it('names each held field, what its source now says, and offers that value back', async () => {
+  it('names each held field and offers to stop holding it', async () => {
     const wrapper = mount(EditModal, {
       props: {
-        item: { ...defaultItem, manual_fields: [HELD_CREATOR] },
+        item: { ...defaultItem, manual_fields: ['creator'] },
         saving: false,
         saveError: '',
       },
       attachTo: document.body,
     })
 
-    expect(wrapper.text()).toContain('creator: Capcom — its source now says CAPCOM Co., Ltd.')
+    expect(wrapper.get('.edit-manual-held').text()).toContain('creator')
     await wrapper.findAll('button')
-      .find(b => b.text().includes("Use the source's value"))!.trigger('click')
+      .find(b => b.text().includes('Stop holding this field'))!.trigger('click')
 
     expect(wrapper.emitted('clearManual')).toEqual([[1, 'creator']])
     wrapper.unmount()
   })
 
   it('a cleared hold says so and keeps focus in the dialog, not on the button that vanished', async () => {
-    const held = { ...defaultItem, manual_fields: [HELD_CREATOR] }
+    const held = { ...defaultItem, manual_fields: ['creator'] }
     const wrapper = mount(EditModal, {
       props: { item: held, saving: false, saveError: '' },
       attachTo: document.body,
@@ -166,10 +159,10 @@ describe('EditModal', () => {
     await vi.runAllTimersAsync()
     const said = wrapper.get('[role="status"]')
     const whileManual = said.text()
-    const restore = wrapper.findAll('button')
-      .find(b => b.text().includes("Use the source's value"))!
-    ;(restore.element as HTMLElement).focus()
-    await restore.trigger('click')
+    const stop = wrapper.findAll('button')
+      .find(b => b.text().includes('Stop holding this field'))!
+    ;(stop.element as HTMLElement).focus()
+    await stop.trigger('click')
 
     await wrapper.setProps({ item: { ...held, manual_fields: [] } })
     await vi.runAllTimersAsync()
@@ -195,7 +188,7 @@ describe('EditModal', () => {
     })
 
     expect(wrapper.text()).toContain('holds it against its source')
-    expect(wrapper.text()).not.toContain("Use the source's value")
+    expect(wrapper.text()).not.toContain('Stop holding this field')
     wrapper.unmount()
   })
 

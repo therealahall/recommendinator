@@ -89,7 +89,7 @@ class SyncRunDict(TypedDict):
 # Changing ``normalize_title_for_matching``, ``get_sort_title`` or
 # ``build_search_text`` needs a bump and a step to rewrite what the old one
 # stored, or dedup lookups stop matching and duplicates accumulate in silence.
-_SCHEMA_VERSION = 24
+_SCHEMA_VERSION = 25
 
 # Rows for these keys are unreachable from the app but would still
 # be overlaid onto config, so they are pruned once on upgrade.
@@ -251,11 +251,8 @@ _CONTENT_ITEM_CHILDREN: dict[str, str] = {
             content_item_id INTEGER NOT NULL
                 REFERENCES content_items(id) ON DELETE CASCADE,
             field TEXT NOT NULL,
-            -- Both JSON, so one table holds a rating, a title and a genre list
-            -- without a column per field. A row exists only while the field is
-            -- held; drift is the two disagreeing, never a flag beside them.
-            manual_value TEXT NOT NULL,
-            source_value TEXT NOT NULL,
+            -- The row is the whole fact. Storing what the field said would be a
+            -- copy every door writing that column had to keep in step.
             PRIMARY KEY (content_item_id, field)
         )
     """,
@@ -347,6 +344,12 @@ def create_schema(conn: sqlite3.Connection) -> None:
 
     for child_statement in _CONTENT_ITEM_CHILDREN.values():
         cursor.execute(child_statement)
+
+    # Guarded by the column rather than the version: a database upgrading from
+    # before holds existed has just had the table created in its current shape.
+    # Ahead of the step below, which inserts into it.
+    if _has_column(cursor, "content_item_manual_fields", "manual_value"):
+        _drop_held_values(cursor)
 
     # Ahead of every write below, because it cannot open a transaction while
     # one is already open. It commits before the version stamp, so the guard is
@@ -607,6 +610,21 @@ def _repair_legacy_content_rows(cursor: sqlite3.Cursor) -> None:
     _migrate_stranded_detail_shapes(cursor)
 
 
+def _drop_held_values(cursor: sqlite3.Cursor) -> None:
+    """Which fields are held carries over; what each said when it was held goes
+    with the columns, having only ever been a copy going stale.
+    """
+    cursor.execute(
+        "ALTER TABLE content_item_manual_fields RENAME TO content_item_manual_values"
+    )
+    cursor.execute(_CONTENT_ITEM_CHILDREN["content_item_manual_fields"])
+    cursor.execute(
+        "INSERT INTO content_item_manual_fields (content_item_id, field)"
+        " SELECT content_item_id, field FROM content_item_manual_values"
+    )
+    cursor.execute("DROP TABLE content_item_manual_values")
+
+
 #: The fields the retired item-level ``manual`` provider could have come from.
 _MANUALLY_ENRICHED_FIELDS = ("genres", "tags", "description")
 
@@ -615,7 +633,7 @@ def _hold_manually_enriched_metadata(cursor: sqlite3.Cursor) -> None:
     """That flag said one of three fields was hand written, never which, so all
     three are held and the item rejoins the queue the flag kept it out of.
     """
-    holds: list[tuple[int, str, str, str]] = []
+    holds: list[tuple[int, str]] = []
     for content_type, spec in DETAIL_FIELDS.items():
         fields = [
             field
@@ -632,20 +650,14 @@ def _hold_manually_enriched_metadata(cursor: sqlite3.Cursor) -> None:
         )
         for row in cursor.fetchall():
             for field in fields:
-                value = field.codec.load(row[field.column])
                 # Not truthiness: a stored ``[]`` or ``""`` is a field the
                 # operator emptied, which enrichment refills unless it is held.
-                if value is not None:
-                    # Nothing has been stated since the edit, so the source
-                    # value the clear would apply is the held value itself.
-                    encoded = json.dumps(value)
-                    holds.append(
-                        (row["content_item_id"], field.metadata_key, encoded, encoded)
-                    )
+                if field.codec.load(row[field.column]) is not None:
+                    holds.append((row["content_item_id"], field.metadata_key))
 
     cursor.executemany(
         "INSERT OR IGNORE INTO content_item_manual_fields"
-        " (content_item_id, field, manual_value, source_value) VALUES (?, ?, ?, ?)",
+        " (content_item_id, field) VALUES (?, ?)",
         holds,
     )
     cursor.execute(

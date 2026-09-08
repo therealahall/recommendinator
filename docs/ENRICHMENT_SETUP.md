@@ -138,10 +138,10 @@ and `--description` replaces the description. `--clear-genres`, `--clear-tags`
 and `--description ""` empty them.
 
 Manual values **overwrite** the stored detail, unlike the gap-filling merge that
-sync and automatic enrichment use, and each one is held from then on. To hand a
-field back, run `library clear-manual --id <id> --field genres` or press **Use
-the source's value** beside it in the edit modal, which applies what the source
-last stated without waiting for a run.
+sync and automatic enrichment use, and each one is held from then on. To let a
+field be stated again, run `library clear-manual --id <id> --field genres` or
+press **Stop holding this field** beside it in the edit modal. Either way the
+stored value stands until something states a new one.
 
 ## Troubleshooting
 

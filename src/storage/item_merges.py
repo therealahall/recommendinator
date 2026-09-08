@@ -12,12 +12,6 @@ from enum import Enum
 from typing import Any
 
 from src.storage.derived import write_derived_columns
-from src.storage.field_provenance import (
-    BASE_ITEM_FIELDS,
-    drop_hold,
-    held_detail_columns,
-    read_holds,
-)
 from src.storage.merge import (
     ALLOWED_DETAIL_TABLES,
     detail_columns,
@@ -111,7 +105,6 @@ def absorb_item(
     merge_enrichment_status(cursor, survivor_id, absorbed_id)
     write_derived_columns(cursor, survivor_id)
     restore = _what_this_merge_wrote(before, _survivor_state(cursor, survivor_id))
-    _drop_holds_this_merge_overruled(cursor, survivor_id, restore)
     restore["dead_covers"] = _carry_dead_covers(cursor, survivor_id, absorbed_id)
     # What it absorbed comes with it: no row may hide behind a hidden row.
     restore["repointed"] = _absorbed_by(cursor, absorbed_id)
@@ -305,29 +298,6 @@ def _drop_carried_dead_covers(
         f" AND cover_url IN ({placeholders})",
         (survivor_id, *carried),
     )
-
-
-def _drop_holds_this_merge_overruled(
-    cursor: sqlite3.Cursor, survivor_id: int, written: dict[str, Any]
-) -> None:
-    """Keyed on what the merge actually moved, not on what it may write: a
-    column it left alone still says what the operator wrote, and keeps its hold.
-    """
-    held = read_holds(cursor, survivor_id)
-    if not held:
-        return
-    cursor.execute(
-        "SELECT content_type FROM content_items WHERE id = ?", (survivor_id,)
-    )
-    columns = held_detail_columns(cursor.fetchone()["content_type"], held)
-    moved_detail = {
-        column for row in written["children"].values() for column in row or {}
-    }
-    for column, field in columns.items():
-        if column in moved_detail:
-            drop_hold(cursor, survivor_id, field)
-    for field in held.keys() & BASE_ITEM_FIELDS & written["item"].keys():
-        drop_hold(cursor, survivor_id, field)
 
 
 def _survivor_state(cursor: sqlite3.Cursor, survivor_id: int) -> dict[str, Any]:

@@ -21,7 +21,6 @@ from src.models.content import (
     ContentType,
     EnrichmentFilter,
     ExternalId,
-    ManualField,
     get_enum_value,
 )
 from src.storage.manager import (
@@ -122,7 +121,7 @@ class ContentItemResponse(BaseModel):
     series: str | None = None
     series_index: float | None = None
     enriched: bool = False
-    manual_fields: list[ManualField] = Field(default_factory=list)
+    manual_fields: list[str] = Field(default_factory=list)
     genres: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
     description: str | None = None
@@ -429,7 +428,7 @@ def clear_manual_field(
     storage: RequiredStorage,
     user_id: int = Query(1, ge=1, description="User ID for authorization"),
 ) -> ContentItemResponse:
-    """Drop the operator's hold on one field, applying what the source states."""
+    """Stop holding one field, leaving what it says alone."""
     if field not in MANUAL_FIELDS:
         raise HTTPException(
             status_code=400,

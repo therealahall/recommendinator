@@ -45,16 +45,11 @@ from src.storage.duplicates import (
     undecline_duplicate,
 )
 from src.storage.field_provenance import (
-    BASE_ITEM_FIELDS,
     drop_hold,
     held_detail_columns,
-    manual_detail_field,
     parse_manual_fields,
     read_holds,
     record_hold,
-    record_source_values,
-    stated_value,
-    take_hold,
 )
 from src.storage.item_merges import (
     MergeEvidence,
@@ -210,12 +205,8 @@ _SORT_ORDER_BY: dict[str, str] = {
 # Whitelist of valid sort_by options for get_content_items().
 VALID_SORT_OPTIONS: frozenset[str] = frozenset(_SORT_ORDER_BY)
 
-# ``json()`` rather than the bare column, so a held list arrives as a list
-# instead of the string its JSON encoding is.
 _MANUAL_FIELDS_TERM = (
-    "(SELECT json_group_array(json_object("
-    "'field', m.field, 'value', json(m.manual_value),"
-    " 'source_value', json(m.source_value)))"
+    "(SELECT json_group_array(m.field)"
     " FROM content_item_manual_fields m"
     " WHERE m.content_item_id = ci.id) as manual_fields"
 )
@@ -349,10 +340,9 @@ def _corrected_fields(
     description: str | None,
     release_year: int | None,
     creator: str | None,
-) -> dict[str, Any]:
-    """The fields an edit actually stated, valued as they are stored. A supplied
-    ``None`` clears the value and is still a correction, so the two sentinels
-    cannot be read as one.
+) -> set[str]:
+    """The fields an edit actually stated. A supplied ``None`` clears the value
+    and is still a correction, so the two sentinels cannot be read as one.
     """
     unsent: dict[str, Any] = {
         "title": title,
@@ -360,7 +350,6 @@ def _corrected_fields(
         "rating": rating,
         "review": review,
     }
-    supplied = {field: value for field, value in unsent.items() if value is not UNSET}
     absent: dict[str, Any] = {
         "genres": genres,
         "tags": tags,
@@ -368,15 +357,9 @@ def _corrected_fields(
         "release_year": release_year,
         "creator": creator,
     }
-    supplied.update(
-        {field: value for field, value in absent.items() if value is not None}
-    )
-    # A blank of either is stored as nothing at all, and reads back as None.
-    if isinstance(review, str) and not review.strip():
-        supplied["review"] = None
-    if description is not None and not description.strip():
-        supplied["description"] = None
-    return supplied
+    return {field for field, value in unsent.items() if value is not UNSET} | {
+        field for field, value in absent.items() if value is not None
+    }
 
 
 def _title_match(
@@ -584,7 +567,6 @@ class SQLiteDB:
 
         set_parts = ["status = 'completed'", "updated_at = CURRENT_TIMESTAMP"]
         params: list[Any] = []
-        overruled = ["status"]
         if date_completed is not UNSET:
             set_parts.append("date_completed = ?")
             params.append(date_completed.isoformat())
@@ -594,20 +576,14 @@ class SQLiteDB:
         if rating is not None:
             set_parts.append("rating = ?")
             params.append(rating)
-            overruled.append("rating")
         if review is not None and review.strip():
             set_parts.append("review = ?")
             params.append(review)
-            overruled.append("review")
         params.append(db_id)
         cursor.execute(
             f"UPDATE content_items SET {', '.join(set_parts)} WHERE id = ?",
             params,
         )
-        # This door states the field itself, as the season checklist does, so a
-        # hold it overrules is no longer what the item says.
-        for field in overruled:
-            drop_hold(cursor, db_id, field)
 
     def _upsert_content_item(
         self, cursor: sqlite3.Cursor, item: ContentItem, user_id: int | None
@@ -718,25 +694,14 @@ class SQLiteDB:
             if item.ignored is not None:
                 offered["ignored"] = 1 if item.ignored else 0
 
-            # A held field is the operator's, so the sync records what it now
-            # states and withdraws the offer. normalized_title tracks the title
-            # that stays, not the one being refused.
+            # A held field is the operator's, so the sync withdraws the offer.
+            # normalized_title tracks the title that stays, not the one being
+            # refused.
             held = read_holds(cursor, existing_id)
-            if held:
-                record_source_values(
-                    cursor,
-                    existing_id,
-                    {
-                        "title": item.title,
-                        "status": get_enum_value(item.status),
-                        "rating": item.rating,
-                        "review": incoming_review,
-                    },
-                )
-                for field in held:
-                    offered.pop(field, None)
-                if "title" in held:
-                    offered.pop("normalized_title")
+            for field in held:
+                offered.pop(field, None)
+            if "title" in held:
+                offered.pop("normalized_title")
 
             # Writing only the columns that actually move is what lets a
             # re-sync report itself as unchanged, and keeps ``updated_at`` — a
@@ -788,7 +753,7 @@ class SQLiteDB:
         )
 
         detail_changed = self._save_detail_table(
-            cursor, db_id, item, content_type_value, states_source_values=True
+            cursor, db_id, item, content_type_value
         )
 
         # After the detail write, so the derived columns read the creator that
@@ -833,8 +798,6 @@ class SQLiteDB:
         item: ContentItem,
         content_type: str,
         replaceable_metadata_keys: frozenset[str] = frozenset(),
-        *,
-        states_source_values: bool = False,
     ) -> bool:
         """For existing rows, enrichment is the source of truth: genres and tags
         merge additively, every other column is fill-only, and the metadata blob
@@ -868,9 +831,8 @@ class SQLiteDB:
         values: list[Any] = [db_id]
 
         # Only an existing row can be held: a hold is an edit to a stored item.
-        held = read_holds(cursor, db_id) if existing_data else {}
+        held = read_holds(cursor, db_id) if existing_data else set()
         held_columns = held_detail_columns(content_type, held)
-        stated: dict[str, Any] = {}
 
         for detail_field in spec.fields:
             col_name = detail_field.column
@@ -885,7 +847,6 @@ class SQLiteDB:
                 new_value = detail_field.store(raw)
 
             if col_name in held_columns:
-                stated[held_columns[col_name]] = detail_field.codec.load(new_value)
                 values.append(existing_data.get(col_name))
             elif col_name in MERGEABLE_DETAIL_COLUMNS and existing_data:
                 existing_list = parse_json_list(existing_data.get(col_name))
@@ -955,11 +916,6 @@ class SQLiteDB:
         col_names.append("metadata")
         values.append(metadata_json)
 
-        # The sync door only: enrichment arrives already reconciled against what
-        # is stored, so recording it reports the operator's value as the source's.
-        if states_source_values:
-            record_source_values(cursor, db_id, stated)
-
         if existing_data:
             # Same reason as the base row's write: a column already holding
             # the value this sync carries is not an update of anything.
@@ -1023,8 +979,9 @@ class SQLiteDB:
             " updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             ("completed" if finished else "currently_consuming", db_id),
         )
-        # Derived from the operator's own check-offs, so a status they stated
-        # earlier is no longer what the item says and must stop claiming to be.
+        # The one status a hold cannot refuse: a season list nobody may hold
+        # decides it, so a hold left standing would claim a protection it has
+        # just been overruled on.
         drop_hold(cursor, db_id, "status")
         return True
 
@@ -1476,19 +1433,13 @@ class SQLiteDB:
                 params,
             )
 
-            if status is UNSET and resolved_status != existing_status:
-                # Derived from the check-offs this edit carried, as
-                # _handle_tv_season_change derives it: an earlier held status is
-                # no longer what the item says.
-                drop_hold(cursor, db_id, "status")
-
             if genres is not None or tags is not None or description is not None:
                 self._write_manual_metadata(
                     cursor, db_id, content_type, genres, tags, description
                 )
 
-            for field, value in corrected.items():
-                record_hold(cursor, db_id, field, value, stated_value(before, field))
+            for field in corrected:
+                record_hold(cursor, db_id, field)
 
             conn.commit()
             return True
@@ -1496,57 +1447,17 @@ class SQLiteDB:
     def clear_manual_field(
         self, db_id: int, field: str, user_id: int | None = None
     ) -> bool:
-        """The source value is applied here rather than left to the next sync,
-        which for a hand-imported source may never come.
+        """The field keeps the value it has and stops being protected: the hold
+        was never a copy of anything to hand back.
         """
         with self.connection() as conn:
             cursor = conn.cursor()
-            item = self._item_on_cursor(cursor, db_id, user_id)
-            if item is None:
+            if self._item_on_cursor(cursor, db_id, user_id) is None:
                 return False
-            held, source = take_hold(cursor, db_id, field)
-            if not held:
+            if not drop_hold(cursor, db_id, field):
                 return False
-            self._apply_source_value(
-                cursor, db_id, get_enum_value(item.content_type), field, source
-            )
             conn.commit()
             return True
-
-    def _apply_source_value(
-        self,
-        cursor: sqlite3.Cursor,
-        db_id: int,
-        content_type: str,
-        field: str,
-        value: Any,
-    ) -> None:
-        if field == "title":
-            cursor.execute(
-                "UPDATE content_items SET title = ?, normalized_title = ?,"
-                " updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                (value, normalize_title_for_matching(value), db_id),
-            )
-        elif field in BASE_ITEM_FIELDS:
-            cursor.execute(
-                f"UPDATE content_items SET {field} = ?,"
-                " updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                (value, db_id),
-            )
-        else:
-            detail_field = manual_detail_field(content_type, field)
-            if detail_field is None or detail_field.column is None:
-                raise UncorrectableFieldError(
-                    f"A {content_type} has no {field} to correct."
-                )
-            self._write_detail_columns(
-                cursor,
-                db_id,
-                content_type,
-                {detail_field.column: detail_field.store(value)},
-            )
-        if field in {"title", "creator"}:
-            write_derived_columns(cursor, db_id)
 
     def _write_manual_metadata(
         self,

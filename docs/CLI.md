@@ -176,8 +176,7 @@ the web sends.
 `--genre` and `--tag` replace the existing lists rather than appending.
 
 Every field an edit writes is held against its source from then on: a later sync
-records what the source has come to say but leaves the value alone. `library
-show` lists the held fields and names the source's value where it disagrees.
+and every enrichment run leave it alone. `library show` lists the held fields.
 Seasons are unheld on purpose — a sync only ever adds a watched season.
 
 `--release-year` and `--creator` correct the two fields a title match is vetoed
@@ -200,8 +199,8 @@ uv run python -m src.cli library clear-manual --id 42 --field creator
 uv run python -m src.cli library clear-manual --id 42 --field genres --format json
 ```
 
-Drops one field's hold and applies the value its source last stated, straight
-away rather than at the next sync. `--field` takes `title`, `status`, `rating`,
+Stops holding one field, so the next sync or enrichment run may state it again.
+The stored value is left as it is. `--field` takes `title`, `status`, `rating`,
 `review`, `genres`, `tags`, `description`, `release_year` or `creator`.
 `--format json` emits what `DELETE /api/items/<id>/manual-fields/<field>`
 answers.

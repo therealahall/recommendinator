@@ -507,7 +507,7 @@ class TestManualMetadataEdit:
         assert loaded.metadata.get("genres") == ["Drama", "Thriller"]
         assert loaded.metadata.get("tags") == ["slow-burn"]
         assert loaded.metadata.get("description") == "A tense character study."
-        assert {held.field for held in loaded.manual_fields} == {
+        assert set(loaded.manual_fields) == {
             "status",
             "genres",
             "tags",
