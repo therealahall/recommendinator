@@ -584,6 +584,7 @@ class SQLiteDB:
 
         set_parts = ["status = 'completed'", "updated_at = CURRENT_TIMESTAMP"]
         params: list[Any] = []
+        overruled = ["status"]
         if date_completed is not UNSET:
             set_parts.append("date_completed = ?")
             params.append(date_completed.isoformat())
@@ -593,14 +594,20 @@ class SQLiteDB:
         if rating is not None:
             set_parts.append("rating = ?")
             params.append(rating)
+            overruled.append("rating")
         if review is not None and review.strip():
             set_parts.append("review = ?")
             params.append(review)
+            overruled.append("review")
         params.append(db_id)
         cursor.execute(
             f"UPDATE content_items SET {', '.join(set_parts)} WHERE id = ?",
             params,
         )
+        # This door states the field itself, as the season checklist does, so a
+        # hold it overrules is no longer what the item says.
+        for field in overruled:
+            drop_hold(cursor, db_id, field)
 
     def _upsert_content_item(
         self, cursor: sqlite3.Cursor, item: ContentItem, user_id: int | None
@@ -1468,6 +1475,12 @@ class SQLiteDB:
                 f"UPDATE content_items SET {', '.join(set_parts)} WHERE id = ?",
                 params,
             )
+
+            if status is UNSET and resolved_status != existing_status:
+                # Derived from the check-offs this edit carried, as
+                # _handle_tv_season_change derives it: an earlier held status is
+                # no longer what the item says.
+                drop_hold(cursor, db_id, "status")
 
             if genres is not None or tags is not None or description is not None:
                 self._write_manual_metadata(

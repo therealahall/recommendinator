@@ -17,6 +17,7 @@ from src.models.content import (
     MAX_RELEASE_YEAR,
     MAX_REVIEW_LENGTH,
     MAX_TAGS,
+    MAX_TITLE_LENGTH,
     MIN_RELEASE_YEAR,
     ConsumptionStatus,
     ContentItem,
@@ -1854,6 +1855,34 @@ class TestLibraryEditCorrections:
         call_kwargs = mock_storage.update_item_from_ui.call_args[1]
         assert call_kwargs["release_year"] == 1993
         assert call_kwargs["creator"] == "id Software"
+
+    def test_edit_forwards_a_rename_and_refuses_the_titles_the_api_refuses(
+        self, cli_runner: CliRunner
+    ) -> None:
+        mock_storage = self._game_storage()
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["library", "edit", "--id", "1", "--title", " Doom II "],
+            mock_storage,
+        )
+
+        assert result.exit_code == 0
+        assert mock_storage.update_item_from_ui.call_args[1]["title"] == "Doom II"
+
+        for refused, says in (
+            ("   ", "--title cannot be empty"),
+            ("x" * (MAX_TITLE_LENGTH + 1), f"at most {MAX_TITLE_LENGTH} characters"),
+        ):
+            mock_storage.update_item_from_ui.reset_mock()
+            refusal = _invoke_with_mocks(
+                cli_runner,
+                ["library", "edit", "--id", "1", "--title", refused],
+                mock_storage,
+            )
+            assert refusal.exit_code != 0
+            assert says in refusal.output
+            mock_storage.update_item_from_ui.assert_not_called()
 
     def test_edit_refuses_a_blank_creator(self, cli_runner: CliRunner) -> None:
         mock_storage = self._game_storage()

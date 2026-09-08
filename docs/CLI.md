@@ -153,6 +153,7 @@ uv run python -m src.cli library edit --id 42 --clear-seasons
 uv run python -m src.cli library edit --id 42 --genre Action --tag co-op --description "A grand adventure."
 uv run python -m src.cli library edit --id 42 --clear-genres --clear-tags --description ""
 uv run python -m src.cli library edit --id 42 --release-year 1993 --creator "id Software"
+uv run python -m src.cli library edit --id 42 --title "The Hobbit"
 ```
 
 **Only the flags you pass are written**, so a status-only edit cannot erase a
@@ -184,6 +185,11 @@ on, so a row still holding a released merge's wrong year takes the next source
 stating the true one instead of growing the library another row. A year runs
 1800-2200 and a creator 500 characters; a book takes no `--release-year`,
 because `year_published` dates the edition rather than the work.
+
+`--title` renames the item, up to 500 characters and never blank. The sort key
+and the search text are rebuilt from it, so the item answers to its new name and
+not its old one, and the source that named the old one syncs back onto the same
+row rather than adding a second.
 
 `--format json` emits the edited item, the body `PATCH /api/items/<id>` answers.
 

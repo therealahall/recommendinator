@@ -4837,3 +4837,161 @@ class TestManualFieldHolds:
         assert [(held.value, held.source_value) for held in stored.manual_fields] == [
             ("Puzzle-Platformer", "Puzzle")
         ]
+
+    def test_ticking_every_season_leaves_no_hold_claiming_the_old_status(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """The checklist derives the status the same way ``_handle_tv_season_change``
+        does, so the hold it overrules must stop reporting the value it names."""
+        db_id = temp_db.save_content_item(
+            ContentItem(
+                id="1399",
+                title="Severance",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.UNREAD,
+                source="trakt",
+                metadata={"seasons": 2},
+            )
+        )
+        temp_db.update_item_from_ui(db_id=db_id, status="unread")
+
+        temp_db.update_item_from_ui(db_id=db_id, seasons_watched=[1, 2])
+
+        stored = temp_db.get_content_item(db_id)
+        assert stored is not None
+        assert stored.status == ConsumptionStatus.COMPLETED
+        assert stored.manual_fields == []
+
+    def test_absorbing_a_duplicate_leaves_no_hold_claiming_the_old_status(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """A merge carries the duplicate's status across, so the hold it overrules
+        must stop offering to restore a value the item never held."""
+        kept = self._steam_game(temp_db, "Valve")
+        temp_db.update_item_from_ui(db_id=kept, status="unread")
+        absorbed = temp_db.save_content_item(
+            ContentItem(
+                id="portal-2",
+                title="Portal 2 Sixense Bundle",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.COMPLETED,
+                source="gog",
+            )
+        )
+
+        temp_db.merge_content_items(kept, absorbed, MergeEvidence.MANUAL)
+
+        stored = temp_db.get_content_item(kept)
+        assert stored is not None
+        assert stored.status == ConsumptionStatus.COMPLETED
+        assert stored.manual_fields == []
+
+    def test_undoing_that_merge_hands_the_status_back_still_held(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """The undo puts the operator's status back, so a sync that has never
+        stopped stating another one must still be held off it."""
+        kept = self._steam_game(temp_db, "Valve")
+        temp_db.update_item_from_ui(db_id=kept, status="unread")
+        absorbed = temp_db.save_content_item(
+            ContentItem(
+                id="portal-2",
+                title="Portal 2 Sixense Bundle",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.COMPLETED,
+                source="gog",
+            )
+        )
+        merge = temp_db.merge_content_items(kept, absorbed, MergeEvidence.MANUAL)
+
+        temp_db.unmerge_content_items(merge.id)
+
+        stored = temp_db.get_content_item(kept)
+        assert stored is not None
+        assert stored.status == ConsumptionStatus.UNREAD
+        assert [(held.field, held.value) for held in stored.manual_fields] == [
+            ("status", "unread")
+        ]
+
+
+class TestRenamingAnItem:
+    """A rename is a hold like any other, and the columns every lookup goes
+    through are derived from the title it replaces."""
+
+    @staticmethod
+    def _hobbit(temp_db: SQLiteDB) -> int:
+        return temp_db.save_content_item(
+            ContentItem(
+                id="5907",
+                title="The Hobbit, or There and Back Again",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+                source="storygraph_csv",
+                author="J. R. R. Tolkien",
+            )
+        )
+
+    def test_search_finds_the_new_title_and_no_longer_the_old_one(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        db_id = self._hobbit(temp_db)
+
+        temp_db.update_item_from_ui(db_id=db_id, title="The Hobbit")
+
+        found = temp_db.get_content_items(search="The Hobbit")
+        assert [item.db_id for item in found] == [db_id]
+        assert temp_db.get_content_items(search="There and Back Again") == []
+
+    def test_the_source_that_named_the_old_title_re_syncs_onto_the_same_row(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        db_id = self._hobbit(temp_db)
+        temp_db.update_item_from_ui(db_id=db_id, title="The Hobbit")
+
+        self._hobbit(temp_db)
+
+        assert [item.db_id for item in temp_db.get_content_items()] == [db_id]
+        stored = temp_db.get_content_item(db_id)
+        assert stored is not None
+        assert stored.title == "The Hobbit"
+        assert [
+            (held.field, held.source_value, held.drifted)
+            for held in stored.manual_fields
+        ] == [("title", "The Hobbit, or There and Back Again", True)]
+
+    def test_clearing_the_hold_puts_the_source_title_back_into_search(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        db_id = self._hobbit(temp_db)
+        temp_db.update_item_from_ui(db_id=db_id, title="The Hobbit")
+
+        assert temp_db.clear_manual_field(db_id, "title") is True
+
+        stored = temp_db.get_content_item(db_id)
+        assert stored is not None
+        assert stored.title == "The Hobbit, or There and Back Again"
+        found = temp_db.get_content_items(search="There and Back Again")
+        assert [item.db_id for item in found] == [db_id]
+
+    def test_completing_it_by_its_new_name_is_not_the_source_restating_one(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """The completion door carries the title the operator typed, so
+        recording it would leave the hold with nothing to hand back."""
+        db_id = self._hobbit(temp_db)
+        temp_db.update_item_from_ui(db_id=db_id, title="The Hobbit")
+
+        temp_db.complete_content_item(
+            ContentItem(
+                id=None,
+                title="The Hobbit",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                author="J. R. R. Tolkien",
+            )
+        )
+
+        assert temp_db.clear_manual_field(db_id, "title") is True
+        stored = temp_db.get_content_item(db_id)
+        assert stored is not None
+        assert stored.title == "The Hobbit, or There and Back Again"

@@ -14,4 +14,5 @@ export const SORT_OPTIONS = [
 export const DEFAULT_SORT = 'title'
 
 export const MAX_CREATOR_LENGTH = 500
+export const MAX_TITLE_LENGTH = 500
 export const RELEASE_YEAR_TYPES: readonly string[] = ['movie', 'tv_show', 'video_game']

@@ -30,6 +30,7 @@ from src.storage.manager import (
     VALID_SORT_OPTIONS,
     UncorrectableFieldError,
     Unset,
+    unset_if_none,
 )
 from src.utils.export import export_items_csv, export_items_json
 from src.utils.item_serialization import (
@@ -77,6 +78,9 @@ CompletionTitle = Annotated[
 #: Stripped, so a pasted trailing space is not another name to the veto. Its
 #: bounds are ``edit_item``'s to refuse: a constraint answers an unreadable 422.
 CorrectedCreator = Annotated[str, StringConstraints(strip_whitespace=True)]
+
+#: A rename, on the same terms as the creator above.
+CorrectedTitle = Annotated[str, StringConstraints(strip_whitespace=True)]
 
 
 class CompletionRequest(BaseModel):
@@ -138,9 +142,10 @@ class IgnoreItemResponse(BaseModel):
 class ItemEditRequest(BaseModel):
     """Every field distinguishes omitted from supplied: an absent one leaves the
     stored value alone, and a null clears ``rating`` or ``review``. A null
-    ``status`` is refused instead.
+    ``status`` or ``title`` is refused instead.
     """
 
+    title: CorrectedTitle | None = Field(None, description="Renamed title")
     status: str | None = Field(None, description="Status value")
     rating: int | None = Field(None, ge=1, le=5)
     review: str | None = None
@@ -342,6 +347,11 @@ def get_single_item(
 
 def _edit_bound_crossed(request: ItemEditRequest) -> str | None:
     """The first bound an edit crosses, worded as the CLI words its own."""
+    if "title" in request.model_fields_set:
+        if not request.title:
+            return "Title cannot be empty."
+        if len(request.title) > MAX_TITLE_LENGTH:
+            return f"Title must be at most {MAX_TITLE_LENGTH} characters."
     if request.review is not None:
         if not request.review.strip():
             return "Review cannot be blank. Send null to clear it."
@@ -386,6 +396,7 @@ def edit_item(
     try:
         success = storage.update_item_from_ui(
             db_id=db_id,
+            title=unset_if_none(request.title),
             status=status,
             rating=request.rating if "rating" in supplied else UNSET,
             review=request.review if "review" in supplied else UNSET,

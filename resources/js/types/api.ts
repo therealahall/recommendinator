@@ -411,6 +411,7 @@ export interface TraktPollResponse {
 }
 
 export interface ItemEditRequest {
+  title?: string
   status?: string
   rating?: number | null
   review?: string | null
