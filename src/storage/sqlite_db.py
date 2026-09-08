@@ -974,15 +974,14 @@ class SQLiteDB:
         if finished == (row["status"] == "completed"):
             return False
 
+        # The one write a status hold does not refuse: the season list deciding
+        # it is deliberately outside MANUAL_FIELDS, so a season the operator has
+        # not seen makes the status they set stale rather than a correction.
         cursor.execute(
             "UPDATE content_items SET status = ?,"
             " updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             ("completed" if finished else "currently_consuming", db_id),
         )
-        # The one status a hold cannot refuse: a season list nobody may hold
-        # decides it, so a hold left standing would claim a protection it has
-        # just been overruled on.
-        drop_hold(cursor, db_id, "status")
         return True
 
     def get_content_item(

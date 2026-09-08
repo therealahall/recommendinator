@@ -113,7 +113,9 @@ by provider and starts a run. To find items still missing metadata, filter the
 
 Some items never match a provider, being niche, very new or oddly titled. Fill
 those in yourself. Every field you write is held against its source, so later
-runs record what a provider says without touching your value.
+runs record what a provider says without touching your value. The exception is a
+TV show's status, which follows a provider raising the season count past the
+seasons you have ticked.
 
 **Finding them.** An item counts as enriched only when a provider matched it
 cleanly: a real provider, no error, not marked "not found", and not pending

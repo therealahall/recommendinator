@@ -177,7 +177,9 @@ the web sends.
 
 Every field an edit writes is held against its source from then on: a later sync
 and every enrichment run leave it alone. `library show` lists the held fields.
-Seasons are unheld on purpose — a sync only ever adds a watched season.
+Seasons are unheld on purpose — a sync only ever adds a watched season. That is
+also the one thing that moves a held status: a TV show whose source reports a
+season past the ones you have ticked goes back to in-progress, and stays held.
 
 `--release-year` and `--creator` correct the two fields a title match is vetoed
 on, so a row still holding a released merge's wrong year takes the next source
