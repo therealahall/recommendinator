@@ -7,6 +7,7 @@ from src.models.content import (
     ContentItem,
     ContentType,
     ExternalId,
+    ManualField,
 )
 from src.utils.series import (
     MAX_SEASONS,
@@ -450,7 +451,9 @@ class TestSeasonItemsCarryTheShow:
             source="trakt",
             external_ids=[ExternalId(source="trakt", external_id="show1")],
             enriched=True,
-            manually_enriched=True,
+            manual_fields=[
+                ManualField(field="rating", value="4", source_value="3"),
+            ],
             ignored=False,
             metadata={"total_seasons": 2},
         )

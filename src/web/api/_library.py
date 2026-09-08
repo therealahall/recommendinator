@@ -21,9 +21,11 @@ from src.models.content import (
     ContentType,
     EnrichmentFilter,
     ExternalId,
+    ManualField,
     get_enum_value,
 )
 from src.storage.manager import (
+    MANUAL_FIELDS,
     UNSET,
     VALID_SORT_OPTIONS,
     UncorrectableFieldError,
@@ -116,7 +118,7 @@ class ContentItemResponse(BaseModel):
     series: str | None = None
     series_index: float | None = None
     enriched: bool = False
-    manually_enriched: bool = False
+    manual_fields: list[ManualField] = Field(default_factory=list)
     genres: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
     description: str | None = None
@@ -399,6 +401,34 @@ def edit_item(
         raise HTTPException(status_code=400, detail=str(error)) from error
     if not success:
         raise HTTPException(status_code=404, detail="Item not found")
+
+    updated_item = storage.get_content_item(db_id, user_id=user_id)
+    if not updated_item:
+        raise HTTPException(status_code=404, detail="Item not found after update")
+
+    return _item_to_response(updated_item)
+
+
+@router.delete(
+    "/items/{db_id}/manual-fields/{field}", response_model=ContentItemResponse
+)
+def clear_manual_field(
+    db_id: int,
+    field: str,
+    storage: RequiredStorage,
+    user_id: int = Query(1, ge=1, description="User ID for authorization"),
+) -> ContentItemResponse:
+    """Drop the operator's hold on one field, applying what the source states."""
+    if field not in MANUAL_FIELDS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown field. Valid options: {', '.join(sorted(MANUAL_FIELDS))}",
+        )
+
+    if not storage.clear_manual_field(db_id, field, user_id=user_id):
+        raise HTTPException(
+            status_code=404, detail=f"Item {db_id} holds no manual {field}."
+        )
 
     updated_item = storage.get_content_item(db_id, user_id=user_id)
     if not updated_item:

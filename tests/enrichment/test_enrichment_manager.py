@@ -1555,7 +1555,7 @@ class TestManualEditEnrichmentProtectionRegression:
             }
         }
 
-    def test_auto_enrichment_skips_manually_edited_item_regression(
+    def test_auto_enrichment_never_overwrites_a_held_field_regression(
         self,
         storage_manager: StorageManager,
         registry: EnrichmentRegistry,
@@ -1593,15 +1593,24 @@ class TestManualEditEnrichmentProtectionRegression:
         manager.start_enrichment()
         manager._wait_for_completion()
 
-        assert len(provider.enrich_calls) == 1
-        enriched_titles = {item.title for item in provider.enrich_calls}
-        assert enriched_titles == {"Auto Movie"}
+        # Both are offered to the provider — the holds, not a skipped item, are
+        # what keep the hand-written values.
+        assert {item.title for item in provider.enrich_calls} == {
+            "Auto Movie",
+            "Manual Movie",
+        }
 
         manual = storage_manager.get_content_item(manual_id)
         assert manual.metadata.get("genres") == ["Drama"]
         assert manual.metadata.get("tags") == ["slow-burn"]
         assert manual.metadata.get("description") == "Hand written synopsis."
         assert manual.enriched is True
+        assert {held.field for held in manual.manual_fields} == {
+            "status",
+            "genres",
+            "tags",
+            "description",
+        }
 
         auto = storage_manager.get_content_item(auto_id)
         assert auto.metadata.get("genres") == ["Action", "Drama"]

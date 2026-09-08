@@ -5,6 +5,14 @@ export interface ExternalId {
   display_name: string
 }
 
+/** A field the operator corrected, beside what its source last stated. */
+export interface ManualField {
+  field: string
+  value: string | null
+  source_value: string | null
+  drifted: boolean
+}
+
 export interface ContentItemResponse {
   external_ids: ExternalId[]
   db_id: number | null
@@ -24,8 +32,7 @@ export interface ContentItemResponse {
   series: string | null
   series_index: number | null
   enriched: boolean
-  /** Enriched by the manual provider, which is what an edit here writes. */
-  manually_enriched?: boolean
+  manual_fields?: ManualField[]
   genres: string[]
   tags: string[]
   description: string | null

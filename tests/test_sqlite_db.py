@@ -2515,8 +2515,11 @@ class TestUpdateItemFromUi:
         assert retrieved is not None
         assert retrieved.status == ConsumptionStatus.UNREAD
 
-    def test_sync_still_forward_only_after_ui_update(self, temp_db: SQLiteDB) -> None:
-        """UI sets status backward to unread, then sync tries to set completed."""
+    def test_sync_leaves_a_status_the_operator_set_backward(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """Forward-only would re-complete a book put back to unread to re-read,
+        every sync, for ever."""
         item = ContentItem(
             id="ui_10",
             title="Sync Test Book",
@@ -2543,7 +2546,10 @@ class TestUpdateItemFromUi:
 
         retrieved = temp_db.get_content_item(db_id)
         assert retrieved is not None
-        assert retrieved.status == ConsumptionStatus.COMPLETED
+        assert retrieved.status == ConsumptionStatus.UNREAD
+        held = {field.field: field for field in retrieved.manual_fields}
+        assert held["status"].source_value == "completed"
+        assert held["status"].drifted is True
 
 
 class TestEditDoorNeverStoresABlankReview:
@@ -2562,7 +2568,7 @@ class TestEditDoorNeverStoresABlankReview:
             )
         )
 
-    def test_a_review_cleared_this_way_can_still_be_filled_regression(
+    def test_a_review_cleared_this_way_stays_cleared_and_is_recoverable(
         self, temp_db: SQLiteDB
     ) -> None:
         db_id = self._reviewed(temp_db)
@@ -2580,7 +2586,20 @@ class TestEditDoorNeverStoresABlankReview:
 
         retrieved = temp_db.get_content_item(db_id)
         assert retrieved is not None
-        assert retrieved.review == "Imported from Goodreads"
+        assert retrieved.review is None
+        assert [
+            (held.field, held.value, held.source_value)
+            for held in retrieved.manual_fields
+        ] == [
+            ("review", None, "Imported from Goodreads"),
+            ("status", "completed", "completed"),
+        ]
+
+        temp_db.clear_manual_field(db_id, "review")
+
+        recovered = temp_db.get_content_item(db_id)
+        assert recovered is not None
+        assert recovered.review == "Imported from Goodreads"
 
 
 class TestUpdateItemFromUiRegression:
@@ -4668,3 +4687,153 @@ class TestCoverArtOnAnItem:
         stored = temp_db.get_content_item(db_id)
         assert stored is not None
         assert stored.cover_url == "https://rawg/620.jpg"
+
+
+class TestManualFieldHolds:
+    """A correction outlives every later sync, and the item still says what its
+    source has come to state instead."""
+
+    @staticmethod
+    def _steam_game(temp_db: SQLiteDB, creator: str) -> int:
+        return temp_db.save_content_item(
+            ContentItem(
+                id="620",
+                title="Portal 2",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.UNREAD,
+                source="steam",
+                author=creator,
+            )
+        )
+
+    def test_sync_keeps_a_corrected_creator_and_records_what_the_source_says(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        db_id = self._steam_game(temp_db, "Valve")
+        temp_db.update_item_from_ui(db_id=db_id, creator="Capcom")
+
+        self._steam_game(temp_db, "CAPCOM Co., Ltd.")
+
+        stored = temp_db.get_content_item(db_id)
+        assert stored is not None
+        assert stored.author == "Capcom"
+        assert [
+            (held.field, held.value, held.source_value, held.drifted)
+            for held in stored.manual_fields
+        ] == [("creator", "Capcom", "CAPCOM Co., Ltd.", True)]
+
+    def test_clearing_the_hold_applies_the_source_value_with_no_resync(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        db_id = self._steam_game(temp_db, "Valve")
+        temp_db.update_item_from_ui(db_id=db_id, creator="Capcom")
+        self._steam_game(temp_db, "CAPCOM Co., Ltd.")
+
+        assert temp_db.clear_manual_field(db_id, "creator") is True
+
+        stored = temp_db.get_content_item(db_id)
+        assert stored is not None
+        assert stored.author == "CAPCOM Co., Ltd."
+        assert stored.manual_fields == []
+
+    def test_clearing_refuses_a_field_no_hold_names(self, temp_db: SQLiteDB) -> None:
+        db_id = self._steam_game(temp_db, "Valve")
+
+        assert temp_db.clear_manual_field(db_id, "creator") is False
+
+    def test_completing_an_item_leaves_no_hold_claiming_the_old_status(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """The completion door writes the status itself, as the season checklist
+        does, so the hold it overrules must stop reporting the value it names."""
+        db_id = self._steam_game(temp_db, "Valve")
+        temp_db.update_item_from_ui(db_id=db_id, status="unread")
+
+        temp_db.complete_content_item(
+            ContentItem(
+                id="620",
+                title="Portal 2",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.COMPLETED,
+                source="steam",
+            )
+        )
+
+        stored = temp_db.get_content_item(db_id)
+        assert stored is not None
+        assert stored.status == ConsumptionStatus.COMPLETED
+        held = {field.field: field.value for field in stored.manual_fields}
+        assert held.get("status", "completed") == "completed"
+
+    def test_a_held_title_survives_a_sync_stating_another_one(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """Title is the field ``_upsert_content_item`` used to overwrite
+        unconditionally, dedup key and all."""
+        db_id = self._steam_game(temp_db, "Valve")
+        temp_db.update_item_from_ui(db_id=db_id, title="Portal 2: The Final Hours")
+
+        temp_db.save_content_item(
+            ContentItem(
+                id="620",
+                title="Portal 2 - Deluxe",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.UNREAD,
+                source="steam",
+            )
+        )
+
+        stored = temp_db.get_content_item(db_id)
+        assert stored is not None
+        assert stored.title == "Portal 2: The Final Hours"
+        assert [(held.value, held.source_value) for held in stored.manual_fields] == [
+            ("Portal 2: The Final Hours", "Portal 2 - Deluxe")
+        ]
+
+    def test_a_second_correction_leaves_the_recorded_source_value_alone(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """The value a re-edit displaces is the operator's own, never a source's."""
+        db_id = self._steam_game(temp_db, "Valve")
+        temp_db.update_item_from_ui(db_id=db_id, creator="Capcom")
+        temp_db.update_item_from_ui(db_id=db_id, creator="Capcom USA")
+
+        stored = temp_db.get_content_item(db_id)
+        assert stored is not None
+        assert [(held.value, held.source_value) for held in stored.manual_fields] == [
+            ("Capcom USA", "Valve")
+        ]
+
+    def test_a_sync_stating_nothing_leaves_the_last_source_value_standing(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """A source carrying no genres has not cleared them, and must not be
+        reported as saying so."""
+        db_id = temp_db.save_content_item(
+            ContentItem(
+                id="620",
+                title="Portal 2",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.UNREAD,
+                source="steam",
+                metadata={"genres": ["Puzzle"]},
+            )
+        )
+        temp_db.update_item_from_ui(db_id=db_id, genres=["Puzzle-Platformer"])
+
+        temp_db.save_content_item(
+            ContentItem(
+                id="620",
+                title="Portal 2",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.UNREAD,
+                source="steam",
+            )
+        )
+
+        stored = temp_db.get_content_item(db_id)
+        assert stored is not None
+        assert stored.metadata["genres"] == ["Puzzle-Platformer"]
+        assert [(held.value, held.source_value) for held in stored.manual_fields] == [
+            ("Puzzle-Platformer", "Puzzle")
+        ]

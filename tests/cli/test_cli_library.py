@@ -22,6 +22,7 @@ from src.models.content import (
     ContentItem,
     ContentType,
     ExternalId,
+    ManualField,
 )
 from src.storage.duplicates import GROUP_MEMBER_MAX, MAX_DECLINE_OTHERS
 from src.storage.manager import (
@@ -122,7 +123,7 @@ class TestLibraryList:
             "series",
             "series_index",
             "enriched",
-            "manually_enriched",
+            "manual_fields",
             "genres",
             "tags",
             "description",
@@ -320,12 +321,16 @@ class TestLibraryShow:
         assert "Famous Author" in result.output
         assert "Excellent!" in result.output
 
-    def test_show_names_the_manual_state_enrichment_reset_undoes(
+    def test_show_names_each_held_field_and_what_its_source_now_says(
         self, cli_runner: CliRunner
     ) -> None:
         item = _make_item(db_id=42)
-        item.enriched = True
-        item.manually_enriched = True
+        item.manual_fields = [
+            ManualField(
+                field="creator", value="Capcom", source_value="CAPCOM Co., Ltd."
+            ),
+            ManualField(field="rating", value="5", source_value="5"),
+        ]
         mock_storage = make_storage_mock()
         mock_storage.get_content_item.return_value = item
 
@@ -334,7 +339,10 @@ class TestLibraryShow:
         )
 
         assert result.exit_code == 0
-        assert "Yes (manual)" in result.output
+        assert "creator: Capcom (source says: CAPCOM Co., Ltd.)" in result.output
+        assert "rating: 5" in result.output
+        # Rating agrees with its source, so only the creator carries the note.
+        assert result.output.count("source says:") == 1
 
     def test_show_item_not_found(self, cli_runner: CliRunner) -> None:
         mock_storage = make_storage_mock()
@@ -381,7 +389,7 @@ class TestLibraryShow:
             "series",
             "series_index",
             "enriched",
-            "manually_enriched",
+            "manual_fields",
             "genres",
             "tags",
             "description",
@@ -1895,3 +1903,57 @@ class TestLibraryEditCorrections:
 
         assert result.exit_code != 0
         assert "no release year to correct" in result.output
+
+
+class TestLibraryClearManual:
+    def test_clear_manual_applies_the_source_value_and_emits_the_item(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        storage = StorageManager(sqlite_path=tmp_path / "hold.db")
+        db_id = storage.save_content_item(
+            ContentItem(
+                id="620",
+                title="Portal 2",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.UNREAD,
+                source="steam",
+                author="CAPCOM Co., Ltd.",
+            ),
+            user_id=1,
+        )
+        storage.update_item_from_ui(db_id=db_id, creator="Capcom", user_id=1)
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            [
+                "library",
+                "clear-manual",
+                "--id",
+                str(db_id),
+                "--field",
+                "creator",
+                "--format",
+                "json",
+            ],
+            storage,
+        )
+
+        assert result.exit_code == 0, result.output
+        parsed = json.loads(result.output)
+        assert parsed["author"] == "CAPCOM Co., Ltd."
+        assert parsed["manual_fields"] == []
+
+    def test_clear_manual_names_a_field_no_hold_covers(
+        self, cli_runner: CliRunner
+    ) -> None:
+        mock_storage = make_storage_mock()
+        mock_storage.clear_manual_field.return_value = False
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["library", "clear-manual", "--id", "1", "--field", "creator"],
+            mock_storage,
+        )
+
+        assert result.exit_code != 0
+        assert "Item 1 holds no manual creator." in result.output

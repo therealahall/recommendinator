@@ -30,6 +30,13 @@ const defaultItem = {
   description: null,
 }
 
+const HELD_CREATOR = {
+  field: 'creator',
+  value: 'Capcom',
+  source_value: 'CAPCOM Co., Ltd.',
+  drifted: true,
+}
+
 const tvItem = {
   ...defaultItem,
   title: 'Test Show',
@@ -132,38 +139,39 @@ describe('EditModal', () => {
     wrapper.unmount()
   })
 
-  it('offers a manually enriched item its way back to automatic enrichment', async () => {
+  it('names each held field, what its source now says, and offers that value back', async () => {
     const wrapper = mount(EditModal, {
       props: {
-        item: { ...defaultItem, enriched: true, manually_enriched: true },
+        item: { ...defaultItem, manual_fields: [HELD_CREATOR] },
         saving: false,
         saveError: '',
       },
       attachTo: document.body,
     })
 
+    expect(wrapper.text()).toContain('creator: Capcom — its source now says CAPCOM Co., Ltd.')
     await wrapper.findAll('button')
-      .find(b => b.text().includes('Restore automatic enrichment'))!.trigger('click')
+      .find(b => b.text().includes("Use the source's value"))!.trigger('click')
 
-    expect(wrapper.emitted('restoreEnrichment')).toEqual([[1]])
+    expect(wrapper.emitted('clearManual')).toEqual([[1, 'creator']])
     wrapper.unmount()
   })
 
-  it('a restored item says so and keeps focus in the dialog, not on the button that vanished', async () => {
-    const manual = { ...defaultItem, enriched: true, manually_enriched: true }
+  it('a cleared hold says so and keeps focus in the dialog, not on the button that vanished', async () => {
+    const held = { ...defaultItem, manual_fields: [HELD_CREATOR] }
     const wrapper = mount(EditModal, {
-      props: { item: manual, saving: false, saveError: '' },
+      props: { item: held, saving: false, saveError: '' },
       attachTo: document.body,
     })
     await vi.runAllTimersAsync()
     const said = wrapper.get('[role="status"]')
     const whileManual = said.text()
     const restore = wrapper.findAll('button')
-      .find(b => b.text().includes('Restore automatic enrichment'))!
+      .find(b => b.text().includes("Use the source's value"))!
     ;(restore.element as HTMLElement).focus()
     await restore.trigger('click')
 
-    await wrapper.setProps({ item: { ...manual, enriched: true, manually_enriched: false } })
+    await wrapper.setProps({ item: { ...held, manual_fields: [] } })
     await vi.runAllTimersAsync()
 
     expect(said.text()).not.toBe(whileManual)
@@ -180,14 +188,14 @@ describe('EditModal', () => {
     wrapper.unmount()
   })
 
-  it('says what editing the enrichment fields costs', async () => {
+  it('says what editing a field costs while nothing is held yet', async () => {
     const wrapper = mount(EditModal, {
       props: { item: defaultItem, saving: false, saveError: '' },
       attachTo: document.body,
     })
 
-    expect(wrapper.text()).toContain('opts the item out of automatic enrichment')
-    expect(wrapper.text()).not.toContain('Restore automatic enrichment')
+    expect(wrapper.text()).toContain('holds it against its source')
+    expect(wrapper.text()).not.toContain("Use the source's value")
     wrapper.unmount()
   })
 

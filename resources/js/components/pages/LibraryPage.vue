@@ -59,13 +59,13 @@ async function onClearFilters() {
   rescueFocus(heading.value)
 }
 
-async function onRestoreEnrichment(dbId: number) {
+async function onClearManual(dbId: number, field: string) {
   lib.editError = ''
   try {
-    await data.restoreItemEnrichment(dbId)
+    await data.clearManualField(dbId, field)
     await lib.openEdit(dbId)
   } catch (err) {
-    lib.editError = err instanceof Error ? err.message : 'Failed to restore enrichment'
+    lib.editError = err instanceof Error ? err.message : 'Failed to clear the hold'
   }
 }
 
@@ -209,7 +209,7 @@ onUnmounted(() => {
       :saving="lib.editSaving"
       :save-error="lib.editError"
       @save="lib.saveEdit"
-      @restore-enrichment="onRestoreEnrichment"
+      @clear-manual="onClearManual"
       @close="onCloseEdit"
     />
   </div>
