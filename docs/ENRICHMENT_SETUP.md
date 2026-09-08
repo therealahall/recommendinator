@@ -112,8 +112,8 @@ by provider and starts a run. To find items still missing metadata, filter the
 ## Manual enrichment editing
 
 Some items never match a provider, being niche, very new or oddly titled. Fill
-those in yourself. A manual edit marks the item enriched, so it leaves the
-unenriched set and is skipped by automatic enrichment until you hand it back.
+those in yourself. Every field you write is held against its source, so later
+runs record what a provider says without touching your value.
 
 **Finding them.** An item counts as enriched only when a provider matched it
 cleanly: a real provider, no error, not marked "not found", and not pending
@@ -138,11 +138,10 @@ and `--description` replaces the description. `--clear-genres`, `--clear-tags`
 and `--description ""` empty them.
 
 Manual values **overwrite** the stored detail, unlike the gap-filling merge that
-sync and automatic enrichment use. Supplying any of the three marks the item
-enriched with the provider `"manual"`, which drops it from the `not_enriched`
-filter and keeps automatic enrichment off it, so your values survive later runs.
-To undo that, run `enrichment reset --id <id>` or press **Restore automatic
-enrichment** in the edit modal.
+sync and automatic enrichment use, and each one is held from then on. To hand a
+field back, run `library clear-manual --id <id> --field genres` or press **Use
+the source's value** beside it in the edit modal, which applies what the source
+last stated without waiting for a run.
 
 ## Troubleshooting
 

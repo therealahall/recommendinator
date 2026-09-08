@@ -482,7 +482,7 @@ class TestManualMetadataEdit:
         db_path = tmp_path / "test.db"
         return StorageManager(sqlite_path=db_path)
 
-    def test_manual_edit_persists_and_marks_enriched(
+    def test_manual_edit_persists_and_holds_each_field_it_wrote(
         self, storage_manager: StorageManager
     ) -> None:
         db_id = storage_manager.save_content_item(
@@ -507,11 +507,16 @@ class TestManualMetadataEdit:
         assert loaded.metadata.get("genres") == ["Drama", "Thriller"]
         assert loaded.metadata.get("tags") == ["slow-burn"]
         assert loaded.metadata.get("description") == "A tense character study."
-        assert loaded.enriched is True
-
-        status = storage_manager.enrichment.status(db_id)
-        assert status["enrichment_provider"] == "manual"
-        assert status["needs_enrichment"] is False
+        assert {held.field for held in loaded.manual_fields} == {
+            "status",
+            "genres",
+            "tags",
+            "description",
+        }
+        # An edit is not enrichment: the item stays in front of the providers,
+        # which the holds now keep off these four fields.
+        assert loaded.enriched is False
+        assert storage_manager.enrichment.status(db_id) is None
 
     def test_manual_edit_overwrites_existing_values(
         self, storage_manager: StorageManager
@@ -595,7 +600,6 @@ class TestManualMetadataEdit:
 
         loaded = storage_manager.get_content_item(db_id)
         assert loaded.metadata.get("genres", []) == []
-        assert loaded.enriched is True
 
         conn = storage_manager.sqlite_db._get_connection()
         try:

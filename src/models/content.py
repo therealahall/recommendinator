@@ -72,6 +72,21 @@ class ExternalId(BaseModel):
         return humanize_source_id(self.source)
 
 
+class ManualField(BaseModel):
+    """One field an operator corrected, beside what its source last stated."""
+
+    field: str
+    value: str | None
+    source_value: str | None
+
+    # Derived rather than stored: a drift flag kept beside the two values it is
+    # computed from is one more thing that can disagree with them.
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def drifted(self) -> bool:
+        return self.value != self.source_value
+
+
 class ContentItem(BaseModel):
     model_config = ConfigDict(use_enum_values=True)
 
@@ -108,9 +123,9 @@ class ContentItem(BaseModel):
     # row). Populated when read from storage; None when the state is unknown.
     enriched: bool | None = None
 
-    # Runtime-only: enriched by the ``manual`` provider, the state an edit to
-    # genres, tags or description writes and only a reset undoes.
-    manually_enriched: bool | None = None
+    # Runtime-only: the fields the operator holds against their source,
+    # populated on read. Empty for an item that has not come back from storage.
+    manual_fields: list[ManualField] = Field(default_factory=list)
 
     # None means "not specified by this source" — the existing database
     # value is preserved on update.

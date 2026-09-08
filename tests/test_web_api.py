@@ -1944,14 +1944,14 @@ def test_rating_alone_keeps_the_item_in_the_not_enriched_filter_regression(
     saved = client.patch(f"/api/items/{db_id}?user_id=1", json={"rating": 4})
 
     assert saved.status_code == 200, saved.text
-    assert saved.json()["manually_enriched"] is False
+    assert [held["field"] for held in saved.json()["manual_fields"]] == ["rating"]
     listed = client.get("/api/items?user_id=1&enrichment=not_enriched").json()
     assert [item["db_id"] for item in listed] == [db_id]
     assert listed[0]["rating"] == 4
     assert listed[0]["genres"] == ["Sci-Fi"]
 
 
-def test_an_emptied_description_clears_and_the_reset_hands_the_item_back(
+def test_an_emptied_description_clears_and_the_hold_hands_it_back(
     mock_components, tmp_path
 ):
     storage = StorageManager(sqlite_path=tmp_path / "clear.db")
@@ -1971,18 +1971,40 @@ def test_an_emptied_description_clears_and_the_reset_hands_the_item_back(
 
     assert cleared.status_code == 200, cleared.text
     assert not cleared.json()["description"]
-    assert cleared.json()["manually_enriched"] is True
-    assert client.get("/api/items?user_id=1&enrichment=not_enriched").json() == []
+    assert cleared.json()["manual_fields"] == [
+        {
+            "field": "description",
+            "value": None,
+            "source_value": "A linguist.",
+            "drifted": True,
+        }
+    ]
 
-    restored = client.post(
-        "/api/enrichment/reset", json={"item_id": db_id, "user_id": 1}
-    )
+    restored = client.delete(f"/api/items/{db_id}/manual-fields/description?user_id=1")
 
     assert restored.status_code == 200, restored.text
-    assert restored.json()["count"] == 1
-    back = client.get("/api/items?user_id=1&enrichment=not_enriched").json()
-    assert [item["db_id"] for item in back] == [db_id]
-    assert back[0]["manually_enriched"] is False
+    assert restored.json()["description"] == "A linguist."
+    assert restored.json()["manual_fields"] == []
+
+
+def test_clearing_a_field_nobody_holds_is_a_404(mock_components, tmp_path):
+    storage = StorageManager(sqlite_path=tmp_path / "unheld.db")
+    db_id = storage.save_content_item(
+        ContentItem(
+            id="movie-1",
+            title="Arrival",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+        ),
+        user_id=1,
+    )
+    client = _client_on(mock_components["app"], storage)
+
+    unheld = client.delete(f"/api/items/{db_id}/manual-fields/creator?user_id=1")
+    unknown = client.delete(f"/api/items/{db_id}/manual-fields/cover_url?user_id=1")
+
+    assert unheld.status_code == 404
+    assert unknown.status_code == 400
 
 
 def test_edit_rejects_oversized_manual_metadata(client, mock_components):
@@ -3520,6 +3542,12 @@ _GUARDED_ENDPOINTS = [
         ("storage",),
         url="/api/items/1",
         body={"status": "completed"},
+    ),
+    _Endpoint(
+        "DELETE",
+        "/api/items/{db_id}/manual-fields/{field}",
+        ("storage",),
+        url="/api/items/1/manual-fields/creator",
     ),
     _Endpoint("GET", "/api/duplicates", ("storage",)),
     _Endpoint("GET", "/api/duplicates/declined", ("storage",)),

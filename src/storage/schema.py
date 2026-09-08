@@ -89,7 +89,7 @@ class SyncRunDict(TypedDict):
 # Changing ``normalize_title_for_matching``, ``get_sort_title`` or
 # ``build_search_text`` needs a bump and a step to rewrite what the old one
 # stored, or dedup lookups stop matching and duplicates accumulate in silence.
-_SCHEMA_VERSION = 23
+_SCHEMA_VERSION = 24
 
 # Rows for these keys are unreachable from the app but would still
 # be overlaid onto config, so they are pruned once on upgrade.
@@ -244,6 +244,19 @@ _CONTENT_ITEM_CHILDREN: dict[str, str] = {
             higher_item_id INTEGER NOT NULL
                 REFERENCES content_items(id) ON DELETE CASCADE,
             PRIMARY KEY (lower_item_id, higher_item_id)
+        )
+    """,
+    "content_item_manual_fields": """
+        CREATE TABLE IF NOT EXISTS content_item_manual_fields (
+            content_item_id INTEGER NOT NULL
+                REFERENCES content_items(id) ON DELETE CASCADE,
+            field TEXT NOT NULL,
+            -- Both JSON, so one table holds a rating, a title and a genre list
+            -- without a column per field. A row exists only while the field is
+            -- held; drift is the two disagreeing, never a flag beside them.
+            manual_value TEXT NOT NULL,
+            source_value TEXT NOT NULL,
+            PRIMARY KEY (content_item_id, field)
         )
     """,
     "enrichment_status": """
@@ -407,6 +420,8 @@ def create_schema(conn: sqlite3.Connection) -> None:
         _clear_derived_columns(cursor)
     if stored_version < 22:
         _clear_guessed_series_positions(cursor)
+    if stored_version < 24:
+        _hold_manually_enriched_metadata(cursor)
 
     # Filled after the repair, which recovers a creator that existed only in a
     # blob. Unguarded because the fill selects the rows that need it rather
@@ -590,6 +605,52 @@ def _repair_legacy_content_rows(cursor: sqlite3.Cursor) -> None:
         "WHERE normalized_title IS NULL"
     )
     _migrate_stranded_detail_shapes(cursor)
+
+
+#: The fields the retired item-level ``manual`` provider could have come from.
+_MANUALLY_ENRICHED_FIELDS = ("genres", "tags", "description")
+
+
+def _hold_manually_enriched_metadata(cursor: sqlite3.Cursor) -> None:
+    """That flag said one of three fields was hand written, never which, so all
+    three are held and the item rejoins the queue the flag kept it out of.
+    """
+    holds: list[tuple[int, str, str, str]] = []
+    for content_type, spec in DETAIL_FIELDS.items():
+        fields = [
+            field
+            for field in spec.fields
+            if field.metadata_key in _MANUALLY_ENRICHED_FIELDS and field.column
+        ]
+        columns = ", ".join(f"d.{field.column}" for field in fields)
+        cursor.execute(
+            f"SELECT d.content_item_id, {columns} FROM {spec.table} d"
+            " JOIN enrichment_status es ON es.content_item_id = d.content_item_id"
+            " JOIN content_items ci ON ci.id = d.content_item_id"
+            " WHERE es.enrichment_provider = 'manual' AND ci.content_type = ?",
+            (content_type,),
+        )
+        for row in cursor.fetchall():
+            for field in fields:
+                value = field.codec.load(row[field.column])
+                if value:
+                    # Nothing has been stated since the edit, so the source
+                    # value the clear would apply is the held value itself.
+                    encoded = json.dumps(value)
+                    holds.append(
+                        (row["content_item_id"], field.metadata_key, encoded, encoded)
+                    )
+
+    cursor.executemany(
+        "INSERT OR IGNORE INTO content_item_manual_fields"
+        " (content_item_id, field, manual_value, source_value) VALUES (?, ?, ?, ?)",
+        holds,
+    )
+    cursor.execute(
+        "UPDATE enrichment_status SET enrichment_provider = NULL,"
+        " enrichment_quality = NULL, needs_enrichment = 1"
+        " WHERE enrichment_provider = 'manual'"
+    )
 
 
 @contextmanager

@@ -223,42 +223,6 @@ class TestEnrichmentReset:
         assert data["count"] == 50
         assert "50" in data["message"]
 
-    def test_reset_one_item_narrows_the_reset_to_it(self) -> None:
-        storage = make_storage_mock()
-        storage.enrichment.reset.return_value = 1
-
-        with _client(storage, {}) as client:
-            response = client.post("/api/enrichment/reset", json={"item_id": 7})
-
-        assert response.status_code == 200
-        assert response.json() == {
-            "message": "Reset enrichment status for 1 item(s)",
-            "count": 1,
-        }
-        assert storage.enrichment.reset.call_args[1]["content_item_id"] == 7
-
-    def test_reset_refuses_an_item_id_beside_a_filter(self) -> None:
-        storage = make_storage_mock()
-
-        with _client(storage, {}) as client:
-            response = client.post(
-                "/api/enrichment/reset", json={"item_id": 7, "provider": "tmdb"}
-            )
-
-        assert response.status_code == 400
-        assert "cannot be combined" in response.json()["detail"]
-        storage.enrichment.reset.assert_not_called()
-
-    def test_reset_reports_an_item_that_is_not_there(self) -> None:
-        storage = make_storage_mock()
-        storage.get_content_item.return_value = None
-
-        with _client(storage, {}) as client:
-            response = client.post("/api/enrichment/reset", json={"item_id": 999})
-
-        assert response.status_code == 404
-        storage.enrichment.reset.assert_not_called()
-
     def test_reset_invalid_content_type(self) -> None:
         with _client(make_storage_mock(), {}) as client:
             response = client.post(

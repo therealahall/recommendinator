@@ -295,13 +295,6 @@ def enrichment_status(ctx: click.Context, user_id: int, output_format: str) -> N
     help="Reset only items of this content type",
 )
 @click.option(
-    "--id",
-    "item_id",
-    type=int,
-    default=None,
-    help="Restore this one item to automatic enrichment",
-)
-@click.option(
     "--user",
     "user_id",
     type=int,
@@ -318,11 +311,10 @@ def enrichment_reset(
     ctx: click.Context,
     provider: str,
     content_type_str: str | None,
-    item_id: int | None,
     user_id: int,
     yes: bool,
 ) -> None:
-    """Re-queue items for enrichment, by provider, content type or one item."""
+    """Re-queue items for enrichment, by provider or content type."""
     storage = ctx.obj["storage"]
 
     content_type = (
@@ -331,15 +323,7 @@ def enrichment_reset(
 
     provider_filter = None if provider == "all" else provider
 
-    if item_id is not None:
-        if provider_filter or content_type_str:
-            abort_with("--id cannot be combined with --provider or --type.")
-        if storage.get_content_item(item_id, user_id=user_id) is None:
-            abort_with(f"Item {item_id} not found.")
-
     desc_parts = []
-    if item_id is not None:
-        desc_parts.append(f"item={item_id}")
     if provider_filter:
         desc_parts.append(f"provider={provider_filter}")
     if content_type_str:
@@ -348,9 +332,9 @@ def enrichment_reset(
 
     if not yes:
         target = f"items{desc}"
-        # Stats can count a provider filter ahead of the reset but not a content
-        # type, and --id already names the single item it would touch.
-        if content_type_str is None and item_id is None:
+        # Stats can count a provider filter ahead of the reset but not a
+        # content type.
+        if content_type_str is None:
             stats = storage.enrichment.stats(user_id=user_id)
             count = (
                 stats["by_provider"].get(provider_filter, 0)
@@ -366,7 +350,6 @@ def enrichment_reset(
         provider=provider_filter,
         content_type=content_type,
         user_id=user_id,
-        content_item_id=item_id,
     )
 
     click.echo(f"Reset enrichment status for {count} item(s).")

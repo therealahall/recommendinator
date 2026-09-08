@@ -172,19 +172,33 @@ often a shell accident than an intention. A description is the exception:
 the web sends.
 
 `--seasons-watched` takes comma-separated season numbers, each 1-200. Repeated
-`--genre` and `--tag` replace the existing lists rather than appending. Any of
-`--genre`, `--tag` or `--description` marks the item enriched through the
-`manual` provider, dropping it out of `not_enriched` and out of the automatic
-queue — `library show` says so, and `enrichment reset --id` undoes it.
+`--genre` and `--tag` replace the existing lists rather than appending.
+
+Every field an edit writes is held against its source from then on: a later sync
+records what the source has come to say but leaves the value alone. `library
+show` lists the held fields and names the source's value where it disagrees.
+Seasons are unheld on purpose — a sync only ever adds a watched season.
 
 `--release-year` and `--creator` correct the two fields a title match is vetoed
 on, so a row still holding a released merge's wrong year takes the next source
-stating the true one instead of growing the library another row. Neither marks
-the item enriched. A year runs 1800-2200 and a creator 500 characters; a book
-takes no `--release-year`, because `year_published` dates the edition rather
-than the work.
+stating the true one instead of growing the library another row. A year runs
+1800-2200 and a creator 500 characters; a book takes no `--release-year`,
+because `year_published` dates the edition rather than the work.
 
 `--format json` emits the edited item, the body `PATCH /api/items/<id>` answers.
+
+### `library clear-manual`
+
+```bash
+uv run python -m src.cli library clear-manual --id 42 --field creator
+uv run python -m src.cli library clear-manual --id 42 --field genres --format json
+```
+
+Drops one field's hold and applies the value its source last stated, straight
+away rather than at the next sync. `--field` takes `title`, `status`, `rating`,
+`review`, `genres`, `tags`, `description`, `release_year` or `creator`.
+`--format json` emits what `DELETE /api/items/<id>/manual-fields/<field>`
+answers.
 
 ### `library ignore` / `library unignore`
 
@@ -443,7 +457,6 @@ uv run python -m src.cli enrichment status                    # library counts b
 uv run python -m src.cli enrichment job                       # the live run, if there is one
 uv run python -m src.cli enrichment stop
 uv run python -m src.cli enrichment reset                     # re-process on the next run
-uv run python -m src.cli enrichment reset --id 42             # one item, back to automatic
 ```
 
 `enrichment job` and `enrichment stop` reach the run whatever started it — the
@@ -452,11 +465,6 @@ the database rather than in the process that launched it. `job` mirrors
 `GET /api/enrichment/status` and returns straight away; `status` is the library
 counts, mirroring `GET /api/enrichment/stats`. A stop takes effect after the
 item the run is on.
-
-`--id` hands a single item back to automatic enrichment, which is what undoes a
-manual edit to its genres, tags or description. It takes no `--provider` or
-`--type` beside it, and the web dialog's **Restore automatic enrichment** does
-the same thing.
 
 ## Authentication (GOG/Epic/Trakt)
 

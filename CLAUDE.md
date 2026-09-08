@@ -96,7 +96,9 @@ src/
 │                     # enrichment_jobs.py for the live enrichment run both
 │                     # interfaces read, watch and stop, cover_jobs.py for the
 │                     # live cover backfill on the same terms, ui_settings.py
-│                     # for the per-user UI theme)
+│                     # for the per-user UI theme), plus field_provenance.py:
+│                     # the fields an operator holds against their source, which
+│                     # the sync door reads before it offers a value
 ├── settings/         # Global-config registry (metadata.py) + service (list/get/set/reset/secrets)
 ├── recommendations/  # Recommendation engine (scorers, scoring_pipeline, variety, genre_clusters,
 │                     # identity.py for candidate keys, record.py for the emitted Recommendation)

@@ -27,6 +27,7 @@ from src.storage.duplicates import SuggestionEvidence as SuggestionEvidence
 from src.storage.duplicates import SuggestionPage as SuggestionPage
 from src.storage.enrichment_jobs import EnrichmentJobStore
 from src.storage.enrichment_status import EnrichmentStore
+from src.storage.field_provenance import MANUAL_FIELDS as MANUAL_FIELDS
 from src.storage.global_secrets import SecretStore
 from src.storage.item_merges import MergeError as MergeError
 from src.storage.item_merges import MergeEvidence as MergeEvidence
@@ -316,6 +317,7 @@ class StorageManager:
     def update_item_from_ui(
         self,
         db_id: int,
+        title: str | Unset = UNSET,
         status: str | Unset = UNSET,
         rating: int | None | Unset = UNSET,
         review: str | None | Unset = UNSET,
@@ -327,12 +329,12 @@ class StorageManager:
         creator: str | None = None,
         user_id: int | None = None,
     ) -> bool:
-        """The explicit-user-action door: it writes only the fields supplied and
-        may overwrite them freely, without the fill-only constraints
-        ``save_content_item`` applies to sync.
+        """The explicit-user-action door: it writes only the fields supplied,
+        overwrites them freely, and holds each one against its source.
         """
         return self.sqlite_db.update_item_from_ui(
             db_id=db_id,
+            title=title,
             status=status,
             rating=rating,
             review=review,
@@ -344,6 +346,13 @@ class StorageManager:
             creator=creator,
             user_id=user_id,
         )
+
+    def clear_manual_field(
+        self, db_id: int, field: str, user_id: int | None = None
+    ) -> bool:
+        """``False`` when the item is unknown or the field is not held."""
+        with self._save_lock:
+            return self.sqlite_db.clear_manual_field(db_id, field, user_id=user_id)
 
     def count_items(
         self,

@@ -28,9 +28,6 @@ class EnrichmentResetRequest(BaseModel):
     content_type: str | None = Field(
         None, description="Reset items of this content type"
     )
-    item_id: int | None = Field(
-        None, ge=1, description="Restore this one item to automatic enrichment"
-    )
     user_id: int = Field(1, ge=1, description="User ID for filtering items")
 
 
@@ -176,20 +173,10 @@ def reset_enrichment(
                 detail="Invalid content type. Valid options: book, movie, tv_show, video_game",
             ) from None
 
-    if request.item_id is not None:
-        if request.provider or request.content_type:
-            raise HTTPException(
-                status_code=400,
-                detail="item_id cannot be combined with provider or content_type.",
-            )
-        if not storage.get_content_item(request.item_id, user_id=request.user_id):
-            raise HTTPException(status_code=404, detail="Item not found")
-
     count = storage.enrichment.reset(
         provider=request.provider,
         content_type=content_type,
         user_id=request.user_id,
-        content_item_id=request.item_id,
     )
 
     return {"message": f"Reset enrichment status for {count} item(s)", "count": count}

@@ -77,13 +77,13 @@ async function onCloseEdit() {
   restoreFocus()
 }
 
-async function onRestoreEnrichment(dbId: number) {
+async function onClearManual(dbId: number, field: string) {
   recs.editError = ''
   try {
-    await data.restoreItemEnrichment(dbId)
+    await data.clearManualField(dbId, field)
     await recs.openEdit(dbId)
   } catch (err) {
-    recs.editError = err instanceof Error ? err.message : 'Failed to restore enrichment'
+    recs.editError = err instanceof Error ? err.message : 'Failed to clear the hold'
   }
 }
 
@@ -235,7 +235,7 @@ async function setIgnored(dbId: number, title: string, value: boolean) {
       :save-error="recs.editError"
       initial-status="completed"
       @save="onSave"
-      @restore-enrichment="onRestoreEnrichment"
+      @clear-manual="onClearManual"
       @close="onCloseEdit"
     />
   </div>

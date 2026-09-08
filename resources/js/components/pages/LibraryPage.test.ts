@@ -131,30 +131,30 @@ describe('LibraryPage search behaviour', () => {
     expect(wrapper.findComponent(EditModal).props('saveError')).toBe(refusal)
   })
 
-  it('restores an item to automatic enrichment and reloads what the dialog shows', async () => {
+  it('clears a field hold and reloads what the dialog shows', async () => {
     const { wrapper, lib } = mountPage({
       editingItem: { db_id: 1, title: 'Dune', content_type: 'book', status: 'unread' },
     })
     const data = useDataStore()
     await wrapper.vm.$nextTick()
 
-    wrapper.findComponent(EditModal).vm.$emit('restoreEnrichment', 1)
+    wrapper.findComponent(EditModal).vm.$emit('clearManual', 1, 'creator')
     await flushPromises()
 
-    expect(data.restoreItemEnrichment).toHaveBeenCalledWith(1)
+    expect(data.clearManualField).toHaveBeenCalledWith(1, 'creator')
     expect(lib.openEdit).toHaveBeenCalledWith(1)
   })
 
-  it('clears the last refusal before restoring, so a second failure is announced', async () => {
+  it('clears the last refusal before clearing a hold, so a second failure is announced', async () => {
     const { wrapper, lib } = mountPage({
       editingItem: { db_id: 1, title: 'Dune', content_type: 'book', status: 'unread' },
-      editError: 'Failed to restore enrichment',
+      editError: 'Failed to clear the hold',
     })
     const data = useDataStore()
-    vi.mocked(data.restoreItemEnrichment).mockRejectedValue(new Error('still down'))
+    vi.mocked(data.clearManualField).mockRejectedValue(new Error('still down'))
     await wrapper.vm.$nextTick()
 
-    wrapper.findComponent(EditModal).vm.$emit('restoreEnrichment', 1)
+    wrapper.findComponent(EditModal).vm.$emit('clearManual', 1, 'creator')
 
     expect(lib.editError).toBe('')
     await flushPromises()

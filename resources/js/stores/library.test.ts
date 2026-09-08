@@ -284,15 +284,16 @@ describe('useLibraryStore', () => {
   })
 
   it('openEdit refreshes the card behind the dialog', async () => {
-    const item = { db_id: 1, title: 'Book A', content_type: 'book', status: 'unread', ignored: false, enriched: true, manually_enriched: true }
+    const held = { field: 'creator', value: 'Capcom', source_value: 'Valve', drifted: true }
+    const item = { db_id: 1, title: 'Book A', content_type: 'book', status: 'unread', ignored: false, enriched: true, manual_fields: [held] }
     mockGet.mockResolvedValueOnce([item])
     const store = useLibraryStore()
     await store.resetAndLoad()
 
-    mockGet.mockResolvedValueOnce({ ...item, enriched: false, manually_enriched: false })
+    mockGet.mockResolvedValueOnce({ ...item, enriched: false, manual_fields: [] })
     await store.openEdit(1)
 
     expect(store.items[0].enriched).toBe(false)
-    expect(store.items[0].manually_enriched).toBe(false)
+    expect(store.items[0].manual_fields).toEqual([])
   })
 })

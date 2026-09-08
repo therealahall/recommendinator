@@ -22,7 +22,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   save: [dbId: number, data: ItemEditRequest]
-  restoreEnrichment: [dbId: number]
+  clearManual: [dbId: number, field: string]
   close: []
 }>()
 
@@ -54,7 +54,7 @@ const loaded = {
 }
 
 const refusal = ref<HTMLElement | null>(null)
-const enrichmentStatus = ref<HTMLElement | null>(null)
+const manualNote = ref<HTMLElement | null>(null)
 
 watch(
   () => props.saveError,
@@ -65,14 +65,24 @@ watch(
   },
 )
 
-// The restore button unmounts once the item is back on automatic enrichment,
-// so focus has to land on the line that now says so (WCAG 2.4.3).
+// Pre-computed rather than formatted in the v-for, which re-runs every render.
+const heldFields = computed(() =>
+  (props.item.manual_fields ?? []).map((held) => ({
+    field: held.field,
+    label: held.drifted
+      ? `${held.field}: ${held.value ?? 'nothing'} — its source now says ${held.source_value ?? 'nothing'}`
+      : `${held.field}: ${held.value ?? 'nothing'}`,
+  })),
+)
+
+// A cleared row takes its button with it, so focus lands on the line above
+// rather than dropping to <body> (WCAG 2.4.3).
 watch(
-  () => props.item.manually_enriched,
-  async (manual, was) => {
-    if (manual || !was) return
+  () => heldFields.value.length,
+  async (now, before) => {
+    if (now >= before) return
     await nextTick()
-    rescueFocus(enrichmentStatus.value)
+    rescueFocus(manualNote.value)
   },
 )
 
@@ -133,9 +143,8 @@ function sameList(one: readonly (string | number)[], other: readonly (string | n
   return one.length === other.length && one.every((value, index) => value === other[index])
 }
 
-// Only what changed is sent: storage stamps an item manually enriched for any
-// genres, tags or description it receives, dropping it out of the automatic
-// queue — so an untouched box must not travel with a rating.
+// Only what changed is sent: storage holds every field it receives against its
+// source, so an untouched box must not travel with a rating.
 const edits = computed<ItemEditRequest>(() => {
   const data: ItemEditRequest = {}
   if (status.value !== loaded.status) data.status = status.value
@@ -239,22 +248,6 @@ function save() {
 
     <hr class="edit-modal-divider">
     <h4 class="edit-modal-section">Enrichment metadata</h4>
-    <p class="edit-modal-note">Editing these opts the item out of automatic enrichment.</p>
-
-    <div class="edit-field">
-      <p ref="enrichmentStatus" class="edit-modal-note focus-fallback" role="status" tabindex="-1">
-        {{ item.manually_enriched
-          ? "This item's metadata is manual, so automatic enrichment skips it."
-          : 'Automatic enrichment fills in this item\'s metadata.' }}
-      </p>
-      <button
-        v-if="item.manually_enriched"
-        class="btn btn-secondary"
-        @click="emit('restoreEnrichment', item.db_id!)"
-      >
-        Restore automatic enrichment
-      </button>
-    </div>
 
     <div class="edit-field">
       <TagInput
@@ -279,6 +272,27 @@ function save() {
     <div class="edit-field">
       <label for="edit-description">Description</label>
       <textarea id="edit-description" v-model="description" class="field" maxlength="10000" placeholder="Add a description..." />
+    </div>
+
+    <hr class="edit-modal-divider">
+    <h4 class="edit-modal-section">Your corrections</h4>
+
+    <div class="edit-field">
+      <!-- Mounted whether or not anything is held: a region inserted already
+           populated reads as content rather than a status change (4.1.3). -->
+      <p ref="manualNote" class="edit-modal-note focus-fallback" role="status" tabindex="-1">
+        {{ heldFields.length
+          ? 'A sync records what its source says about these, and leaves them alone.'
+          : 'Editing a field above holds it against its source.' }}
+      </p>
+      <ul class="edit-manual-list">
+        <li v-for="held in heldFields" :key="held.field" class="edit-manual-held">
+          <span>{{ held.label }}</span>
+          <button class="btn btn-secondary" @click="emit('clearManual', item.db_id!, held.field)">
+            Use the source's value
+          </button>
+        </li>
+      </ul>
     </div>
 
     <!-- Mounted while silent: inserted populated it reads as content (4.1.3). -->

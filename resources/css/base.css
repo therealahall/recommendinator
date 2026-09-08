@@ -1878,6 +1878,23 @@ button.rec-score {
   margin: 0 0 var(--space-3) 0;
 }
 
+.edit-manual-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.edit-manual-held {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--border-subtle);
+}
+
 .btn-ignore {
   background: transparent;
   color: var(--text-muted);

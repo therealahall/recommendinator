@@ -563,10 +563,9 @@ export const useDataStore = defineStore('data', () => {
   }
 
   // Throws, unlike its neighbours: the dialog that asked shows the refusal.
-  async function restoreItemEnrichment(dbId: number) {
+  async function clearManualField(dbId: number, field: string) {
     const app = useAppStore()
-    await api.post('/enrichment/reset', {
-      item_id: dbId,
+    await api.delete(`/items/${dbId}/manual-fields/${field}`, {
       user_id: app.currentUserId,
     })
   }
@@ -843,7 +842,7 @@ export const useDataStore = defineStore('data', () => {
     startEnrichment,
     stopEnrichment,
     resetEnrichment,
-    restoreItemEnrichment,
+    clearManualField,
     checkEnrichmentStatus,
     loadSourceSchema,
     loadSourceConfig,
