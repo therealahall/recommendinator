@@ -1,6 +1,48 @@
 # CHANGELOG
 
 
+## v0.55.0 (2026-09-08)
+
+### Bug Fixes
+
+- **web**: Guard the row that is now last on a library card
+  ([`f54e4f0`](https://github.com/therealahall/recommendinator/commit/f54e4f0567ec09672b3f770e8a97986e82d1afee))
+
+- **web**: Separate a card's sources from its state
+  ([`e17e0c4`](https://github.com/therealahall/recommendinator/commit/e17e0c4d08408fbec8e75b8385f19ad1f35be068))
+
+- **web**: Spell ROMs the way the ROM library plugin does
+  ([`562509d`](https://github.com/therealahall/recommendinator/commit/562509da6a4287add07c3c5abbbcb82939f49175))
+
+- **web**: Spell RSS the way the other acronyms are spelled
+  ([`373a50a`](https://github.com/therealahall/recommendinator/commit/373a50aec7ce9c2ad71b2be2f7db03da07567e36))
+
+- **web**: Stop a disclosure of one costing more than it saves
+  ([`1c9808d`](https://github.com/therealahall/recommendinator/commit/1c9808db894eff76a45781336276ac26f5eb8c1c))
+
+- **web**: Stop the source group's name taking a line on the card
+  ([`bc6c955`](https://github.com/therealahall/recommendinator/commit/bc6c9558fac859e032b6b969d758a4e9e2ff499a))
+
+### Features
+
+- **web**: Collapse the account settings like every other section
+  ([`b4120e3`](https://github.com/therealahall/recommendinator/commit/b4120e36dfcdc8b43b56f9c5db0db0147489834b))
+
+- **web**: Group the settings page into collapsible sections
+  ([`56b8268`](https://github.com/therealahall/recommendinator/commit/56b82685cad037defb24537894ddc51355e9a590))
+
+- **web**: Name the source behind each external id
+  ([`440c6d5`](https://github.com/therealahall/recommendinator/commit/440c6d5b4b1252bcb155f72d8bf6f91a8a2b7f31))
+
+- **web**: Show every contributing source on a library card
+  ([`66e550f`](https://github.com/therealahall/recommendinator/commit/66e550fde26f4f4516e9ae95e05bca519ca763f7))
+
+### Refactoring
+
+- **web**: Delete the advanced disclosure nothing reaches
+  ([`5e86d06`](https://github.com/therealahall/recommendinator/commit/5e86d064f4327d86bbe1a337455a4d887ffaae61))
+
+
 ## v0.54.0 (2026-09-07)
 
 ### Bug Fixes
