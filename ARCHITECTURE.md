@@ -184,10 +184,11 @@ returns. Every `ORDER BY` ends in `ci.id`, because SQL ordering is not stable
 and a page boundary inside a tie repeats one row and drops another.
 
 A search is one matched set. SQL orders the filtered candidates and projects
-each as an `id` and its `search_text`; `search_text_matches` runs all three
-tiers — exact, substring and the fuzzy window scan SQL cannot express — and the
-page is sliced out of what matched, so no candidate that misses and no match
-outside the page costs a `ContentItem`.
+each as an `id` and its `search_text`; `search_text_match_tier` reports which
+tier answered — exact, substring, or the fuzzy window scan SQL cannot express —
+the matches rank by that tier and hold the SQL order within one, and the page is
+sliced out of what matched, so no candidate that misses and no match outside the
+page costs a `ContentItem`.
 
 #### Cross-source deduplication
 

@@ -1,5 +1,6 @@
 import re
 from difflib import SequenceMatcher
+from enum import IntEnum
 
 FUZZY_MATCH_THRESHOLD = 0.8
 
@@ -100,19 +101,6 @@ def _best_window_ratio(needle: str, haystack: str) -> float:
     return best
 
 
-def _matches_normalized(haystack_norm: str, needle_norm: str) -> bool:
-    """Matching is case-insensitive and article/punctuation-normalized, because
-    both sides came through :func:`normalize_for_search`.
-    """
-    if not haystack_norm:
-        return False
-    if haystack_norm == needle_norm:
-        return True
-    if needle_norm in haystack_norm:
-        return True
-    return _best_window_ratio(needle_norm, haystack_norm) >= FUZZY_MATCH_THRESHOLD
-
-
 # Separates the parts of a search text. Search normalization collapses every
 # non-word character to a space, so neither a part nor a search term can hold
 # a newline: a substring found in the joined string lies inside one part.
@@ -132,13 +120,31 @@ def build_search_text(
     )
 
 
-def search_text_matches(search_text: str | None, needle_norm: str) -> bool:
-    """Runs all three tiers against each part the text holds, so an item matches
-    on its title, its creator or its series, never on them read as one string.
+class SearchMatchTier(IntEnum):
+    """Ordered best first: a search ranks its matches by the tier they answered on."""
+
+    EXACT = 0
+    SUBSTRING = 1
+    FUZZY = 2
+
+
+def search_text_match_tier(
+    search_text: str | None, needle_norm: str
+) -> SearchMatchTier | None:
+    """A tier is tried against every part before the next is, so a term equal to
+    the creator outranks one merely resembling the title, and the window scan
+    runs only where nothing cheaper matched.
     """
     if not search_text or not needle_norm:
-        return False
-    return any(
-        _matches_normalized(part, needle_norm)
-        for part in search_text.split(_SEARCH_TEXT_SEPARATOR)
-    )
+        return None
+
+    parts = [part for part in search_text.split(_SEARCH_TEXT_SEPARATOR) if part]
+    if any(part == needle_norm for part in parts):
+        return SearchMatchTier.EXACT
+    if any(needle_norm in part for part in parts):
+        return SearchMatchTier.SUBSTRING
+    if any(
+        _best_window_ratio(needle_norm, part) >= FUZZY_MATCH_THRESHOLD for part in parts
+    ):
+        return SearchMatchTier.FUZZY
+    return None

@@ -12,7 +12,11 @@ from src.storage.item_merges import MergeEvidence, absorb_item
 from src.storage.schema import _SCHEMA_VERSION, create_schema
 from src.storage.sqlite_db import SQLiteDB
 from src.utils.series import split_series_from_title
-from src.utils.sorting import get_sort_title, normalize_for_search, search_text_matches
+from src.utils.sorting import (
+    get_sort_title,
+    normalize_for_search,
+    search_text_match_tier,
+)
 
 _THE_DUPLICATE_PAIR = (
     (
@@ -620,9 +624,12 @@ class TestUpgradingALibraryWrittenUnderTheOldTitleRules:
 
         _open(db_path)
 
-        assert search_text_matches(
-            self._search_text(db_path, "calibre:51a0e808"),
-            normalize_for_search("Dungeon Crawler Carl"),
+        assert (
+            search_text_match_tier(
+                self._search_text(db_path, "calibre:51a0e808"),
+                normalize_for_search("Dungeon Crawler Carl"),
+            )
+            is not None
         )
 
     @pytest.mark.parametrize(

@@ -1370,6 +1370,69 @@ class TestGetContentItemsSearch:
         assert [item.id for item in page2] == ["aliems"]
 
 
+class TestSearchRanksByMatchTier:
+    """Bug reported (#151): a show held under exactly the term searched came back
+    around eighth, under every looser match that sorted earlier alphabetically."""
+
+    @staticmethod
+    def _seed(temp_db: SQLiteDB, rows: tuple[tuple[str, str, int], ...]) -> None:
+        for external_id, title, rating in rows:
+            temp_db.save_content_item(
+                ContentItem(
+                    id=external_id,
+                    title=title,
+                    content_type=ContentType.TV_SHOW,
+                    status=ConsumptionStatus.COMPLETED,
+                    rating=rating,
+                    source="trakt",
+                )
+            )
+
+    def test_an_exact_title_leads_the_looser_matches_sorting_before_it_regression(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """The title sort runs these "Federal Marshals", "Marshalls", "Marshals",
+        so the ranked answer is that order reversed and every tier is present."""
+        self._seed(
+            temp_db,
+            (
+                ("federal", "Federal Marshals", 3),
+                ("marshalls", "Marshalls", 4),
+                ("marshals", "Marshals", 5),
+            ),
+        )
+
+        results = temp_db.get_content_items(search="Marshals")
+
+        assert [item.title for item in results] == [
+            "Marshals",
+            "Federal Marshals",
+            "Marshalls",
+        ]
+
+    def test_the_callers_sort_orders_the_items_inside_one_tier(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """Ranking by tier replaces no sort: the exact match leads on the rating that
+        would put it last, and the two substring matches keep rating order under it."""
+        self._seed(
+            temp_db,
+            (
+                ("marshals", "Marshals", 1),
+                ("federal", "Federal Marshals", 3),
+                ("space", "Space Marshals", 5),
+            ),
+        )
+
+        results = temp_db.get_content_items(search="Marshals", sort_by="rating")
+
+        assert [item.title for item in results] == [
+            "Marshals",
+            "Space Marshals",
+            "Federal Marshals",
+        ]
+
+
 def test_get_content_items_refuses_an_unknown_sort(temp_db: SQLiteDB) -> None:
     """The surfaces validate their own input, so this is the backstop for a caller
     that reaches storage directly — a plugin, or a surface that gains a sort
@@ -1630,6 +1693,15 @@ class TestSearchPagesPartitionTheMatchedSet:
         ("i_robot", "I, Robot", "Isaac Asimov"),
     )
 
+    _MANY_MATCHES = (
+        ("exact", "Marshals", "Ada Vance"),
+        ("fuzzy", "Marshalls", "Ada Vance"),
+        *(
+            (f"sub_{index:02d}", f"Marshals {index:02d}", "Ada Vance")
+            for index in range(10)
+        ),
+    )
+
     @staticmethod
     def _seed(temp_db: SQLiteDB, rows: tuple[tuple[str, str, str], ...]) -> None:
         for external_id, title, author in rows:
@@ -1650,10 +1722,27 @@ class TestSearchPagesPartitionTheMatchedSet:
         assert "asimov" not in build_search_text("The Caves of Steel", "Isaac Asmiov")
 
         assert [item.id for item in temp_db.get_content_items(search="Asimov")] == [
-            "caves",
             "foundation",
             "i_robot",
+            "caves",
         ]
+
+    def test_a_page_boundary_inside_a_tier_neither_repeats_nor_drops(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """Twelve matches over two pages of ten, with the fuzzy match first in the
+        title order and last in the ranked one — the id a boundary drawn before the
+        ranking would put on both pages."""
+        self._seed(temp_db, self._MANY_MATCHES)
+
+        whole = [item.id for item in temp_db.get_content_items(search="Marshals")]
+        page1 = temp_db.get_content_items(search="Marshals", limit=10, offset=0)
+        page2 = temp_db.get_content_items(search="Marshals", limit=10, offset=10)
+        paged = [item.id for item in (*page1, *page2)]
+
+        assert [len(page1), len(page2)] == [10, 2]
+        assert paged == whole
+        assert len(set(paged)) == 12
 
     @pytest.mark.parametrize("page_size", [1, 2])
     def test_a_search_pages_one_set_when_the_tiers_disagree(
