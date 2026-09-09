@@ -204,7 +204,7 @@ function save() {
 
 const pinQuery = ref('')
 const searched = ref(false)
-const pinNoteEl = ref<HTMLElement | null>(null)
+const pinHeading = ref<HTMLElement | null>(null)
 
 // Pre-computed rather than formatted in the v-for, which re-runs every render.
 const pinRows = computed(() =>
@@ -229,14 +229,15 @@ const pinNote = computed(() => {
   return pinRows.value.length === 1 ? '1 record offered' : `${pinRows.value.length} records offered`
 })
 
-// Unpinning takes its own button with it, so focus lands on the line that says
-// what happened rather than dropping to <body> (WCAG 2.4.3).
+// Unpinning takes its own button with it, so focus lands on the words heading
+// the section rather than dropping to <body> (WCAG 2.4.3). Not on the note,
+// which announces its own new sentence: landing there reads it a second time.
 watch(
   () => pinnedRows.value.length,
   async (now, before) => {
     if (now >= before) return
     await nextTick()
-    rescueFocus(pinNoteEl.value)
+    rescueFocus(pinHeading.value)
   },
 )
 
@@ -356,7 +357,12 @@ function searchRecords() {
     </div>
 
     <div v-if="pinned" class="edit-field">
-      <label for="edit-pin-query">Which record enriches this</label>
+      <label
+        ref="pinHeading"
+        class="focus-fallback"
+        for="edit-pin-query"
+        tabindex="-1"
+      >Which record enriches this</label>
       <p class="edit-modal-note">
         Search each provider and pick the right record. Enrichment then reads
         that one instead of matching by title.
@@ -378,14 +384,7 @@ function searchRecords() {
       </button>
       <!-- Mounted whether or not it has anything to say: a region inserted
            already populated reads as content rather than a status change. -->
-      <p
-        id="edit-pin-note"
-        ref="pinNoteEl"
-        class="edit-modal-note focus-fallback"
-        role="status"
-        aria-live="polite"
-        tabindex="-1"
-      >{{ pinNote }}</p>
+      <p id="edit-pin-note" class="edit-modal-note" role="status" aria-live="polite">{{ pinNote }}</p>
       <ul v-if="pinRows.length" class="edit-manual-list" aria-label="Records the providers offered">
         <li v-for="row in pinRows" :key="row.key" class="edit-manual-held">
           <span>{{ row.label }}</span>
