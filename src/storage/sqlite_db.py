@@ -1392,6 +1392,9 @@ class SQLiteDB:
                         resolved_status = status_for_seasons_watched(
                             seasons_watched, total_seasons
                         ).value
+                        # Held like a stated one: unheld, the next sync
+                        # forward-resolves it back to what it was.
+                        corrected.add("status")
 
                 if tv_row and seasons_watched is not None:
                     now_iso = utc_now().isoformat()

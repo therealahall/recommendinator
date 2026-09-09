@@ -450,7 +450,6 @@ RELEASE_YEAR_FIELDS: dict[str, DetailField] = {
 #: The record each provider is bound to, keyed by provider name. The operator
 #: is its only writer: a run recording its own match would make a wrong one
 #: permanent, which is what a pin exists to correct.
-
 #: An older version's singular ``enrichment_id`` survives beside it in blobs
 #: that already carry one. Nothing reads it, so it is left rather than migrated.
 PIN_KEY = "enrichment_ids"

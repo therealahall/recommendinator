@@ -333,6 +333,30 @@ describe('useLibraryStore', () => {
     expect(store.items.map((one) => one.db_id)).toEqual([1])
   })
 
+  it('a scrolled next page drops the merge sentence, so the count is what is heard', async () => {
+    const page = Array.from({ length: 50 }, (_, i) => ({
+      db_id: i, title: `Item ${i}`, content_type: 'movie', status: 'unread', ignored: false,
+    }))
+    mockGet.mockResolvedValue(page)
+    const store = useLibraryStore()
+    await store.resetAndLoad()
+
+    mockPost.mockResolvedValue({
+      id: 7,
+      survivor_id: 1,
+      survivor_title: 'Amelie',
+      absorbed_id: 2,
+      absorbed_title: 'Le Fabuleux Destin d’Amelie Poulain',
+    })
+    await store.mergeInto(1, 2)
+    expect(store.mergeAnnouncement).not.toBe('')
+
+    mockGet.mockResolvedValueOnce([])
+    await store.loadMore()
+
+    expect(store.mergeAnnouncement).toBe('')
+  })
+
   it('mergeInto keeps a refused merge on the picker, leaving it open to correct', async () => {
     const book = { db_id: 1, title: 'Delicatessen', content_type: 'book', status: 'unread', ignored: false }
     mockGet.mockResolvedValue([book])
@@ -380,5 +404,16 @@ describe('useLibraryStore', () => {
 
     expect(store.pinned).toEqual({ rawg: '41494' })
     expect(store.pinMessage).toBe('Item 1 now enriches from rawg record 41494')
+  })
+
+  it('retryEnrichment re-queues the one item, whatever settled it', async () => {
+    const store = useLibraryStore()
+    mockPost.mockResolvedValue({ message: 'Reset enrichment status for 1 item(s)', count: 1 })
+
+    await store.retryEnrichment(7)
+
+    expect(mockPost.mock.lastCall![0]).toBe('/enrichment/reset')
+    expect(mockPost.mock.lastCall![1]).toMatchObject({ item_id: 7 })
+    expect(store.pinMessage).toBe('Reset enrichment status for 1 item(s)')
   })
 })

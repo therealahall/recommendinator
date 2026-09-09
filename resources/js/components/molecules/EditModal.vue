@@ -27,7 +27,7 @@ const props = defineProps<{
   pinned?: Record<string, string>
   pinCandidates?: EnrichmentCandidate[]
   pinSearching?: boolean
-  /** What the server said about the last pin, '' before there was one. */
+  /** What the server said about the last pin or retry, '' before either. */
   pinMessage?: string
 }>()
 
@@ -36,6 +36,7 @@ const emit = defineEmits<{
   clearManual: [dbId: number, field: string]
   pinSearch: [dbId: number, query: string]
   pin: [dbId: number, provider: string, recordId: string | null]
+  retryEnrichment: [dbId: number]
   close: []
 }>()
 
@@ -69,7 +70,7 @@ const loaded = {
 }
 
 const refusal = ref<HTMLElement | null>(null)
-const manualNote = ref<HTMLElement | null>(null)
+const manualNoteEl = ref<HTMLElement | null>(null)
 
 watch(
   () => props.saveError,
@@ -88,16 +89,25 @@ const heldFields = computed(() =>
   })),
 )
 
+const clearedField = ref('')
+
 // A cleared row takes its button with it, so focus lands on the line above
-// rather than dropping to <body> (WCAG 2.4.3).
-watch(
-  () => heldFields.value.length,
-  async (now, before) => {
-    if (now >= before) return
-    await nextTick()
-    rescueFocus(manualNote.value)
-  },
-)
+// rather than dropping to <body> (WCAG 2.4.3) — and on words saying which
+// field went, since clearing one of several leaves the standing sentence.
+watch(heldFields, async (now, before) => {
+  const dropped = before.find((held) => !now.some((one) => one.field === held.field))
+  if (!dropped) return
+  clearedField.value = dropped.label
+  await nextTick()
+  rescueFocus(manualNoteEl.value)
+})
+
+const manualNote = computed(() => {
+  if (clearedField.value) return `${clearedField.value} is no longer held.`
+  return heldFields.value.length
+    ? 'A sync and enrichment leave these alone.'
+    : 'Editing a field above holds it against its source.'
+})
 
 const REFUSED_FIELDS: [string, string][] = [
   ['Title', 'edit-title'],
@@ -363,6 +373,9 @@ function searchRecords() {
       <button class="btn btn-secondary" :aria-disabled="pinSearching || undefined" @click="searchRecords">
         {{ pinSearching ? 'Searching…' : 'Search providers' }}
       </button>
+      <button class="btn btn-secondary" @click="emit('retryEnrichment', item.db_id!)">
+        Enrich this again
+      </button>
       <!-- Mounted whether or not it has anything to say: a region inserted
            already populated reads as content rather than a status change. -->
       <p
@@ -401,11 +414,12 @@ function searchRecords() {
     <div class="edit-field">
       <!-- Mounted whether or not anything is held: a region inserted already
            populated reads as content rather than a status change (4.1.3). -->
-      <p ref="manualNote" class="edit-modal-note focus-fallback" role="status" tabindex="-1">
-        {{ heldFields.length
-          ? 'A sync and enrichment leave these alone.'
-          : 'Editing a field above holds it against its source.' }}
-      </p>
+      <p
+        ref="manualNoteEl"
+        class="edit-modal-note focus-fallback"
+        role="status"
+        tabindex="-1"
+      >{{ manualNote }}</p>
       <ul class="edit-manual-list" aria-label="Fields held against their source">
         <li v-for="held in heldFields" :key="held.field" class="edit-manual-held">
           <span>{{ held.label }}</span>

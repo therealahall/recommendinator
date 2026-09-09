@@ -209,6 +209,38 @@ describe('EditModal', () => {
     wrapper.unmount()
   })
 
+  it('retries enrichment for the one item and says what the server answered', async () => {
+    const wrapper = mount(EditModal, {
+      props: { item: defaultItem, saving: false, saveError: '', pinned: {} },
+      attachTo: document.body,
+    })
+
+    await wrapper.findAll('button').find(b => b.text() === 'Enrich this again')!.trigger('click')
+    await wrapper.setProps({ pinMessage: 'Reset enrichment status for 1 item(s)' })
+
+    expect(wrapper.emitted('retryEnrichment')).toEqual([[1]])
+    expect(wrapper.get('#edit-pin-note').text()).toBe('Reset enrichment status for 1 item(s)')
+    wrapper.unmount()
+  })
+
+  it('clearing one of several holds names the one that went, not the standing sentence', async () => {
+    const held = { ...defaultItem, manual_fields: ['creator', 'release_year'] }
+    const wrapper = mount(EditModal, {
+      props: { item: held, saving: false, saveError: '' },
+      attachTo: document.body,
+    })
+    await vi.runAllTimersAsync()
+    const said = wrapper.get('[role="status"]')
+    const standing = said.text()
+
+    await wrapper.setProps({ item: { ...held, manual_fields: ['release_year'] } })
+    await vi.runAllTimersAsync()
+
+    expect(standing).toBe('A sync and enrichment leave these alone.')
+    expect(said.text()).toBe('Creator is no longer held.')
+    wrapper.unmount()
+  })
+
   it('a cleared hold says so and keeps focus in the dialog, not on the button that vanished', async () => {
     const held = { ...defaultItem, manual_fields: ['creator'] }
     const wrapper = mount(EditModal, {

@@ -917,6 +917,33 @@ class TestLibraryEditClearing:
         assert stored is not None
         assert stored.review == "Loved it"
 
+    def test_clearing_the_seasons_holds_the_status_they_derive(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        storage = StorageManager(sqlite_path=tmp_path / "seasons.db")
+        db_id = storage.save_content_item(
+            ContentItem(
+                id="show-1",
+                title="The Expanse",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.COMPLETED,
+                metadata={"seasons": 5, "seasons_watched": [1, 2, 3, 4, 5]},
+            ),
+            user_id=1,
+        )
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["library", "edit", "--id", str(db_id), "--clear-seasons"],
+            storage,
+        )
+
+        assert result.exit_code == 0, result.output
+        stored = storage.get_content_item(db_id, user_id=1)
+        assert stored is not None
+        assert stored.status == ConsumptionStatus.UNREAD
+        assert "status" in stored.manual_fields
+
     @pytest.mark.parametrize("emptied", ["", "   "])
     def test_an_empty_description_is_its_clear_as_the_web_box_is(
         self, cli_runner: CliRunner, tmp_path: Path, emptied: str

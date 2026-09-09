@@ -333,3 +333,16 @@ class TestIsbnLookupRendersItsFailureThroughTheScrubberRegression:
         assert "HTTP 500" in caplog.text
         assert self._URL not in caplog.text
         assert "Server Error" not in caplog.text
+
+
+class TestAPinCannotLeaveTheWorksPath:
+    @pytest.mark.parametrize(
+        "record_id", ["../../search", "OL1W/../x", "/works/OL1W", "OL1W\n"]
+    )
+    def test_a_key_carrying_more_than_a_work_id_is_refused(
+        self, record_id: str
+    ) -> None:
+        assert OpenLibraryProvider().accepts_record_id(record_id) is False
+
+    def test_a_bare_work_key_is_accepted(self) -> None:
+        assert OpenLibraryProvider().accepts_record_id("OL1234W") is True

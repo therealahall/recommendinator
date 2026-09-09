@@ -208,6 +208,41 @@ class TestTMDBProviderMovieEnrichment:
         assert result.match_quality == "not_found"
         assert result.genres is None
 
+    @pytest.mark.parametrize(
+        ("release_date", "expected"),
+        [("2001-03-30", "high"), ("2010-03-30", "not_found")],
+        ids=["within-the-drift", "beyond-it"],
+    )
+    def test_a_release_a_year_or_two_out_is_reached_only_by_the_yearless_retry(
+        self,
+        provider: TMDBProvider,
+        movie_item: ContentItem,
+        config: dict[str, Any],
+        release_date: str,
+        expected: str,
+    ) -> None:
+        hit = {"id": 603, "title": "The Matrix", "release_date": release_date}
+
+        def tmdb(url: str, *, params: dict[str, str], timeout: int) -> MagicMock:
+            # Stands in for TMDB's exact year filter, which is what puts the
+            # drifted release out of reach of the first search.
+            payload: dict[str, Any] = (
+                {"results": [] if "year" in params else [hit]}
+                if "/search/" in url
+                else {"id": 603, "title": "The Matrix", "genres": []}
+            )
+            return MagicMock(
+                spec=requests.Response, status_code=200, json=lambda: payload
+            )
+
+        with patch("src.enrichment.providers.tmdb.tmdb.requests.get") as mock_get:
+            mock_get.side_effect = tmdb
+
+            result = provider.enrich(movie_item, {**config, "include_keywords": False})
+
+        assert result is not None
+        assert result.match_quality == expected
+
     def test_the_picker_searches_unfiltered_by_the_year_it_exists_to_correct(
         self, provider: TMDBProvider, movie_item: ContentItem, config: dict[str, Any]
     ) -> None:
@@ -503,6 +538,43 @@ class TestTMDBProviderTVShowEnrichment:
         assert result.extra_metadata.get("network") == "AMC"
         assert "Vince Gilligan" in result.extra_metadata.get("creators", "")
         assert result.cover_url == "https://image.tmdb.org/t/p/w500/bb.jpg"
+
+    def test_the_stored_year_tells_two_shows_of_the_same_name_apart(
+        self, provider: TMDBProvider, config: dict[str, Any]
+    ) -> None:
+        item = ContentItem(
+            id="show123",
+            title="The Office",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"release_year": 2001},
+        )
+        mock_search_response = {
+            "results": [
+                {"id": 2316, "name": "The Office", "first_air_date": "2005-03-24"},
+                {"id": 2996, "name": "The Office", "first_air_date": "2001-07-09"},
+            ]
+        }
+
+        with patch("src.enrichment.providers.tmdb.tmdb.requests.get") as mock_get:
+            mock_get.side_effect = [
+                MagicMock(
+                    spec=requests.Response,
+                    status_code=200,
+                    json=lambda: mock_search_response,
+                ),
+                MagicMock(
+                    spec=requests.Response,
+                    status_code=200,
+                    json=lambda: {"id": 2996, "name": "The Office", "genres": []},
+                ),
+            ]
+
+            result = provider.enrich(item, {**config, "include_keywords": False})
+
+        assert result is not None
+        assert result.match_quality == "high"
+        assert mock_get.call_args_list[1].args[0].endswith("/tv/2996")
 
     def test_a_show_titled_with_its_original_name_matches_the_localized_result(
         self, provider: TMDBProvider, config: dict[str, Any]
