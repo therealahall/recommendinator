@@ -2,10 +2,13 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
 from click.testing import CliRunner
 
 from src.enrichment.manager import EnrichmentJobStatus, EnrichmentManager
+from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.manager import StorageManager
+from src.utils.matching import Candidate
 from tests.factories import make_storage_mock
 
 from .conftest import _invoke_with_mocks
@@ -362,6 +365,108 @@ class TestEnrichmentStatus:
 
         assert result.exit_code == 0
         assert json.loads(result.output) == {"enabled": False, **stats}
+
+
+class TestEnrichmentPinning:
+    @staticmethod
+    def _storage() -> MagicMock:
+        storage = make_storage_mock()
+        storage.get_content_item.return_value = ContentItem(
+            db_id=7,
+            title="Prey",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"enrichment_ids": {"rawg": "3328"}},
+        )
+        return storage
+
+    def test_candidates_emit_the_web_responses_key_set(
+        self, cli_runner: CliRunner
+    ) -> None:
+        manager = MagicMock(spec=EnrichmentManager)
+        manager.candidates.return_value = [
+            ("rawg", Candidate(record_id="41494", title="Prey", year=2017))
+        ]
+
+        result = _invoke_with_enrichment_manager(
+            cli_runner,
+            [
+                "enrichment",
+                "candidates",
+                "--id",
+                "7",
+                "--query",
+                "Prey 2017",
+                "--format",
+                "json",
+            ],
+            self._storage(),
+            manager,
+        )
+
+        assert result.exit_code == 0
+        assert json.loads(result.output) == {
+            "item_id": 7,
+            "candidates": [
+                {
+                    "provider": "rawg",
+                    "record_id": "41494",
+                    "title": "Prey",
+                    "year": 2017,
+                    "creator": None,
+                    "cover_url": None,
+                }
+            ],
+            "pinned": {"rawg": "3328"},
+        }
+        assert manager.candidates.call_args.args[1] == "Prey 2017"
+
+    @pytest.mark.parametrize(
+        ("flags", "stored", "record"),
+        [
+            (["--record", "41494"], {"rawg": "41494"}, "41494"),
+            (["--clear"], {}, None),
+        ],
+        ids=["binds", "clears"],
+    )
+    def test_pin_binds_the_item_to_the_record_named_or_to_none(
+        self,
+        cli_runner: CliRunner,
+        flags: list[str],
+        stored: dict[str, str],
+        record: str | None,
+    ) -> None:
+        manager = MagicMock(spec=EnrichmentManager)
+        manager.pin.return_value = stored
+
+        result = _invoke_with_enrichment_manager(
+            cli_runner,
+            ["enrichment", "pin", "--id", "7", "--provider", "rawg", *flags]
+            + ["--format", "json"],
+            self._storage(),
+            manager,
+        )
+
+        assert result.exit_code == 0
+        assert json.loads(result.output)["pinned"] == stored
+        assert manager.pin.call_args.args[0] == 7
+        assert manager.pin.call_args.args[2:] == ("rawg", record)
+
+    def test_a_pin_naming_neither_a_record_nor_a_clear_is_refused(
+        self, cli_runner: CliRunner
+    ) -> None:
+        manager = MagicMock(spec=EnrichmentManager)
+
+        result = _invoke_with_enrichment_manager(
+            cli_runner,
+            ["enrichment", "pin", "--id", "7", "--provider", "rawg"],
+            self._storage(),
+            manager,
+        )
+
+        assert result.exit_code != 0
+        assert "--record or --clear" in result.output
+        manager.pin.assert_not_called()
 
 
 class TestEnrichmentReset:

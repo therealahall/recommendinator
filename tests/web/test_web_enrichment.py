@@ -8,8 +8,9 @@ from fastapi.testclient import TestClient
 
 from src.enrichment.manager import EnrichmentManager
 from src.enrichment.registry import EnrichmentRegistry
-from src.models.content import ContentType
+from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.manager import StorageManager
+from src.utils.matching import Candidate
 from tests.enrichment.test_enrichment_manager import (
     WrappedRequestErrorProvider,
     http_error,
@@ -208,6 +209,88 @@ class TestEnrichmentStats:
 
         assert response.status_code == 200
         assert response.json() == {"enabled": False, **stats}
+
+
+class TestEnrichmentPinning:
+    @staticmethod
+    def _storage() -> MagicMock:
+        storage = make_storage_mock()
+        storage.get_content_item.return_value = ContentItem(
+            db_id=7,
+            title="Prey",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"enrichment_ids": {"rawg": "3328"}},
+        )
+        return storage
+
+    def test_candidates_carry_what_tells_two_records_apart(self) -> None:
+        manager = MagicMock(spec=EnrichmentManager)
+        manager.candidates.return_value = [
+            ("rawg", Candidate(record_id="41494", title="Prey", year=2017))
+        ]
+
+        with (
+            patch("src.web.api._enrichment.EnrichmentManager", return_value=manager),
+            _client(self._storage(), {}) as client,
+        ):
+            response = client.get(
+                "/api/enrichment/candidates",
+                params={"item_id": 7, "query": "Prey 2017"},
+            )
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "item_id": 7,
+            "candidates": [
+                {
+                    "provider": "rawg",
+                    "record_id": "41494",
+                    "title": "Prey",
+                    "year": 2017,
+                    "creator": None,
+                    "cover_url": None,
+                }
+            ],
+            "pinned": {"rawg": "3328"},
+        }
+        assert manager.candidates.call_args.args[1] == "Prey 2017"
+
+    @pytest.mark.parametrize(
+        ("record", "stored"),
+        [("41494", {"rawg": "41494"}), (None, {})],
+        ids=["binds", "clears"],
+    )
+    def test_pin_binds_the_item_to_the_record_the_body_names_or_to_none(
+        self, record: str | None, stored: dict[str, str]
+    ) -> None:
+        manager = MagicMock(spec=EnrichmentManager)
+        manager.pin.return_value = stored
+
+        with (
+            patch("src.web.api._enrichment.EnrichmentManager", return_value=manager),
+            _client(self._storage(), {}) as client,
+        ):
+            response = client.post(
+                "/api/enrichment/pin",
+                json={"item_id": 7, "provider": "rawg", "record_id": record},
+            )
+
+        assert response.status_code == 200
+        assert response.json()["pinned"] == stored
+        assert manager.pin.call_args.args[2:] == ("rawg", record)
+
+    def test_pinning_an_item_that_is_not_there_is_a_404(self) -> None:
+        storage = make_storage_mock()
+        storage.get_content_item.return_value = None
+
+        with _client(storage, {}) as client:
+            response = client.post(
+                "/api/enrichment/pin",
+                json={"item_id": 7, "provider": "rawg", "record_id": "1"},
+            )
+
+        assert response.status_code == 404
 
 
 class TestEnrichmentReset:

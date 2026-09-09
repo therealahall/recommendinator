@@ -4,10 +4,24 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from src.enrichment.manager import EnrichmentManager, job_status
-from src.models.content import ContentType
+from src.enrichment.provider_base import pins_of
+from src.models.content import ContentItem, ContentType
+from src.storage.manager import StorageManager
+from src.utils.item_serialization import (
+    enrichment_candidates_to_dict,
+    enrichment_pin_to_dict,
+)
+from src.utils.sorting import MAX_SEARCH_LENGTH
 from src.web.guards import RequiredConfig, RequiredStorage
 
 router = APIRouter()
+
+
+def _item_or_404(storage: StorageManager, db_id: int, user_id: int) -> ContentItem:
+    item = storage.get_content_item(db_id, user_id=user_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail=f"Item {db_id} not found")
+    return item
 
 
 class EnrichmentStartRequest(BaseModel):
@@ -29,6 +43,36 @@ class EnrichmentResetRequest(BaseModel):
         None, description="Reset items of this content type"
     )
     user_id: int = Field(1, ge=1, description="User ID for filtering items")
+
+
+class EnrichmentPinRequest(BaseModel):
+    item_id: int = Field(..., ge=1, description="Library item to pin")
+    provider: str = Field(..., description="Provider whose record is being pinned")
+    record_id: str | None = Field(
+        None, description="Provider's record id; null returns the item to searching"
+    )
+    user_id: int = Field(1, ge=1, description="User ID for authorization")
+
+
+class EnrichmentCandidateResponse(BaseModel):
+    provider: str
+    record_id: str
+    title: str
+    year: int | None = None
+    creator: str | None = None
+    cover_url: str | None = None
+
+
+class EnrichmentCandidatesResponse(BaseModel):
+    item_id: int
+    candidates: list[EnrichmentCandidateResponse] = Field(default_factory=list)
+    pinned: dict[str, str] = Field(default_factory=dict)
+
+
+class EnrichmentPinResponse(BaseModel):
+    item_id: int
+    pinned: dict[str, str] = Field(default_factory=dict)
+    message: str
 
 
 class EnrichmentJobStatusResponse(BaseModel):
@@ -156,6 +200,44 @@ def get_enrichment_stats(
         by_provider=cast(dict[str, int], stats.get("by_provider", {})),
         by_quality=cast(dict[str, int], stats.get("by_quality", {})),
     )
+
+
+@router.get("/enrichment/candidates", response_model=EnrichmentCandidatesResponse)
+def get_enrichment_candidates(
+    storage: RequiredStorage,
+    config: RequiredConfig,
+    item_id: int = Query(..., ge=1, description="Library item to search for"),
+    query: str | None = Query(
+        None,
+        max_length=MAX_SEARCH_LENGTH,
+        description="Title to search under, in place of the item's own",
+    ),
+    user_id: int = Query(1, ge=1, description="User ID for authorization"),
+) -> EnrichmentCandidatesResponse:
+    """Every enabled provider's own search results for one item."""
+    item = _item_or_404(storage, item_id, user_id)
+    manager = EnrichmentManager(storage, config)
+    payload = enrichment_candidates_to_dict(
+        item_id, manager.candidates(item, query), pins_of(item.metadata)
+    )
+    return EnrichmentCandidatesResponse.model_validate(payload)
+
+
+@router.post("/enrichment/pin", response_model=EnrichmentPinResponse)
+def pin_enrichment_record(
+    request: EnrichmentPinRequest,
+    storage: RequiredStorage,
+    config: RequiredConfig,
+) -> EnrichmentPinResponse:
+    """Bind one item to one provider record, or hand it back to title search."""
+    item = _item_or_404(storage, request.item_id, request.user_id)
+    pinned = EnrichmentManager(storage, config).pin(
+        request.item_id, item, request.provider, request.record_id
+    )
+    payload = enrichment_pin_to_dict(
+        request.item_id, request.provider, request.record_id, pinned
+    )
+    return EnrichmentPinResponse.model_validate(payload)
 
 
 @router.post("/enrichment/reset")

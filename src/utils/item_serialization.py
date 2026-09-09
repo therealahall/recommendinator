@@ -7,6 +7,7 @@ from typing import TypedDict
 from src.covers import cover_payload_url
 from src.models.content import ContentItem, get_enum_value
 from src.models.detail_fields import to_int
+from src.utils.matching import Candidate
 from src.utils.series import (
     get_series_name_from_metadata,
     get_series_position_from_metadata,
@@ -83,6 +84,37 @@ def item_to_dict(item: ContentItem) -> dict[str, object]:
         "tags": metadata.get("tags") or [],
         "description": metadata.get("description"),
     }
+
+
+def enrichment_candidates_to_dict(
+    db_id: int, offered: list[tuple[str, Candidate]], pinned: dict[str, str]
+) -> dict[str, object]:
+    return {
+        "item_id": db_id,
+        "candidates": [
+            {
+                "provider": provider,
+                "record_id": candidate.record_id,
+                "title": candidate.title,
+                "year": candidate.year,
+                "creator": candidate.creator,
+                "cover_url": candidate.cover_url,
+            }
+            for provider, candidate in offered
+        ],
+        "pinned": pinned,
+    }
+
+
+def enrichment_pin_to_dict(
+    db_id: int, provider: str, record_id: str | None, pinned: dict[str, str]
+) -> dict[str, object]:
+    said = (
+        f"Item {db_id} now enriches from {provider} record {record_id}"
+        if record_id
+        else f"Item {db_id} is back to matching {provider} by title"
+    )
+    return {"item_id": db_id, "pinned": pinned, "message": said}
 
 
 def completion_to_dict(title: str, db_id: int) -> dict[str, object]:

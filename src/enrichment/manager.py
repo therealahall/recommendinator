@@ -12,15 +12,18 @@ import requests
 from src.enrichment.provider_base import (
     EnrichmentProvider,
     EnrichmentResult,
+    ProviderError,
     states_a_match,
     states_a_series_ordinal,
+    with_pin,
 )
 from src.enrichment.rate_limiter import RateLimiter
 from src.enrichment.registry import EnrichmentRegistry, get_enrichment_registry
 from src.models.content import ContentItem, ContentType, get_enum_value
-from src.models.detail_fields import PROVIDER_OWNED_METADATA_KEYS
+from src.models.detail_fields import PIN_KEY, PROVIDER_OWNED_METADATA_KEYS
 from src.storage.enrichment_jobs import EnrichmentJobRecord
 from src.storage.global_secrets import read_secret
+from src.utils.matching import Candidate
 from src.utils.request_errors import scrub_request_error
 from src.utils.series import (
     SERIES_RECONCILED_KEYS,
@@ -198,6 +201,47 @@ class EnrichmentManager:
         # a SQLite query + Fernet decrypt, so it is read once per manager
         # instance (one per run) and reused across every processed item.
         self._secret_cache: dict[str, str | None] = {}
+
+    def candidates(
+        self, item: ContentItem, query: str | None = None
+    ) -> list[tuple[str, Candidate]]:
+        """What every enabled provider offers for *item*, each paired with the
+        provider that offered it. *query* searches under a title of the
+        operator's choosing, which is the only way past a title nothing matches.
+        """
+        searched = item.model_copy(update={"title": query}) if query else item
+        offered: list[tuple[str, Candidate]] = []
+        for provider in self.registry.get_enabled_providers(self.config):
+            self._get_rate_limiter(provider.name).acquire()
+            try:
+                found = provider.search(
+                    searched, self._get_provider_config(provider.name)
+                )
+            except ProviderError as error:
+                # One stale key must not empty the picker of every other
+                # provider's records.
+                logger.warning(
+                    "[ENRICHMENT] %s offered no candidates: %s",
+                    provider.name,
+                    error.message,
+                )
+                continue
+            offered.extend((provider.name, candidate) for candidate in found)
+        return offered
+
+    def pin(
+        self, db_id: int, item: ContentItem, provider_name: str, record_id: str | None
+    ) -> dict[str, str]:
+        """Binds *item* to one provider record, *record_id* ``None`` clearing it,
+        and re-queues the item so the next run reads it.
+        """
+        pins = with_pin(item.metadata, provider_name, record_id)
+        self.storage_manager.save_enrichment_metadata(
+            db_id,
+            item.model_copy(update={"metadata": {**item.metadata, PIN_KEY: pins}}),
+        )
+        self.storage_manager.enrichment.reset(content_item_id=db_id)
+        return pins
 
     def start_enrichment(
         self,
@@ -848,7 +892,8 @@ def merge_enrichment(
 
     merged.update(reconcile_series(merged, result.extra_metadata))
 
-    if result.external_id:
-        merged["enrichment_id"] = result.external_id
+    if result.external_id and result.provider:
+        record_id = result.external_id.removeprefix(f"{result.provider}:")
+        merged[PIN_KEY] = with_pin(merged, result.provider, record_id)
 
     return merged

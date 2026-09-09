@@ -11,9 +11,10 @@ from src.enrichment.provider_base import (
     EnrichmentResult,
     ProviderError,
     log_search_title,
+    pinned_record,
 )
-from src.models.content import ContentItem, ContentType
-from src.utils.matching import best_match_index, year_of
+from src.models.content import ContentItem, ContentType, get_enum_value
+from src.utils.matching import Candidate, best_match, year_of
 from src.utils.request_errors import scrub_request_error
 
 logger = logging.getLogger(__name__)
@@ -184,7 +185,7 @@ class RAWGProvider(EnrichmentProvider):
 
         api_key = config.get("api_key", "")
 
-        game_id = self._search_game(item, api_key)
+        game_id = self._matched_id(item, api_key)
 
         if game_id is None:
             return EnrichmentResult(
@@ -194,7 +195,28 @@ class RAWGProvider(EnrichmentProvider):
 
         return self._fetch_game_details(game_id, api_key)
 
-    def _search_game(self, item: ContentItem, api_key: str) -> int | None:
+    def search(self, item: ContentItem, config: dict[str, Any]) -> list[Candidate]:
+        if get_enum_value(item.content_type) != ContentType.VIDEO_GAME.value:
+            return []
+        return self._search_game(item, config.get("api_key", ""))
+
+    def _matched_id(self, item: ContentItem, api_key: str) -> int | None:
+        pinned = pinned_record(item, self.name)
+        if pinned is not None:
+            try:
+                return int(pinned)
+            except ValueError:
+                pass
+
+        metadata = item.metadata or {}
+        matched = best_match(
+            clean_game_title_for_search(item.title),
+            year_of(metadata.get("release_year")),
+            self._search_game(item, api_key),
+        )
+        return None if matched is None else int(matched.record_id)
+
+    def _search_game(self, item: ContentItem, api_key: str) -> list[Candidate]:
         search_title = clean_game_title_for_search(item.title)
         log_search_title(logger, item.title, search_title)
 
@@ -211,21 +233,16 @@ class RAWGProvider(EnrichmentProvider):
                 timeout=10,
             )
             response.raise_for_status()
-            data = response.json()
 
-            results = data.get("results", [])
-            if not results:
-                return None
-
-            metadata = item.metadata or {}
-            candidates = [
-                ([str(result.get("name") or "")], year_of(result.get("released")))
-                for result in results
+            return [
+                Candidate(
+                    record_id=str(result["id"]),
+                    title=str(result.get("name") or ""),
+                    year=year_of(result.get("released")),
+                    cover_url=result.get("background_image"),
+                )
+                for result in response.json().get("results", [])
             ]
-            index = best_match_index(
-                search_title, year_of(metadata.get("release_year")), candidates
-            )
-            return None if index is None else int(results[index]["id"])
 
         except requests.RequestException as error:
             # ``from None``: the key is a query parameter, so the URL on

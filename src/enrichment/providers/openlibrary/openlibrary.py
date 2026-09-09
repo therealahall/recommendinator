@@ -10,8 +10,10 @@ from src.enrichment.provider_base import (
     EnrichmentResult,
     ProviderError,
     log_search_title,
+    pinned_record,
 )
-from src.models.content import ContentItem, ContentType
+from src.models.content import ContentItem, ContentType, get_enum_value
+from src.utils.matching import Candidate, year_of
 from src.utils.request_errors import scrub_request_error
 from src.utils.text import sanitize_for_log
 
@@ -39,6 +41,17 @@ def _cover_from_id(cover_id: Any) -> str | None:
     if not isinstance(cover_id, int) or cover_id <= 0:
         return None
     return _COVER_URL.format(cover_id=cover_id)
+
+
+def _doc_candidate(doc: dict[str, Any]) -> Candidate:
+    authors = doc.get("author_name") or []
+    return Candidate(
+        record_id=str(doc.get("key") or "").split("/")[-1],
+        title=str(doc.get("title") or ""),
+        year=year_of(doc.get("first_publish_year")),
+        creator=str(authors[0]) if authors else None,
+        cover_url=_cover_from_id(doc.get("cover_i")),
+    )
 
 
 def _cover_url(payload: dict[str, Any]) -> str | None:
@@ -96,6 +109,10 @@ class OpenLibraryProvider(EnrichmentProvider):
             logger.warning("OpenLibrary provider does not support %s", content_type)
             return None
 
+        pinned = pinned_record(item, self.name)
+        if pinned is not None:
+            return self._fetch_work_details(f"/works/{pinned}")
+
         metadata = item.metadata or {}
         isbn = metadata.get("isbn13") or metadata.get("isbn")
 
@@ -139,7 +156,28 @@ class OpenLibraryProvider(EnrichmentProvider):
             )
             return None
 
+    def search(self, item: ContentItem, config: dict[str, Any]) -> list[Candidate]:
+        if get_enum_value(item.content_type) != ContentType.BOOK.value:
+            return []
+        return [_doc_candidate(doc) for doc in self._search_docs(item)]
+
     def _search_book(self, item: ContentItem) -> EnrichmentResult:
+        docs = self._search_docs(item)
+        if not docs:
+            return EnrichmentResult(
+                match_quality="not_found",
+                provider=self.name,
+            )
+
+        doc = docs[0]
+        work_key = doc.get("key")
+
+        if work_key:
+            return self._fetch_work_details(work_key)
+
+        return self._build_result_from_search(doc)
+
+    def _search_docs(self, item: ContentItem) -> list[dict[str, Any]]:
         search_title = clean_title_for_search(item.title)
         log_search_title(logger, item.title, search_title)
 
@@ -152,45 +190,26 @@ class OpenLibraryProvider(EnrichmentProvider):
             params["author"] = item.author
 
         try:
-            response = requests.get(
-                f"{OPENLIBRARY_API_BASE}/search.json",
-                params=params,
-                timeout=15,
-            )
-            response.raise_for_status()
-            data = response.json()
-
-            docs = data.get("docs", [])
-            if not docs:
-                if item.author and "author" in params:
-                    del params["author"]
-                    response = requests.get(
-                        f"{OPENLIBRARY_API_BASE}/search.json",
-                        params=params,
-                        timeout=15,
-                    )
-                    response.raise_for_status()
-                    data = response.json()
-                    docs = data.get("docs", [])
-
-            if not docs:
-                return EnrichmentResult(
-                    match_quality="not_found",
-                    provider=self.name,
-                )
-
-            doc = docs[0]
-            work_key = doc.get("key")
-
-            if work_key:
-                return self._fetch_work_details(work_key)
-
-            return self._build_result_from_search(doc)
+            docs = self._request_docs(params)
+            if not docs and "author" in params:
+                del params["author"]
+                docs = self._request_docs(params)
+            return docs
 
         except requests.RequestException as error:
             raise ProviderError(
                 self.name, f"Failed to search Open Library: {error}"
             ) from error
+
+    def _request_docs(self, params: dict[str, Any]) -> list[dict[str, Any]]:
+        response = requests.get(
+            f"{OPENLIBRARY_API_BASE}/search.json",
+            params=params,
+            timeout=15,
+        )
+        response.raise_for_status()
+        docs = response.json().get("docs", [])
+        return docs if isinstance(docs, list) else []
 
     def _fetch_work_details(
         self,
@@ -268,10 +287,10 @@ class OpenLibraryProvider(EnrichmentProvider):
         subjects = edition.get("subjects", [])
         genres = self._filter_subjects(subjects)
 
-        edition_key = edition.get("key", "").split("/")[-1]
-
         return EnrichmentResult(
-            external_id=f"openlibrary:{edition_key}" if edition_key else None,
+            # No external_id: this is an edition, and the pin the next run reads
+            # is looked up under /works.
+            external_id=None,
             genres=genres if genres else None,
             tags=genres if genres else None,
             cover_url=_cover_url(edition),

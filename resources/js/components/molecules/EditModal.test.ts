@@ -149,6 +149,41 @@ describe('EditModal', () => {
     wrapper.unmount()
   })
 
+  it('searches providers under a typed title, pins a record, and drops the pin', async () => {
+    const wrapper = mount(EditModal, {
+      props: {
+        item: defaultItem,
+        saving: false,
+        saveError: '',
+        pinned: { rawg: '3328' },
+        pinCandidates: [
+          {
+            provider: 'openlibrary',
+            record_id: 'OL1W',
+            title: 'Leviathan Wakes',
+            year: 2011,
+            creator: 'James S. A. Corey',
+            cover_url: null,
+          },
+        ],
+        pinSearching: false,
+      },
+      attachTo: document.body,
+    })
+
+    await wrapper.get('#edit-pin-query').setValue('Leviathan')
+    await wrapper.findAll('button').find(b => b.text() === 'Search providers')!.trigger('click')
+    await wrapper.findAll('button').find(b => b.text() === 'Use this record')!.trigger('click')
+    await wrapper.findAll('button').find(b => b.text() === 'Match by title again')!.trigger('click')
+
+    expect(wrapper.emitted('pinSearch')).toEqual([[1, 'Leviathan']])
+    expect(wrapper.emitted('pin')).toEqual([
+      [1, 'openlibrary', 'OL1W'],
+      [1, 'rawg', null],
+    ])
+    wrapper.unmount()
+  })
+
   it('a cleared hold says so and keeps focus in the dialog, not on the button that vanished', async () => {
     const held = { ...defaultItem, manual_fields: ['creator'] }
     const wrapper = mount(EditModal, {

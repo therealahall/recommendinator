@@ -11,6 +11,7 @@ from src.enrichment.provider_base import (
     ProviderError,
     SeriesOrdinal,
     log_search_title,
+    pinned_record,
 )
 from src.ingestion.urls import (
     MAX_SAME_ORIGIN_REDIRECTS,
@@ -18,11 +19,13 @@ from src.ingestion.urls import (
     REQUEST_TIMEOUT,
     same_origin,
 )
-from src.models.content import ContentItem, ContentType
+from src.models.content import ContentItem, ContentType, get_enum_value
 from src.utils.matching import (
     MINIMUM_TITLE_SIMILARITY,
+    Candidate,
     best_match_index,
     title_similarity,
+    year_of,
 )
 from src.utils.request_errors import scrub_request_error
 from src.utils.series import split_series_from_title, valid_series_position
@@ -35,7 +38,10 @@ HARDCOVER_API_URL = "https://api.hardcover.app/v1/graphql"
 _SERIES_QUERY = """
 query BookSeriesPosition($where: books_bool_exp!, $limit: Int!) {
   books(where: $where, limit: $limit, order_by: {users_count: desc}) {
+    id
     title
+    release_year
+    image { url }
     contributions { author { name } }
     featured_book_series { position series { name } }
   }
@@ -83,6 +89,20 @@ def _states_the_author(book: dict[str, Any], author: str) -> bool:
         title_similarity(credited, name) >= MINIMUM_TITLE_SIMILARITY
         for credited in _AUTHOR_SEPARATORS.split(author)
         for name in stated
+    )
+
+
+def _candidate(book: dict[str, Any]) -> Candidate:
+    credited = [
+        str(((contribution or {}).get("author") or {}).get("name") or "")
+        for contribution in book.get("contributions") or []
+    ]
+    return Candidate(
+        record_id=str(book.get("id") or ""),
+        title=str(book.get("title") or ""),
+        year=year_of(book.get("release_year")),
+        creator=", ".join(name for name in credited if name) or None,
+        cover_url=(book.get("image") or {}).get("url"),
     )
 
 
@@ -184,7 +204,22 @@ class HardcoverProvider(EnrichmentProvider):
         book = self._match(item, api_key)
         return _series_ordinal(book) if book is not None else None
 
+    def search(self, item: ContentItem, config: dict[str, Any]) -> list[Candidate]:
+        api_key = str(config.get("api_key") or "").strip()
+        if not api_key or get_enum_value(item.content_type) != ContentType.BOOK.value:
+            return []
+        searched, _series = split_series_from_title(item.title)
+        log_search_title(logger, item.title, searched)
+        return [
+            _candidate(book) for book in self._books(_title_where(searched), api_key)
+        ]
+
     def _match(self, item: ContentItem, api_key: str) -> dict[str, Any] | None:
+        pinned = pinned_record(item, self.name)
+        if pinned is not None:
+            books = self._books({"id": {"_eq": pinned}}, api_key)
+            return books[0] if books else None
+
         isbn_clause = _isbn_where(item.metadata)
         if isbn_clause is not None:
             editions = self._books(isbn_clause, api_key)

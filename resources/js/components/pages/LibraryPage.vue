@@ -236,8 +236,13 @@ onUnmounted(() => {
       :item="lib.editingItem"
       :saving="lib.editSaving"
       :save-error="lib.editError"
+      :pin-candidates="lib.pinCandidates"
+      :pinned="lib.pinned"
+      :pin-searching="lib.pinSearching"
       @save="lib.saveEdit"
       @clear-manual="onClearManual"
+      @pin-search="lib.findPinCandidates"
+      @pin="lib.pinEnrichment"
       @close="onCloseEdit"
     />
 
