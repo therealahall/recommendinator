@@ -548,13 +548,11 @@ class MyEnrichmentProvider(EnrichmentProvider):
     ) -> EnrichmentResult | None:
         # Return None when the item cannot be found.
         return EnrichmentResult(
-            external_id="myapi:12345",
             genres=["Action", "Adventure"],
             tags=["open-world", "rpg"],
             description="A description from the API",
             extra_metadata={"runtime": 120, "release_year": 2024},
             match_quality="high",  # "high", "medium", or "not_found"
-            provider=self.name,
         )
 
     def fetch_series_ordinal(

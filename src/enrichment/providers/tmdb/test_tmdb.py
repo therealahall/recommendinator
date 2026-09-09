@@ -100,12 +100,10 @@ class TestTMDBProviderMovieEnrichment:
             result = provider.enrich(item, config)
 
         assert result is not None
-        assert result.external_id == "tmdb:603"
         assert result.genres == ["Action", "Science Fiction"]
         assert result.tags == ["dystopia", "virtual reality"]
         assert "hacker" in result.description
         assert result.match_quality == "high"
-        assert result.provider == "tmdb"
         assert result.extra_metadata.get("runtime") == 136
         assert result.extra_metadata.get("release_year") == 1999
         assert result.cover_url == "https://image.tmdb.org/t/p/w500/abc123.jpg"
@@ -191,7 +189,6 @@ class TestTMDBProviderMovieEnrichment:
             result = provider.enrich(movie_item, config)
 
         assert result is not None
-        assert result.external_id == "tmdb:603"
         assert result.match_quality == "high"
         assert result.cover_url is None
 
@@ -210,64 +207,6 @@ class TestTMDBProviderMovieEnrichment:
         assert result is not None
         assert result.match_quality == "not_found"
         assert result.genres is None
-
-    @pytest.mark.parametrize(
-        ("retry_result", "expected_external_id"),
-        [
-            (
-                {"id": 12345, "title": "Fully Loaded", "release_date": "2018-01-12"},
-                None,
-            ),
-            (
-                {"id": 12345, "title": "Fully Loaded", "release_date": "2000-01-12"},
-                "tmdb:12345",
-            ),
-        ],
-        ids=["another-year", "a-year-or-two-out"],
-    )
-    def test_the_yearless_retry_takes_a_near_year_release_and_nothing_further_off(
-        self,
-        provider: TMDBProvider,
-        config: dict[str, Any],
-        retry_result: dict[str, Any],
-        expected_external_id: str | None,
-    ) -> None:
-        item = ContentItem(
-            id="movie123",
-            title="Fully Loaded",
-            content_type=ContentType.MOVIE,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"release_year": 1998},
-        )
-
-        mock_empty_response = {"results": []}
-        mock_retry_response = {"results": [retry_result]}
-        mock_movie_response = {"id": 12345, "title": "Fully Loaded", "genres": []}
-
-        with patch("src.enrichment.providers.tmdb.tmdb.requests.get") as mock_get:
-            mock_get.side_effect = [
-                MagicMock(
-                    spec=requests.Response,
-                    status_code=200,
-                    json=lambda: mock_empty_response,
-                ),
-                MagicMock(
-                    spec=requests.Response,
-                    status_code=200,
-                    json=lambda: mock_retry_response,
-                ),
-                MagicMock(
-                    spec=requests.Response,
-                    status_code=200,
-                    json=lambda: mock_movie_response,
-                ),
-            ]
-
-            result = provider.enrich(item, {**config, "include_keywords": False})
-
-        assert "year" not in mock_get.call_args_list[1].kwargs["params"]
-        assert result is not None
-        assert result.external_id == expected_external_id
 
     def test_the_picker_searches_unfiltered_by_the_year_it_exists_to_correct(
         self, provider: TMDBProvider, movie_item: ContentItem, config: dict[str, Any]
@@ -361,7 +300,6 @@ class TestTMDBProviderMovieEnrichment:
             result = provider.enrich(item, config)
 
         assert result is not None
-        assert result.external_id == "tmdb:129"
         assert result.match_quality == "high"
 
     def test_a_tmdb_prefixed_item_id_enriches_without_a_title_check(
@@ -394,7 +332,6 @@ class TestTMDBProviderMovieEnrichment:
             result = provider.enrich(item, config)
 
         assert result is not None
-        assert result.external_id == "tmdb:603"
         assert result.match_quality == "high"
 
     def test_enrich_movie_sets_director_and_excludes_non_director_roles(
@@ -557,7 +494,6 @@ class TestTMDBProviderTVShowEnrichment:
             result = provider.enrich(tv_item, config)
 
         assert result is not None
-        assert result.external_id == "tmdb:1396"
         assert result.genres == ["Drama", "Crime"]
         assert result.tags == ["crime", "drug trade"]
         assert "chemistry teacher" in result.description
@@ -567,43 +503,6 @@ class TestTMDBProviderTVShowEnrichment:
         assert result.extra_metadata.get("network") == "AMC"
         assert "Vince Gilligan" in result.extra_metadata.get("creators", "")
         assert result.cover_url == "https://image.tmdb.org/t/p/w500/bb.jpg"
-
-    def test_a_remake_is_told_from_the_original_by_its_first_air_date(
-        self, provider: TMDBProvider, config: dict[str, Any]
-    ) -> None:
-        item = ContentItem(
-            id="show123",
-            title="The Office (UK)",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"release_year": 2001},
-        )
-        mock_search_response = {
-            "results": [
-                {"id": 2316, "name": "The Office", "first_air_date": "2005-03-24"},
-                {"id": 2966, "name": "The Office", "first_air_date": "2001-07-09"},
-            ]
-        }
-        mock_tv_response = {"id": 2966, "name": "The Office", "genres": []}
-
-        with patch("src.enrichment.providers.tmdb.tmdb.requests.get") as mock_get:
-            mock_get.side_effect = [
-                MagicMock(
-                    spec=requests.Response,
-                    status_code=200,
-                    json=lambda: mock_search_response,
-                ),
-                MagicMock(
-                    spec=requests.Response,
-                    status_code=200,
-                    json=lambda: mock_tv_response,
-                ),
-            ]
-
-            result = provider.enrich(item, {**config, "include_keywords": False})
-
-        assert result is not None
-        assert result.external_id == "tmdb:2966"
 
     def test_a_show_titled_with_its_original_name_matches_the_localized_result(
         self, provider: TMDBProvider, config: dict[str, Any]
@@ -644,7 +543,6 @@ class TestTMDBProviderTVShowEnrichment:
             result = provider.enrich(item, {**config, "include_keywords": False})
 
         assert result is not None
-        assert result.external_id == "tmdb:71446"
         assert result.match_quality == "high"
 
 

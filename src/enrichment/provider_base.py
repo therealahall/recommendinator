@@ -63,9 +63,6 @@ def with_pin(
 
 @dataclass
 class EnrichmentResult:
-    # Provider's ID for the item (e.g., "tmdb:12345", "openlibrary:OL123W")
-    external_id: str | None = None
-
     genres: list[str] | None = None
     tags: list[str] | None = None
     description: str | None = None
@@ -79,8 +76,6 @@ class EnrichmentResult:
     # "medium" = fuzzy match
     # "not_found" = no match found
     match_quality: str = "high"
-
-    provider: str = ""
 
 
 @dataclass(frozen=True)

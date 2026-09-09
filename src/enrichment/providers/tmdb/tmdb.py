@@ -165,10 +165,7 @@ class TMDBProvider(EnrichmentProvider):
             )
 
         if tmdb_id is None:
-            return EnrichmentResult(
-                match_quality="not_found",
-                provider=self.name,
-            )
+            return EnrichmentResult(match_quality="not_found")
 
         return self._fetch_movie_details(tmdb_id, api_key, language, include_keywords)
 
@@ -187,10 +184,7 @@ class TMDBProvider(EnrichmentProvider):
             )
 
         if tmdb_id is None:
-            return EnrichmentResult(
-                match_quality="not_found",
-                provider=self.name,
-            )
+            return EnrichmentResult(match_quality="not_found")
 
         return self._fetch_tv_details(tmdb_id, api_key, language, include_keywords)
 
@@ -358,14 +352,12 @@ class TMDBProvider(EnrichmentProvider):
                 extra_metadata["tmdb_collection_id"] = collection.get("id")
 
             return EnrichmentResult(
-                external_id=f"tmdb:{tmdb_id}",
                 genres=genres if genres else None,
                 tags=tags,
                 description=movie.get("overview"),
                 cover_url=_poster_url(movie),
                 extra_metadata=extra_metadata,
                 match_quality="high",
-                provider=self.name,
             )
 
         except requests.RequestException as error:
@@ -436,14 +428,12 @@ class TMDBProvider(EnrichmentProvider):
                 extra_metadata["status"] = show["status"]
 
             return EnrichmentResult(
-                external_id=f"tmdb:{tmdb_id}",
                 genres=genres if genres else None,
                 tags=tags,
                 description=show.get("overview"),
                 cover_url=_poster_url(show),
                 extra_metadata=extra_metadata,
                 match_quality="high",
-                provider=self.name,
             )
 
         except requests.RequestException as error:

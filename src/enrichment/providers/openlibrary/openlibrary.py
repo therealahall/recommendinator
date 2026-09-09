@@ -164,10 +164,7 @@ class OpenLibraryProvider(EnrichmentProvider):
     def _search_book(self, item: ContentItem) -> EnrichmentResult:
         docs = self._search_docs(item)
         if not docs:
-            return EnrichmentResult(
-                match_quality="not_found",
-                provider=self.name,
-            )
+            return EnrichmentResult(match_quality="not_found")
 
         doc = docs[0]
         work_key = doc.get("key")
@@ -252,18 +249,14 @@ class OpenLibraryProvider(EnrichmentProvider):
                 if first_year and "year_published" not in extra_metadata:
                     extra_metadata["year_published"] = first_year
 
-            work_id = work_key.split("/")[-1] if work_key else None
-
             # Also set tags from genres for cross-content-type matching
             return EnrichmentResult(
-                external_id=f"openlibrary:{work_id}" if work_id else None,
                 genres=genres if genres else None,
                 tags=genres if genres else None,
                 description=description,
                 cover_url=_cover_url(work),
                 extra_metadata=extra_metadata,
                 match_quality="high",
-                provider=self.name,
             )
 
         except requests.RequestException as error:
@@ -288,15 +281,11 @@ class OpenLibraryProvider(EnrichmentProvider):
         genres = self._filter_subjects(subjects)
 
         return EnrichmentResult(
-            # No external_id: this is an edition, and the pin the next run reads
-            # is looked up under /works.
-            external_id=None,
             genres=genres if genres else None,
             tags=genres if genres else None,
             cover_url=_cover_url(edition),
             extra_metadata=extra_metadata,
             match_quality="medium",
-            provider=self.name,
         )
 
     def _build_result_from_search(self, doc: dict[str, Any]) -> EnrichmentResult:
@@ -312,16 +301,12 @@ class OpenLibraryProvider(EnrichmentProvider):
         subjects = doc.get("subject", [])
         genres = self._filter_subjects(subjects)
 
-        work_key = doc.get("key", "").split("/")[-1]
-
         return EnrichmentResult(
-            external_id=f"openlibrary:{work_key}" if work_key else None,
             genres=genres if genres else None,
             tags=genres if genres else None,
             cover_url=_cover_from_id(doc.get("cover_i")),
             extra_metadata=extra_metadata,
             match_quality="medium",
-            provider=self.name,
         )
 
     def _filter_subjects(self, subjects: list[Any]) -> list[str]:
