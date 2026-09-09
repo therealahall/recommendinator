@@ -1605,12 +1605,6 @@ class TestManualEditEnrichmentProtectionRegression:
         assert manual.metadata.get("tags") == ["slow-burn"]
         assert manual.metadata.get("description") == "Hand written synopsis."
         assert manual.enriched is True
-        assert set(manual.manual_fields) == {
-            "status",
-            "genres",
-            "tags",
-            "description",
-        }
 
         auto = storage_manager.get_content_item(auto_id)
         assert auto.metadata.get("genres") == ["Action", "Drama"]

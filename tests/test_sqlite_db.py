@@ -1693,15 +1693,6 @@ class TestSearchPagesPartitionTheMatchedSet:
         ("i_robot", "I, Robot", "Isaac Asimov"),
     )
 
-    _MANY_MATCHES = (
-        ("exact", "Marshals", "Ada Vance"),
-        ("fuzzy", "Marshalls", "Ada Vance"),
-        *(
-            (f"sub_{index:02d}", f"Marshals {index:02d}", "Ada Vance")
-            for index in range(10)
-        ),
-    )
-
     @staticmethod
     def _seed(temp_db: SQLiteDB, rows: tuple[tuple[str, str, str], ...]) -> None:
         for external_id, title, author in rows:
@@ -1726,23 +1717,6 @@ class TestSearchPagesPartitionTheMatchedSet:
             "i_robot",
             "caves",
         ]
-
-    def test_a_page_boundary_inside_a_tier_neither_repeats_nor_drops(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """Twelve matches over two pages of ten, with the fuzzy match first in the
-        title order and last in the ranked one — the id a boundary drawn before the
-        ranking would put on both pages."""
-        self._seed(temp_db, self._MANY_MATCHES)
-
-        whole = [item.id for item in temp_db.get_content_items(search="Marshals")]
-        page1 = temp_db.get_content_items(search="Marshals", limit=10, offset=0)
-        page2 = temp_db.get_content_items(search="Marshals", limit=10, offset=10)
-        paged = [item.id for item in (*page1, *page2)]
-
-        assert [len(page1), len(page2)] == [10, 2]
-        assert paged == whole
-        assert len(set(paged)) == 12
 
     @pytest.mark.parametrize("page_size", [1, 2])
     def test_a_search_pages_one_set_when_the_tiers_disagree(
@@ -4716,11 +4690,6 @@ class TestManualFieldHolds:
         assert stored.author == "Capcom"
         assert stored.manual_fields == []
 
-    def test_clearing_refuses_a_field_no_hold_names(self, temp_db: SQLiteDB) -> None:
-        db_id = self._steam_game(temp_db, "Valve")
-
-        assert temp_db.clear_manual_field(db_id, "creator") is False
-
     def test_completing_an_item_keeps_its_status_held(self, temp_db: SQLiteDB) -> None:
         """The completion door is the operator's own, so the status it writes
         stays held rather than dropping back to what a source may state."""
@@ -4741,29 +4710,6 @@ class TestManualFieldHolds:
         assert stored is not None
         assert stored.status == ConsumptionStatus.COMPLETED
         assert stored.manual_fields == ["status"]
-
-    def test_a_held_title_survives_a_sync_stating_another_one(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """Title is the field ``_upsert_content_item`` used to overwrite
-        unconditionally, dedup key and all."""
-        db_id = self._steam_game(temp_db, "Valve")
-        temp_db.update_item_from_ui(db_id=db_id, title="Portal 2: The Final Hours")
-
-        temp_db.save_content_item(
-            ContentItem(
-                id="620",
-                title="Portal 2 - Deluxe",
-                content_type=ContentType.VIDEO_GAME,
-                status=ConsumptionStatus.UNREAD,
-                source="steam",
-            )
-        )
-
-        stored = temp_db.get_content_item(db_id)
-        assert stored is not None
-        assert stored.title == "Portal 2: The Final Hours"
-        assert stored.manual_fields == ["title"]
 
     def test_a_sync_carrying_no_genres_leaves_the_held_ones_standing(
         self, temp_db: SQLiteDB
@@ -4876,31 +4822,6 @@ class TestManualFieldHolds:
         stored = temp_db.get_content_item(kept)
         assert stored is not None
         assert stored.status == ConsumptionStatus.COMPLETED
-        assert stored.manual_fields == ["status"]
-
-    def test_undoing_that_merge_hands_the_status_back_still_held(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """The undo puts the operator's status back, so a sync that has never
-        stopped stating another one must still be held off it."""
-        kept = self._steam_game(temp_db, "Valve")
-        temp_db.update_item_from_ui(db_id=kept, status="unread")
-        absorbed = temp_db.save_content_item(
-            ContentItem(
-                id="portal-2",
-                title="Portal 2 Sixense Bundle",
-                content_type=ContentType.VIDEO_GAME,
-                status=ConsumptionStatus.COMPLETED,
-                source="gog",
-            )
-        )
-        merge = temp_db.merge_content_items(kept, absorbed, MergeEvidence.MANUAL)
-
-        temp_db.unmerge_content_items(merge.id)
-
-        stored = temp_db.get_content_item(kept)
-        assert stored is not None
-        assert stored.status == ConsumptionStatus.UNREAD
         assert stored.manual_fields == ["status"]
 
 

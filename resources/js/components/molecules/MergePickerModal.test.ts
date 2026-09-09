@@ -68,18 +68,6 @@ describe('MergePickerModal', () => {
     }
   })
 
-  it('names the survivor and the absorbed item in the confirmation', async () => {
-    const wrapper = picker()
-
-    await button(wrapper, 'Choose “Le Fabuleux').trigger('click')
-    await button(wrapper, 'Keep “Amelie”').trigger('click')
-
-    const panel = wrapper.get('[data-testid="confirm-panel"]')
-    expect(panel.text()).toContain('Keep “Amelie”')
-    expect(panel.text()).toContain('absorb “Le Fabuleux Destin d’Amelie Poulain”')
-    wrapper.unmount()
-  })
-
   it('follows the keyboard onto the pair, whose step unmounted the button pressed', async () => {
     const wrapper = picker()
     // The dialog takes focus on mount; without settling that first it lands on

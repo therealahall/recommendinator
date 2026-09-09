@@ -62,13 +62,13 @@ def read_holds(cursor: sqlite3.Cursor, db_id: int) -> set[str]:
     return {row["field"] for row in cursor.fetchall()}
 
 
-def held_detail_columns(content_type: str, held: Iterable[str]) -> dict[str, str]:
-    """Column to field name, for the held fields this type keeps in a column."""
-    columns = {}
+def held_detail_columns(content_type: str, held: Iterable[str]) -> set[str]:
+    """The columns this type keeps the held fields in."""
+    columns = set()
     for field in held:
         detail_field = _manual_detail_field(content_type, field)
         if detail_field is not None and detail_field.column is not None:
-            columns[detail_field.column] = field
+            columns.add(detail_field.column)
     return columns
 
 

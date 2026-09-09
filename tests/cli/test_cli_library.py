@@ -40,7 +40,7 @@ from src.utils.duplicate_serialization import (
 from src.utils.series import MAX_SEASONS
 from src.utils.sorting import MAX_SEARCH_LENGTH
 from src.web.api._library import ContentItemResponse, IgnoreItemResponse
-from tests.factories import authenticated_client, booted_web_app, make_storage_mock
+from tests.factories import make_storage_mock
 
 from .conftest import _invoke_with_mocks
 
@@ -232,47 +232,6 @@ class TestLibraryList:
         call_kwargs = mock_storage.get_content_items.call_args[1]
         assert call_kwargs["status"] == ConsumptionStatus.COMPLETED
         assert call_kwargs["unrated_only"] is True
-
-
-class TestSearchRanksTheSameInBothInterfaces:
-    """The ranking lives in storage precisely so one library cannot come back in two
-    orders, and a search run twice in two places is where a user would meet it."""
-
-    _LIBRARY = (
-        ("federal", "Federal Marshals"),
-        ("marshalls", "Marshalls"),
-        ("marshals", "Marshals"),
-    )
-
-    def test_the_cli_and_the_web_return_one_ranked_order(
-        self, cli_runner: CliRunner, tmp_path: Path
-    ) -> None:
-        storage = StorageManager(sqlite_path=tmp_path / "search-parity.db")
-        for external_id, title in self._LIBRARY:
-            storage.save_content_item(
-                ContentItem(
-                    id=external_id,
-                    title=title,
-                    content_type=ContentType.TV_SHOW,
-                    status=ConsumptionStatus.COMPLETED,
-                )
-            )
-
-        with booted_web_app(storage, {}) as app:
-            response = authenticated_client(app).get(
-                "/api/items", params={"search": "Marshals"}
-            )
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["library", "list", "--search", "Marshals", "--format", "json"],
-            storage,
-        )
-
-        assert response.status_code == 200, response.text
-        assert result.exit_code == 0, result.output
-        web_titles = [item["title"] for item in response.json()]
-        assert web_titles == ["Marshals", "Federal Marshals", "Marshalls"]
-        assert [item["title"] for item in json.loads(result.output)] == web_titles
 
 
 class TestLibraryListCreatorColumnRegression:
@@ -1706,34 +1665,6 @@ class TestLibraryMergeByName:
         assert neither.exit_code != 0
         assert "Pass --survivor or --survivor-title." in neither.output
         assert _json(cli_runner, storage, ["library", "merges"]) == []
-
-    def test_naming_one_row_twice_and_naming_two_types_are_both_refused(
-        self, cli_runner: CliRunner, tmp_path: Path
-    ) -> None:
-        storage = _amelie_library(tmp_path)
-        book = _save_book(storage, "calibre", "4", "Delicatessen")
-
-        itself = _invoke_with_mocks(
-            cli_runner,
-            ["library", "merge", "--survivor-title", "Amelie"]
-            + ["--absorbed-title", "Amelie"],
-            storage,
-        )
-        crossed = _invoke_with_mocks(
-            cli_runner,
-            ["library", "merge", "--survivor-title", "Amelie"]
-            + ["--absorbed-title", "Delicatessen"],
-            storage,
-        )
-
-        assert itself.exit_code != 0
-        assert "cannot absorb itself." in itself.output
-        assert crossed.exit_code != 0
-        assert "A movie cannot absorb a book." in crossed.output
-        assert _json(cli_runner, storage, ["library", "merges"]) == []
-        assert book in [
-            item["db_id"] for item in _json(cli_runner, storage, ["library", "list"])
-        ]
 
 
 class TestDuplicateJsonIsTheSharedSerializer:

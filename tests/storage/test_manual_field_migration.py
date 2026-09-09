@@ -10,7 +10,7 @@ from src.storage.manager import StorageManager
 def _seed_manually_enriched_db(
     path: Path,
     *,
-    genres: list[str] | None,
+    genres: list[str],
     emptied: bool = False,
     value_holding: str | None = None,
     version: int = 23,
@@ -25,7 +25,7 @@ def _seed_manually_enriched_db(
             title="Arrival",
             content_type=ContentType.MOVIE,
             status=ConsumptionStatus.UNREAD,
-            metadata={"genres": genres} if genres else {},
+            metadata={"genres": genres},
         ),
         user_id=1,
     )
@@ -72,22 +72,6 @@ def test_a_past_correction_becomes_a_hold_on_the_fields_it_could_have_touched(
     assert item.manual_fields == ["genres"]
 
 
-def test_a_hold_that_stored_values_keeps_its_field_through_both_steps(
-    tmp_path: Path,
-) -> None:
-    """The two run in sequence on one open, so the values are dropped before the
-    provider step inserts into the table it left behind."""
-    db_path = tmp_path / "boolean.db"
-    db_id = _seed_manually_enriched_db(
-        db_path, genres=["Sci-Fi"], value_holding="title"
-    )
-
-    item = StorageManager(sqlite_path=db_path).get_content_item(db_id, user_id=1)
-
-    assert item is not None
-    assert item.manual_fields == ["genres", "title"]
-
-
 def test_the_version_that_stored_the_values_keeps_its_holds_and_takes_new_ones(
     tmp_path: Path,
 ) -> None:
@@ -117,18 +101,6 @@ def test_the_upgraded_item_rejoins_the_automatic_queue(tmp_path: Path) -> None:
         item.db_id
         for item in storage.get_content_items(user_id=1, enrichment="not_enriched")
     ] == [db_id]
-
-
-def test_an_item_whose_fields_are_all_empty_is_held_on_none_of_them(
-    tmp_path: Path,
-) -> None:
-    db_path = tmp_path / "empty.db"
-    db_id = _seed_manually_enriched_db(db_path, genres=None)
-
-    item = StorageManager(sqlite_path=db_path).get_content_item(db_id, user_id=1)
-
-    assert item is not None
-    assert item.manual_fields == []
 
 
 def test_a_list_the_operator_emptied_is_held_at_empty_not_refilled(

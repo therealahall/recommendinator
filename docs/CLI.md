@@ -176,10 +176,9 @@ the web sends.
 `--genre` and `--tag` replace the existing lists rather than appending.
 
 Every field an edit writes is held against its source from then on: a later sync
-and every enrichment run leave it alone. `library show` lists the held fields.
-Seasons are unheld on purpose — a sync only ever adds a watched season. That is
-also the one thing that moves a held status: a TV show whose source reports a
-season past the ones you have ticked goes back to in-progress, and stays held.
+and every enrichment run leave it alone, and `library show` lists what is held.
+The one exception is a TV show whose source reports a season past the ones you
+have ticked, which goes back to in-progress, still held.
 
 `--release-year` and `--creator` correct the two fields a title match is vetoed
 on, so a row still holding a released merge's wrong year takes the next source
@@ -187,10 +186,9 @@ stating the true one instead of growing the library another row. A year runs
 1800-2200 and a creator 500 characters; a book takes no `--release-year`,
 because `year_published` dates the edition rather than the work.
 
-`--title` renames the item, up to 500 characters and never blank. The sort key
-and the search text are rebuilt from it, so the item answers to its new name and
-not its old one, and the source that named the old one syncs back onto the same
-row rather than adding a second.
+`--title` renames the item, up to 500 characters and never blank. It answers to
+the new name in a search and to the old one no longer, and the source that named
+the old one still syncs onto the same row rather than adding a second.
 
 `--format json` emits the edited item, the body `PATCH /api/items/<id>` answers.
 
@@ -201,8 +199,8 @@ uv run python -m src.cli library clear-manual --id 42 --field creator
 uv run python -m src.cli library clear-manual --id 42 --field genres --format json
 ```
 
-Stops holding one field, so the next sync or enrichment run may state it again.
-The stored value is left as it is. `--field` takes `title`, `status`, `rating`,
+Stops holding one field, leaving the stored value as it is, so the next sync or
+enrichment run may state it again. `--field` takes `title`, `status`, `rating`,
 `review`, `genres`, `tags`, `description`, `release_year` or `creator`.
 `--format json` emits what `DELETE /api/items/<id>/manual-fields/<field>`
 answers.
@@ -247,11 +245,10 @@ copy, from the one listing. Nothing is deleted, and `unmerge` puts the absorbed
 row back — newest merge first, refusing any other order.
 
 `--survivor-title` and `--absorbed-title` name a side by title instead, for the
-same work held under two names, which nothing above ever offers because the two
-share no title key. Each is searched as `library list --search` searches, and a
-term matching more than one row is refused with those rows listed rather than
-resolved to the best-ranked one. The web reaches the same merge from an item's
-**Merge** action, which searches, then asks which side survives.
+same work held under two names, which nothing above ever offers. Each is
+searched as `library list --search` searches, and a term matching more than one
+row is refused with those rows listed. The web reaches the same merge from an
+item's **Merge** action.
 
 A show's season sizes survive on both sides: each season takes the largest count
 either row stated.
