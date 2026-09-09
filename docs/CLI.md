@@ -156,15 +156,14 @@ uv run python -m src.cli library edit --id 42 --release-year 1993 --creator "id 
 uv run python -m src.cli library edit --id 42 --title "The Hobbit"
 ```
 
-**Only the flags you pass are written**, so a status-only edit cannot erase a
-rating. Passing one replaces it.
+**Only the flags you pass are written.** Passing one replaces the stored value.
 
 A TV show status fills in a season list you did not pass only where that adds
 one: `--status completed` ticks every season. Nothing else infers seasons from a
 status, and nothing but `--clear-seasons` empties the list, because a sync only
 ever adds a watched season. Pass both and both are written as given.
 
-Emptying a field is a separate instruction. `--clear-rating`, `--clear-review`,
+`--clear-rating`, `--clear-review`,
 `--clear-seasons`, `--clear-genres` and `--clear-tags` are the only way to store
 nothing there, and none may be combined with its value flag. `--review ""` is
 refused, pointing you at `--clear-review`, because an empty string is far more
@@ -175,20 +174,20 @@ the web sends.
 `--seasons-watched` takes comma-separated season numbers, each 1-200. Repeated
 `--genre` and `--tag` replace the existing lists rather than appending.
 
-Every field an edit writes is held against its source from then on: a later sync
-and every enrichment run leave it alone, and `library show` lists what is held.
-The one exception is a TV show whose source reports a season past the ones you
-have ticked, which goes back to in-progress, still held.
+Every field an edit writes is held against its source: a later sync and every
+enrichment run leave it alone, and `library show` lists what is held. The one
+exception is a TV show whose source reports a season past the ones you ticked,
+which goes back to in-progress, still held.
 
 `--release-year` and `--creator` correct the two fields a title match is vetoed
-on, so a row still holding a released merge's wrong year takes the next source
-stating the true one instead of growing the library another row. A year runs
+on, so a row with a wrong year takes the next source stating the true one
+instead of growing the library another row. A year runs
 1800-2200 and a creator 500 characters; a book takes no `--release-year`,
 because `year_published` dates the edition rather than the work.
 
-`--title` renames the item, up to 500 characters and never blank. It answers to
-the new name in a search and to the old one no longer, and the source that named
-the old one still syncs onto the same row rather than adding a second.
+`--title` renames the item, up to 500 characters and never blank. The source
+that named the old title still syncs onto the same row rather than adding a
+second.
 
 `--format json` emits the edited item, the body `PATCH /api/items/<id>` answers.
 

@@ -51,8 +51,8 @@ save the new URL, then enter the credential the new host expects.
 ## What a refusal says
 
 A source `url` must be `http` or `https`, must name a host, and must not embed
-`user:password@`. Source config is validated when it is written and again at
-sync, and neither 400 carries the plugin's own message: a write names the field
+`user:password@`. Source config is validated at write and again at
+sync, neither 400 carrying the plugin's own message: a write names the field
 it blames, or repeats a path-containment refusal verbatim, and a sync names the
 settings it matched or answers a fixed string. The reason goes to the log
 instead.
@@ -60,32 +60,31 @@ instead.
 **One carve-out: a plugin module that failed to import.** `GET
 /api/sync/sources`, `GET /api/plugins`, the 400 from `POST /api/update` and the
 400 `require_plugin` raises for every `/api/sync/sources/{source_id}/*` route
-carry the module name and the exception that lost it, because "No module named
-'defusedxml'" is the answer the operator needs and those routes need a session.
+carry the module name and the exception that lost it, because that is the answer
+the operator needs and those routes need a session.
 
 **The second: templates that are not installed.** The 503 from both
-`/api/import/templates` routes names the directory it looked in, for the same
-reason — a broken install is fixed from that path.
+`/api/import/templates` routes names the directory it looked in, because a
+broken install is fixed from that path.
 
 **The third: a file the chosen format cannot parse.** The 400 from `POST
 /api/import` repeats the parser's own words because nothing else says which row
-to fix. The file is the operator's own upload. The per-row `errors` in a 200 are
-not this carve-out: a row that fails to save is named by exception class, never
+to fix. A row that fails to save inside a 200 is named by exception class, never
 quoted.
 
 **The fourth: a correction to a field the content type does not state.** The
 400 from `PATCH /api/items/{db_id}` repeats `UncorrectableFieldError`, whose
-message is fixed over the content type and one of two field names — "A book has
-no release year to correct." — and holds nothing from the request.
+message is fixed over the content type and one of two field names, and holds
+nothing from the request.
 
 **The fifth: a merge or an undo storage refused.** The 409 from `_refused_merge`
-repeats `MergeError`, which names the row or the merge to deal with first and is
-built from ids the request already carries.
+repeats `MergeError`, which names the row or merge to deal with first, built
+from ids the request already carries.
 
 **The sixth: a pin no enrichment run could read back.** The 400 from `POST
 /api/enrichment/pin` repeats `PinRefused`, worded from the provider and record
-the request named and the registry's own provider names. Its own exception type
-so an unrelated failure inside `EnrichmentManager.pin` is not echoed with it.
+the request named and the registry's own provider names. Nothing else from
+`EnrichmentManager.pin` is echoed.
 
 ## Web sign-in
 
