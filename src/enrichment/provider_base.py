@@ -169,6 +169,12 @@ class EnrichmentProvider(ABC):
         """
         return []
 
+    def accepts_record_id(self, record_id: str) -> bool:
+        """Whether a pin naming this record is one :meth:`enrich` can look up.
+        An id it cannot is stored and then silently ignored by every run.
+        """
+        return bool(record_id.strip())
+
     def fetch_series_ordinal(
         self, item: ContentItem, config: dict[str, Any]
     ) -> SeriesOrdinal | None:

@@ -24,6 +24,7 @@ from src.models.content import (
 from src.models.detail_fields import (
     CREATOR_FIELDS,
     DETAIL_FIELDS,
+    PIN_KEY,
     PROVIDER_OWNED_METADATA_KEYS,
     RELEASE_YEAR_FIELDS,
     ContentTypeFields,
@@ -495,7 +496,9 @@ class SQLiteDB:
                 db_id,
                 _surrogate_free(item),
                 content_type,
-                replaceable_metadata_keys=PROVIDER_OWNED_METADATA_KEYS,
+                # The pin map among them: clearing a pin writes an empty one,
+                # which a fill-only write would discard.
+                replaceable_metadata_keys=PROVIDER_OWNED_METADATA_KEYS | {PIN_KEY},
             )
             # Both read what was stored: a creator this filled belongs in the
             # search text, and a season count it raised unfinishes the show.

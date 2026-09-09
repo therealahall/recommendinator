@@ -468,6 +468,22 @@ class TestEnrichmentPinning:
         assert "--record or --clear" in result.output
         manager.pin.assert_not_called()
 
+    def test_a_pin_the_manager_refuses_reports_what_is_valid(
+        self, cli_runner: CliRunner
+    ) -> None:
+        manager = MagicMock(spec=EnrichmentManager)
+        manager.pin.side_effect = ValueError("pin one of rawg, tmdb.")
+
+        result = _invoke_with_enrichment_manager(
+            cli_runner,
+            ["enrichment", "pin", "--id", "7", "--provider", "rawgg", "--record", "1"],
+            self._storage(),
+            manager,
+        )
+
+        assert result.exit_code != 0
+        assert "pin one of rawg, tmdb." in result.output
+
 
 class TestEnrichmentReset:
     def test_reset_prompt_states_the_count_each_filter_leaves(

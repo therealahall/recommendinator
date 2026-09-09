@@ -377,9 +377,12 @@ def enrichment_pin(
 
     storage = ctx.obj["storage"]
     item = _item_or_abort(storage, item_id, user_id)
-    pinned = EnrichmentManager(storage, ctx.obj["config"]).pin(
-        item_id, item, provider, None if clear else record_id
-    )
+    try:
+        pinned = EnrichmentManager(storage, ctx.obj["config"]).pin(
+            item_id, item, provider, None if clear else record_id
+        )
+    except ValueError as error:
+        abort_with(str(error))
     payload = enrichment_pin_to_dict(
         item_id, provider, None if clear else record_id, pinned
     )

@@ -198,12 +198,21 @@ class TMDBProvider(EnrichmentProvider):
         route = _SEARCH_ROUTES.get(get_enum_value(item.content_type))
         if route is None:
             return []
-        return self._search_media(
-            item,
+        # Unfiltered by the stored year: an operator reaches the picker having
+        # decided the stored data is wrong, and TMDB filters the year exactly.
+        search_title = clean_media_title_for_search(item.title)
+        log_search_title(logger, item.title, search_title)
+        return self._request_candidates(
+            route[0],
             config.get("api_key", ""),
-            config.get("language", _DEFAULT_LANGUAGE),
-            *route,
+            {
+                "query": search_title,
+                "language": config.get("language", _DEFAULT_LANGUAGE),
+            },
         )
+
+    def accepts_record_id(self, record_id: str) -> bool:
+        return record_id.isdigit()
 
     def _get_tmdb_id(self, item: ContentItem, media_type: str) -> int | None:
         metadata = item.metadata or {}
@@ -240,41 +249,34 @@ class TMDBProvider(EnrichmentProvider):
         search_title, year = _searched(item)
         log_search_title(logger, item.title, search_title)
 
-        params = {
-            "api_key": api_key,
-            "query": search_title,
-            "language": language,
-        }
+        params = {"query": search_title, "language": language}
         if year:
             params[year_param] = str(year)
-
-        try:
-            candidates = self._request_candidates(endpoint, params=params)
+            candidates = self._request_candidates(endpoint, api_key, params)
             if best_match(search_title, year, candidates) is not None:
                 return candidates
+            # TMDB filters on an exact year where the gate allows three of
+            # drift, so a near-year release only surfaces on this retry.
+            del params[year_param]
 
-            if year and year_param in params:
-                del params[year_param]
-                # TMDB filters on an exact year where the gate allows three of
-                # drift, so a near-year release only surfaces on this retry.
-                return self._request_candidates(endpoint, params=params)
+        return self._request_candidates(endpoint, api_key, params)
 
-            return candidates
-
+    def _request_candidates(
+        self, endpoint: str, api_key: str, params: dict[str, str]
+    ) -> list[Candidate]:
+        try:
+            response = requests.get(
+                f"{TMDB_API_BASE}/{endpoint}",
+                params={"api_key": api_key, **params},
+                timeout=10,
+            )
+            response.raise_for_status()
         except requests.RequestException as error:
             # ``from None``: the api_key is a query parameter, so the URL on
             # ``__cause__`` is a credential a caller's traceback would print.
             raise ProviderError(
                 self.name, f"Failed to search TMDB: {scrub_request_error(error)}"
             ) from None
-
-    def _request_candidates(
-        self, endpoint: str, *, params: dict[str, str]
-    ) -> list[Candidate]:
-        response = requests.get(
-            f"{TMDB_API_BASE}/{endpoint}", params=params, timeout=10
-        )
-        response.raise_for_status()
         return [_candidate(result) for result in response.json().get("results", [])]
 
     def _matched_id(

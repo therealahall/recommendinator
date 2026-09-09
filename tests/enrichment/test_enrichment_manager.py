@@ -22,6 +22,7 @@ from src.enrichment.provider_base import (
     ProviderError,
     SeriesOrdinal,
 )
+from src.enrichment.providers.tmdb.tmdb import TMDBProvider
 from src.enrichment.registry import EnrichmentRegistry
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.enrichment_status import EnrichmentStore
@@ -1644,26 +1645,26 @@ class TestPinnedProviderRecord:
         db_id = storage_manager.save_content_item(self._movie())
         manager = self._manager(storage_manager)
 
-        manager.pin(db_id, storage_manager.get_content_item(db_id), "tmdb", "603")
+        manager.pin(db_id, storage_manager.get_content_item(db_id), "mock", "603")
         storage_manager.save_content_item(self._movie())
 
         resynced = storage_manager.get_content_item(db_id)
-        assert resynced.metadata["enrichment_ids"] == {"tmdb": "603"}
+        assert resynced.metadata["enrichment_ids"] == {"mock": "603"}
 
     def test_clearing_a_pin_drops_it_and_re_queues_a_settled_item(
         self, storage_manager: StorageManager
     ) -> None:
         db_id = storage_manager.save_content_item(self._movie())
         manager = self._manager(storage_manager)
-        manager.pin(db_id, storage_manager.get_content_item(db_id), "tmdb", "603")
-        storage_manager.enrichment.mark_complete(db_id, "tmdb", "high")
+        manager.pin(db_id, storage_manager.get_content_item(db_id), "mock", "603")
+        storage_manager.enrichment.mark_complete(db_id, "mock", "high")
 
-        manager.pin(db_id, storage_manager.get_content_item(db_id), "tmdb", None)
+        manager.pin(db_id, storage_manager.get_content_item(db_id), "mock", None)
 
         assert storage_manager.get_content_item(db_id).metadata["enrichment_ids"] == {}
         assert storage_manager.enrichment.status(db_id)["needs_enrichment"] is True
 
-    def test_a_run_records_the_record_it_matched_as_the_pin(
+    def test_an_automatic_match_leaves_the_item_unpinned_so_a_rename_rematches(
         self, storage_manager: StorageManager
     ) -> None:
         db_id = storage_manager.save_content_item(self._movie())
@@ -1673,7 +1674,7 @@ class TestPinnedProviderRecord:
         manager._wait_for_completion()
 
         stored = storage_manager.get_content_item(db_id)
-        assert stored.metadata["enrichment_ids"] == {"mock": "tt1"}
+        assert stored.metadata.get("enrichment_ids", {}) == {}
 
     def test_candidates_search_under_the_title_the_operator_gave(
         self, storage_manager: StorageManager
@@ -1709,32 +1710,37 @@ class TestPinnedProviderRecord:
 
         assert found == [("other", offered[0])]
 
-    def test_a_run_records_its_own_pin_without_evicting_another_providers(
-        self, storage_manager: StorageManager
+    @pytest.mark.parametrize(
+        ("provider_name", "record_id"),
+        [("themoviedb", "603"), ("tmdb", "tt0468569")],
+        ids=["a-name-no-provider-answers-to", "an-id-the-provider-cannot-look-up"],
+    )
+    def test_a_pin_no_run_could_read_back_is_refused_rather_than_stored(
+        self,
+        storage_manager: StorageManager,
+        provider_name: str,
+        record_id: str,
     ) -> None:
         db_id = storage_manager.save_content_item(self._movie())
         manager = self._manager(storage_manager)
-        manager.pin(db_id, storage_manager.get_content_item(db_id), "hardcover", "4231")
-
-        manager.start_enrichment()
-        manager._wait_for_completion()
-
-        stored = storage_manager.get_content_item(db_id)
-        assert stored.metadata["enrichment_ids"] == {
-            "hardcover": "4231",
-            "mock": "tt1",
-        }
-
-    def test_a_provider_no_registry_knows_is_refused_rather_than_stored(
-        self, storage_manager: StorageManager
-    ) -> None:
-        db_id = storage_manager.save_content_item(self._movie())
-        manager = self._manager(storage_manager)
+        manager.registry.register(TMDBProvider())
+        item = storage_manager.get_content_item(db_id)
 
         with pytest.raises(ValueError):
-            manager.pin(db_id, storage_manager.get_content_item(db_id), "MOCK", "tt1")
+            manager.pin(db_id, item, provider_name, record_id)
 
         assert "enrichment_ids" not in storage_manager.get_content_item(db_id).metadata
+
+    def test_a_provider_named_in_another_case_pins_under_the_name_runs_read(
+        self, storage_manager: StorageManager
+    ) -> None:
+        db_id = storage_manager.save_content_item(self._movie())
+        manager = self._manager(storage_manager)
+
+        manager.pin(db_id, storage_manager.get_content_item(db_id), "MOCK", "tt1")
+
+        stored = storage_manager.get_content_item(db_id)
+        assert stored.metadata["enrichment_ids"] == {"mock": "tt1"}
 
 
 class TestEnrichmentWritesTheRowItWasHandedRegression:

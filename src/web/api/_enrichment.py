@@ -231,9 +231,12 @@ def pin_enrichment_record(
 ) -> EnrichmentPinResponse:
     """Bind one item to one provider record, or hand it back to title search."""
     item = _item_or_404(storage, request.item_id, request.user_id)
-    pinned = EnrichmentManager(storage, config).pin(
-        request.item_id, item, request.provider, request.record_id
-    )
+    try:
+        pinned = EnrichmentManager(storage, config).pin(
+            request.item_id, item, request.provider, request.record_id
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
     payload = enrichment_pin_to_dict(
         request.item_id, request.provider, request.record_id, pinned
     )
