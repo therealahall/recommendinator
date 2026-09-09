@@ -71,7 +71,7 @@ class MockMovieProvider(EnrichmentProvider):
     def enrich(
         self, item: ContentItem, config: dict[str, Any]
     ) -> EnrichmentResult | None:
-        return EnrichmentResult(genres=["Action"], provider=self.name)
+        return EnrichmentResult(genres=["Action"])
 
 
 class MockBookProvider(EnrichmentProvider):
@@ -100,7 +100,7 @@ class MockBookProvider(EnrichmentProvider):
     def enrich(
         self, item: ContentItem, config: dict[str, Any]
     ) -> EnrichmentResult | None:
-        return EnrichmentResult(genres=["Fiction"], provider=self.name)
+        return EnrichmentResult(genres=["Fiction"])
 
 
 class TestEnrichmentRegistry:

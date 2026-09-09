@@ -88,16 +88,14 @@ class MockProvider(EnrichmentProvider):
             raise ProviderError(self._name, "Simulated failure")
 
         if self._should_not_find:
-            return EnrichmentResult(match_quality="not_found", provider=self._name)
+            return EnrichmentResult(match_quality="not_found")
 
         return EnrichmentResult(
-            external_id=f"{self._name}:{item.id}",
             genres=["Action", "Drama"],
             tags=["test-tag"],
             description="A test description.",
             extra_metadata={"source_rating": 8.5},
             match_quality="high",
-            provider=self._name,
         )
 
 
@@ -275,7 +273,6 @@ class TestMergeEnrichment:
             tags=["funny"],
             description="A comedy.",
             extra_metadata={"director": "Someone Else", "runtime": 90},
-            provider="tmdb",
         )
 
         merged = merge_enrichment(existing, result)
@@ -299,15 +296,13 @@ class TestMergeEnrichment:
     def test_a_stored_value_of_any_shape_keeps_its_place_behind_the_enrichment(
         self, field: str, stored: str | list[str], expected: list[str]
     ) -> None:
-        result = EnrichmentResult(provider="tmdb")
+        result = EnrichmentResult()
         setattr(result, field, ["Science Fiction"])
 
         assert merge_enrichment({field: stored}, result)[field] == expected
 
     def test_re_enriching_replaces_a_franchise_stored_from_a_worse_guess(self) -> None:
-        better = EnrichmentResult(
-            extra_metadata={"franchise": "Donkey Kong"}, provider="rawg"
-        )
+        better = EnrichmentResult(extra_metadata={"franchise": "Donkey Kong"})
 
         assert merge_enrichment({"franchise": "Donkey"}, better) == {
             "franchise": "Donkey Kong"
@@ -317,14 +312,13 @@ class TestMergeEnrichment:
         stored = {"series_name": "Alien", "series_position": 1}
         result = EnrichmentResult(
             extra_metadata={"series_name": "Alien Collection", "series_position": 3},
-            provider="tmdb",
         )
 
         assert merge_enrichment(stored, result) == stored
 
     def test_merging_leaves_the_callers_metadata_untouched(self) -> None:
         existing = {"genres": ["Comedy"]}
-        merge_enrichment(existing, EnrichmentResult(genres=["Action"], provider="tmdb"))
+        merge_enrichment(existing, EnrichmentResult(genres=["Action"]))
         assert existing == {"genres": ["Comedy"]}
 
 
@@ -1094,12 +1088,8 @@ class TestTransientProviderFailureIsRetryable:
                 if item.title == "Broken Movie":
                     raise ProviderError(self._name, "upstream 503")
                 if item.title == "Missing Movie":
-                    return EnrichmentResult(
-                        match_quality="not_found", provider=self._name
-                    )
-                return EnrichmentResult(
-                    genres=["Action"], match_quality="high", provider=self._name
-                )
+                    return EnrichmentResult(match_quality="not_found")
+                return EnrichmentResult(genres=["Action"], match_quality="high")
 
         found_id = save_movie(storage_manager, "Found Movie")
         missing_id = save_movie(storage_manager, "Missing Movie")
@@ -1650,6 +1640,20 @@ class TestPinnedProviderRecord:
 
         resynced = storage_manager.get_content_item(db_id)
         assert resynced.metadata["enrichment_ids"] == {"mock": "603"}
+
+    def test_a_pin_outlives_the_enrichment_run_that_merges_metadata_over_it(
+        self, storage_manager: StorageManager
+    ) -> None:
+        db_id = storage_manager.save_content_item(self._movie())
+        manager = self._manager(storage_manager)
+        manager.pin(db_id, storage_manager.get_content_item(db_id), "mock", "603")
+
+        manager.start_enrichment()
+        manager._wait_for_completion()
+
+        stored = storage_manager.get_content_item(db_id)
+        assert stored.metadata["genres"] == ["Action", "Drama"]
+        assert stored.metadata["enrichment_ids"] == {"mock": "603"}
 
     def test_clearing_a_pin_drops_it_and_re_queues_a_settled_item(
         self, storage_manager: StorageManager

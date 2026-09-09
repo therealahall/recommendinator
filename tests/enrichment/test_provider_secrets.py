@@ -63,12 +63,7 @@ class KeyedProvider(EnrichmentProvider):
         self, item: ContentItem, config: dict[str, Any]
     ) -> EnrichmentResult | None:
         self.received_configs.append(dict(config))
-        return EnrichmentResult(
-            external_id=f"keyed:{item.id}",
-            genres=["Action"],
-            match_quality="high",
-            provider=self.name,
-        )
+        return EnrichmentResult(genres=["Action"], match_quality="high")
 
 
 @pytest.fixture()

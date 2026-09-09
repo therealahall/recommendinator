@@ -71,7 +71,6 @@ class TestOpenLibraryProviderISBNLookup:
             result = provider.enrich(item, {})
 
         assert result is not None
-        assert result.external_id == "openlibrary:OL5678W"
         assert "Dystopia" in result.genres
         assert result.tags is not None
         assert "Dystopia" in result.tags

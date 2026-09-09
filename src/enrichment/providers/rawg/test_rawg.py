@@ -131,7 +131,6 @@ class TestRAWGProviderEnrichment:
             result = provider.enrich(game_item, config)
 
         assert result is not None
-        assert result.external_id == "rawg:3328"
         assert result.genres == ["RPG", "Action"]
         assert "Open World" in result.tags
         assert "epic" in result.description.lower()
@@ -236,53 +235,6 @@ class TestRAWGProviderEnrichment:
         assert result is not None
         assert result.match_quality == "not_found"
 
-    def test_enrich_game_matches_by_year(
-        self,
-        provider: RAWGProvider,
-        config: dict[str, Any],
-    ) -> None:
-        item = ContentItem(
-            id="game1",
-            title="Doom",
-            content_type=ContentType.VIDEO_GAME,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"release_year": 2016},
-        )
-
-        mock_search = {
-            "results": [
-                {"id": 1, "name": "Doom", "released": "1993-12-10"},
-                {"id": 2, "name": "Doom", "released": "2016-05-13"},
-            ]
-        }
-
-        mock_game = {
-            "id": 2,
-            "name": "Doom",
-            "genres": [{"name": "Shooter"}],
-            "tags": [],
-        }
-
-        mock_series = {"results": []}
-
-        with patch("src.enrichment.providers.rawg.rawg.requests.get") as mock_get:
-            mock_get.side_effect = [
-                MagicMock(
-                    spec=requests.Response, status_code=200, json=lambda: mock_search
-                ),
-                MagicMock(
-                    spec=requests.Response, status_code=200, json=lambda: mock_game
-                ),
-                MagicMock(
-                    spec=requests.Response, status_code=200, json=lambda: mock_series
-                ),
-            ]
-
-            result = provider.enrich(item, config)
-
-        assert result is not None
-        assert result.external_id == "rawg:2"
-
     @pytest.mark.parametrize(
         ("release_year", "search_results"),
         [
@@ -318,7 +270,6 @@ class TestRAWGProviderEnrichment:
         assert mock_get.call_count == 1
         assert result is not None
         assert result.match_quality == "not_found"
-        assert result.external_id is None
 
 
 class TestRAWGPinnedRecord:
@@ -341,7 +292,6 @@ class TestRAWGPinnedRecord:
             result = RAWGProvider().enrich(item, {"api_key": "k"})
 
         assert result is not None
-        assert result.external_id == "rawg:3328"
         assert "/games/3328" in mock_get.call_args_list[0].args[0]
 
 

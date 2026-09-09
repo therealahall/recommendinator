@@ -188,10 +188,7 @@ class RAWGProvider(EnrichmentProvider):
         game_id = self._matched_id(item, api_key)
 
         if game_id is None:
-            return EnrichmentResult(
-                match_quality="not_found",
-                provider=self.name,
-            )
+            return EnrichmentResult(match_quality="not_found")
 
         return self._fetch_game_details(game_id, api_key)
 
@@ -318,14 +315,12 @@ class RAWGProvider(EnrichmentProvider):
                 extra_metadata["franchise"] = franchise_name
 
             return EnrichmentResult(
-                external_id=f"rawg:{game_id}",
                 genres=genres if genres else None,
                 tags=tags if tags else None,
                 description=description,
                 cover_url=_https_cover(game.get("background_image")),
                 extra_metadata=extra_metadata,
                 match_quality="high",
-                provider=self.name,
             )
 
         except requests.RequestException as error:

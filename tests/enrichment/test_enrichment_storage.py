@@ -634,9 +634,7 @@ class TestGameLengthAfterEnrichment:
     ) -> None:
         item = self._steam_game()
         result = EnrichmentResult(
-            external_id="rawg:301566",
-            extra_metadata={"average_playtime_hours": 6, "metacritic": 77},
-            provider="rawg",
+            extra_metadata={"average_playtime_hours": 6, "metacritic": 77}
         )
         merged = merge_enrichment(item.metadata, result)
         item.metadata = merged
@@ -660,11 +658,7 @@ class TestGameLengthAfterEnrichment:
             status=ConsumptionStatus.UNREAD,
             metadata={"platform": "GOG"},
         )
-        result = EnrichmentResult(
-            external_id="rawg:41494",
-            extra_metadata={"average_playtime_hours": 60},
-            provider="rawg",
-        )
+        result = EnrichmentResult(extra_metadata={"average_playtime_hours": 60})
         item.metadata = merge_enrichment(item.metadata, result)
 
         loaded = storage_manager.get_content_item(
