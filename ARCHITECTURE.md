@@ -70,33 +70,32 @@ SQLite holds everything.
 `seasons_watched` is the one metadata key the sync door unions: a sync adds a
 season, never removes one.
 
-The series name and position are the one family it re-decides rather than keeps:
+The series name and position are the one family it re-decides:
 `reconcile_series` gives them to the better-founded source, recorded in
 `series_position_authority`. Two outside sources of one standing keep the first
 answer; the operator's own catalogue restating a position corrects it.
 
-One exception to forward-only sits outside that resolution. After the upsert,
+One exception to forward-only comes after the upsert:
 `_handle_tv_season_change` regresses a completed TV show to
-`currently_consuming` when the season count rises above the seasons the
-user checked off, because new seasons mean the show is not finished. It needs an
-existing `seasons_watched` list, and it skips ignored items.
+`currently_consuming` when the season count rises above the seasons the user
+checked off. It needs an existing `seasons_watched` list, and it skips ignored
+items.
 
 The enrichment door runs that same pass:
 
 - **`save_enrichment_metadata`** writes a provider's metadata to the detail
   table and the derived columns. Of the user-owned fields it writes only
-  `status`, and only through the season regression above.
+  `status`.
 
 The three user-action doors overwrite freely and write only what the caller
 supplied:
 
-- **`complete_content_item`** backs the `complete` CLI command and
-  `POST /api/complete`. It finds or creates the row and applies rating, review,
-  status and date in one transaction. `status` is written outright rather than
-  resolved forward.
+- **`complete_content_item`** backs `complete` and `POST /api/complete`. It
+  finds or creates the row and applies rating, review, status and date in one
+  transaction. `status` is written outright rather than resolved forward.
 - **`update_item_from_ui`** backs the web edit modal and `library edit`.
-  "Not supplied" is spelled two ways. `status`, `rating` and `review` use the
-  `UNSET` sentinel, because for the last two `None` has to mean clear.
+  `status`, `rating` and `review` use the `UNSET` sentinel, because for the last
+  two `None` has to mean clear.
   `seasons_watched`, `genres`, `tags` and `description` use `None`, so there the
   *empty* value clears: `[]` or `""`.
 - **`set_item_ignored`** backs the Ignore buttons
@@ -106,8 +105,7 @@ supplied:
 **`date_completed` is never replaced silently.** A completion carrying no date
 fills an empty column with today and keeps an existing date. A named date is
 written as given, but no further ahead than `MAX_COMPLETION_DATE_SKEW` — one
-day, for a caller in a zone ahead of the server — and the check is at the door,
-so no surface can skip it.
+day, for a caller in a zone ahead of the server — and the check is at the door.
 
 #### Source configuration precedence
 
@@ -310,7 +308,7 @@ records reads its result.
 
 ### 4. Enrichment (`src/enrichment/`)
 
-Background metadata gap-filling from external APIs. Providers subclass
+Providers subclass
 `EnrichmentProvider` and are discovered by name from `src/enrichment/providers/`
 and from `private/plugins/`, each with its own token-bucket rate limiter. A
 background worker runs them in configurable batches, and an optional hook fires
@@ -324,41 +322,34 @@ it after a sync.
 | Wikidata | All four, no API key | `P179`, positioned by its `P1545` qualifier |
 | Hardcover | Books, series position only | `books.featured_book_series` |
 
-RAWG derives a franchise name from the longest common prefix of the related
-titles, after majority first-word voting drops outliers, and strips DLC suffixes
-before searching. RAWG stores `franchise` and TMDB `series_name` in
-`extra_metadata`. Neither stores a position: both endpoints return an unordered
-related-titles set, so any rank read off one is invented.
+RAWG stores `franchise` and TMDB `series_name` in `extra_metadata`. Neither
+stores a position: both endpoints return an unordered related-titles set, so any
+rank read off one is invented.
 
-Wikidata and Hardcover state a position rather than implying one. Each
-implements `fetch_series_ordinal` alone, so it answers the ordinal pass at
-`authored` authority and never settles an item as matched. A `SeriesOrdinal`
-names the series its position counts within, and the pass runs after the match
-loop so that name has TMDB's to agree with: Wikidata numbers a film 2 of the
-original trilogy and files it under the franchise too, and only `reconcile_series`
-comparing the two names keeps a trilogy's number out of "Star Wars Collection".
+Wikidata and Hardcover state a position instead, each implementing
+`fetch_series_ordinal` alone at `authored` authority, so neither settles an item
+as matched.
 
 Rules:
 
-- The merge is gap-filling and never overwrites existing metadata, bar
+- The merge is gap-filling, bar
   `franchise`: RAWG is its only writer, so re-running enrichment corrects a name
-  an earlier run derived badly. Manual edits are the other exception: a field
-  set from the edit modal or `library edit` overwrites the detail table and is
-  recorded in `content_item_manual_fields`, which is what keeps a later sync or
-  enrichment run off that one column. `library clear-manual` releases one field.
+  an earlier run derived badly. An edited field is the other exception: it
+  overwrites the detail table and is recorded in `content_item_manual_fields`,
+  which keeps a later sync or enrichment run off that column until
+  `library clear-manual` releases it.
 - **A settled miss is not a failure.** Every provider answering "not this one"
   retires the item through `mark_enrichment_complete(..., "not_found")`. Reaching
   it again takes `--retry-not-found`.
 - **A failure is classified before it is acted on** (`_classify_failure`,
   `_is_retryable`). Transport errors, 5xx, 408 and 429 are retryable, so
   `mark_enrichment_failed` records the error and leaves `needs_enrichment=1`. Any
-  other 4xx would be rejected identically every run and is not retryable.
+  other 4xx is not, being rejected identically every run.
 - **A provider that keeps rejecting is abandoned for the run.** Five consecutive
   non-retryable rejections (`_MAX_CONSECUTIVE_REJECTIONS`) drop it, and the run
   ends once nothing unabandoned is left for its content type.
 - **A failed save is ours, not a miss.** `mark_enrichment_settled_failure` takes
-  the item out of the queue with the error on the row, so it is not counted as
-  one more `not_found`.
+  the item out of the queue with the error on the row.
 - An item counts as enriched only with a real provider, no error, not
   `not_found`, and `needs_enrichment=0`. `get_content_items(enrichment=...)` and
   the per-row `enriched` flag share that predicate (`_ENRICHED_PREDICATE`).

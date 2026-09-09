@@ -163,11 +163,10 @@ def normalize_rating(source_rating: int, max_rating: int = 10) -> int | None:
 ## Metadata keys
 
 `metadata` is free-form, but storage recognises a fixed set of keys per content
-type and lifts those into the type's detail table (`book_details`,
-`movie_details`, `tv_show_details`, `video_game_details`). Anything else is kept
-verbatim in the detail row's free-form blob. **A misspelled key is not an error
-anywhere**, so spell a recognised one correctly: the value lands in the blob and
-never reaches the column the rest of the app queries.
+type and lifts those into the type's detail table. Anything else is kept
+verbatim in the detail row's blob. **A misspelled key is not an error
+anywhere**: the value lands in the blob and never reaches the column the rest of
+the app queries.
 
 | Content type | Recognised keys |
 |---|---|
@@ -176,11 +175,10 @@ never reaches the column the rest of the app queries.
 | `tv_show` | `creators`, `seasons`, `episodes`, `network`, `release_year`, `genres`, `tags`, `description` |
 | `video_game` | `developer`, `publisher`, `platforms`, `genres`, `release_year`, `tags`, `description` |
 
-The first key of each row above is that type's creator, and it is the one
-exception to metadata in and metadata out: storage reads it back on
+The first key of each row is that type's creator: storage reads it back on
 `ContentItem.author`, not in `metadata`.
 
-Six columns accept a second spelling, and reach the same column either way:
+Six columns accept a second spelling:
 
 | Column | Also accepted as | Where |
 |---|---|---|
@@ -191,14 +189,13 @@ Six columns accept a second spelling, and reach the same column either way:
 | `release_year` | `year` | `movie`, `tv_show` (**not** `video_game`, which takes `release_year` only) |
 | `creators` | `creator` | `tv_show` |
 
-A text column takes a string, a number, or a list of either, joined with commas
-— so `developer` may be a list of studios. An object is refused rather than
-stored as its Python repr, and the refusal fails the whole item's save: sync
-reports only `Failed to process '<title>'`, naming no field, while the log line
-beside it names the key.
+A text column takes a string, a number, or a list of either, joined with commas.
+An object is refused rather than stored as its Python repr, and the refusal
+fails the whole item's save: sync reports only `Failed to process '<title>'`
+while the log line names the key.
 
-The blob is a shared namespace rather than scratch space. First-party code reads
-these keys out of it, and none of them is a recognised key:
+First-party code reads these keys out of the blob, and none of them is a
+recognised key:
 
 | Read by | Keys |
 |---|---|
@@ -207,27 +204,24 @@ these keys out of it, and none of them is a recognised key:
 | Season checklist and the [variety ladder](SCORING.md#variety-after-completion), `src/utils/series.py` | `seasons_watched`, `seasons_watched_dates` |
 | Library export, `src/utils/export.py` | `notes` on every type. **TV show** `seasons_watched`, `seasons_watched_dates`. **video game** `playtime_hours` |
 
-That list grows whenever a reader gains another fallback spelling, so check those
-files. Beyond it and the recognised keys, the blob is yours.
+That list grows, so check those files. Beyond it and the recognised keys, the
+blob is yours.
 
 **Taking one of those keys for your own bookkeeping changes behaviour, with no
 warning and no error at any layer.** Your own `number_of_seasons` re-classifies
-the show's length. Your own `franchise` re-orders a series.
+the show's length.
 
-Enrichment writes into the blob too. RAWG writes `average_playtime_hours` and
-`franchise`, TMDB writes `series_name` and `tmdb_collection_id`. Neither writes a
-position. `merge_enrichment` (`src/enrichment/manager.py`) fills
-each only where the key is missing or empty, so it never overwrites you — except
-`franchise`, which RAWG replaces because it is that key's only writer. Write your
-own franchise name to `series_name` instead. See
-[ARCHITECTURE.md](../ARCHITECTURE.md).
+RAWG writes `average_playtime_hours` and `franchise`, TMDB writes `series_name`
+and `tmdb_collection_id`. Neither writes a position. `merge_enrichment`
+(`src/enrichment/manager.py`) fills each only where the key is missing or empty
+— except `franchise`, which RAWG replaces because it is that key's only writer.
+Write your own franchise name to `series_name` instead.
 
 The series name and position are the other exception: `reconcile_series` decides
 those by rank, and a position naming no series settles nothing. Record yours in
 `series_position_authority` — `library` for an ordinal your catalogue states,
 `stated` for one read out of a title — and no weaker source can replace it. A
-re-sync of that same catalogue corrects rather than competes, so a series index
-fixed in Calibre-Web lands on the next sync.
+re-sync of that same catalogue corrects rather than competes.
 
 ### Shape rules
 
@@ -517,21 +511,18 @@ Worked examples: `src/ingestion/sources/gog/gog.py` and
 
 ## Enrichment providers
 
-Providers fill metadata gaps from external APIs. They use the same folder layout
-as source plugins, under `src/enrichment/providers/<name>/`, and subclass
-`EnrichmentProvider` from `src/enrichment/provider_base.py`.
+Providers use the same folder layout as source plugins, under
+`src/enrichment/providers/<name>/`, and subclass `EnrichmentProvider` from
+`src/enrichment/provider_base.py`.
 
 `EnrichmentRegistry` discovers the folder the same way `PluginRegistry`
 discovers a source plugin, so shipping a provider edits no core file.
 
-A provider you do not want in the repo goes in `private/plugins/`, the
-directory private source plugins already live in: both registries scan it and
-each keeps the classes it recognises. Same folder layout as everywhere else,
-described under [Registration](#registration).
+A provider you do not want in the repo goes in `private/plugins/`: both
+registries scan it and each keeps the classes it recognises.
 
 `make check` runs Ruff, Black, MyPy and pytest over `private/` when the
-directory exists, so a private plugin is held to the same standard and its
-tests run beside it. On a clone without one the step does nothing.
+directory exists. On a clone without one the step does nothing.
 
 `name`, `display_name`, `content_types`, `requires_api_key`,
 `get_config_schema` and `validate_config` work as they do on a source plugin. The

@@ -53,9 +53,8 @@ the franchise a game belongs to. It strips edition suffixes, trademark symbols
 and DLC indicators from a title before searching, so it copes with messy names.
 Get a key from [rawg.io/apidocs](https://rawg.io/apidocs).
 
-**Wikidata** fills nothing but the series position, for all four content types,
-from the ordinal a work's own series statement carries. It runs beside the
-others rather than instead of them: it never matches an item, so the provider
+**Wikidata** fills nothing but the series position, from the ordinal a work's
+own series statement carries. It never matches an item, so the provider
 credited with a book or a game is still OpenLibrary or RAWG. A work Wikidata
 cannot identify beyond doubt, by type and release year, is left unpositioned. So
 is one whose series Wikidata names differently from the series already stored —
@@ -162,13 +161,11 @@ once the data may have been added upstream, with
 ### Items showing as "failed"
 
 Different from "not found". The provider never answered, having timed out, been
-unreachable, throttled you or returned a server error, so nothing is known about
-the item yet. Failed items stay queued and the next run picks them up. There is
-nothing to do but run enrichment again once the provider is healthy, or
-`enrichment reset --id <id>`, or **Enrich this again** in the item's edit dialog,
-to retry that one item without re-fetching the rest.
-`enrichment status` counts each item once, so a failed item reports under
-**Failed** rather than **Pending** even though it is queued.
+unreachable, throttled you or returned a server error. Failed items stay queued,
+so there is nothing to do but run enrichment again once the provider is healthy
+— or, for one item, `enrichment reset --id <id>` or **Enrich this again** in the
+edit dialog. `enrichment status` counts each item once, so a failed item reports
+under **Failed** rather than **Pending** even though it is queued.
 
 **Keeping a failure queued is new.** Before, *any* provider error settled the
 item as "not found", so a library enriched under an older version can hold items
