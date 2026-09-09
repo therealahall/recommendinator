@@ -5,6 +5,7 @@ model without a line here is a field the CLI stops emitting.
 from typing import TypedDict
 
 from src.covers import cover_payload_url
+from src.enrichment.provider_base import pins_of
 from src.models.content import ContentItem, get_enum_value
 from src.models.detail_fields import to_int
 from src.utils.matching import Candidate
@@ -77,6 +78,7 @@ def item_to_dict(item: ContentItem) -> dict[str, object]:
         # which the wire type presents as "not enriched".
         "enriched": bool(item.enriched),
         "manual_fields": list(item.manual_fields),
+        "pinned": pins_of(metadata),
         "release_year": to_int(metadata.get("release_year")),
         "series": get_series_name_from_metadata(metadata),
         "series_index": get_series_position_from_metadata(metadata),

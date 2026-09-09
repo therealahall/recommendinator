@@ -3,7 +3,7 @@ from typing import Any, cast
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from src.enrichment.manager import EnrichmentManager, job_status
+from src.enrichment.manager import EnrichmentManager, PinRefused, job_status
 from src.enrichment.provider_base import pins_of
 from src.models.content import ContentItem, ContentType
 from src.storage.manager import StorageManager
@@ -41,6 +41,9 @@ class EnrichmentResetRequest(BaseModel):
     )
     content_type: str | None = Field(
         None, description="Reset items of this content type"
+    )
+    item_id: int | None = Field(
+        None, ge=1, description="Re-queue this one item, whatever left it settled"
     )
     user_id: int = Field(1, ge=1, description="User ID for filtering items")
 
@@ -235,7 +238,7 @@ def pin_enrichment_record(
         pinned = EnrichmentManager(storage, config).pin(
             request.item_id, item, request.provider, request.record_id
         )
-    except ValueError as error:
+    except PinRefused as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     payload = enrichment_pin_to_dict(
         request.item_id, request.provider, request.record_id, pinned
@@ -248,6 +251,9 @@ def reset_enrichment(
     request: EnrichmentResetRequest,
     storage: RequiredStorage,
 ) -> dict[str, Any]:
+    """Re-queue items the next run would otherwise skip: everything a provider
+    settled, everything of one content type, or the one item that failed.
+    """
     content_type = None
     if request.content_type:
         try:
@@ -258,10 +264,19 @@ def reset_enrichment(
                 detail="Invalid content type. Valid options: book, movie, tv_show, video_game",
             ) from None
 
+    if request.item_id is not None:
+        if request.provider or request.content_type:
+            raise HTTPException(
+                status_code=400,
+                detail="item_id cannot be combined with provider or content_type.",
+            )
+        _item_or_404(storage, request.item_id, request.user_id)
+
     count = storage.enrichment.reset(
         provider=request.provider,
         content_type=content_type,
         user_id=request.user_id,
+        content_item_id=request.item_id,
     )
 
     return {"message": f"Reset enrichment status for {count} item(s)", "count": count}

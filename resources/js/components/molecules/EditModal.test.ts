@@ -132,20 +132,21 @@ describe('EditModal', () => {
     wrapper.unmount()
   })
 
-  it('names each held field and offers to stop holding it', async () => {
+  it('names each held field readably and clears it by its wire name', async () => {
     const wrapper = mount(EditModal, {
       props: {
-        item: { ...defaultItem, manual_fields: ['creator'] },
+        item: { ...defaultItem, manual_fields: ['release_year'] },
         saving: false,
         saveError: '',
       },
       attachTo: document.body,
     })
 
-    await wrapper.findAll('button')
-      .find(b => b.text().includes('Stop holding this field'))!.trigger('click')
+    const row = wrapper.get('.edit-manual-held')
+    expect(row.get('span').text()).toBe('Release year')
+    await row.get('button').trigger('click')
 
-    expect(wrapper.emitted('clearManual')).toEqual([[1, 'creator']])
+    expect(wrapper.emitted('clearManual')).toEqual([[1, 'release_year']])
     wrapper.unmount()
   })
 
@@ -181,6 +182,30 @@ describe('EditModal', () => {
       [1, 'openlibrary', 'OL1W'],
       [1, 'rawg', null],
     ])
+    expect(wrapper.get('#edit-pin-note').text()).toBe('1 record offered')
+    wrapper.unmount()
+  })
+
+  it('dropping a pin says what happened and keeps focus in the dialog', async () => {
+    const wrapper = mount(EditModal, {
+      props: { item: defaultItem, saving: false, saveError: '', pinned: { rawg: '3328' } },
+      attachTo: document.body,
+    })
+    await vi.runAllTimersAsync()
+    const drop = wrapper.findAll('button').find(b => b.text() === 'Match by title again')!
+    ;(drop.element as HTMLElement).focus()
+    await drop.trigger('click')
+
+    await wrapper.setProps({
+      pinned: {},
+      pinMessage: 'Item 1 is back to matching rawg by title',
+    })
+    await vi.runAllTimersAsync()
+
+    const said = wrapper.get('#edit-pin-note')
+    expect(said.text()).toBe('Item 1 is back to matching rawg by title')
+    expect(document.activeElement).toBe(said.element)
+    expect(wrapper.get('[aria-modal="true"]').element.contains(said.element)).toBe(true)
     wrapper.unmount()
   })
 

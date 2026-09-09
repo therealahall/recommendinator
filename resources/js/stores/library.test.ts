@@ -349,16 +349,36 @@ describe('useLibraryStore', () => {
     expect(store.mergeAnnouncement).toBe('')
   })
 
-  it('openEdit refreshes the card behind the dialog', async () => {
+  it('openEdit refreshes the card behind the dialog and shows the item\'s pins', async () => {
     const item = { db_id: 1, title: 'Book A', content_type: 'book', status: 'unread', ignored: false, enriched: true, manual_fields: ['creator'] }
     mockGet.mockResolvedValueOnce([item])
     const store = useLibraryStore()
     await store.resetAndLoad()
 
-    mockGet.mockResolvedValueOnce({ ...item, enriched: false, manual_fields: [] })
+    mockGet.mockResolvedValueOnce({
+      ...item,
+      enriched: false,
+      manual_fields: [],
+      pinned: { openlibrary: 'OL1W' },
+    })
     await store.openEdit(1)
 
     expect(store.items[0].enriched).toBe(false)
     expect(store.items[0].manual_fields).toEqual([])
+    expect(store.pinned).toEqual({ openlibrary: 'OL1W' })
+  })
+
+  it('pinEnrichment keeps the words the server answered with, for the dialog to say', async () => {
+    const store = useLibraryStore()
+    mockPost.mockResolvedValue({
+      item_id: 1,
+      pinned: { rawg: '41494' },
+      message: 'Item 1 now enriches from rawg record 41494',
+    })
+
+    await store.pinEnrichment(1, 'rawg', '41494')
+
+    expect(store.pinned).toEqual({ rawg: '41494' })
+    expect(store.pinMessage).toBe('Item 1 now enriches from rawg record 41494')
   })
 })

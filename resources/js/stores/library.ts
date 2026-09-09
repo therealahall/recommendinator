@@ -45,11 +45,12 @@ export const useLibraryStore = defineStore('library', () => {
   const editError = ref('')
 
   // Which provider record enriches the item being edited, and what its
-  // providers offer instead. Loaded on demand: each search costs an API call
-  // to every enabled provider.
+  // providers offer instead. The pins arrive with the item; the candidates cost
+  // an API call to every enabled provider, so they are searched for on demand.
   const pinCandidates = ref<EnrichmentCandidate[]>([])
   const pinned = ref<Record<string, string>>({})
   const pinSearching = ref(false)
+  const pinMessage = ref('')
 
   // The item a merge is picked from. Its content type scopes the candidate
   // search, which is what puts a cross-type merge out of the picker's reach.
@@ -212,6 +213,7 @@ export const useLibraryStore = defineStore('library', () => {
         user_id: app.currentUserId,
       })
       editingItem.value = item
+      pinned.value = item.pinned ?? {}
       syncRow(dbId, item)
     } catch (err) {
       error.value = err instanceof Error ? err.message : 'Failed to load item'
@@ -224,11 +226,13 @@ export const useLibraryStore = defineStore('library', () => {
     editError.value = ''
     pinCandidates.value = []
     pinned.value = {}
+    pinMessage.value = ''
   }
 
   async function findPinCandidates(dbId: number, query: string) {
     pinSearching.value = true
     editError.value = ''
+    pinMessage.value = ''
     try {
       const found = await api.get<EnrichmentCandidatesResponse>('/enrichment/candidates', {
         item_id: dbId,
@@ -255,6 +259,7 @@ export const useLibraryStore = defineStore('library', () => {
         user_id: useAppStore().currentUserId,
       })
       pinned.value = result.pinned
+      pinMessage.value = result.message
     } catch (err) {
       editError.value = err instanceof Error ? err.message : 'Failed to pin'
     }
@@ -404,6 +409,7 @@ export const useLibraryStore = defineStore('library', () => {
     pinCandidates,
     pinned,
     pinSearching,
+    pinMessage,
     mergeAnchor,
     mergeQuery,
     mergeCandidates,

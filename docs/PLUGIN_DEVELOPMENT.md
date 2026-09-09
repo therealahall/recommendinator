@@ -560,7 +560,20 @@ class MyEnrichmentProvider(EnrichmentProvider):
     ) -> SeriesOrdinal | None:
         # None when you have no ordinal for this item; raise on a failure.
         return SeriesOrdinal(position=3.0, series_name="The Expanse")
+
+    def search(self, item: ContentItem, config: dict[str, Any]) -> list[Candidate]:
+        # The records the operator picks between, your own ranking kept.
+        return [Candidate(record_id="42", title="Nemesis Games", year=2015)]
+
+    def accepts_record_id(self, record_id: str) -> bool:
+        # Refusing every id by default. Override it to be pinnable at all.
+        return record_id.isdigit()
 ```
+
+A pin is read back with `pinned_record(item, self.name)` at the top of `enrich`:
+return that record's metadata instead of searching. Accept only the ids you
+offered as candidates — an id you cannot look up is a pin every run ignores, and
+one spliced into a URL path is an operator-typed path segment.
 
 `fetch_series_ordinal` is optional and separate from the match: it is asked only
 while a stronger source has not positioned the item already, and a provider

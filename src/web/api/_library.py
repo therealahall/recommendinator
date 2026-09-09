@@ -122,6 +122,8 @@ class ContentItemResponse(BaseModel):
     series_index: float | None = None
     enriched: bool = False
     manual_fields: list[str] = Field(default_factory=list)
+    #: The provider record each pin binds this item's enrichment to.
+    pinned: dict[str, str] = Field(default_factory=dict)
     genres: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
     description: str | None = None

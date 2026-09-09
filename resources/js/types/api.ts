@@ -26,6 +26,8 @@ export interface ContentItemResponse {
   enriched: boolean
   /** The names of the fields the operator holds against their source. */
   manual_fields?: string[]
+  /** The provider record each pin binds this item's enrichment to. */
+  pinned?: Record<string, string>
   genres: string[]
   tags: string[]
   description: string | null

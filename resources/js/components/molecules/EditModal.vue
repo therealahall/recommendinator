@@ -7,7 +7,7 @@ import {
   MAX_TITLE_LENGTH,
   RELEASE_YEAR_TYPES,
 } from '@/constants/library'
-import { formatContentType, formatStatusForContentType } from '@/utils/format'
+import { capitalize, formatContentType, formatStatusForContentType } from '@/utils/format'
 import { useDiscardGuard } from '@/composables/useDiscardGuard'
 import { rescueFocus } from '@/utils/focus'
 import ModalDialog from '@/components/atoms/ModalDialog.vue'
@@ -27,6 +27,8 @@ const props = defineProps<{
   pinned?: Record<string, string>
   pinCandidates?: EnrichmentCandidate[]
   pinSearching?: boolean
+  /** What the server said about the last pin, '' before there was one. */
+  pinMessage?: string
 }>()
 
 const emit = defineEmits<{
@@ -78,7 +80,13 @@ watch(
   },
 )
 
-const heldFields = computed(() => props.item.manual_fields ?? [])
+// Pre-computed rather than formatted in the v-for, which re-runs every render.
+const heldFields = computed(() =>
+  (props.item.manual_fields ?? []).map((field) => ({
+    field,
+    label: capitalize(field.replace(/_/g, ' ')),
+  })),
+)
 
 // A cleared row takes its button with it, so focus lands on the line above
 // rather than dropping to <body> (WCAG 2.4.3).
@@ -185,6 +193,8 @@ function save() {
 }
 
 const pinQuery = ref('')
+const searched = ref(false)
+const pinNoteEl = ref<HTMLElement | null>(null)
 
 // Pre-computed rather than formatted in the v-for, which re-runs every render.
 const pinRows = computed(() =>
@@ -201,8 +211,28 @@ const pinnedRows = computed(() =>
   Object.entries(props.pinned ?? {}).map(([provider, recordId]) => ({ provider, recordId })),
 )
 
+const pinNote = computed(() => {
+  if (props.pinSearching) return 'Searching the providers…'
+  if (props.pinMessage) return props.pinMessage
+  if (!searched.value) return ''
+  if (pinRows.value.length === 0) return 'No provider offered a record'
+  return pinRows.value.length === 1 ? '1 record offered' : `${pinRows.value.length} records offered`
+})
+
+// Unpinning takes its own button with it, so focus lands on the line that says
+// what happened rather than dropping to <body> (WCAG 2.4.3).
+watch(
+  () => pinnedRows.value.length,
+  async (now, before) => {
+    if (now >= before) return
+    await nextTick()
+    rescueFocus(pinNoteEl.value)
+  },
+)
+
 function searchRecords() {
   if (props.pinSearching) return
+  searched.value = true
   emit('pinSearch', props.item.db_id!, pinQuery.value)
 }
 </script>
@@ -333,19 +363,34 @@ function searchRecords() {
       <button class="btn btn-secondary" :aria-disabled="pinSearching || undefined" @click="searchRecords">
         {{ pinSearching ? 'Searching…' : 'Search providers' }}
       </button>
-      <ul class="edit-manual-list">
+      <!-- Mounted whether or not it has anything to say: a region inserted
+           already populated reads as content rather than a status change. -->
+      <p
+        id="edit-pin-note"
+        ref="pinNoteEl"
+        class="edit-modal-note focus-fallback"
+        role="status"
+        aria-live="polite"
+        tabindex="-1"
+      >{{ pinNote }}</p>
+      <ul v-if="pinRows.length" class="edit-manual-list" aria-label="Records the providers offered">
         <li v-for="row in pinRows" :key="row.key" class="edit-manual-held">
           <span>{{ row.label }}</span>
           <button
             class="btn btn-secondary"
+            :aria-label="`Use ${row.label}`"
             @click="emit('pin', item.db_id!, row.candidate.provider, row.candidate.record_id)"
           >Use this record</button>
         </li>
+      </ul>
+      <ul v-if="pinnedRows.length" class="edit-manual-list" aria-label="Records this item is pinned to">
         <li v-for="row in pinnedRows" :key="row.provider" class="edit-manual-held">
           <span>Pinned: {{ row.provider }} {{ row.recordId }}</span>
-          <button class="btn btn-secondary" @click="emit('pin', item.db_id!, row.provider, null)">
-            Match by title again
-          </button>
+          <button
+            class="btn btn-secondary"
+            :aria-label="`Match ${row.provider} by title again`"
+            @click="emit('pin', item.db_id!, row.provider, null)"
+          >Match by title again</button>
         </li>
       </ul>
     </div>
@@ -361,12 +406,14 @@ function searchRecords() {
           ? 'A sync and enrichment leave these alone.'
           : 'Editing a field above holds it against its source.' }}
       </p>
-      <ul class="edit-manual-list">
-        <li v-for="field in heldFields" :key="field" class="edit-manual-held">
-          <span>{{ field }}</span>
-          <button class="btn btn-secondary" @click="emit('clearManual', item.db_id!, field)">
-            Stop holding this field
-          </button>
+      <ul class="edit-manual-list" aria-label="Fields held against their source">
+        <li v-for="held in heldFields" :key="held.field" class="edit-manual-held">
+          <span>{{ held.label }}</span>
+          <button
+            class="btn btn-secondary"
+            :aria-label="`Stop holding ${held.label}`"
+            @click="emit('clearManual', item.db_id!, held.field)"
+          >Stop holding this field</button>
         </li>
       </ul>
     </div>

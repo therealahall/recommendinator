@@ -239,6 +239,7 @@ onUnmounted(() => {
       :pin-candidates="lib.pinCandidates"
       :pinned="lib.pinned"
       :pin-searching="lib.pinSearching"
+      :pin-message="lib.pinMessage"
       @save="lib.saveEdit"
       @clear-manual="onClearManual"
       @pin-search="lib.findPinCandidates"

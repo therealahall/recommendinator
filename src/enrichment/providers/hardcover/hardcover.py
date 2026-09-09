@@ -214,6 +214,9 @@ class HardcoverProvider(EnrichmentProvider):
             _candidate(book) for book in self._books(_title_where(searched), api_key)
         ]
 
+    def accepts_record_id(self, record_id: str) -> bool:
+        return record_id.isdigit()
+
     def _match(self, item: ContentItem, api_key: str) -> dict[str, Any] | None:
         pinned = pinned_record(item, self.name)
         if pinned is not None:

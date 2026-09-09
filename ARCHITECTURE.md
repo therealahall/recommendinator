@@ -342,10 +342,10 @@ Rules:
 
 - The merge is gap-filling and never overwrites existing metadata, bar
   `franchise`: RAWG is its only writer, so re-running enrichment corrects a name
-  an earlier run derived badly. Manual edits are the other exception: genres,
-  tags and a description set from the edit modal or
-  `library edit` overwrite the detail table, record the `"manual"` provider, and
-  leave the automatic queue for good.
+  an earlier run derived badly. Manual edits are the other exception: a field
+  set from the edit modal or `library edit` overwrites the detail table and is
+  recorded in `content_item_manual_fields`, which is what keeps a later sync or
+  enrichment run off that one column. `library clear-manual` releases one field.
 - **A settled miss is not a failure.** Every provider answering "not this one"
   retires the item through `mark_enrichment_complete(..., "not_found")`. Reaching
   it again takes `--retry-not-found`.

@@ -82,6 +82,11 @@ no release year to correct." — and holds nothing from the request.
 repeats `MergeError`, which names the row or the merge to deal with first and is
 built from ids the request already carries.
 
+**The sixth: a pin no enrichment run could read back.** The 400 from `POST
+/api/enrichment/pin` repeats `PinRefused`, worded from the provider and record
+the request named and the registry's own provider names. Its own exception type
+so an unrelated failure inside `EnrichmentManager.pin` is not echoed with it.
+
 ## Web sign-in
 
 **One account, username and password, and a session cookie.** A fresh instance
@@ -251,8 +256,8 @@ Changes are audited for the following before they are committed.
 - CORS defaults to localhost, never wildcard
 - `allow_credentials=False` when wildcard origins are used
 - Internal error detail never reaches an HTTP response (`detail=str(error)` is
-  forbidden), with the five carve-outs above as the only exceptions. Four are
-  the whole of `git grep -n 'detail=str(' -- src`, five call sites, because the
+  forbidden), with the six carve-outs above as the only exceptions. Five are
+  the whole of `git grep -n 'detail=str(' -- src`, six call sites, because the
   templates 503 raises twice. The first reaches a body two ways, so that grep
   misses it: named response fields on the source and plugin listings,
   and `unusable_detail` in the sync 400 and in `require_plugin`, which composes
