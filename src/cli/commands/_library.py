@@ -317,6 +317,16 @@ def library_show(
             ["Ignored", "Yes" if item.ignored else "No"],
             ["Enriched", "Yes" if item.enriched else "No"],
             ["Manual Fields", "\n".join(item.manual_fields) or "N/A"],
+            [
+                "Pinned Records",
+                "\n".join(
+                    f"{provider}: {record}"
+                    for provider, record in sorted(
+                        cast(dict[str, str], serialized["pinned"]).items()
+                    )
+                )
+                or "N/A",
+            ],
             ["Genres", ", ".join(cast(list[str], genres)) or "N/A"],
             ["Tags", ", ".join(cast(list[str], tags)) or "N/A"],
             ["Description", description or "N/A"],

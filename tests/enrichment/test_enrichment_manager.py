@@ -13,6 +13,7 @@ from src.enrichment.manager import (
     _MAX_CONSECUTIVE_REJECTIONS,
     MAX_RECORDED_ERRORS,
     EnrichmentManager,
+    PinRefused,
     merge_enrichment,
 )
 from src.enrichment.provider_base import (
@@ -23,6 +24,7 @@ from src.enrichment.provider_base import (
     SeriesOrdinal,
 )
 from src.enrichment.providers.tmdb.tmdb import TMDBProvider
+from src.enrichment.providers.wikidata.wikidata import WikidataProvider
 from src.enrichment.registry import EnrichmentRegistry
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.enrichment_status import EnrichmentStore
@@ -78,6 +80,9 @@ class MockProvider(EnrichmentProvider):
 
     def validate_config(self, config: dict[str, Any]) -> list[str]:
         return []
+
+    def accepts_record_id(self, record_id: str) -> bool:
+        return bool(record_id.strip())
 
     def enrich(
         self, item: ContentItem, config: dict[str, Any]
@@ -1730,9 +1735,27 @@ class TestPinnedProviderRecord:
         manager.registry.register(TMDBProvider())
         item = storage_manager.get_content_item(db_id)
 
-        with pytest.raises(ValueError):
+        with pytest.raises(PinRefused):
             manager.pin(db_id, item, provider_name, record_id)
 
+        assert "enrichment_ids" not in storage_manager.get_content_item(db_id).metadata
+
+    def test_a_provider_that_never_reads_a_pin_is_refused_and_left_unlisted(
+        self, storage_manager: StorageManager
+    ) -> None:
+        db_id = storage_manager.save_content_item(self._movie())
+        manager = self._manager(storage_manager)
+        manager.registry.register(WikidataProvider())
+
+        with pytest.raises(PinRefused) as refused:
+            manager.pin(
+                db_id,
+                storage_manager.get_content_item(db_id),
+                "wikidata",
+                "Q1128199",
+            )
+
+        assert "pin one of mock." in str(refused.value)
         assert "enrichment_ids" not in storage_manager.get_content_item(db_id).metadata
 
     def test_a_provider_named_in_another_case_pins_under_the_name_runs_read(

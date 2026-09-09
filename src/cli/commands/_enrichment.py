@@ -7,7 +7,12 @@ from typing import Any, cast
 import click
 
 from src.cli._shared import abort_with
-from src.enrichment.manager import EnrichmentJobStatus, EnrichmentManager, job_status
+from src.enrichment.manager import (
+    EnrichmentJobStatus,
+    EnrichmentManager,
+    PinRefused,
+    job_status,
+)
 from src.enrichment.provider_base import pins_of
 from src.models.content import ContentItem, ContentType
 from src.storage.manager import StorageManager
@@ -381,7 +386,7 @@ def enrichment_pin(
         pinned = EnrichmentManager(storage, ctx.obj["config"]).pin(
             item_id, item, provider, None if clear else record_id
         )
-    except ValueError as error:
+    except PinRefused as error:
         abort_with(str(error))
     payload = enrichment_pin_to_dict(
         item_id, provider, None if clear else record_id, pinned
@@ -408,6 +413,13 @@ def enrichment_pin(
     help="Reset only items of this content type",
 )
 @click.option(
+    "--id",
+    "item_id",
+    type=int,
+    default=None,
+    help="Re-queue this one item, whatever left it settled",
+)
+@click.option(
     "--user",
     "user_id",
     type=int,
@@ -424,10 +436,13 @@ def enrichment_reset(
     ctx: click.Context,
     provider: str,
     content_type_str: str | None,
+    item_id: int | None,
     user_id: int,
     yes: bool,
 ) -> None:
-    """Re-queue items for enrichment, by provider or content type."""
+    """Re-queue items the next run would otherwise skip, by provider, content
+    type, or the one item that failed.
+    """
     storage = ctx.obj["storage"]
 
     content_type = (
@@ -436,7 +451,14 @@ def enrichment_reset(
 
     provider_filter = None if provider == "all" else provider
 
+    if item_id is not None:
+        if provider_filter or content_type_str:
+            abort_with("--id cannot be combined with --provider or --type.")
+        _item_or_abort(storage, item_id, user_id)
+
     desc_parts = []
+    if item_id is not None:
+        desc_parts.append(f"item={item_id}")
     if provider_filter:
         desc_parts.append(f"provider={provider_filter}")
     if content_type_str:
@@ -445,9 +467,9 @@ def enrichment_reset(
 
     if not yes:
         target = f"items{desc}"
-        # Stats can count a provider filter ahead of the reset but not a
-        # content type.
-        if content_type_str is None:
+        # Stats can count a provider filter ahead of the reset but not a content
+        # type, and --id already names the single item it would touch.
+        if content_type_str is None and item_id is None:
             stats = storage.enrichment.stats(user_id=user_id)
             count = (
                 stats["by_provider"].get(provider_filter, 0)
@@ -463,6 +485,7 @@ def enrichment_reset(
         provider=provider_filter,
         content_type=content_type,
         user_id=user_id,
+        content_item_id=item_id,
     )
 
     click.echo(f"Reset enrichment status for {count} item(s).")

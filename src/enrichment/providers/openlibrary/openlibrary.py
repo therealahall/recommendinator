@@ -30,6 +30,10 @@ _MAX_SHORT_SUBJECT_LENGTH = 25
 
 _COVER_URL = "https://covers.openlibrary.org/b/id/{cover_id}-L.jpg"
 
+#: An Open Library work key. Matched whole because a pin is spliced into the
+#: ``/works/<key>`` path, where a typed "../" would address another endpoint.
+_WORK_KEY = re.compile(r"OL\d+W")
+
 
 def clean_title_for_search(title: str) -> str:
     cleaned = SERIES_PATTERN.sub("", title).strip()
@@ -160,6 +164,9 @@ class OpenLibraryProvider(EnrichmentProvider):
         if get_enum_value(item.content_type) != ContentType.BOOK.value:
             return []
         return [_doc_candidate(doc) for doc in self._search_docs(item)]
+
+    def accepts_record_id(self, record_id: str) -> bool:
+        return _WORK_KEY.fullmatch(record_id) is not None
 
     def _search_book(self, item: ContentItem) -> EnrichmentResult:
         docs = self._search_docs(item)

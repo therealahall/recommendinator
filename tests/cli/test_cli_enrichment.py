@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
-from src.enrichment.manager import EnrichmentJobStatus, EnrichmentManager
+from src.enrichment.manager import EnrichmentJobStatus, EnrichmentManager, PinRefused
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.manager import StorageManager
 from src.utils.matching import Candidate
@@ -472,7 +472,7 @@ class TestEnrichmentPinning:
         self, cli_runner: CliRunner
     ) -> None:
         manager = MagicMock(spec=EnrichmentManager)
-        manager.pin.side_effect = ValueError("pin one of rawg, tmdb.")
+        manager.pin.side_effect = PinRefused("pin one of rawg, tmdb.")
 
         result = _invoke_with_enrichment_manager(
             cli_runner,
@@ -523,5 +523,48 @@ class TestEnrichmentReset:
         assert result.exit_code == 0
         assert "Reset enrichment status for 50 item(s)" in result.output
         mock_storage.enrichment.reset.assert_called_once_with(
-            provider=None, content_type=None, user_id=1
+            provider=None, content_type=None, user_id=1, content_item_id=None
         )
+
+    def test_enrichment_reset_re_queues_the_one_item_named(
+        self, cli_runner: CliRunner
+    ) -> None:
+        mock_storage = make_storage_mock()
+        mock_storage.enrichment.reset.return_value = 1
+
+        result = _invoke_with_mocks(
+            cli_runner, ["enrichment", "reset", "--id", "42", "--yes"], mock_storage
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "Reset enrichment status for 1 item(s)" in result.output
+        assert mock_storage.enrichment.reset.call_args.kwargs["content_item_id"] == 42
+
+    def test_enrichment_reset_refuses_an_id_beside_a_filter(
+        self, cli_runner: CliRunner
+    ) -> None:
+        mock_storage = make_storage_mock()
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["enrichment", "reset", "--id", "7", "--provider", "tmdb", "--yes"],
+            mock_storage,
+        )
+
+        assert result.exit_code != 0
+        assert "--id cannot be combined with --provider or --type." in result.output
+        mock_storage.enrichment.reset.assert_not_called()
+
+    def test_enrichment_reset_names_an_id_that_is_not_there(
+        self, cli_runner: CliRunner
+    ) -> None:
+        mock_storage = make_storage_mock()
+        mock_storage.get_content_item.return_value = None
+
+        result = _invoke_with_mocks(
+            cli_runner, ["enrichment", "reset", "--id", "999", "--yes"], mock_storage
+        )
+
+        assert result.exit_code != 0
+        assert "Item 999 not found" in result.output
+        mock_storage.enrichment.reset.assert_not_called()

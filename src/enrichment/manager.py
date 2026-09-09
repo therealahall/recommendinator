@@ -13,6 +13,7 @@ from src.enrichment.provider_base import (
     EnrichmentProvider,
     EnrichmentResult,
     ProviderError,
+    accepts_a_pin,
     states_a_match,
     states_a_series_ordinal,
     with_pin,
@@ -48,6 +49,12 @@ _MAX_CONSECUTIVE_REJECTIONS = 5
 
 #: The provider the first-success loop settled an item on, and what it said.
 _Match = tuple[EnrichmentProvider, EnrichmentResult]
+
+
+class PinRefused(ValueError):
+    """A pin no run could read back, worded here and echoed to the operator.
+    Its own type so neither interface repeats an unrelated storage failure.
+    """
 
 
 @dataclass(frozen=True)
@@ -233,12 +240,12 @@ class EnrichmentManager:
         self, db_id: int, item: ContentItem, provider_name: str, record_id: str | None
     ) -> dict[str, str]:
         """Binds *item* to one provider record, *record_id* ``None`` clearing it,
-        and re-queues the item so the next run reads it. Raises ``ValueError``
+        and re-queues the item so the next run reads it. Raises ``PinRefused``
         for a pin no run could read back.
         """
         provider = self._pinnable_provider(provider_name)
         if record_id is not None and not provider.accepts_record_id(record_id):
-            raise ValueError(
+            raise PinRefused(
                 f"{provider.name} cannot look up record '{record_id}'; "
                 "pin a record id it offered as a candidate."
             )
@@ -253,14 +260,19 @@ class EnrichmentManager:
     def _pinnable_provider(self, provider_name: str) -> EnrichmentProvider:
         """Case-insensitively, as ``enrichment reset --provider`` reads one: a
         pin is stored under the name every run looks it up by, or refused.
+        A provider that never reads one is as unpinnable as a made-up name.
         """
-        known = self.registry.get_all_providers()
-        for name, provider in known.items():
+        pinnable = {
+            name: provider
+            for name, provider in self.registry.get_all_providers().items()
+            if accepts_a_pin(provider)
+        }
+        for name, provider in pinnable.items():
             if name.lower() == provider_name.lower():
                 return provider
-        raise ValueError(
-            f"No enrichment provider is named '{provider_name}'; "
-            f"pin one of {', '.join(sorted(known))}."
+        raise PinRefused(
+            f"No enrichment provider named '{provider_name}' reads a pinned "
+            f"record; pin one of {', '.join(sorted(pinnable))}."
         )
 
     def start_enrichment(

@@ -1878,6 +1878,12 @@ button.rec-score {
   margin: 0 0 var(--space-3) 0;
 }
 
+/* A live region is mounted before it has anything to announce, so its margin
+   waits for the words rather than opening a gap under the search button. */
+.edit-modal-note:empty {
+  margin: 0;
+}
+
 .edit-manual-list {
   list-style: none;
   margin: 0;

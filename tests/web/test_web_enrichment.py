@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from src.enrichment.manager import EnrichmentManager
+from src.enrichment.manager import EnrichmentManager, PinRefused
 from src.enrichment.registry import EnrichmentRegistry
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.manager import StorageManager
@@ -282,7 +282,7 @@ class TestEnrichmentPinning:
 
     def test_a_pin_the_manager_refuses_is_a_400_naming_what_is_valid(self) -> None:
         manager = MagicMock(spec=EnrichmentManager)
-        manager.pin.side_effect = ValueError("pin one of rawg, tmdb.")
+        manager.pin.side_effect = PinRefused("pin one of rawg, tmdb.")
 
         with (
             patch("src.web.api._enrichment.EnrichmentManager", return_value=manager),
@@ -295,6 +295,20 @@ class TestEnrichmentPinning:
 
         assert response.status_code == 400
         assert response.json()["detail"] == "pin one of rawg, tmdb."
+
+    def test_a_failure_that_is_not_the_authored_refusal_is_never_echoed(self) -> None:
+        manager = MagicMock(spec=EnrichmentManager)
+        manager.pin.side_effect = ValueError("no such column: enrichment_ids")
+
+        with (
+            patch("src.web.api._enrichment.EnrichmentManager", return_value=manager),
+            _client(self._storage(), {}) as client,
+            pytest.raises(ValueError),
+        ):
+            client.post(
+                "/api/enrichment/pin",
+                json={"item_id": 7, "provider": "rawg", "record_id": "1"},
+            )
 
     def test_pinning_an_item_that_is_not_there_is_a_404(self) -> None:
         storage = make_storage_mock()
@@ -321,6 +335,42 @@ class TestEnrichmentReset:
         data = response.json()
         assert data["count"] == 50
         assert "50" in data["message"]
+
+    def test_reset_one_item_narrows_the_reset_to_it(self) -> None:
+        storage = make_storage_mock()
+        storage.enrichment.reset.return_value = 1
+
+        with _client(storage, {}) as client:
+            response = client.post("/api/enrichment/reset", json={"item_id": 7})
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "message": "Reset enrichment status for 1 item(s)",
+            "count": 1,
+        }
+        assert storage.enrichment.reset.call_args[1]["content_item_id"] == 7
+
+    def test_reset_refuses_an_item_id_beside_a_filter(self) -> None:
+        storage = make_storage_mock()
+
+        with _client(storage, {}) as client:
+            response = client.post(
+                "/api/enrichment/reset", json={"item_id": 7, "provider": "tmdb"}
+            )
+
+        assert response.status_code == 400
+        assert "cannot be combined" in response.json()["detail"]
+        storage.enrichment.reset.assert_not_called()
+
+    def test_reset_reports_an_item_that_is_not_there(self) -> None:
+        storage = make_storage_mock()
+        storage.get_content_item.return_value = None
+
+        with _client(storage, {}) as client:
+            response = client.post("/api/enrichment/reset", json={"item_id": 999})
+
+        assert response.status_code == 404
+        storage.enrichment.reset.assert_not_called()
 
     def test_reset_invalid_content_type(self) -> None:
         with _client(make_storage_mock(), {}) as client:

@@ -166,9 +166,10 @@ class EnrichmentProvider(ABC):
 
     def accepts_record_id(self, record_id: str) -> bool:
         """Whether a pin naming this record is one :meth:`enrich` can look up.
-        An id it cannot is stored and then silently ignored by every run.
+        Refusing by default, so a provider that never reads
+        :func:`pinned_record` cannot be handed an id every run then ignores.
         """
-        return bool(record_id.strip())
+        return False
 
     def fetch_series_ordinal(
         self, item: ContentItem, config: dict[str, Any]
@@ -200,3 +201,10 @@ def states_a_match(provider: EnrichmentProvider) -> bool:
 def states_a_series_ordinal(provider: EnrichmentProvider) -> bool:
     """Whether the ordinal pass has anything to ask this provider."""
     return _overrides(type(provider), "fetch_series_ordinal")
+
+
+def accepts_a_pin(provider: EnrichmentProvider) -> bool:
+    """Whether a pin means anything to this provider, so the refusal can name
+    the ones it does.
+    """
+    return _overrides(type(provider), "accepts_record_id")
