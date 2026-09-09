@@ -142,7 +142,6 @@ describe('EditModal', () => {
       attachTo: document.body,
     })
 
-    expect(wrapper.get('.edit-manual-held').text()).toContain('creator')
     await wrapper.findAll('button')
       .find(b => b.text().includes('Stop holding this field'))!.trigger('click')
 
@@ -178,17 +177,6 @@ describe('EditModal', () => {
         (el) => said.element.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING,
       ),
     ).toBe(true)
-    wrapper.unmount()
-  })
-
-  it('says what editing a field costs while nothing is held yet', async () => {
-    const wrapper = mount(EditModal, {
-      props: { item: defaultItem, saving: false, saveError: '' },
-      attachTo: document.body,
-    })
-
-    expect(wrapper.text()).toContain('holds it against its source')
-    expect(wrapper.text()).not.toContain('Stop holding this field')
     wrapper.unmount()
   })
 

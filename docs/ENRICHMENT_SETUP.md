@@ -113,9 +113,7 @@ by provider and starts a run. To find items still missing metadata, filter the
 
 Some items never match a provider, being niche, very new or oddly titled. Fill
 those in yourself. Every field you write is held against its source, so later
-runs record what a provider says without touching your value. The exception is a
-TV show's status, which follows a provider raising the season count past the
-seasons you have ticked.
+runs record what a provider says without touching your value.
 
 **Finding them.** An item counts as enriched only when a provider matched it
 cleanly: a real provider, no error, not marked "not found", and not pending
@@ -140,10 +138,9 @@ and `--description` replaces the description. `--clear-genres`, `--clear-tags`
 and `--description ""` empty them.
 
 Manual values **overwrite** the stored detail, unlike the gap-filling merge that
-sync and automatic enrichment use, and each one is held from then on. To let a
-field be stated again, run `library clear-manual --id <id> --field genres` or
-press **Stop holding this field** beside it in the edit modal. Either way the
-stored value stands until something states a new one.
+sync and automatic enrichment use. To let a field be stated again, run
+`library clear-manual --id <id> --field genres` or press **Stop holding this
+field** beside it in the edit modal.
 
 ## Troubleshooting
 

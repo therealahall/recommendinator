@@ -112,7 +112,7 @@ change depends on the field, and is usually less than you expect:
 | `seasons_watched` | Merge in. An import adds a season, never removes one. Unticking one in the season checklist or with `library edit --seasons-watched` holds only until a source reports that season again, so to drop it for good remove it at the source (unwatch the season in Trakt, say) |
 | `year_published`, `pages`, `isbn`, `runtime_minutes`, `platform`, `hours_played`, `notes`, `series_name`, `series_position` | Fill an empty value, and nothing else ever. There is no edit surface for these either, so fix them at the source they came from |
 | `year` and the creator: `author`, `director`, `creator`, `developer` | Fill an empty value. The edit modal and `library edit --release-year`/`--creator` replace one |
-| `title` | Replace it, since the title is how a re-import finds the row. Renaming in the edit modal or with `library edit --title` holds it, and a later import then records what the file says without overwriting you |
+| `title` | Replace it, since the title is how a re-import finds the row. Renaming in the edit modal or with `library edit --title` holds it against later imports |
 
 Every row this app exports carries a real `true` or `false` in `ignored`, never
 a blank cell, so re-importing an export replaces your entire ignore list with
