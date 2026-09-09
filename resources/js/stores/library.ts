@@ -3,7 +3,14 @@ import { ref, computed } from 'vue'
 import { useApi } from '@/composables/useApi'
 import { useAppStore } from '@/stores/app'
 import { DEFAULT_SORT, MAX_SEARCH_LENGTH, MERGE_CANDIDATE_LIMIT } from '@/constants/library'
-import type { ContentItemResponse, ItemEditRequest, MergeRecord } from '@/types/api'
+import type {
+  ContentItemResponse,
+  EnrichmentCandidate,
+  EnrichmentCandidatesResponse,
+  EnrichmentPinResponse,
+  ItemEditRequest,
+  MergeRecord,
+} from '@/types/api'
 
 const PAGE_SIZE = 50
 const SEARCH_DEBOUNCE_MS = 250
@@ -36,6 +43,13 @@ export const useLibraryStore = defineStore('library', () => {
   const editingItem = ref<ContentItemResponse | null>(null)
   const editSaving = ref(false)
   const editError = ref('')
+
+  // Which provider record enriches the item being edited, and what its
+  // providers offer instead. Loaded on demand: each search costs an API call
+  // to every enabled provider.
+  const pinCandidates = ref<EnrichmentCandidate[]>([])
+  const pinned = ref<Record<string, string>>({})
+  const pinSearching = ref(false)
 
   // The item a merge is picked from. Its content type scopes the candidate
   // search, which is what puts a cross-type merge out of the picker's reach.
@@ -208,6 +222,42 @@ export const useLibraryStore = defineStore('library', () => {
     editingItem.value = null
     editSaving.value = false
     editError.value = ''
+    pinCandidates.value = []
+    pinned.value = {}
+  }
+
+  async function findPinCandidates(dbId: number, query: string) {
+    pinSearching.value = true
+    editError.value = ''
+    try {
+      const found = await api.get<EnrichmentCandidatesResponse>('/enrichment/candidates', {
+        item_id: dbId,
+        user_id: useAppStore().currentUserId,
+        ...(query.trim() ? { query: query.slice(0, MAX_SEARCH_LENGTH) } : {}),
+      })
+      pinCandidates.value = found.candidates
+      pinned.value = found.pinned
+    } catch (err) {
+      editError.value = err instanceof Error ? err.message : 'Failed to search'
+      pinCandidates.value = []
+    } finally {
+      pinSearching.value = false
+    }
+  }
+
+  async function pinEnrichment(dbId: number, provider: string, recordId: string | null) {
+    editError.value = ''
+    try {
+      const result = await api.post<EnrichmentPinResponse>('/enrichment/pin', {
+        item_id: dbId,
+        provider,
+        record_id: recordId,
+        user_id: useAppStore().currentUserId,
+      })
+      pinned.value = result.pinned
+    } catch (err) {
+      editError.value = err instanceof Error ? err.message : 'Failed to pin'
+    }
   }
 
   async function saveEdit(dbId: number, data: ItemEditRequest) {
@@ -351,6 +401,9 @@ export const useLibraryStore = defineStore('library', () => {
     editingItem,
     editSaving,
     editError,
+    pinCandidates,
+    pinned,
+    pinSearching,
     mergeAnchor,
     mergeQuery,
     mergeCandidates,
@@ -368,6 +421,8 @@ export const useLibraryStore = defineStore('library', () => {
     openEdit,
     closeEdit,
     saveEdit,
+    findPinCandidates,
+    pinEnrichment,
     openMerge,
     closeMerge,
     setMergeQuery,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
+from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from typing import Any
 
@@ -51,6 +52,35 @@ def _year_rank(item_year: int | None, year: int | None) -> tuple[int, int]:
     if item_year is None or year is None:
         return (1, 0)
     return (0, abs(year - item_year))
+
+
+@dataclass(frozen=True)
+class Candidate:
+    """One record a provider offers, carrying what tells two of them apart."""
+
+    record_id: str
+    title: str
+    year: int | None = None
+    creator: str | None = None
+    cover_url: str | None = None
+    #: Alternates the ranker also compares, an original-language title above all.
+    also_titled: tuple[str, ...] = field(default_factory=tuple)
+
+
+def best_match(
+    searched_title: str,
+    item_year: int | None,
+    candidates: Sequence[Candidate],
+) -> Candidate | None:
+    index = best_match_index(
+        searched_title,
+        item_year,
+        [
+            ([candidate.title, *candidate.also_titled], candidate.year)
+            for candidate in candidates
+        ],
+    )
+    return None if index is None else candidates[index]
 
 
 def best_match_index(

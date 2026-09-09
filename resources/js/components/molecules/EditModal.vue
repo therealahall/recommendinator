@@ -1,7 +1,12 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, watch } from 'vue'
-import type { ContentItemResponse, ItemEditRequest } from '@/types/api'
-import { MAX_CREATOR_LENGTH, MAX_TITLE_LENGTH, RELEASE_YEAR_TYPES } from '@/constants/library'
+import type { ContentItemResponse, EnrichmentCandidate, ItemEditRequest } from '@/types/api'
+import {
+  MAX_CREATOR_LENGTH,
+  MAX_SEARCH_LENGTH,
+  MAX_TITLE_LENGTH,
+  RELEASE_YEAR_TYPES,
+} from '@/constants/library'
 import { formatContentType, formatStatusForContentType } from '@/utils/format'
 import { useDiscardGuard } from '@/composables/useDiscardGuard'
 import { rescueFocus } from '@/utils/focus'
@@ -18,11 +23,17 @@ const props = defineProps<{
   saveError: string
   /** The status the opening action means, where it is not the item's own. */
   initialStatus?: string
+  /** Left out where the host has not wired the pin, which hides the section. */
+  pinned?: Record<string, string>
+  pinCandidates?: EnrichmentCandidate[]
+  pinSearching?: boolean
 }>()
 
 const emit = defineEmits<{
   save: [dbId: number, data: ItemEditRequest]
   clearManual: [dbId: number, field: string]
+  pinSearch: [dbId: number, query: string]
+  pin: [dbId: number, provider: string, recordId: string | null]
   close: []
 }>()
 
@@ -172,6 +183,28 @@ function save() {
   if (props.saving) return
   emit('save', props.item.db_id!, edits.value)
 }
+
+const pinQuery = ref('')
+
+// Pre-computed rather than formatted in the v-for, which re-runs every render.
+const pinRows = computed(() =>
+  (props.pinCandidates ?? []).map((candidate) => ({
+    key: `${candidate.provider}:${candidate.record_id}`,
+    candidate,
+    label: [candidate.provider, candidate.title, candidate.creator, candidate.year]
+      .filter(Boolean)
+      .join(' · '),
+  })),
+)
+
+const pinnedRows = computed(() =>
+  Object.entries(props.pinned ?? {}).map(([provider, recordId]) => ({ provider, recordId })),
+)
+
+function searchRecords() {
+  if (props.pinSearching) return
+  emit('pinSearch', props.item.db_id!, pinQuery.value)
+}
 </script>
 
 <template>
@@ -280,6 +313,41 @@ function save() {
     <div class="edit-field">
       <label for="edit-description">Description</label>
       <textarea id="edit-description" v-model="description" class="field" maxlength="10000" placeholder="Add a description..." />
+    </div>
+
+    <div v-if="pinned" class="edit-field">
+      <label for="edit-pin-query">Which record enriches this</label>
+      <p class="edit-modal-note">
+        Search each provider and pick the right record. Enrichment then reads
+        that one instead of matching by title.
+      </p>
+      <input
+        id="edit-pin-query"
+        v-model="pinQuery"
+        type="search"
+        class="field"
+        :maxlength="MAX_SEARCH_LENGTH"
+        placeholder="Leave empty to search this item's own title..."
+        @keydown.enter.prevent="searchRecords"
+      >
+      <button class="btn btn-secondary" :aria-disabled="pinSearching || undefined" @click="searchRecords">
+        {{ pinSearching ? 'Searching…' : 'Search providers' }}
+      </button>
+      <ul class="edit-manual-list">
+        <li v-for="row in pinRows" :key="row.key" class="edit-manual-held">
+          <span>{{ row.label }}</span>
+          <button
+            class="btn btn-secondary"
+            @click="emit('pin', item.db_id!, row.candidate.provider, row.candidate.record_id)"
+          >Use this record</button>
+        </li>
+        <li v-for="row in pinnedRows" :key="row.provider" class="edit-manual-held">
+          <span>Pinned: {{ row.provider }} {{ row.recordId }}</span>
+          <button class="btn btn-secondary" @click="emit('pin', item.db_id!, row.provider, null)">
+            Match by title again
+          </button>
+        </li>
+      </ul>
     </div>
 
     <hr class="edit-modal-divider">

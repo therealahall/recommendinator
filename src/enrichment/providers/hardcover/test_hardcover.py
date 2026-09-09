@@ -182,6 +182,22 @@ class TestHardcoverMatching:
         assert "editions" not in where
         assert ordinal is not None
 
+    def test_a_pinned_record_settles_two_candidates_the_title_gate_refuses(
+        self, provider: HardcoverProvider
+    ) -> None:
+        with patch(
+            "src.enrichment.providers.hardcover.hardcover.requests.post"
+        ) as mock_post:
+            mock_post.return_value = _response(_books(_hardcover_book()))
+            ordinal = provider.fetch_series_ordinal(
+                _book(enrichment_ids={"hardcover": "4231"}), _CONFIG
+            )
+
+        where = mock_post.call_args.kwargs["json"]["variables"]["where"]
+        assert where["id"] == {"_eq": "4231"}
+        assert "title" not in where
+        assert ordinal is not None and ordinal.position == 1
+
     def test_a_title_that_only_contains_the_searched_one_is_refused(
         self, provider: HardcoverProvider
     ) -> None:

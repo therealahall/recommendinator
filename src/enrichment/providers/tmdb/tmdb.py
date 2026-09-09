@@ -10,9 +10,10 @@ from src.enrichment.provider_base import (
     EnrichmentResult,
     ProviderError,
     log_search_title,
+    pinned_record,
 )
-from src.models.content import ContentItem, ContentType
-from src.utils.matching import best_match_index, year_of
+from src.models.content import ContentItem, ContentType, get_enum_value
+from src.utils.matching import Candidate, best_match, year_of
 from src.utils.request_errors import scrub_request_error
 
 logger = logging.getLogger(__name__)
@@ -37,10 +38,42 @@ def _poster_url(payload: dict[str, Any]) -> str | None:
     return f"{_POSTER_BASE}{poster_path}" if poster_path else None
 
 
+def _searched(item: ContentItem) -> tuple[str, int | None]:
+    metadata = item.metadata or {}
+    return clean_media_title_for_search(item.title), year_of(
+        metadata.get("release_year") or metadata.get("year_published")
+    )
+
+
+def _candidate(result: dict[str, Any]) -> Candidate:
+    titles = [
+        str(title)
+        for title in (
+            result.get("title"),
+            result.get("name"),
+            result.get("original_title"),
+            result.get("original_name"),
+        )
+        if title
+    ]
+    return Candidate(
+        record_id=str(result["id"]),
+        title=titles[0] if titles else "",
+        year=year_of(result.get("release_date") or result.get("first_air_date")),
+        cover_url=_poster_url(result),
+        also_titled=tuple(titles[1:]),
+    )
+
+
 # The provider's own defaults, consumed by BOTH get_config_schema() and enrich()
 # so the two cannot drift.
 _DEFAULT_LANGUAGE = "en-US"
 _DEFAULT_INCLUDE_KEYWORDS = True
+
+_SEARCH_ROUTES = {
+    "movie": ("search/movie", "year"),
+    "tv_show": ("search/tv", "first_air_date_year"),
+}
 
 
 class TMDBProvider(EnrichmentProvider):
@@ -127,7 +160,9 @@ class TMDBProvider(EnrichmentProvider):
         tmdb_id = self._get_tmdb_id(item, "movie")
 
         if tmdb_id is None:
-            tmdb_id = self._search_movie(item, api_key, language)
+            tmdb_id = self._matched_id(
+                item, api_key, language, *_SEARCH_ROUTES["movie"]
+            )
 
         if tmdb_id is None:
             return EnrichmentResult(
@@ -147,7 +182,9 @@ class TMDBProvider(EnrichmentProvider):
         tmdb_id = self._get_tmdb_id(item, "tv")
 
         if tmdb_id is None:
-            tmdb_id = self._search_tv_show(item, api_key, language)
+            tmdb_id = self._matched_id(
+                item, api_key, language, *_SEARCH_ROUTES["tv_show"]
+            )
 
         if tmdb_id is None:
             return EnrichmentResult(
@@ -157,8 +194,26 @@ class TMDBProvider(EnrichmentProvider):
 
         return self._fetch_tv_details(tmdb_id, api_key, language, include_keywords)
 
+    def search(self, item: ContentItem, config: dict[str, Any]) -> list[Candidate]:
+        route = _SEARCH_ROUTES.get(get_enum_value(item.content_type))
+        if route is None:
+            return []
+        return self._search_media(
+            item,
+            config.get("api_key", ""),
+            config.get("language", _DEFAULT_LANGUAGE),
+            *route,
+        )
+
     def _get_tmdb_id(self, item: ContentItem, media_type: str) -> int | None:
         metadata = item.metadata or {}
+
+        pinned = pinned_record(item, self.name)
+        if pinned is not None:
+            try:
+                return int(pinned)
+            except ValueError:
+                pass
 
         if "tmdb_id" in metadata:
             try:
@@ -181,8 +236,8 @@ class TMDBProvider(EnrichmentProvider):
         language: str,
         endpoint: str,
         year_param: str,
-    ) -> int | None:
-        search_title = clean_media_title_for_search(item.title)
+    ) -> list[Candidate]:
+        search_title, year = _searched(item)
         log_search_title(logger, item.title, search_title)
 
         params = {
@@ -190,40 +245,21 @@ class TMDBProvider(EnrichmentProvider):
             "query": search_title,
             "language": language,
         }
-
-        metadata = item.metadata or {}
-        year = metadata.get("release_year") or metadata.get("year_published")
         if year:
             params[year_param] = str(year)
 
         try:
-            response = requests.get(
-                f"{TMDB_API_BASE}/{endpoint}",
-                params=params,
-                timeout=10,
-            )
-            response.raise_for_status()
-            matched = self._pick_result(
-                response.json().get("results", []), search_title, year
-            )
-            if matched is not None:
-                return matched
+            candidates = self._request_candidates(endpoint, params=params)
+            if best_match(search_title, year, candidates) is not None:
+                return candidates
 
             if year and year_param in params:
                 del params[year_param]
-                response = requests.get(
-                    f"{TMDB_API_BASE}/{endpoint}",
-                    params=params,
-                    timeout=10,
-                )
-                response.raise_for_status()
                 # TMDB filters on an exact year where the gate allows three of
                 # drift, so a near-year release only surfaces on this retry.
-                return self._pick_result(
-                    response.json().get("results", []), search_title, year
-                )
+                return self._request_candidates(endpoint, params=params)
 
-            return None
+            return candidates
 
         except requests.RequestException as error:
             # ``from None``: the api_key is a query parameter, so the URL on
@@ -232,39 +268,30 @@ class TMDBProvider(EnrichmentProvider):
                 self.name, f"Failed to search TMDB: {scrub_request_error(error)}"
             ) from None
 
-    def _pick_result(
-        self, results: list[dict[str, Any]], search_title: str, year: Any
-    ) -> int | None:
-        candidates = [
-            (
-                [
-                    str(title)
-                    for title in (
-                        result.get("title"),
-                        result.get("name"),
-                        result.get("original_title"),
-                        result.get("original_name"),
-                    )
-                    if title
-                ],
-                year_of(result.get("release_date") or result.get("first_air_date")),
-            )
-            for result in results
-        ]
-        index = best_match_index(search_title, year_of(year), candidates)
-        return None if index is None else int(results[index]["id"])
-
-    def _search_movie(
-        self, item: ContentItem, api_key: str, language: str
-    ) -> int | None:
-        return self._search_media(item, api_key, language, "search/movie", "year")
-
-    def _search_tv_show(
-        self, item: ContentItem, api_key: str, language: str
-    ) -> int | None:
-        return self._search_media(
-            item, api_key, language, "search/tv", "first_air_date_year"
+    def _request_candidates(
+        self, endpoint: str, *, params: dict[str, str]
+    ) -> list[Candidate]:
+        response = requests.get(
+            f"{TMDB_API_BASE}/{endpoint}", params=params, timeout=10
         )
+        response.raise_for_status()
+        return [_candidate(result) for result in response.json().get("results", [])]
+
+    def _matched_id(
+        self,
+        item: ContentItem,
+        api_key: str,
+        language: str,
+        endpoint: str,
+        year_param: str,
+    ) -> int | None:
+        search_title, year = _searched(item)
+        matched = best_match(
+            search_title,
+            year,
+            self._search_media(item, api_key, language, endpoint, year_param),
+        )
+        return None if matched is None else int(matched.record_id)
 
     def _fetch_movie_details(
         self,

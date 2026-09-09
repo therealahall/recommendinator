@@ -91,7 +91,8 @@ class EnrichmentStore:
         content_item_id: int | None = None,
     ) -> int:
         """Each filter left as ``None`` widens the reset; all unset resets every
-        item.
+        item. ``mark_needed`` is no substitute for the single-item case: it
+        ignores an item that already has a row, which every enriched one has.
         """
         with self._sqlite_db.connection() as conn:
             content_type_str = content_type.value if content_type else None

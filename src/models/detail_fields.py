@@ -447,10 +447,14 @@ RELEASE_YEAR_FIELDS: dict[str, DetailField] = {
 }
 
 
+#: The record each provider is bound to for an item, keyed by provider name.
+#: A run writes what it matched, so the next one stops searching by title.
+PIN_KEY = "enrichment_ids"
+
 #: A provider replaces these rather than filling them. Only a key with a single
 #: writer qualifies; the series fields have several, so ``reconcile_series``
 #: decides those by authority instead.
-PROVIDER_OWNED_METADATA_KEYS = frozenset({"franchise"})
+PROVIDER_OWNED_METADATA_KEYS = frozenset({"franchise", PIN_KEY})
 
 
 def _assert_select_aliases_are_unique() -> None:

@@ -3738,6 +3738,18 @@ _GUARDED_ENDPOINTS = [
     _Endpoint("POST", "/api/enrichment/start", ("storage", "config"), body={}),
     _Endpoint("GET", "/api/enrichment/stats", ("config", "storage")),
     _Endpoint("POST", "/api/enrichment/reset", ("storage",), body={}),
+    _Endpoint(
+        "GET",
+        "/api/enrichment/candidates",
+        ("storage", "config"),
+        url="/api/enrichment/candidates?item_id=1",
+    ),
+    _Endpoint(
+        "POST",
+        "/api/enrichment/pin",
+        ("storage", "config"),
+        body={"item_id": 1, "provider": "tmdb", "record_id": "603"},
+    ),
     _Endpoint("GET", "/api/gog/status", ("config", "storage")),
     _Endpoint(
         "POST",

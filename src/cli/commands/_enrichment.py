@@ -2,14 +2,20 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Any
+from typing import Any, cast
 
 import click
 
 from src.cli._shared import abort_with
 from src.enrichment.manager import EnrichmentJobStatus, EnrichmentManager, job_status
-from src.models.content import ContentType
+from src.enrichment.provider_base import pins_of
+from src.models.content import ContentItem, ContentType
 from src.storage.manager import StorageManager
+from src.utils.item_serialization import (
+    enrichment_candidates_to_dict,
+    enrichment_pin_to_dict,
+)
+from src.utils.sorting import MAX_SEARCH_LENGTH
 
 
 def _echo_errors(errors: list[str], *, err: bool = False) -> None:
@@ -278,6 +284,110 @@ def enrichment_status(ctx: click.Context, user_id: int, output_format: str) -> N
             click.echo("\nBy Match Quality:")
             for quality, count in stats["by_quality"].items():
                 click.echo(f"  {quality}: {count}")
+
+
+def _item_or_abort(storage: StorageManager, item_id: int, user_id: int) -> ContentItem:
+    item = storage.get_content_item(item_id, user_id=user_id)
+    if item is None:
+        abort_with(f"Item {item_id} not found")
+    return item
+
+
+@enrichment.command("candidates")
+@click.option("--id", "item_id", type=int, required=True, help="Item database ID")
+@click.option(
+    "--query",
+    default=None,
+    help="Title to search under, in place of the item's own",
+)
+@click.option("--user", "user_id", type=int, default=1, help="User ID")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format",
+)
+@click.pass_context
+def enrichment_candidates(
+    ctx: click.Context,
+    item_id: int,
+    query: str | None,
+    user_id: int,
+    output_format: str,
+) -> None:
+    """List every enabled provider's own search results for one item."""
+    if query is not None and len(query) > MAX_SEARCH_LENGTH:
+        abort_with(f"--query must be at most {MAX_SEARCH_LENGTH} characters.")
+
+    storage = ctx.obj["storage"]
+    item = _item_or_abort(storage, item_id, user_id)
+    manager = EnrichmentManager(storage, ctx.obj["config"])
+    payload = enrichment_candidates_to_dict(
+        item_id, manager.candidates(item, query), pins_of(item.metadata)
+    )
+
+    if output_format == "json":
+        click.echo(json.dumps(payload, indent=2))
+        return
+
+    rows = cast(list[dict[str, Any]], payload["candidates"])
+    if not rows:
+        click.echo(f"No provider offered a record for item {item_id}.")
+        return
+    for row in rows:
+        detail = " · ".join(str(part) for part in (row["creator"], row["year"]) if part)
+        click.echo(
+            f"{row['provider']} {row['record_id']}: {row['title']}"
+            + (f" ({detail})" if detail else "")
+        )
+
+
+@enrichment.command("pin")
+@click.option("--id", "item_id", type=int, required=True, help="Item database ID")
+@click.option("--provider", required=True, help="Provider whose record to pin")
+@click.option(
+    "--record",
+    "record_id",
+    default=None,
+    help="Provider's record id; omit with --clear to resume title matching",
+)
+@click.option("--clear", is_flag=True, help="Drop the pin and match by title again")
+@click.option("--user", "user_id", type=int, default=1, help="User ID")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format",
+)
+@click.pass_context
+def enrichment_pin(
+    ctx: click.Context,
+    item_id: int,
+    provider: str,
+    record_id: str | None,
+    clear: bool,
+    user_id: int,
+    output_format: str,
+) -> None:
+    """Bind one item to one provider record, or hand it back to title search."""
+    if clear == bool(record_id):
+        abort_with("Pass either --record or --clear.")
+
+    storage = ctx.obj["storage"]
+    item = _item_or_abort(storage, item_id, user_id)
+    pinned = EnrichmentManager(storage, ctx.obj["config"]).pin(
+        item_id, item, provider, None if clear else record_id
+    )
+    payload = enrichment_pin_to_dict(
+        item_id, provider, None if clear else record_id, pinned
+    )
+
+    if output_format == "json":
+        click.echo(json.dumps(payload, indent=2))
+    else:
+        click.echo(payload["message"])
 
 
 @enrichment.command("reset")

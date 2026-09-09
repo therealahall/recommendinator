@@ -864,7 +864,7 @@ class TestSearchTitleCannotForgeALogLineRegression:
             caplog.at_level(logging.DEBUG, logger="src.enrichment.providers.tmdb.tmdb"),
         ):
             mock_get.return_value.json.return_value = {"results": []}
-            assert provider._search_movie(item, "test-key", "en-US") is None
+            assert provider.search(item, {"api_key": "test-key"}) == []
 
         assert "Real Title\\nWARNING" in caplog.text
         assert self._FORGED not in caplog.text

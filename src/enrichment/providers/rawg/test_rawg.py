@@ -321,6 +321,30 @@ class TestRAWGProviderEnrichment:
         assert result.external_id is None
 
 
+class TestRAWGPinnedRecord:
+    def test_a_pinned_record_is_fetched_without_searching_by_title(self) -> None:
+        item = ContentItem(
+            id="game1",
+            title="Prey",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"enrichment_ids": {"rawg": "3328"}},
+        )
+
+        with patch("src.enrichment.providers.rawg.rawg.requests.get") as mock_get:
+            mock_get.return_value = MagicMock(
+                spec=requests.Response,
+                status_code=200,
+                json=lambda: {"id": 3328, "name": "The Witcher 3", "results": []},
+            )
+
+            result = RAWGProvider().enrich(item, {"api_key": "k"})
+
+        assert result is not None
+        assert result.external_id == "rawg:3328"
+        assert "/games/3328" in mock_get.call_args_list[0].args[0]
+
+
 class TestRAWGProviderDescriptionCleaning:
     def test_clean_description_removes_html(self) -> None:
         provider = RAWGProvider()
@@ -562,7 +586,7 @@ class TestSearchTitleCannotForgeALogLineRegression:
             caplog.at_level(logging.DEBUG, logger="src.enrichment.providers.rawg.rawg"),
         ):
             mock_get.return_value.json.return_value = {"results": []}
-            assert provider._search_game(item, "test-key") is None
+            assert provider._search_game(item, "test-key") == []
 
         assert "Real Game\\nWARNING" in caplog.text
         assert self._FORGED not in caplog.text

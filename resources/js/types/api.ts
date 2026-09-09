@@ -524,6 +524,28 @@ export interface DuplicateSuggestionPage {
   suggestions: DuplicateSuggestion[]
 }
 
+export interface EnrichmentCandidate {
+  provider: string
+  record_id: string
+  title: string
+  year: number | null
+  creator: string | null
+  cover_url: string | null
+}
+
+export interface EnrichmentCandidatesResponse {
+  item_id: number
+  candidates: EnrichmentCandidate[]
+  /** The record each provider is bound to, keyed by provider name. */
+  pinned: Record<string, string>
+}
+
+export interface EnrichmentPinResponse {
+  item_id: number
+  pinned: Record<string, string>
+  message: string
+}
+
 export interface MergeRecord {
   id: number
   survivor_id: number

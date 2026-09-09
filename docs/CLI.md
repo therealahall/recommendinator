@@ -469,7 +469,15 @@ uv run python -m src.cli enrichment status                    # library counts b
 uv run python -m src.cli enrichment job                       # the live run, if there is one
 uv run python -m src.cli enrichment stop
 uv run python -m src.cli enrichment reset                     # re-process on the next run
+uv run python -m src.cli enrichment candidates --id 42        # what each provider offers
+uv run python -m src.cli enrichment pin --id 42 --provider rawg --record 41494
+uv run python -m src.cli enrichment pin --id 42 --provider rawg --clear
 ```
+
+An item whose title matches nothing, or the wrong thing, is pointed at a record
+by hand: `candidates` searches every enabled provider (add `--query` to search
+under a different title), `pin` binds the item to one of them, and `--clear`
+hands it back to title matching. Both re-queue the item for the next run.
 
 `enrichment job` and `enrichment stop` reach the run whatever started it — the
 Data tab, another terminal, a backgrounded process — because the job lives in

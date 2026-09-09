@@ -9,6 +9,8 @@ from typing import Any
 # same way source plugins take it from plugin_base.
 from src.models.config_field import ConfigField as ConfigField
 from src.models.content import ContentItem, ContentType
+from src.models.detail_fields import PIN_KEY
+from src.utils.matching import Candidate
 from src.utils.series import (
     MAX_SERIES_POSITION,
     SERIES_AUTHORITY_KEY,
@@ -33,6 +35,30 @@ def log_search_title(
         sanitize_for_log(original),
         sanitize_for_log(cleaned),
     )
+
+
+def pins_of(metadata: dict[str, Any]) -> dict[str, str]:
+    """The record each provider is bound to, however the blob read back."""
+    pins = metadata.get(PIN_KEY)
+    if not isinstance(pins, dict):
+        return {}
+    return {str(name): str(record) for name, record in pins.items() if record}
+
+
+def pinned_record(item: ContentItem, provider_name: str) -> str | None:
+    return pins_of(item.metadata or {}).get(provider_name)
+
+
+def with_pin(
+    metadata: dict[str, Any], provider_name: str, record_id: str | None
+) -> dict[str, str]:
+    """The whole pin map as it should be stored, *record_id* ``None`` clearing."""
+    kept = {
+        name: record
+        for name, record in pins_of(metadata).items()
+        if name != provider_name
+    }
+    return kept if record_id is None else {**kept, provider_name: record_id}
 
 
 @dataclass
@@ -136,6 +162,12 @@ class EnrichmentProvider(ABC):
         states nothing at all is refused when its class is created.
         """
         return None
+
+    def search(self, item: ContentItem, config: dict[str, Any]) -> list[Candidate]:
+        """The records this provider would consider for *item*, its own ranking
+        kept — the same search :meth:`enrich` runs, without the discarding.
+        """
+        return []
 
     def fetch_series_ordinal(
         self, item: ContentItem, config: dict[str, Any]

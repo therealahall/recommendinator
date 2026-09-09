@@ -27,6 +27,7 @@ from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.enrichment_status import EnrichmentStore
 from src.storage.manager import StorageManager
 from src.storage.schema import _LEGACY_EXTERNAL_ID_SOURCE
+from src.utils.matching import Candidate
 from tests.factories import make_storage_mock
 
 
@@ -1609,6 +1610,131 @@ class TestManualEditEnrichmentProtectionRegression:
         auto = storage_manager.get_content_item(auto_id)
         assert auto.metadata.get("genres") == ["Action", "Drama"]
         assert auto.enriched is True
+
+
+class TestPinnedProviderRecord:
+    @pytest.fixture
+    def storage_manager(self, tmp_path: Path) -> StorageManager:
+        return StorageManager(sqlite_path=tmp_path / "test.db")
+
+    @staticmethod
+    def _movie() -> ContentItem:
+        return ContentItem(
+            id="tt1",
+            title="Prey",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+            source="radarr",
+        )
+
+    @staticmethod
+    def _manager(storage_manager: StorageManager) -> EnrichmentManager:
+        registry = EnrichmentRegistry()
+        registry._discovered = True
+        registry.register(MockProvider())
+        return EnrichmentManager(
+            storage_manager,
+            {"enrichment": {"providers": {"mock": {"enabled": True}}}},
+            registry,
+        )
+
+    def test_a_pin_outlives_a_later_sync_of_the_same_item(
+        self, storage_manager: StorageManager
+    ) -> None:
+        db_id = storage_manager.save_content_item(self._movie())
+        manager = self._manager(storage_manager)
+
+        manager.pin(db_id, storage_manager.get_content_item(db_id), "tmdb", "603")
+        storage_manager.save_content_item(self._movie())
+
+        resynced = storage_manager.get_content_item(db_id)
+        assert resynced.metadata["enrichment_ids"] == {"tmdb": "603"}
+
+    def test_clearing_a_pin_drops_it_and_re_queues_a_settled_item(
+        self, storage_manager: StorageManager
+    ) -> None:
+        db_id = storage_manager.save_content_item(self._movie())
+        manager = self._manager(storage_manager)
+        manager.pin(db_id, storage_manager.get_content_item(db_id), "tmdb", "603")
+        storage_manager.enrichment.mark_complete(db_id, "tmdb", "high")
+
+        manager.pin(db_id, storage_manager.get_content_item(db_id), "tmdb", None)
+
+        assert storage_manager.get_content_item(db_id).metadata["enrichment_ids"] == {}
+        assert storage_manager.enrichment.status(db_id)["needs_enrichment"] is True
+
+    def test_a_run_records_the_record_it_matched_as_the_pin(
+        self, storage_manager: StorageManager
+    ) -> None:
+        db_id = storage_manager.save_content_item(self._movie())
+        manager = self._manager(storage_manager)
+
+        manager.start_enrichment()
+        manager._wait_for_completion()
+
+        stored = storage_manager.get_content_item(db_id)
+        assert stored.metadata["enrichment_ids"] == {"mock": "tt1"}
+
+    def test_candidates_search_under_the_title_the_operator_gave(
+        self, storage_manager: StorageManager
+    ) -> None:
+        item = self._movie()
+        manager = self._manager(storage_manager)
+        offered = [
+            Candidate(
+                record_id="9", title="Prey", year=2022, creator="Dan Trachtenberg"
+            )
+        ]
+
+        with patch.object(MockProvider, "search", return_value=offered) as mock_search:
+            found = manager.candidates(item, "Predator 5")
+
+        assert found == [("mock", offered[0])]
+        assert mock_search.call_args.args[0].title == "Predator 5"
+
+    def test_one_provider_refusing_does_not_empty_the_picker(
+        self, storage_manager: StorageManager
+    ) -> None:
+        manager = self._manager(storage_manager)
+        manager.registry.register(MockProvider(name="other"))
+        manager.config["enrichment"]["providers"]["other"] = {"enabled": True}
+        offered = [Candidate(record_id="9", title="Prey")]
+
+        with patch.object(
+            MockProvider,
+            "search",
+            side_effect=[ProviderError("mock", "HTTP 401"), offered],
+        ):
+            found = manager.candidates(self._movie())
+
+        assert found == [("other", offered[0])]
+
+    def test_a_run_records_its_own_pin_without_evicting_another_providers(
+        self, storage_manager: StorageManager
+    ) -> None:
+        db_id = storage_manager.save_content_item(self._movie())
+        manager = self._manager(storage_manager)
+        manager.pin(db_id, storage_manager.get_content_item(db_id), "hardcover", "4231")
+
+        manager.start_enrichment()
+        manager._wait_for_completion()
+
+        stored = storage_manager.get_content_item(db_id)
+        assert stored.metadata["enrichment_ids"] == {
+            "hardcover": "4231",
+            "mock": "tt1",
+        }
+
+    def test_a_provider_no_registry_knows_is_refused_rather_than_stored(
+        self, storage_manager: StorageManager
+    ) -> None:
+        db_id = storage_manager.save_content_item(self._movie())
+        manager = self._manager(storage_manager)
+
+        with pytest.raises(ValueError):
+            manager.pin(db_id, storage_manager.get_content_item(db_id), "MOCK", "tt1")
+
+        assert "enrichment_ids" not in storage_manager.get_content_item(db_id).metadata
 
 
 class TestEnrichmentWritesTheRowItWasHandedRegression:
