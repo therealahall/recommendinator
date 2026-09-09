@@ -88,6 +88,9 @@ export const useLibraryStore = defineStore('library', () => {
     const app = useAppStore()
     loading.value = true
     error.value = ''
+    // A scrolled page would otherwise flip the live region back to the merge
+    // sentence, re-announcing it and burying the count this load is about.
+    if (!isReset) mergeAnnouncement.value = ''
 
     try {
       const params: Record<string, string | number | boolean> = {
@@ -265,6 +268,21 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
+  // Not pinning: a pin re-queues only as a side effect of binding a record, and
+  // an item that failed for a transient reason has the right record already.
+  async function retryEnrichment(dbId: number) {
+    editError.value = ''
+    try {
+      const result = await api.post<{ message: string; count: number }>('/enrichment/reset', {
+        item_id: dbId,
+        user_id: useAppStore().currentUserId,
+      })
+      pinMessage.value = result.message
+    } catch (err) {
+      editError.value = err instanceof Error ? err.message : 'Failed to queue a retry'
+    }
+  }
+
   async function saveEdit(dbId: number, data: ItemEditRequest) {
     const app = useAppStore()
     editSaving.value = true
@@ -429,6 +447,7 @@ export const useLibraryStore = defineStore('library', () => {
     saveEdit,
     findPinCandidates,
     pinEnrichment,
+    retryEnrichment,
     openMerge,
     closeMerge,
     setMergeQuery,

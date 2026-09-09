@@ -244,6 +244,7 @@ onUnmounted(() => {
       @clear-manual="onClearManual"
       @pin-search="lib.findPinCandidates"
       @pin="lib.pinEnrichment"
+      @retry-enrichment="lib.retryEnrichment"
       @close="onCloseEdit"
     />
 

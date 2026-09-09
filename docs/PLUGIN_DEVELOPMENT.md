@@ -540,6 +540,28 @@ rest is what differs:
 ```python
 class MyEnrichmentProvider(EnrichmentProvider):
     @property
+    def name(self) -> str:
+        return "my_api"
+
+    @property
+    def display_name(self) -> str:
+        return "My API"
+
+    @property
+    def content_types(self) -> list[ContentType]:
+        return [ContentType.MOVIE]
+
+    @property
+    def requires_api_key(self) -> bool:
+        return True
+
+    def get_config_schema(self) -> list[ConfigField]:
+        return [ConfigField(name="api_key", field_type=str, required=True)]
+
+    def validate_config(self, config: dict[str, Any]) -> list[str]:
+        return [] if config.get("api_key") else ["'api_key' is required"]
+
+    @property
     def rate_limit_requests_per_second(self) -> float:
         return 5.0  # default is 1.0
 
