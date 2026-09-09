@@ -89,7 +89,7 @@ class SyncRunDict(TypedDict):
 # Changing ``normalize_title_for_matching``, ``get_sort_title`` or
 # ``build_search_text`` needs a bump and a step to rewrite what the old one
 # stored, or dedup lookups stop matching and duplicates accumulate in silence.
-_SCHEMA_VERSION = 25
+_SCHEMA_VERSION = 24
 
 # Rows for these keys are unreachable from the app but would still
 # be overlaid onto config, so they are pruned once on upgrade.
@@ -344,12 +344,6 @@ def create_schema(conn: sqlite3.Connection) -> None:
 
     for child_statement in _CONTENT_ITEM_CHILDREN.values():
         cursor.execute(child_statement)
-
-    # Guarded by the column rather than the version: a database upgrading from
-    # before holds existed has just had the table created in its current shape.
-    # Ahead of the step below, which inserts into it.
-    if _has_column(cursor, "content_item_manual_fields", "manual_value"):
-        _drop_held_values(cursor)
 
     # Ahead of every write below, because it cannot open a transaction while
     # one is already open. It commits before the version stamp, so the guard is
@@ -608,21 +602,6 @@ def _repair_legacy_content_rows(cursor: sqlite3.Cursor) -> None:
         "WHERE normalized_title IS NULL"
     )
     _migrate_stranded_detail_shapes(cursor)
-
-
-def _drop_held_values(cursor: sqlite3.Cursor) -> None:
-    """Which fields are held carries over; what each said when it was held goes
-    with the columns, having only ever been a copy going stale.
-    """
-    cursor.execute(
-        "ALTER TABLE content_item_manual_fields RENAME TO content_item_manual_values"
-    )
-    cursor.execute(_CONTENT_ITEM_CHILDREN["content_item_manual_fields"])
-    cursor.execute(
-        "INSERT INTO content_item_manual_fields (content_item_id, field)"
-        " SELECT content_item_id, field FROM content_item_manual_values"
-    )
-    cursor.execute("DROP TABLE content_item_manual_values")
 
 
 #: The fields the retired item-level ``manual`` provider could have come from.
