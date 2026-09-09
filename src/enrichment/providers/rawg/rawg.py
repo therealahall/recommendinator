@@ -200,6 +200,9 @@ class RAWGProvider(EnrichmentProvider):
             return []
         return self._search_game(item, config.get("api_key", ""))
 
+    def accepts_record_id(self, record_id: str) -> bool:
+        return record_id.isdigit()
+
     def _matched_id(self, item: ContentItem, api_key: str) -> int | None:
         pinned = pinned_record(item, self.name)
         if pinned is not None:

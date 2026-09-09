@@ -269,6 +269,18 @@ class TestTMDBProviderMovieEnrichment:
         assert result is not None
         assert result.external_id == expected_external_id
 
+    def test_the_picker_searches_unfiltered_by_the_year_it_exists_to_correct(
+        self, provider: TMDBProvider, movie_item: ContentItem, config: dict[str, Any]
+    ) -> None:
+        with patch("src.enrichment.providers.tmdb.tmdb.requests.get") as mock_get:
+            mock_get.return_value = MagicMock(
+                spec=requests.Response, status_code=200, json=lambda: {"results": []}
+            )
+
+            provider.search(movie_item, config)
+
+        assert "year" not in mock_get.call_args.kwargs["params"]
+
     def test_enrich_movie_rejects_a_search_hit_that_merely_contains_the_title(
         self, provider: TMDBProvider, config: dict[str, Any]
     ) -> None:

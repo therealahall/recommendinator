@@ -233,15 +233,35 @@ class EnrichmentManager:
         self, db_id: int, item: ContentItem, provider_name: str, record_id: str | None
     ) -> dict[str, str]:
         """Binds *item* to one provider record, *record_id* ``None`` clearing it,
-        and re-queues the item so the next run reads it.
+        and re-queues the item so the next run reads it. Raises ``ValueError``
+        for a pin no run could read back.
         """
-        pins = with_pin(item.metadata, provider_name, record_id)
+        provider = self._pinnable_provider(provider_name)
+        if record_id is not None and not provider.accepts_record_id(record_id):
+            raise ValueError(
+                f"{provider.name} cannot look up record '{record_id}'; "
+                "pin a record id it offered as a candidate."
+            )
+        pins = with_pin(item.metadata, provider.name, record_id)
         self.storage_manager.save_enrichment_metadata(
             db_id,
             item.model_copy(update={"metadata": {**item.metadata, PIN_KEY: pins}}),
         )
         self.storage_manager.enrichment.reset(content_item_id=db_id)
         return pins
+
+    def _pinnable_provider(self, provider_name: str) -> EnrichmentProvider:
+        """Case-insensitively, as ``enrichment reset --provider`` reads one: a
+        pin is stored under the name every run looks it up by, or refused.
+        """
+        known = self.registry.get_all_providers()
+        for name, provider in known.items():
+            if name.lower() == provider_name.lower():
+                return provider
+        raise ValueError(
+            f"No enrichment provider is named '{provider_name}'; "
+            f"pin one of {', '.join(sorted(known))}."
+        )
 
     def start_enrichment(
         self,
@@ -891,9 +911,5 @@ def merge_enrichment(
             merged[key] = value
 
     merged.update(reconcile_series(merged, result.extra_metadata))
-
-    if result.external_id and result.provider:
-        record_id = result.external_id.removeprefix(f"{result.provider}:")
-        merged[PIN_KEY] = with_pin(merged, result.provider, record_id)
 
     return merged

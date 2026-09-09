@@ -280,6 +280,22 @@ class TestEnrichmentPinning:
         assert response.json()["pinned"] == stored
         assert manager.pin.call_args.args[2:] == ("rawg", record)
 
+    def test_a_pin_the_manager_refuses_is_a_400_naming_what_is_valid(self) -> None:
+        manager = MagicMock(spec=EnrichmentManager)
+        manager.pin.side_effect = ValueError("pin one of rawg, tmdb.")
+
+        with (
+            patch("src.web.api._enrichment.EnrichmentManager", return_value=manager),
+            _client(self._storage(), {}) as client,
+        ):
+            response = client.post(
+                "/api/enrichment/pin",
+                json={"item_id": 7, "provider": "rawgg", "record_id": "1"},
+            )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "pin one of rawg, tmdb."
+
     def test_pinning_an_item_that_is_not_there_is_a_404(self) -> None:
         storage = make_storage_mock()
         storage.get_content_item.return_value = None
