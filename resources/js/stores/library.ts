@@ -252,8 +252,11 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
+  // Blanked before the request, not just replaced after it: the server answers a
+  // repeat with the same sentence, and an unchanged region announces nothing.
   async function pinEnrichment(dbId: number, provider: string, recordId: string | null) {
     editError.value = ''
+    pinMessage.value = ''
     try {
       const result = await api.post<EnrichmentPinResponse>('/enrichment/pin', {
         item_id: dbId,
@@ -272,6 +275,7 @@ export const useLibraryStore = defineStore('library', () => {
   // an item that failed for a transient reason has the right record already.
   async function retryEnrichment(dbId: number) {
     editError.value = ''
+    pinMessage.value = ''
     try {
       const result = await api.post<{ message: string; count: number }>('/enrichment/reset', {
         item_id: dbId,

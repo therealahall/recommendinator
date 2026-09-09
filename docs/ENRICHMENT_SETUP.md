@@ -165,7 +165,8 @@ Different from "not found". The provider never answered, having timed out, been
 unreachable, throttled you or returned a server error, so nothing is known about
 the item yet. Failed items stay queued and the next run picks them up. There is
 nothing to do but run enrichment again once the provider is healthy, or
-`enrichment reset --id <id>` to retry that one item without re-fetching the rest.
+`enrichment reset --id <id>`, or **Enrich this again** in the item's edit dialog,
+to retry that one item without re-fetching the rest.
 `enrichment status` counts each item once, so a failed item reports under
 **Failed** rather than **Pending** even though it is queued.
 

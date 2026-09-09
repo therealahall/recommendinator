@@ -241,7 +241,7 @@ describe('EditModal', () => {
     wrapper.unmount()
   })
 
-  it('a cleared hold says so and keeps focus in the dialog, not on the button that vanished', async () => {
+  it('a cleared hold is announced once, focus landing on the heading and not the region', async () => {
     const held = { ...defaultItem, manual_fields: ['creator'] }
     const wrapper = mount(EditModal, {
       props: { item: held, saving: false, saveError: '' },
@@ -260,13 +260,14 @@ describe('EditModal', () => {
 
     expect(said.text()).not.toBe(whileManual)
     expect(said.text()).not.toBe('')
-    expect(document.activeElement).toBe(said.element)
+    const heading = wrapper.findAll('h4').find(h => h.text() === 'Your corrections')!
+    expect(document.activeElement).toBe(heading.element)
     const dialog = wrapper.get('[aria-modal="true"]').element
     expect(dialog.contains(document.activeElement)).toBe(true)
     const tabbable = [...dialog.querySelectorAll<HTMLElement>('button, input, select, textarea')]
     expect(
       tabbable.some(
-        (el) => said.element.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING,
+        (el) => heading.element.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING,
       ),
     ).toBe(true)
     wrapper.unmount()
