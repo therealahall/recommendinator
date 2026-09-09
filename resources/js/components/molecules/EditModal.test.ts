@@ -186,7 +186,7 @@ describe('EditModal', () => {
     wrapper.unmount()
   })
 
-  it('dropping a pin says what happened and keeps focus in the dialog', async () => {
+  it('a dropped pin is announced once, focus landing on the label and not the region', async () => {
     const wrapper = mount(EditModal, {
       props: { item: defaultItem, saving: false, saveError: '', pinned: { rawg: '3328' } },
       attachTo: document.body,
@@ -204,8 +204,9 @@ describe('EditModal', () => {
 
     const said = wrapper.get('#edit-pin-note')
     expect(said.text()).toBe('Item 1 is back to matching rawg by title')
-    expect(document.activeElement).toBe(said.element)
-    expect(wrapper.get('[aria-modal="true"]').element.contains(said.element)).toBe(true)
+    const label = wrapper.get('label[for="edit-pin-query"]')
+    expect(document.activeElement).toBe(label.element)
+    expect(wrapper.get('[aria-modal="true"]').element.contains(label.element)).toBe(true)
     wrapper.unmount()
   })
 
