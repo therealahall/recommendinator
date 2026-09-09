@@ -70,7 +70,7 @@ const loaded = {
 }
 
 const refusal = ref<HTMLElement | null>(null)
-const manualNoteEl = ref<HTMLElement | null>(null)
+const manualHeading = ref<HTMLElement | null>(null)
 
 watch(
   () => props.saveError,
@@ -91,15 +91,15 @@ const heldFields = computed(() =>
 
 const clearedField = ref('')
 
-// A cleared row takes its button with it, so focus lands on the line above
-// rather than dropping to <body> (WCAG 2.4.3) — and on words saying which
-// field went, since clearing one of several leaves the standing sentence.
+// A cleared row takes its button with it, so focus lands on the heading rather
+// than dropping to <body> (WCAG 2.4.3). Not on the note, which announces its own
+// new words: focus landing there reads them a second time.
 watch(heldFields, async (now, before) => {
   const dropped = before.find((held) => !now.some((one) => one.field === held.field))
   if (!dropped) return
   clearedField.value = dropped.label
   await nextTick()
-  rescueFocus(manualNoteEl.value)
+  rescueFocus(manualHeading.value)
 })
 
 const manualNote = computed(() => {
@@ -409,17 +409,16 @@ function searchRecords() {
     </div>
 
     <hr class="edit-modal-divider">
-    <h4 class="edit-modal-section">Your corrections</h4>
+    <h4
+      ref="manualHeading"
+      class="edit-modal-section focus-fallback"
+      tabindex="-1"
+    >Your corrections</h4>
 
     <div class="edit-field">
       <!-- Mounted whether or not anything is held: a region inserted already
            populated reads as content rather than a status change (4.1.3). -->
-      <p
-        ref="manualNoteEl"
-        class="edit-modal-note focus-fallback"
-        role="status"
-        tabindex="-1"
-      >{{ manualNote }}</p>
+      <p class="edit-modal-note" role="status">{{ manualNote }}</p>
       <ul class="edit-manual-list" aria-label="Fields held against their source">
         <li v-for="held in heldFields" :key="held.field" class="edit-manual-held">
           <span>{{ held.label }}</span>

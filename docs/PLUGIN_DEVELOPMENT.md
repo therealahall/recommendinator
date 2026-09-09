@@ -538,6 +538,18 @@ tests run beside it. On a clone without one the step does nothing.
 rest is what differs:
 
 ```python
+from typing import Any
+
+from src.enrichment.provider_base import (
+    ConfigField,
+    EnrichmentProvider,
+    EnrichmentResult,
+    SeriesOrdinal,
+)
+from src.models.content import ContentItem, ContentType
+from src.utils.matching import Candidate
+
+
 class MyEnrichmentProvider(EnrichmentProvider):
     @property
     def name(self) -> str:

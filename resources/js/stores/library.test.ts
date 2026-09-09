@@ -416,4 +416,26 @@ describe('useLibraryStore', () => {
     expect(mockPost.mock.lastCall![1]).toMatchObject({ item_id: 7 })
     expect(store.pinMessage).toBe('Reset enrichment status for 1 item(s)')
   })
+
+  it('a repeat blanks the note while it waits, so the same sentence is announced again', async () => {
+    const reset = { message: 'Reset enrichment status for 1 item(s)', count: 1 }
+    const store = useLibraryStore()
+    mockPost.mockResolvedValueOnce(reset)
+    await store.retryEnrichment(7)
+
+    let answer: (value: unknown) => void = () => {}
+    mockPost.mockReturnValueOnce(new Promise((resolve) => { answer = resolve }))
+    const second = store.retryEnrichment(7)
+    expect(store.pinMessage).toBe('')
+
+    answer(reset)
+    await second
+    expect(store.pinMessage).toBe('Reset enrichment status for 1 item(s)')
+
+    mockPost.mockRejectedValueOnce(new Error('Provider is down'))
+    await store.pinEnrichment(7, 'rawg', '41494')
+
+    expect(store.pinMessage).toBe('')
+    expect(store.editError).toBe('Provider is down')
+  })
 })
