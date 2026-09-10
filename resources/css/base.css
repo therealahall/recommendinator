@@ -1884,6 +1884,13 @@ button.rec-score {
   margin: 0;
 }
 
+.edit-pin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin: var(--space-3) 0;
+}
+
 .edit-manual-list {
   list-style: none;
   margin: 0;
