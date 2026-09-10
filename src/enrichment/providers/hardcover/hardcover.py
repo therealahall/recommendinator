@@ -67,6 +67,10 @@ _AUTHOR_SEPARATORS = re.compile(r"\s*(?:[,;&]|\band\b)\s*")
 #: no cluster in genre_clusters.py reaches them.
 _GENRE_CATEGORY = "Genre"
 
+#: OpenLibrary's cap, so neither provider's books carry the longer genre list
+#: the overlap scorer rewards.
+_MAX_GENRES = 10
+
 
 def _normalized_isbn(raw: Any) -> str:
     return "".join(char for char in str(raw or "") if char.isalnum()).upper()
@@ -100,6 +104,13 @@ def _states_the_author(book: dict[str, Any], author: str) -> bool:
     )
 
 
+def _https_cover(book: dict[str, Any]) -> str | None:
+    """The one cover URL a third party chooses freely, so it is narrowed here."""
+    image = book.get("image")
+    url = image.get("url") if isinstance(image, dict) else None
+    return url if isinstance(url, str) and url.startswith("https://") else None
+
+
 def _candidate(book: dict[str, Any]) -> Candidate:
     credited = [
         str(((contribution or {}).get("author") or {}).get("name") or "")
@@ -110,7 +121,7 @@ def _candidate(book: dict[str, Any]) -> Candidate:
         title=str(book.get("title") or ""),
         year=year_of(book.get("release_year")),
         creator=", ".join(name for name in credited if name) or None,
-        cover_url=(book.get("image") or {}).get("url"),
+        cover_url=_https_cover(book),
     )
 
 
@@ -147,18 +158,28 @@ def _series_ordinal(book: dict[str, Any]) -> SeriesOrdinal | None:
     return SeriesOrdinal(position=position, series_name=name)
 
 
+def _tag_count(entry: dict[str, Any]) -> float:
+    try:
+        return float(entry.get("count") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _genres(book: dict[str, Any]) -> list[str]:
+    """One reader's stray tag arrives beside one eighteen readers agreed on."""
     categories = book.get("cached_tags")
     if not isinstance(categories, dict):
         return []
-    return [
-        name
+    tagged = [
+        (_tag_count(entry), name)
         for entry in categories.get(_GENRE_CATEGORY) or []
         if isinstance(entry, dict) and (name := str(entry.get("tag") or "").strip())
     ]
+    ranked = sorted(tagged, key=lambda counted: counted[0], reverse=True)
+    return [name for _count, name in ranked[:_MAX_GENRES]]
 
 
-def _result(book: dict[str, Any]) -> EnrichmentResult:
+def _result(book: dict[str, Any], match_quality: str) -> EnrichmentResult:
     """``year_published`` is the only year column a book has, so Hardcover's
     work-level release year lands there (see models/detail_fields.py).
     """
@@ -175,9 +196,9 @@ def _result(book: dict[str, Any]) -> EnrichmentResult:
         genres=genres or None,
         tags=genres or None,
         description=str(book.get("description") or "").strip() or None,
-        cover_url=(book.get("image") or {}).get("url"),
+        cover_url=_https_cover(book),
         extra_metadata=extra,
-        match_quality="high",
+        match_quality=match_quality,
     )
 
 
@@ -239,24 +260,17 @@ class HardcoverProvider(EnrichmentProvider):
         self, item: ContentItem, config: dict[str, Any]
     ) -> EnrichmentResult | None:
         api_key = str(config.get("api_key") or "").strip()
-        if not api_key or get_enum_value(item.content_type) != ContentType.BOOK.value:
-            return None
-
-        book = self._match(item, api_key)
-        if book is None:
-            return EnrichmentResult(match_quality="not_found")
-        return _result(book)
-
-    def fetch_series_ordinal(
-        self, item: ContentItem, config: dict[str, Any]
-    ) -> SeriesOrdinal | None:
-        api_key = str(config.get("api_key") or "").strip()
         if not api_key:
             logger.debug("Hardcover is enabled with no token stored; stating nothing")
             return None
+        if get_enum_value(item.content_type) != ContentType.BOOK.value:
+            return None
 
-        book = self._match(item, api_key)
-        return _series_ordinal(book) if book is not None else None
+        matched = self._match(item, api_key)
+        if matched is None:
+            return EnrichmentResult(match_quality="not_found")
+        book, match_quality = matched
+        return _result(book, match_quality)
 
     def search(self, item: ContentItem, config: dict[str, Any]) -> list[Candidate]:
         api_key = str(config.get("api_key") or "").strip()
@@ -271,17 +285,22 @@ class HardcoverProvider(EnrichmentProvider):
     def accepts_record_id(self, record_id: str) -> bool:
         return record_id.isdigit()
 
-    def _match(self, item: ContentItem, api_key: str) -> dict[str, Any] | None:
+    def _match(
+        self, item: ContentItem, api_key: str
+    ) -> tuple[dict[str, Any], str] | None:
+        """The book and its quality: an id or ISBN identifies a record, a
+        `%ilike%` title gated on author similarity only resembles one.
+        """
         pinned = pinned_record(item, self.name)
         if pinned is not None:
             books = self._books({"id": {"_eq": pinned}}, api_key)
-            return books[0] if books else None
+            return (books[0], "high") if books else None
 
         isbn_clause = _isbn_where(item.metadata)
         if isbn_clause is not None:
             editions = self._books(isbn_clause, api_key)
             if editions:
-                return editions[0] if len(editions) == 1 else None
+                return (editions[0], "high") if len(editions) == 1 else None
 
         searched, _series = split_series_from_title(item.title)
         log_search_title(logger, item.title, searched)
@@ -290,7 +309,8 @@ class HardcoverProvider(EnrichmentProvider):
             candidates = [
                 book for book in candidates if _states_the_author(book, item.author)
             ]
-        return _sole_close_title(searched, candidates)
+        book = _sole_close_title(searched, candidates)
+        return None if book is None else (book, "medium")
 
     def _books(self, clause: dict[str, Any], api_key: str) -> list[dict[str, Any]]:
         payload = {
