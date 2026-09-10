@@ -108,15 +108,41 @@ def enrichment_candidates_to_dict(
     }
 
 
+def _run_clause(enriching: bool) -> str:
+    """A run the claim was lost to still reaches the item, so the wording says
+    which of the two happened rather than promising the same thing for both.
+    """
+    return (
+        "Enriching it now."
+        if enriching
+        else "Queued behind the enrichment run already in progress."
+    )
+
+
 def enrichment_pin_to_dict(
-    db_id: int, provider: str, record_id: str | None, pinned: dict[str, str]
+    db_id: int,
+    provider: str,
+    record_id: str | None,
+    pinned: dict[str, str],
+    enriching: bool,
 ) -> dict[str, object]:
     said = (
-        f"Item {db_id} now enriches from {provider} record {record_id}"
+        f"Item {db_id} now enriches from {provider} record {record_id}. "
+        f"{_run_clause(enriching)}"
         if record_id
         else f"Item {db_id} is back to matching {provider} by title"
     )
     return {"item_id": db_id, "pinned": pinned, "message": said}
+
+
+def enrichment_reset_to_dict(count: int, enriching: bool | None) -> dict[str, object]:
+    """*enriching* is ``None`` where the reset asked for no run of its own, as a
+    reset over a whole provider or content type does.
+    """
+    said = f"Reset enrichment status for {count} item(s)"
+    if enriching is not None:
+        said = f"{said}. {_run_clause(enriching)}"
+    return {"message": said, "count": count}
 
 
 def completion_to_dict(title: str, db_id: int) -> dict[str, object]:

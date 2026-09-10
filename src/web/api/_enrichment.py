@@ -10,6 +10,7 @@ from src.storage.manager import StorageManager
 from src.utils.item_serialization import (
     enrichment_candidates_to_dict,
     enrichment_pin_to_dict,
+    enrichment_reset_to_dict,
 )
 from src.utils.sorting import MAX_SEARCH_LENGTH
 from src.web.guards import RequiredConfig, RequiredStorage
@@ -235,13 +236,19 @@ def pin_enrichment_record(
     """Bind one item to one provider record, or hand it back to title search."""
     item = _item_or_404(storage, request.item_id, request.user_id)
     try:
-        pinned = EnrichmentManager(storage, config).pin(
-            request.item_id, item, request.provider, request.record_id
+        # The run this starts is fire-and-forget: it publishes to the job record
+        # the status endpoint already serves.
+        pinned, enriching = EnrichmentManager(storage, config).pin(
+            request.item_id,
+            item,
+            request.provider,
+            request.record_id,
+            user_id=request.user_id,
         )
     except PinRefused as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     payload = enrichment_pin_to_dict(
-        request.item_id, request.provider, request.record_id, pinned
+        request.item_id, request.provider, request.record_id, pinned, enriching
     )
     return EnrichmentPinResponse.model_validate(payload)
 
@@ -250,9 +257,11 @@ def pin_enrichment_record(
 def reset_enrichment(
     request: EnrichmentResetRequest,
     storage: RequiredStorage,
+    config: RequiredConfig,
 ) -> dict[str, Any]:
     """Re-queue items the next run would otherwise skip: everything a provider
-    settled, everything of one content type, or the one item that failed.
+    settled, everything of one content type, or the one item that failed, which
+    is enriched then and there.
     """
     content_type = None
     if request.content_type:
@@ -279,4 +288,9 @@ def reset_enrichment(
         content_item_id=request.item_id,
     )
 
-    return {"message": f"Reset enrichment status for {count} item(s)", "count": count}
+    enriching = None
+    if request.item_id is not None:
+        enriching = EnrichmentManager(storage, config).start_enrichment(
+            user_id=request.user_id, content_item_id=request.item_id
+        )
+    return enrichment_reset_to_dict(count, enriching)

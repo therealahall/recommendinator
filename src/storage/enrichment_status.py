@@ -24,25 +24,30 @@ class EnrichmentStore:
         user_id: int | None = None,
         limit: int = 100,
         after_db_id: int | None = None,
+        content_item_id: int | None = None,
     ) -> list[tuple[int, ContentItem]]:
         """An item with no ``enrichment_status`` row counts as queued, which is
-        what puts newly ingested items in front of a provider.
+        what puts newly ingested items in front of a provider. *content_item_id*
+        narrows the queue to that one item, still only while it is queued.
         """
         return self._sqlite_db.get_items_needing_enrichment(
             content_type=content_type,
             user_id=user_id,
             limit=limit,
             after_db_id=after_db_id,
+            content_item_id=content_item_id,
         )
 
     def count_needing(
         self,
         content_type: ContentType | None = None,
         user_id: int | None = None,
+        content_item_id: int | None = None,
     ) -> int:
         return self._sqlite_db.count_items_needing_enrichment(
             content_type=content_type,
             user_id=user_id,
+            content_item_id=content_item_id,
         )
 
     def settled_without_cover(self, user_id: int) -> int:

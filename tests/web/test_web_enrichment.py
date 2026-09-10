@@ -265,7 +265,7 @@ class TestEnrichmentPinning:
         self, record: str | None, stored: dict[str, str]
     ) -> None:
         manager = MagicMock(spec=EnrichmentManager)
-        manager.pin.return_value = stored
+        manager.pin.return_value = (stored, record is not None)
 
         with (
             patch("src.web.api._enrichment.EnrichmentManager", return_value=manager),
@@ -279,6 +279,34 @@ class TestEnrichmentPinning:
         assert response.status_code == 200
         assert response.json()["pinned"] == stored
         assert manager.pin.call_args.args[2:] == ("rawg", record)
+
+    @pytest.mark.parametrize(
+        ("enriching", "clause"),
+        [
+            (True, "Enriching it now."),
+            (False, "Queued behind the enrichment run already in progress."),
+        ],
+        ids=["claimed", "claim-lost"],
+    )
+    def test_a_pin_says_whether_the_run_it_asked_for_started(
+        self, enriching: bool, clause: str
+    ) -> None:
+        manager = MagicMock(spec=EnrichmentManager)
+        manager.pin.return_value = ({"rawg": "41494"}, enriching)
+
+        with (
+            patch("src.web.api._enrichment.EnrichmentManager", return_value=manager),
+            _client(self._storage(), {}) as client,
+        ):
+            response = client.post(
+                "/api/enrichment/pin",
+                json={"item_id": 7, "provider": "rawg", "record_id": "41494"},
+            )
+
+        assert (
+            response.json()["message"]
+            == f"Item 7 now enriches from rawg record 41494. {clause}"
+        )
 
     def test_a_pin_the_manager_refuses_is_a_400_naming_what_is_valid(self) -> None:
         manager = MagicMock(spec=EnrichmentManager)
@@ -336,19 +364,25 @@ class TestEnrichmentReset:
         assert data["count"] == 50
         assert "50" in data["message"]
 
-    def test_reset_one_item_narrows_the_reset_to_it(self) -> None:
+    def test_reset_one_item_narrows_the_reset_to_it_and_enriches_it(self) -> None:
         storage = make_storage_mock()
         storage.enrichment.reset.return_value = 1
+        manager = MagicMock(spec=EnrichmentManager)
+        manager.start_enrichment.return_value = True
 
-        with _client(storage, {}) as client:
+        with (
+            patch("src.web.api._enrichment.EnrichmentManager", return_value=manager),
+            _client(storage, {}) as client,
+        ):
             response = client.post("/api/enrichment/reset", json={"item_id": 7})
 
         assert response.status_code == 200
         assert response.json() == {
-            "message": "Reset enrichment status for 1 item(s)",
+            "message": "Reset enrichment status for 1 item(s). Enriching it now.",
             "count": 1,
         }
         assert storage.enrichment.reset.call_args[1]["content_item_id"] == 7
+        assert manager.start_enrichment.call_args.kwargs["content_item_id"] == 7
 
     def test_reset_refuses_an_item_id_beside_a_filter(self) -> None:
         storage = make_storage_mock()
