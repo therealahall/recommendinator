@@ -237,11 +237,16 @@ class EnrichmentManager:
         return offered
 
     def pin(
-        self, db_id: int, item: ContentItem, provider_name: str, record_id: str | None
-    ) -> dict[str, str]:
+        self,
+        db_id: int,
+        item: ContentItem,
+        provider_name: str,
+        record_id: str | None,
+        user_id: int,
+    ) -> tuple[dict[str, str], bool]:
         """Binds *item* to one provider record, *record_id* ``None`` clearing it,
-        and re-queues the item so the next run reads it. Raises ``PinRefused``
-        for a pin no run could read back.
+        and re-queues it. A bound record enriches at once; a cleared one waits
+        for the next run. Raises ``PinRefused`` for a pin no run could read back.
         """
         provider = self._pinnable_provider(provider_name)
         if record_id is not None and not provider.accepts_record_id(record_id):
@@ -255,7 +260,9 @@ class EnrichmentManager:
             item.model_copy(update={"metadata": {**item.metadata, PIN_KEY: pins}}),
         )
         self.storage_manager.enrichment.reset(content_item_id=db_id)
-        return pins
+        if record_id is None:
+            return pins, False
+        return pins, self.start_enrichment(user_id=user_id, content_item_id=db_id)
 
     def _pinnable_provider(self, provider_name: str) -> EnrichmentProvider:
         """Case-insensitively, as ``enrichment reset --provider`` reads one: a
@@ -280,7 +287,11 @@ class EnrichmentManager:
         content_type: ContentType | None = None,
         user_id: int | None = None,
         include_not_found: bool = False,
+        content_item_id: int | None = None,
     ) -> bool:
+        """*content_item_id* scopes the run to that one item, which is how a pin
+        or a retry is applied then and there. False when the claim is lost.
+        """
         with self._lock:
             # The claim is the mutual exclusion, and it spans processes: a
             # local flag let the CLI start a second job beside the server's.
@@ -298,14 +309,17 @@ class EnrichmentManager:
 
             self._thread = threading.Thread(
                 target=self._run_enrichment,
-                args=(content_type, user_id, include_not_found),
+                args=(content_type, user_id, include_not_found, content_item_id),
                 daemon=True,
             )
             self._thread.start()
 
-            type_msg = (
-                f" for {content_type.value}" if content_type else " for all types"
-            )
+            if content_item_id is not None:
+                type_msg = f" for item {content_item_id}"
+            else:
+                type_msg = (
+                    f" for {content_type.value}" if content_type else " for all types"
+                )
             retry_msg = " (including not_found)" if include_not_found else ""
             logger.info(
                 "[ENRICHMENT] === Starting enrichment job%s%s ===",
@@ -387,6 +401,7 @@ class EnrichmentManager:
         content_type: ContentType | None,
         user_id: int | None,
         include_not_found: bool = False,
+        content_item_id: int | None = None,
     ) -> None:
         try:
             with self._lock:
@@ -415,6 +430,7 @@ class EnrichmentManager:
             pending_count = self.storage_manager.enrichment.count_needing(
                 content_type=content_type,
                 user_id=user_id,
+                content_item_id=content_item_id,
             )
             with self._lock:
                 self._status.total_items = pending_count + len(not_found_ids)
@@ -436,6 +452,7 @@ class EnrichmentManager:
                     user_id=user_id,
                     limit=batch_size,
                     after_db_id=after_db_id,
+                    content_item_id=content_item_id,
                 )
                 if fetched:
                     after_db_id = max(db_id for db_id, _item in fetched)

@@ -725,6 +725,7 @@ class TestEnrichmentProgressRegression:
         mock_storage.enrichment.count_needing.assert_called_once_with(
             content_type=None,
             user_id=None,
+            content_item_id=None,
         )
 
     def test_total_items_includes_not_found_when_retrying_regression(
@@ -759,6 +760,7 @@ class TestEnrichmentProgressRegression:
         mock_storage.enrichment.count_needing.assert_called_once_with(
             content_type=None,
             user_id=None,
+            content_item_id=None,
         )
 
 
@@ -1640,7 +1642,10 @@ class TestPinnedProviderRecord:
         db_id = storage_manager.save_content_item(self._movie())
         manager = self._manager(storage_manager)
 
-        manager.pin(db_id, storage_manager.get_content_item(db_id), "mock", "603")
+        manager.pin(
+            db_id, storage_manager.get_content_item(db_id), "mock", "603", user_id=1
+        )
+        manager._wait_for_completion()
         storage_manager.save_content_item(self._movie())
 
         resynced = storage_manager.get_content_item(db_id)
@@ -1651,9 +1656,10 @@ class TestPinnedProviderRecord:
     ) -> None:
         db_id = storage_manager.save_content_item(self._movie())
         manager = self._manager(storage_manager)
-        manager.pin(db_id, storage_manager.get_content_item(db_id), "mock", "603")
 
-        manager.start_enrichment()
+        manager.pin(
+            db_id, storage_manager.get_content_item(db_id), "mock", "603", user_id=1
+        )
         manager._wait_for_completion()
 
         stored = storage_manager.get_content_item(db_id)
@@ -1665,13 +1671,49 @@ class TestPinnedProviderRecord:
     ) -> None:
         db_id = storage_manager.save_content_item(self._movie())
         manager = self._manager(storage_manager)
-        manager.pin(db_id, storage_manager.get_content_item(db_id), "mock", "603")
-        storage_manager.enrichment.mark_complete(db_id, "mock", "high")
+        manager.pin(
+            db_id, storage_manager.get_content_item(db_id), "mock", "603", user_id=1
+        )
+        manager._wait_for_completion()
 
-        manager.pin(db_id, storage_manager.get_content_item(db_id), "mock", None)
+        _pins, enriching = manager.pin(
+            db_id, storage_manager.get_content_item(db_id), "mock", None, user_id=1
+        )
 
+        # Clearing hands the item back to the title match it was pinned away
+        # from, so running now would re-apply the metadata that was rejected.
+        assert enriching is False
         assert storage_manager.get_content_item(db_id).metadata["enrichment_ids"] == {}
         assert storage_manager.enrichment.status(db_id)["needs_enrichment"] is True
+
+    def test_a_pin_enriches_the_item_pinned_and_no_other(
+        self, storage_manager: StorageManager
+    ) -> None:
+        db_id = storage_manager.save_content_item(self._movie())
+        untouched_id = save_movie(storage_manager, "Dune")
+        manager = self._manager(storage_manager)
+
+        _pins, enriching = manager.pin(
+            db_id, storage_manager.get_content_item(db_id), "mock", "603", user_id=1
+        )
+        manager._wait_for_completion()
+
+        assert enriching is True
+        assert queued_ids(storage_manager) == {untouched_id}
+
+    def test_a_pin_taken_behind_a_claimed_job_leaves_the_item_queued(
+        self, storage_manager: StorageManager
+    ) -> None:
+        db_id = storage_manager.save_content_item(self._movie())
+        manager = self._manager(storage_manager)
+        storage_manager.enrichment_jobs.claim(None)
+
+        _pins, enriching = manager.pin(
+            db_id, storage_manager.get_content_item(db_id), "mock", "603", user_id=1
+        )
+
+        assert enriching is False
+        assert queued_ids(storage_manager) == {db_id}
 
     def test_an_automatic_match_leaves_the_item_unpinned_so_a_rename_rematches(
         self, storage_manager: StorageManager
@@ -1736,7 +1778,7 @@ class TestPinnedProviderRecord:
         item = storage_manager.get_content_item(db_id)
 
         with pytest.raises(PinRefused):
-            manager.pin(db_id, item, provider_name, record_id)
+            manager.pin(db_id, item, provider_name, record_id, user_id=1)
 
         assert "enrichment_ids" not in storage_manager.get_content_item(db_id).metadata
 
@@ -1753,6 +1795,7 @@ class TestPinnedProviderRecord:
                 storage_manager.get_content_item(db_id),
                 "wikidata",
                 "Q1128199",
+                user_id=1,
             )
 
         assert "pin one of mock." in str(refused.value)
@@ -1764,7 +1807,10 @@ class TestPinnedProviderRecord:
         db_id = storage_manager.save_content_item(self._movie())
         manager = self._manager(storage_manager)
 
-        manager.pin(db_id, storage_manager.get_content_item(db_id), "MOCK", "tt1")
+        manager.pin(
+            db_id, storage_manager.get_content_item(db_id), "MOCK", "tt1", user_id=1
+        )
+        manager._wait_for_completion()
 
         stored = storage_manager.get_content_item(db_id)
         assert stored.metadata["enrichment_ids"] == {"mock": "tt1"}

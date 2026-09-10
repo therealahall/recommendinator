@@ -46,6 +46,15 @@ def _make_status(
     return mock_status
 
 
+def _idle_manager() -> MagicMock:
+    """A spec'd mock answers ``running`` with a truthy Mock, which spins the
+    wait loop forever; the real status answers with a bool.
+    """
+    manager = MagicMock(spec=EnrichmentManager)
+    manager.get_status.return_value = EnrichmentJobStatus()
+    return manager
+
+
 class TestEnrichmentStart:
     def test_disabled_enrichment_names_the_surface_that_turns_it_on(
         self, cli_runner: CliRunner
@@ -436,8 +445,8 @@ class TestEnrichmentPinning:
         stored: dict[str, str],
         record: str | None,
     ) -> None:
-        manager = MagicMock(spec=EnrichmentManager)
-        manager.pin.return_value = stored
+        manager = _idle_manager()
+        manager.pin.return_value = (stored, record is not None)
 
         result = _invoke_with_enrichment_manager(
             cli_runner,
@@ -448,9 +457,37 @@ class TestEnrichmentPinning:
         )
 
         assert result.exit_code == 0
-        assert json.loads(result.output)["pinned"] == stored
+        assert json.loads(result.stdout)["pinned"] == stored
         assert manager.pin.call_args.args[0] == 7
         assert manager.pin.call_args.args[2:] == ("rawg", record)
+
+    @pytest.mark.parametrize(
+        ("enriching", "clause"),
+        [
+            (True, "Enriching it now."),
+            (False, "Queued behind the enrichment run already in progress."),
+        ],
+        ids=["claimed", "claim-lost"],
+    )
+    def test_a_pin_says_whether_the_run_it_asked_for_started(
+        self, cli_runner: CliRunner, enriching: bool, clause: str
+    ) -> None:
+        manager = _idle_manager()
+        manager.pin.return_value = ({"rawg": "41494"}, enriching)
+
+        result = _invoke_with_enrichment_manager(
+            cli_runner,
+            ["enrichment", "pin", "--id", "7", "--provider", "rawg"]
+            + ["--record", "41494", "--format", "json"],
+            self._storage(),
+            manager,
+        )
+
+        assert result.exit_code == 0
+        # Waiting out the run must leave stdout the JSON document alone.
+        assert json.loads(result.stdout)["message"] == (
+            f"Item 7 now enriches from rawg record 41494. {clause}"
+        )
 
     def test_a_pin_naming_neither_a_record_nor_a_clear_is_refused(
         self, cli_runner: CliRunner
@@ -526,19 +563,27 @@ class TestEnrichmentReset:
             provider=None, content_type=None, user_id=1, content_item_id=None
         )
 
-    def test_enrichment_reset_re_queues_the_one_item_named(
+    def test_enrichment_reset_re_queues_the_one_item_named_and_enriches_it(
         self, cli_runner: CliRunner
     ) -> None:
         mock_storage = make_storage_mock()
         mock_storage.enrichment.reset.return_value = 1
+        manager = _idle_manager()
+        manager.start_enrichment.return_value = True
 
-        result = _invoke_with_mocks(
-            cli_runner, ["enrichment", "reset", "--id", "42", "--yes"], mock_storage
+        result = _invoke_with_enrichment_manager(
+            cli_runner,
+            ["enrichment", "reset", "--id", "42", "--yes"],
+            mock_storage,
+            manager,
         )
 
         assert result.exit_code == 0, result.output
-        assert "Reset enrichment status for 1 item(s)" in result.output
+        assert (
+            "Reset enrichment status for 1 item(s). Enriching it now." in result.output
+        )
         assert mock_storage.enrichment.reset.call_args.kwargs["content_item_id"] == 42
+        assert manager.start_enrichment.call_args.kwargs["content_item_id"] == 42
 
     def test_enrichment_reset_refuses_an_id_beside_a_filter(
         self, cli_runner: CliRunner

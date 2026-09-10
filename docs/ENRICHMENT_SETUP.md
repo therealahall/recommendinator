@@ -161,11 +161,12 @@ once the data may have been added upstream, with
 ### Items showing as "failed"
 
 Different from "not found". The provider never answered, having timed out, been
-unreachable, throttled you or returned a server error. Failed items stay queued,
+unreachable, throttled or returned a server error. Failed items stay queued,
 so there is nothing to do but run enrichment again once the provider is healthy
 — or, for one item, `enrichment reset --id <id>` or **Enrich this again** in the
-edit dialog. `enrichment status` counts each item once, so a failed item reports
-under **Failed** rather than **Pending** even though it is queued.
+edit dialog, which enrich it now. `enrichment status` counts each item once, so
+a failed item reports under **Failed** rather than **Pending** even though it is
+queued.
 
 **Keeping a failure queued is new.** Before, *any* provider error settled the
 item as "not found", so a library enriched under an older version can hold items

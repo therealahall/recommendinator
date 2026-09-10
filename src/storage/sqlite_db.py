@@ -1674,6 +1674,7 @@ class SQLiteDB:
         user_id: int | None = None,
         limit: int = 100,
         after_db_id: int | None = None,
+        content_item_id: int | None = None,
     ) -> list[tuple[int, ContentItem]]:
         """Results are ordered by ID, so a caller walking the queue passes the
         last ID it saw as *after_db_id* to page past the items it already
@@ -1689,6 +1690,7 @@ class SQLiteDB:
                 "exclude",
                 count_only=False,
                 after_db_id=after_db_id,
+                content_item_id=content_item_id,
             )
             query += " ORDER BY ci.id LIMIT ?"
             params.append(limit)
@@ -1725,6 +1727,7 @@ class SQLiteDB:
         self,
         content_type: ContentType | None = None,
         user_id: int | None = None,
+        content_item_id: int | None = None,
     ) -> int:
         """Items settled as ``not_found`` are counted separately, not here."""
         effective_user_id = user_id if user_id is not None else get_default_user_id()
@@ -1736,6 +1739,7 @@ class SQLiteDB:
                 content_type,
                 "exclude",
                 count_only=True,
+                content_item_id=content_item_id,
             )
             cursor.execute(query, params)
             row = cursor.fetchone()
@@ -1769,6 +1773,7 @@ class SQLiteDB:
         not_found: NotFoundMode,
         count_only: bool,
         after_db_id: int | None = None,
+        content_item_id: int | None = None,
     ) -> tuple[str, list[Any]]:
         """The SELECT clause is hardcoded based on ``count_only`` rather than
         accepting an open string, so this helper cannot be misused to inject SQL.
@@ -1797,4 +1802,7 @@ class SQLiteDB:
         if after_db_id is not None:
             query += " AND ci.id > ?"
             params.append(after_db_id)
+        if content_item_id is not None:
+            query += " AND ci.id = ?"
+            params.append(content_item_id)
         return query, params

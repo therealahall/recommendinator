@@ -19,6 +19,7 @@ from src.storage.manager import StorageManager
 from src.utils.item_serialization import (
     enrichment_candidates_to_dict,
     enrichment_pin_to_dict,
+    enrichment_reset_to_dict,
 )
 from src.utils.sorting import MAX_SEARCH_LENGTH
 
@@ -48,9 +49,6 @@ def run_enrichment(
     include_not_found: bool = False,
     err: bool = False,
 ) -> bool:
-    """Never backgrounded: the worker is a daemon thread, so a CLI that exited
-    first would strand the claim until it went stale.
-    """
     manager = EnrichmentManager(storage, config)
     if not manager.start_enrichment(
         content_type=content_type,
@@ -61,7 +59,16 @@ def run_enrichment(
 
     type_desc = content_type.value if content_type else "all types"
     click.echo(f"Started enrichment for {type_desc}...", err=True)
+    _await_run(manager, storage, err=err)
+    return True
 
+
+def _await_run(
+    manager: EnrichmentManager, storage: StorageManager, *, err: bool
+) -> None:
+    """Never backgrounded: the worker is a daemon thread, so a CLI that exited
+    first would strand the claim until it went stale.
+    """
     try:
         while True:
             status = manager.get_status()
@@ -107,8 +114,6 @@ def run_enrichment(
                 completed=False, cancelled=True, errors=errors
             )
         click.echo("Enrichment stopped.", err=err)
-
-    return True
 
 
 @click.group()
@@ -382,20 +387,23 @@ def enrichment_pin(
 
     storage = ctx.obj["storage"]
     item = _item_or_abort(storage, item_id, user_id)
+    manager = EnrichmentManager(storage, ctx.obj["config"])
     try:
-        pinned = EnrichmentManager(storage, ctx.obj["config"]).pin(
-            item_id, item, provider, None if clear else record_id
+        pinned, enriching = manager.pin(
+            item_id, item, provider, None if clear else record_id, user_id=user_id
         )
     except PinRefused as error:
         abort_with(str(error))
     payload = enrichment_pin_to_dict(
-        item_id, provider, None if clear else record_id, pinned
+        item_id, provider, None if clear else record_id, pinned, enriching
     )
 
     if output_format == "json":
         click.echo(json.dumps(payload, indent=2))
     else:
         click.echo(payload["message"])
+    if enriching:
+        _await_run(manager, storage, err=output_format == "json")
 
 
 @enrichment.command("reset")
@@ -488,4 +496,12 @@ def enrichment_reset(
         content_item_id=item_id,
     )
 
-    click.echo(f"Reset enrichment status for {count} item(s).")
+    if item_id is None:
+        click.echo(enrichment_reset_to_dict(count, None)["message"])
+        return
+
+    manager = EnrichmentManager(storage, ctx.obj["config"])
+    enriching = manager.start_enrichment(user_id=user_id, content_item_id=item_id)
+    click.echo(enrichment_reset_to_dict(count, enriching)["message"])
+    if enriching:
+        _await_run(manager, storage, err=False)
