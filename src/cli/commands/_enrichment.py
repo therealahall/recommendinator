@@ -10,6 +10,7 @@ from src.cli._shared import abort_with
 from src.enrichment.manager import (
     EnrichmentJobStatus,
     EnrichmentManager,
+    EnrichmentStart,
     PinRefused,
     job_status,
 )
@@ -17,6 +18,7 @@ from src.enrichment.provider_base import pins_of
 from src.models.content import ContentItem, ContentType
 from src.storage.manager import StorageManager
 from src.utils.item_serialization import (
+    ENRICHMENT_UNAVAILABLE,
     enrichment_candidates_to_dict,
     enrichment_pin_to_dict,
     enrichment_reset_to_dict,
@@ -48,19 +50,20 @@ def run_enrichment(
     user_id: int = 1,
     include_not_found: bool = False,
     err: bool = False,
-) -> bool:
+) -> EnrichmentStart:
     manager = EnrichmentManager(storage, config)
-    if not manager.start_enrichment(
+    started = manager.start_enrichment(
         content_type=content_type,
         user_id=user_id,
         include_not_found=include_not_found,
-    ):
-        return False
+    )
+    if started is not EnrichmentStart.STARTED:
+        return started
 
     type_desc = content_type.value if content_type else "all types"
     click.echo(f"Started enrichment for {type_desc}...", err=True)
     _await_run(manager, storage, err=err)
-    return True
+    return started
 
 
 def _await_run(
@@ -156,24 +159,20 @@ def enrichment_start(
     storage = ctx.obj["storage"]
     config = ctx.obj["config"]
 
-    enrichment_config = config.get("enrichment", {})
-    if not enrichment_config.get("enabled", False):
-        abort_with(
-            "Enrichment is disabled. Turn it on from the Data tab, or run: "
-            "settings set enrichment.enabled true"
-        )
-
     content_type = (
         ContentType.from_string(content_type_str) if content_type_str else None
     )
 
-    if not run_enrichment(
+    started = run_enrichment(
         storage,
         config,
         content_type,
         user_id=user_id,
         include_not_found=retry_not_found,
-    ):
+    )
+    if started is EnrichmentStart.UNAVAILABLE:
+        abort_with(ENRICHMENT_UNAVAILABLE)
+    if started is EnrichmentStart.ALREADY_RUNNING:
         click.echo("Enrichment job is already running.", err=True)
         raise click.Abort()
 
@@ -389,20 +388,20 @@ def enrichment_pin(
     item = _item_or_abort(storage, item_id, user_id)
     manager = EnrichmentManager(storage, ctx.obj["config"])
     try:
-        pinned, enriching = manager.pin(
+        pinned, started = manager.pin(
             item_id, item, provider, None if clear else record_id, user_id=user_id
         )
     except PinRefused as error:
         abort_with(str(error))
     payload = enrichment_pin_to_dict(
-        item_id, provider, None if clear else record_id, pinned, enriching
+        item_id, provider, None if clear else record_id, pinned, started
     )
 
     if output_format == "json":
         click.echo(json.dumps(payload, indent=2))
     else:
         click.echo(payload["message"])
-    if enriching:
+    if started is EnrichmentStart.STARTED:
         _await_run(manager, storage, err=output_format == "json")
 
 
@@ -501,7 +500,7 @@ def enrichment_reset(
         return
 
     manager = EnrichmentManager(storage, ctx.obj["config"])
-    enriching = manager.start_enrichment(user_id=user_id, content_item_id=item_id)
-    click.echo(enrichment_reset_to_dict(count, enriching)["message"])
-    if enriching:
+    started = manager.start_enrichment(user_id=user_id, content_item_id=item_id)
+    click.echo(enrichment_reset_to_dict(count, started)["message"])
+    if started is EnrichmentStart.STARTED:
         _await_run(manager, storage, err=False)

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from src.config.service import auto_enrich_enabled
-from src.enrichment.manager import EnrichmentManager
+from src.enrichment.manager import EnrichmentManager, EnrichmentStart
 from src.ingestion.sync import (
     SyncResult,
     execute_multi_source_sync,
@@ -94,9 +94,9 @@ def build_sync_job(
         started = EnrichmentManager(storage, config).start_enrichment(
             content_type=content_type,
         )
-        if started:
+        if started is EnrichmentStart.STARTED:
             logger.info("[ENRICHMENT] Auto-started after sync")
         else:
-            logger.info("[ENRICHMENT] Auto-start skipped: a job is already running")
+            logger.info("[ENRICHMENT] Auto-start skipped: %s", started.value)
 
     return SyncDispatch(run=run_sync, on_complete=on_sync_complete)

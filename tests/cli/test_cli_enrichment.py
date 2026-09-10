@@ -1,11 +1,17 @@
 import json
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
 
-from src.enrichment.manager import EnrichmentJobStatus, EnrichmentManager, PinRefused
+from src.enrichment.manager import (
+    EnrichmentJobStatus,
+    EnrichmentManager,
+    EnrichmentStart,
+    PinRefused,
+)
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.manager import StorageManager
 from src.utils.matching import Candidate
@@ -55,6 +61,14 @@ def _idle_manager() -> MagicMock:
     return manager
 
 
+def _claims(storage: StorageManager) -> Callable[..., EnrichmentStart]:
+    def start(**_: object) -> EnrichmentStart:
+        storage.enrichment_jobs.claim(None)
+        return EnrichmentStart.STARTED
+
+    return start
+
+
 class TestEnrichmentStart:
     def test_disabled_enrichment_names_the_surface_that_turns_it_on(
         self, cli_runner: CliRunner
@@ -75,7 +89,7 @@ class TestEnrichmentStart:
     def test_enrichment_start_success(self, cli_runner: CliRunner) -> None:
         mock_storage = make_storage_mock()
         mock_manager = MagicMock(spec=EnrichmentManager)
-        mock_manager.start_enrichment.return_value = True
+        mock_manager.start_enrichment.return_value = EnrichmentStart.STARTED
         mock_manager.get_status.return_value = _make_status()
 
         result = _invoke_with_enrichment_manager(
@@ -96,7 +110,7 @@ class TestEnrichmentStart:
     def test_enrichment_start_retry_not_found(self, cli_runner: CliRunner) -> None:
         mock_storage = make_storage_mock()
         mock_manager = MagicMock(spec=EnrichmentManager)
-        mock_manager.start_enrichment.return_value = True
+        mock_manager.start_enrichment.return_value = EnrichmentStart.STARTED
         mock_manager.get_status.return_value = _make_status()
 
         result = _invoke_with_enrichment_manager(
@@ -117,7 +131,7 @@ class TestEnrichmentStart:
     ) -> None:
         mock_storage = make_storage_mock()
         mock_manager = MagicMock(spec=EnrichmentManager)
-        mock_manager.start_enrichment.return_value = True
+        mock_manager.start_enrichment.return_value = EnrichmentStart.STARTED
         status = _make_status(completed=False, items_processed=5, items_enriched=0)
         status.errors = ["tmdb: abandoned for this run after 5 rejections (HTTP 401)"]
         mock_manager.get_status.return_value = status
@@ -137,7 +151,7 @@ class TestEnrichmentStart:
     def test_enrichment_already_running(self, cli_runner: CliRunner) -> None:
         mock_storage = make_storage_mock()
         mock_manager = MagicMock(spec=EnrichmentManager)
-        mock_manager.start_enrichment.return_value = False
+        mock_manager.start_enrichment.return_value = EnrichmentStart.ALREADY_RUNNING
 
         result = _invoke_with_enrichment_manager(
             cli_runner,
@@ -239,9 +253,7 @@ class TestEnrichmentJobControl:
     ) -> None:
         storage = StorageManager(sqlite_path=tmp_path / "job.db")
         mock_manager = MagicMock(spec=EnrichmentManager)
-        mock_manager.start_enrichment.side_effect = (
-            lambda **_: storage.enrichment_jobs.claim(None)
-        )
+        mock_manager.start_enrichment.side_effect = _claims(storage)
         mock_manager.get_status.side_effect = KeyboardInterrupt
         mock_manager._wait_for_completion.return_value = False
 
@@ -262,9 +274,7 @@ class TestEnrichmentJobControl:
     ) -> None:
         storage = StorageManager(sqlite_path=tmp_path / "job.db")
         mock_manager = MagicMock(spec=EnrichmentManager)
-        mock_manager.start_enrichment.side_effect = (
-            lambda **_: storage.enrichment_jobs.claim(None)
-        )
+        mock_manager.start_enrichment.side_effect = _claims(storage)
         mock_manager.get_status.side_effect = KeyboardInterrupt
         mock_manager._wait_for_completion.side_effect = KeyboardInterrupt
 
@@ -285,8 +295,8 @@ class TestEnrichmentJobControl:
         storage = StorageManager(sqlite_path=tmp_path / "job.db")
         mock_manager = MagicMock(spec=EnrichmentManager)
 
-        def claim_and_report(**_: object) -> bool:
-            claimed = storage.enrichment_jobs.claim(None)
+        def claim_and_report(**_: object) -> EnrichmentStart:
+            storage.enrichment_jobs.claim(None)
             storage.enrichment_jobs.heartbeat(
                 items_processed=1,
                 items_enriched=0,
@@ -296,7 +306,7 @@ class TestEnrichmentJobControl:
                 current_item="Dune",
                 errors=["tmdb: HTTP 401"],
             )
-            return claimed
+            return EnrichmentStart.STARTED
 
         mock_manager.start_enrichment.side_effect = claim_and_report
         mock_manager.get_status.side_effect = KeyboardInterrupt
@@ -321,10 +331,10 @@ class TestEnrichmentJobControl:
         storage = StorageManager(sqlite_path=tmp_path / "job.db")
         mock_manager = MagicMock(spec=EnrichmentManager)
 
-        def claim_then_finish(**_: object) -> bool:
-            claimed = storage.enrichment_jobs.claim(None)
+        def claim_then_finish(**_: object) -> EnrichmentStart:
+            storage.enrichment_jobs.claim(None)
             storage.enrichment_jobs.finish(completed=True, cancelled=False, errors=[])
-            return claimed
+            return EnrichmentStart.STARTED
 
         mock_manager.start_enrichment.side_effect = claim_then_finish
         mock_manager.get_status.side_effect = KeyboardInterrupt
@@ -446,7 +456,10 @@ class TestEnrichmentPinning:
         record: str | None,
     ) -> None:
         manager = _idle_manager()
-        manager.pin.return_value = (stored, record is not None)
+        manager.pin.return_value = (
+            stored,
+            EnrichmentStart.STARTED if record else None,
+        )
 
         result = _invoke_with_enrichment_manager(
             cli_runner,
@@ -462,18 +475,25 @@ class TestEnrichmentPinning:
         assert manager.pin.call_args.args[2:] == ("rawg", record)
 
     @pytest.mark.parametrize(
-        ("enriching", "clause"),
+        ("started", "clause"),
         [
-            (True, "Enriching it now."),
-            (False, "Queued behind the enrichment run already in progress."),
+            (EnrichmentStart.STARTED, "Enriching it now."),
+            (
+                EnrichmentStart.ALREADY_RUNNING,
+                "Queued for the next enrichment run.",
+            ),
+            (
+                EnrichmentStart.UNAVAILABLE,
+                "Queued: enrichment is off, or no enabled provider handles this type.",
+            ),
         ],
-        ids=["claimed", "claim-lost"],
+        ids=["claimed", "claim-lost", "nobody-to-ask"],
     )
     def test_a_pin_says_whether_the_run_it_asked_for_started(
-        self, cli_runner: CliRunner, enriching: bool, clause: str
+        self, cli_runner: CliRunner, started: EnrichmentStart, clause: str
     ) -> None:
         manager = _idle_manager()
-        manager.pin.return_value = ({"rawg": "41494"}, enriching)
+        manager.pin.return_value = ({"rawg": "41494"}, started)
 
         result = _invoke_with_enrichment_manager(
             cli_runner,
@@ -569,7 +589,7 @@ class TestEnrichmentReset:
         mock_storage = make_storage_mock()
         mock_storage.enrichment.reset.return_value = 1
         manager = _idle_manager()
-        manager.start_enrichment.return_value = True
+        manager.start_enrichment.return_value = EnrichmentStart.STARTED
 
         result = _invoke_with_enrichment_manager(
             cli_runner,

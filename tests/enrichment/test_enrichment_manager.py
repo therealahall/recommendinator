@@ -13,6 +13,7 @@ from src.enrichment.manager import (
     _MAX_CONSECUTIVE_REJECTIONS,
     MAX_RECORDED_ERRORS,
     EnrichmentManager,
+    EnrichmentStart,
     PinRefused,
     merge_enrichment,
 )
@@ -251,7 +252,9 @@ def manager_over(
         registry.register(provider)
         enabled[provider.name] = {"enabled": True}
     return EnrichmentManager(
-        storage_manager, {"enrichment": {"providers": enabled}}, registry
+        storage_manager,
+        {"enrichment": {"enabled": True, "providers": enabled}},
+        registry,
     )
 
 
@@ -345,6 +348,7 @@ class TestEnrichmentManager:
     def config(self) -> dict[str, Any]:
         return {
             "enrichment": {
+                "enabled": True,
                 "batch_size": 10,
                 "providers": {
                     "mock": {"enabled": True},
@@ -381,12 +385,12 @@ class TestEnrichmentManager:
 
         manager = EnrichmentManager(mock_storage, config, mock_registry)
         try:
-            assert manager.start_enrichment() is True
+            assert manager.start_enrichment() is EnrichmentStart.STARTED
             assert started_enrich.wait(timeout=5.0)
 
             result = manager.start_enrichment()
 
-            assert result is False
+            assert result is EnrichmentStart.ALREADY_RUNNING
         finally:
             release_enrich.set()
             manager._wait_for_completion()
@@ -421,6 +425,20 @@ class TestEnrichmentManager:
         status = manager.get_status()
         assert status.items_not_found == 1
 
+    def test_a_type_scoped_run_with_no_provider_for_it_never_starts(
+        self,
+        mock_storage: MagicMock,
+        mock_registry: EnrichmentRegistry,
+        config: dict[str, Any],
+    ) -> None:
+        mock_registry.register(MockProvider(content_types=[ContentType.MOVIE]))
+        manager = EnrichmentManager(mock_storage, config, mock_registry)
+
+        started = manager.start_enrichment(content_type=ContentType.BOOK)
+
+        assert started is EnrichmentStart.UNAVAILABLE
+        mock_storage.enrichment.items_needing.assert_not_called()
+
 
 class TestEnrichmentStatusApiKeyScrubbingRegression:
     _API_KEY = "SECRET_MANAGER_KEY_123"
@@ -442,6 +460,7 @@ class TestEnrichmentStatusApiKeyScrubbingRegression:
     def config(self) -> dict[str, Any]:
         return {
             "enrichment": {
+                "enabled": True,
                 "batch_size": 10,
                 "providers": {
                     "raw_request": {"enabled": True},
@@ -580,6 +599,7 @@ class TestAFailureCannotCarryTheItemsTitleRegression:
     def config(self) -> dict[str, Any]:
         return {
             "enrichment": {
+                "enabled": True,
                 "batch_size": 10,
                 "providers": {"raw_request": {"enabled": True}},
             }
@@ -623,6 +643,7 @@ class TestAFailureCannotCarryTheItemsTitleRegression:
         mock_storage.enrichment.count_needing.side_effect = ValueError(
             f"query failed for {self._FORGED}"
         )
+        mock_registry.register(RawRequestErrorProvider(ValueError("unreached")))
 
         manager = EnrichmentManager(mock_storage, config, mock_registry)
         manager.start_enrichment()
@@ -641,6 +662,7 @@ class TestAFailureCannotCarryTheItemsTitleRegression:
             raise ValueError("query failed")
 
         mock_storage.enrichment.count_needing.side_effect = _raise_inside_the_job
+        mock_registry.register(RawRequestErrorProvider(ValueError("unreached")))
 
         manager = EnrichmentManager(mock_storage, config, mock_registry)
         with caplog.at_level(logging.ERROR, logger="src.enrichment.manager"):
@@ -673,6 +695,7 @@ class TestEnrichmentProgressRegression:
     def config(self) -> dict[str, Any]:
         return {
             "enrichment": {
+                "enabled": True,
                 "batch_size": 10,
                 "providers": {"mock": {"enabled": True}},
             }
@@ -771,7 +794,9 @@ class TestRetryNotFoundSetIsBuiltInOneQuery:
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
         registry = EnrichmentRegistry()
         registry._discovered = True
-        config = {"enrichment": {"providers": {"mock": {"enabled": True}}}}
+        config = {
+            "enrichment": {"enabled": True, "providers": {"mock": {"enabled": True}}}
+        }
         settled = save_movie(storage_manager, "Missing Movie")
         storage_manager.enrichment.mark_complete(settled, "none", "not_found")
         enriched = save_movie(storage_manager, "Found Movie")
@@ -810,6 +835,7 @@ class TestTransientProviderFailureIsRetryable:
     def config(self) -> dict[str, Any]:
         return {
             "enrichment": {
+                "enabled": True,
                 "batch_size": 10,
                 "providers": {
                     "mock": {"enabled": True},
@@ -1141,6 +1167,7 @@ class TestPermanentProviderFailureStopsRetrying:
     def config(self) -> dict[str, Any]:
         return {
             "enrichment": {
+                "enabled": True,
                 "batch_size": 10,
                 "providers": {
                     "mock": {"enabled": True},
@@ -1378,6 +1405,7 @@ class TestPersistedEnrichmentErrorIsDerived:
     def config(self) -> dict[str, Any]:
         return {
             "enrichment": {
+                "enabled": True,
                 "batch_size": 10,
                 "providers": {"wrapped_request": {"enabled": True}},
             }
@@ -1432,6 +1460,7 @@ class TestEnrichmentTitleCannotForgeALogLineRegression:
     def config(self) -> dict[str, Any]:
         return {
             "enrichment": {
+                "enabled": True,
                 "batch_size": 10,
                 "providers": {"mock": {"enabled": True}},
             }
@@ -1490,6 +1519,7 @@ class TestEnrichmentFetchWindowRegression:
     def config(self) -> dict[str, Any]:
         return {
             "enrichment": {
+                "enabled": True,
                 "batch_size": 2,
                 "providers": {"mock": {"enabled": True}},
             }
@@ -1549,6 +1579,7 @@ class TestManualEditEnrichmentProtectionRegression:
     def config(self) -> dict[str, Any]:
         return {
             "enrichment": {
+                "enabled": True,
                 "batch_size": 10,
                 "providers": {"mock": {"enabled": True}},
             }
@@ -1626,13 +1657,23 @@ class TestPinnedProviderRecord:
         )
 
     @staticmethod
-    def _manager(storage_manager: StorageManager) -> EnrichmentManager:
+    def _manager(
+        storage_manager: StorageManager,
+        *,
+        enabled: bool = True,
+        serves: list[ContentType] | None = None,
+    ) -> EnrichmentManager:
         registry = EnrichmentRegistry()
         registry._discovered = True
-        registry.register(MockProvider())
+        registry.register(MockProvider(content_types=serves))
         return EnrichmentManager(
             storage_manager,
-            {"enrichment": {"providers": {"mock": {"enabled": True}}}},
+            {
+                "enrichment": {
+                    "enabled": enabled,
+                    "providers": {"mock": {"enabled": True}},
+                }
+            },
             registry,
         )
 
@@ -1676,13 +1717,13 @@ class TestPinnedProviderRecord:
         )
         manager._wait_for_completion()
 
-        _pins, enriching = manager.pin(
+        _pins, started = manager.pin(
             db_id, storage_manager.get_content_item(db_id), "mock", None, user_id=1
         )
 
         # Clearing hands the item back to the title match it was pinned away
         # from, so running now would re-apply the metadata that was rejected.
-        assert enriching is False
+        assert started is None
         assert storage_manager.get_content_item(db_id).metadata["enrichment_ids"] == {}
         assert storage_manager.enrichment.status(db_id)["needs_enrichment"] is True
 
@@ -1693,12 +1734,13 @@ class TestPinnedProviderRecord:
         untouched_id = save_movie(storage_manager, "Dune")
         manager = self._manager(storage_manager)
 
-        _pins, enriching = manager.pin(
+        _pins, started = manager.pin(
             db_id, storage_manager.get_content_item(db_id), "mock", "603", user_id=1
         )
         manager._wait_for_completion()
 
-        assert enriching is True
+        assert started is EnrichmentStart.STARTED
+        assert manager.get_status().total_items == 1
         assert queued_ids(storage_manager) == {untouched_id}
 
     def test_a_pin_taken_behind_a_claimed_job_leaves_the_item_queued(
@@ -1708,11 +1750,39 @@ class TestPinnedProviderRecord:
         manager = self._manager(storage_manager)
         storage_manager.enrichment_jobs.claim(None)
 
-        _pins, enriching = manager.pin(
+        _pins, started = manager.pin(
             db_id, storage_manager.get_content_item(db_id), "mock", "603", user_id=1
         )
 
-        assert enriching is False
+        assert started is EnrichmentStart.ALREADY_RUNNING
+        assert queued_ids(storage_manager) == {db_id}
+
+    def test_a_pin_with_enrichment_switched_off_leaves_the_item_queued(
+        self, storage_manager: StorageManager
+    ) -> None:
+        db_id = storage_manager.save_content_item(self._movie())
+        manager = self._manager(storage_manager, enabled=False)
+
+        _pins, started = manager.pin(
+            db_id, storage_manager.get_content_item(db_id), "mock", "603", user_id=1
+        )
+        manager._wait_for_completion()
+
+        assert started is EnrichmentStart.UNAVAILABLE
+        assert queued_ids(storage_manager) == {db_id}
+
+    def test_a_pin_with_no_provider_for_the_type_leaves_the_item_queued(
+        self, storage_manager: StorageManager
+    ) -> None:
+        db_id = storage_manager.save_content_item(self._movie())
+        manager = self._manager(storage_manager, serves=[ContentType.BOOK])
+
+        _pins, started = manager.pin(
+            db_id, storage_manager.get_content_item(db_id), "mock", "603", user_id=1
+        )
+        manager._wait_for_completion()
+
+        assert started is EnrichmentStart.UNAVAILABLE
         assert queued_ids(storage_manager) == {db_id}
 
     def test_an_automatic_match_leaves_the_item_unpinned_so_a_rename_rematches(
@@ -1847,7 +1917,7 @@ class TestEnrichmentWritesTheRowItWasHandedRegression:
 
         manager = EnrichmentManager(
             storage_manager,
-            {"enrichment": {"providers": {"mock": {"enabled": True}}}},
+            {"enrichment": {"enabled": True, "providers": {"mock": {"enabled": True}}}},
             registry,
         )
         manager.start_enrichment()
@@ -2237,6 +2307,7 @@ class TestARunReachesTMDBThroughTheGlobalRegistry:
     def config(self) -> dict[str, Any]:
         return {
             "enrichment": {
+                "enabled": True,
                 "batch_size": 10,
                 "providers": {
                     "tmdb": {

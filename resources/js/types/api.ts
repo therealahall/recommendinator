@@ -542,10 +542,20 @@ export interface EnrichmentCandidatesResponse {
   pinned: Record<string, string>
 }
 
+/** What became of the run the write asked for, null where it asked for none. */
+export type EnrichmentRun = 'started' | 'already_running' | 'unavailable' | null
+
 export interface EnrichmentPinResponse {
   item_id: number
   pinned: Record<string, string>
   message: string
+  run: EnrichmentRun
+}
+
+export interface EnrichmentResetResponse {
+  message: string
+  count: number
+  run: EnrichmentRun
 }
 
 export interface MergeRecord {

@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from src.enrichment.manager import EnrichmentManager, PinRefused
+from src.enrichment.manager import EnrichmentManager, EnrichmentStart, PinRefused
 from src.enrichment.registry import EnrichmentRegistry
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.manager import StorageManager
@@ -80,7 +80,7 @@ class TestEnrichmentStart:
             patch("src.web.api._enrichment.EnrichmentManager") as mock_manager_cls,
         ):
             mock_manager = MagicMock(spec=EnrichmentManager)
-            mock_manager.start_enrichment.return_value = True
+            mock_manager.start_enrichment.return_value = EnrichmentStart.STARTED
             mock_manager_cls.return_value = mock_manager
 
             response = client.post("/api/enrichment/start", json=body)
@@ -173,6 +173,7 @@ class TestEnrichmentStatus:
         )
         config = {
             "enrichment": {
+                "enabled": True,
                 "batch_size": 10,
                 "providers": {"wrapped_request": {"enabled": True}},
             }
@@ -265,7 +266,10 @@ class TestEnrichmentPinning:
         self, record: str | None, stored: dict[str, str]
     ) -> None:
         manager = MagicMock(spec=EnrichmentManager)
-        manager.pin.return_value = (stored, record is not None)
+        manager.pin.return_value = (
+            stored,
+            EnrichmentStart.STARTED if record else None,
+        )
 
         with (
             patch("src.web.api._enrichment.EnrichmentManager", return_value=manager),
@@ -281,18 +285,25 @@ class TestEnrichmentPinning:
         assert manager.pin.call_args.args[2:] == ("rawg", record)
 
     @pytest.mark.parametrize(
-        ("enriching", "clause"),
+        ("started", "clause"),
         [
-            (True, "Enriching it now."),
-            (False, "Queued behind the enrichment run already in progress."),
+            (EnrichmentStart.STARTED, "Enriching it now."),
+            (
+                EnrichmentStart.ALREADY_RUNNING,
+                "Queued for the next enrichment run.",
+            ),
+            (
+                EnrichmentStart.UNAVAILABLE,
+                "Queued: enrichment is off, or no enabled provider handles this type.",
+            ),
         ],
-        ids=["claimed", "claim-lost"],
+        ids=["claimed", "claim-lost", "nobody-to-ask"],
     )
     def test_a_pin_says_whether_the_run_it_asked_for_started(
-        self, enriching: bool, clause: str
+        self, started: EnrichmentStart, clause: str
     ) -> None:
         manager = MagicMock(spec=EnrichmentManager)
-        manager.pin.return_value = ({"rawg": "41494"}, enriching)
+        manager.pin.return_value = ({"rawg": "41494"}, started)
 
         with (
             patch("src.web.api._enrichment.EnrichmentManager", return_value=manager),
@@ -303,10 +314,10 @@ class TestEnrichmentPinning:
                 json={"item_id": 7, "provider": "rawg", "record_id": "41494"},
             )
 
-        assert (
-            response.json()["message"]
-            == f"Item 7 now enriches from rawg record 41494. {clause}"
+        assert response.json()["message"] == (
+            f"Item 7 now enriches from rawg record 41494. {clause}"
         )
+        assert response.json()["run"] == started.value
 
     def test_a_pin_the_manager_refuses_is_a_400_naming_what_is_valid(self) -> None:
         manager = MagicMock(spec=EnrichmentManager)
@@ -368,7 +379,7 @@ class TestEnrichmentReset:
         storage = make_storage_mock()
         storage.enrichment.reset.return_value = 1
         manager = MagicMock(spec=EnrichmentManager)
-        manager.start_enrichment.return_value = True
+        manager.start_enrichment.return_value = EnrichmentStart.STARTED
 
         with (
             patch("src.web.api._enrichment.EnrichmentManager", return_value=manager),
@@ -380,6 +391,7 @@ class TestEnrichmentReset:
         assert response.json() == {
             "message": "Reset enrichment status for 1 item(s). Enriching it now.",
             "count": 1,
+            "run": "started",
         }
         assert storage.enrichment.reset.call_args[1]["content_item_id"] == 7
         assert manager.start_enrichment.call_args.kwargs["content_item_id"] == 7

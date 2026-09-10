@@ -11,6 +11,7 @@ import click
 from src.cli._shared import abort_after_failure
 from src.cli.commands._enrichment import run_enrichment
 from src.config.service import auto_enrich_enabled
+from src.enrichment.manager import EnrichmentStart
 from src.ingestion.sync import (
     ALL_SOURCES_LABEL,
     MAX_WORKERS_CEILING,
@@ -344,7 +345,10 @@ def update(
     # hook. Here the run is waited on rather than backgrounded: this process
     # exits, and its claim would outlive it.
     if auto_enrich and job["status"] == "completed":
-        if not run_enrichment(
+        started = run_enrichment(
             storage, config, enrichment_content_type(valid), err=json_output
-        ):
+        )
+        if started is EnrichmentStart.ALREADY_RUNNING:
             click.echo("Enrichment is already running; left to finish.", err=True)
+        elif started is EnrichmentStart.UNAVAILABLE:
+            click.echo("No enabled provider enriches these items.", err=True)
