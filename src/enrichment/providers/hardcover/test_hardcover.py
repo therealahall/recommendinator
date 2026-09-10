@@ -91,7 +91,10 @@ def _enriched(
         mock_post.return_value = _response(_books(book))
         result = provider.enrich(item if item is not None else _book(), _CONFIG)
 
+    # A miss returns not_found rather than None, so every caller asserting on
+    # extra_metadata would pass against an empty dict without this.
     assert result is not None
+    assert result.match_quality != "not_found"
     return result.extra_metadata
 
 
