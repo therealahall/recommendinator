@@ -203,6 +203,13 @@ def states_a_series_ordinal(provider: EnrichmentProvider) -> bool:
     return _overrides(type(provider), "fetch_series_ordinal")
 
 
+def offers_candidates(provider: EnrichmentProvider) -> bool:
+    """Whether the picker has records to ask this provider for, which a provider
+    that searches has whether or not it can enrich from one.
+    """
+    return _overrides(type(provider), "search")
+
+
 def accepts_a_pin(provider: EnrichmentProvider) -> bool:
     """Whether a pin means anything to this provider, so the refusal can name
     the ones it does.

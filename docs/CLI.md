@@ -477,9 +477,9 @@ uv run python -m src.cli enrichment pin --id 42 --provider rawg --clear
 An item whose title matches nothing, or the wrong thing, is pointed at a record
 by hand: `candidates` searches every enabled provider (add `--query` to search
 under a different title), `pin` binds the item to one of them, and `--clear`
-hands it back to title matching. `candidates` and `pin` both need enrichment on
-with a provider for the item's type. A pin then enriches the item and waits for
-the run; a clear leaves it queued.
+hands it back to title matching. `candidates` needs enrichment on with a
+provider that searches the item's type. A pin then enriches the item and waits
+for the run; a clear leaves it queued.
 
 Only a provider that reads a pin can be pinned, and only to an id it can look
 up; the refusal names the ones that can.

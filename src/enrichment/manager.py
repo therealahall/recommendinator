@@ -4,6 +4,7 @@ import json
 import logging
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any
@@ -15,6 +16,7 @@ from src.enrichment.provider_base import (
     EnrichmentResult,
     ProviderError,
     accepts_a_pin,
+    offers_candidates,
     states_a_match,
     states_a_series_ordinal,
     with_pin,
@@ -346,19 +348,30 @@ class EnrichmentManager:
             return EnrichmentStart.STARTED
 
     def can_ask_a_provider(self, scope: ContentType | None) -> bool:
-        """A run no enabled provider could match settles its queue as not_found,
-        an ordinal-only provider being no better than none here.
+        """Whether a run would ask any enabled provider anything: a match to try,
+        or a series ordinal to state.
         """
+        return self._any_enabled(
+            scope,
+            lambda provider: states_a_match(provider)
+            or states_a_series_ordinal(provider),
+        )
+
+    def can_offer_candidates(self, scope: ContentType) -> bool:
+        """Searching is its own capability: Hardcover offers records to pin
+        without ever being a run's match.
+        """
+        return self._any_enabled(scope, offers_candidates)
+
+    def _any_enabled(
+        self, scope: ContentType | None, asked: Callable[[EnrichmentProvider], bool]
+    ) -> bool:
         if not self.config.get("enrichment", {}).get("enabled", False):
             return False
-        matchers = [
-            provider
+        return any(
+            asked(provider) and (scope is None or scope in provider.content_types)
             for provider in self.registry.get_enabled_providers(self.config)
-            if states_a_match(provider)
-        ]
-        if scope is None:
-            return bool(matchers)
-        return any(scope in provider.content_types for provider in matchers)
+        )
 
     def _scoped_content_type(
         self, content_item_id: int, user_id: int | None
@@ -712,7 +725,10 @@ class EnrichmentManager:
                 "[ENRICHMENT] No match found for %s: %s", content_type_str, safe_title
             )
 
-        self.storage_manager.enrichment.mark_complete(db_id, "none", "not_found")
+        # Settling an item no matcher was asked about buried it: an ordinal-only
+        # run left every item not_found, out of every later run's queue.
+        if matchers_existed:
+            self.storage_manager.enrichment.mark_complete(db_id, "none", "not_found")
         with self._lock:
             self._status.items_processed += 1
             self._status.items_not_found += 1

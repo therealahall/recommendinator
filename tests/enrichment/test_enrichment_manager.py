@@ -1981,16 +1981,13 @@ class OrdinalOnlyProvider(EnrichmentProvider):
 
 class TestTheOrdinalPass:
     def _run(self, storage_manager: StorageManager) -> OrdinalOnlyProvider:
-        # Beside a matcher that finds nothing: a run with no matcher is refused.
         provider = OrdinalOnlyProvider()
-        manager = manager_over(
-            storage_manager, MockProvider(should_not_find=True), provider
-        )
+        manager = manager_over(storage_manager, provider)
         manager.start_enrichment(content_type=ContentType.MOVIE)
         assert manager._wait_for_completion()
         return provider
 
-    def test_a_provider_stating_only_an_ordinal_is_never_the_items_match(
+    def test_an_ordinal_only_run_positions_the_item_and_leaves_it_queued(
         self, tmp_path: Path
     ) -> None:
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
@@ -1998,12 +1995,10 @@ class TestTheOrdinalPass:
 
         self._run(storage_manager)
 
-        status = storage_manager.enrichment.status(db_id)
-        assert status is not None
-        assert status["enrichment_provider"] == "none"
         item = storage_manager.get_content_item(db_id)
         assert item.metadata["series_position"] == 3.0
         assert item.metadata["series_position_authority"] == "authored"
+        assert queued_ids(storage_manager) == {db_id}
 
     def test_an_ordinal_a_title_marker_stated_is_asked_about_and_replaced(
         self, tmp_path: Path
@@ -2021,17 +2016,20 @@ class TestTheOrdinalPass:
         assert item.metadata["series_position"] == 3.0
         assert item.metadata["series_position_authority"] == "authored"
 
-    def test_a_run_with_nothing_but_an_ordinal_provider_never_starts(
-        self, tmp_path: Path
+    @pytest.mark.parametrize(
+        "scope", [None, ContentType.MOVIE], ids=["unscoped", "type-scoped"]
+    )
+    def test_a_type_scoped_run_starts_wherever_an_unscoped_one_does(
+        self, tmp_path: Path, scope: ContentType | None
     ) -> None:
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
-        db_id = save_movie(storage_manager)
+        save_movie(storage_manager)
         manager = manager_over(storage_manager, OrdinalOnlyProvider())
 
-        started = manager.start_enrichment(content_type=ContentType.MOVIE)
+        started = manager.start_enrichment(content_type=scope)
 
-        assert started is EnrichmentStart.UNAVAILABLE
-        assert queued_ids(storage_manager) == {db_id}
+        assert started is EnrichmentStart.STARTED
+        assert manager._wait_for_completion()
 
     def test_a_matching_provider_still_owns_the_item_the_ordinal_pass_positioned(
         self, tmp_path: Path
@@ -2101,11 +2099,7 @@ class TestAnOrdinalCountedInAnotherSeries:
             "A New Hope",
             metadata={"series_name": "Star Wars Collection"},
         )
-        manager = manager_over(
-            storage_manager,
-            MockProvider(should_not_find=True),
-            SubSeriesOrdinalProvider(),
-        )
+        manager = manager_over(storage_manager, SubSeriesOrdinalProvider())
 
         manager.start_enrichment(content_type=ContentType.MOVIE)
         assert manager._wait_for_completion()
@@ -2202,9 +2196,7 @@ class TestTheOrdinalPassCountsRejectionsInARow:
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
         movies = [save_movie(storage_manager, f"Movie {index}") for index in range(20)]
         provider = UnreliableOrdinalProvider()
-        manager = manager_over(
-            storage_manager, MockProvider(should_not_find=True), provider
-        )
+        manager = manager_over(storage_manager, provider)
 
         manager.start_enrichment(content_type=ContentType.MOVIE)
         assert manager._wait_for_completion()
@@ -2289,9 +2281,7 @@ class TestAFailedOrdinalSave:
     ) -> None:
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
         db_ids = [save_movie(storage_manager, f"Movie {index}") for index in range(2)]
-        manager = manager_over(
-            storage_manager, MockProvider(should_not_find=True), OrdinalOnlyProvider()
-        )
+        manager = manager_over(storage_manager, OrdinalOnlyProvider())
 
         with patch.object(
             storage_manager,
