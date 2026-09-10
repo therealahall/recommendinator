@@ -220,6 +220,9 @@ def get_enrichment_candidates(
     """Every enabled provider's own search results for one item."""
     item = _item_or_404(storage, item_id, user_id)
     manager = EnrichmentManager(storage, config)
+    # Searching reaches the providers a run would, so the same switch gates it.
+    if not manager.can_ask_a_provider(item.content_type):
+        raise HTTPException(status_code=400, detail=ENRICHMENT_UNAVAILABLE)
     payload = enrichment_candidates_to_dict(
         item_id, manager.candidates(item, query), pins_of(item.metadata)
     )

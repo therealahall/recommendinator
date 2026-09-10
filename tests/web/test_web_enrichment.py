@@ -257,6 +257,17 @@ class TestEnrichmentPinning:
         }
         assert manager.candidates.call_args.args[1] == "Prey 2017"
 
+    def test_candidates_reach_no_provider_with_enrichment_switched_off(self) -> None:
+        config = {
+            "enrichment": {"enabled": False, "providers": {"rawg": {"enabled": True}}}
+        }
+
+        with _client(self._storage(), config) as client:
+            response = client.get("/api/enrichment/candidates", params={"item_id": 7})
+
+        assert response.status_code == 400
+        assert "settings set enrichment.enabled true" in response.json()["detail"]
+
     @pytest.mark.parametrize(
         ("record", "stored"),
         [("41494", {"rawg": "41494"}), (None, {})],
@@ -287,7 +298,7 @@ class TestEnrichmentPinning:
     @pytest.mark.parametrize(
         ("started", "clause"),
         [
-            (EnrichmentStart.STARTED, "Enriching it now."),
+            (EnrichmentStart.STARTED, "Enriching it now. The Data tab shows the run."),
             (
                 EnrichmentStart.ALREADY_RUNNING,
                 "Queued for the next enrichment run.",
@@ -389,7 +400,10 @@ class TestEnrichmentReset:
 
         assert response.status_code == 200
         assert response.json() == {
-            "message": "Reset enrichment status for 1 item(s). Enriching it now.",
+            "message": (
+                "Reset enrichment status for 1 item(s)."
+                " Enriching it now. The Data tab shows the run."
+            ),
             "count": 1,
             "run": "started",
         }

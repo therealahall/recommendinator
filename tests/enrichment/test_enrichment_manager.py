@@ -439,6 +439,21 @@ class TestEnrichmentManager:
         assert started is EnrichmentStart.UNAVAILABLE
         mock_storage.enrichment.items_needing.assert_not_called()
 
+    def test_a_run_scoped_to_an_item_that_is_gone_never_takes_the_claim(
+        self,
+        mock_storage: MagicMock,
+        mock_registry: EnrichmentRegistry,
+        config: dict[str, Any],
+    ) -> None:
+        mock_registry.register(MockProvider())
+        mock_storage.get_content_item.return_value = None
+        manager = EnrichmentManager(mock_storage, config, mock_registry)
+
+        started = manager.start_enrichment(content_item_id=404)
+
+        assert started is EnrichmentStart.UNAVAILABLE
+        assert mock_storage.enrichment_jobs.claim(None)
+
 
 class TestEnrichmentStatusApiKeyScrubbingRegression:
     _API_KEY = "SECRET_MANAGER_KEY_123"
@@ -1966,8 +1981,11 @@ class OrdinalOnlyProvider(EnrichmentProvider):
 
 class TestTheOrdinalPass:
     def _run(self, storage_manager: StorageManager) -> OrdinalOnlyProvider:
+        # Beside a matcher that finds nothing: a run with no matcher is refused.
         provider = OrdinalOnlyProvider()
-        manager = manager_over(storage_manager, provider)
+        manager = manager_over(
+            storage_manager, MockProvider(should_not_find=True), provider
+        )
         manager.start_enrichment(content_type=ContentType.MOVIE)
         assert manager._wait_for_completion()
         return provider
@@ -2002,6 +2020,18 @@ class TestTheOrdinalPass:
         item = storage_manager.get_content_item(db_id)
         assert item.metadata["series_position"] == 3.0
         assert item.metadata["series_position_authority"] == "authored"
+
+    def test_a_run_with_nothing_but_an_ordinal_provider_never_starts(
+        self, tmp_path: Path
+    ) -> None:
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        db_id = save_movie(storage_manager)
+        manager = manager_over(storage_manager, OrdinalOnlyProvider())
+
+        started = manager.start_enrichment(content_type=ContentType.MOVIE)
+
+        assert started is EnrichmentStart.UNAVAILABLE
+        assert queued_ids(storage_manager) == {db_id}
 
     def test_a_matching_provider_still_owns_the_item_the_ordinal_pass_positioned(
         self, tmp_path: Path
@@ -2071,7 +2101,11 @@ class TestAnOrdinalCountedInAnotherSeries:
             "A New Hope",
             metadata={"series_name": "Star Wars Collection"},
         )
-        manager = manager_over(storage_manager, SubSeriesOrdinalProvider())
+        manager = manager_over(
+            storage_manager,
+            MockProvider(should_not_find=True),
+            SubSeriesOrdinalProvider(),
+        )
 
         manager.start_enrichment(content_type=ContentType.MOVIE)
         assert manager._wait_for_completion()
@@ -2168,7 +2202,9 @@ class TestTheOrdinalPassCountsRejectionsInARow:
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
         movies = [save_movie(storage_manager, f"Movie {index}") for index in range(20)]
         provider = UnreliableOrdinalProvider()
-        manager = manager_over(storage_manager, provider)
+        manager = manager_over(
+            storage_manager, MockProvider(should_not_find=True), provider
+        )
 
         manager.start_enrichment(content_type=ContentType.MOVIE)
         assert manager._wait_for_completion()
@@ -2253,7 +2289,9 @@ class TestAFailedOrdinalSave:
     ) -> None:
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
         db_ids = [save_movie(storage_manager, f"Movie {index}") for index in range(2)]
-        manager = manager_over(storage_manager, OrdinalOnlyProvider())
+        manager = manager_over(
+            storage_manager, MockProvider(should_not_find=True), OrdinalOnlyProvider()
+        )
 
         with patch.object(
             storage_manager,

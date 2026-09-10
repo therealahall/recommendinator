@@ -2,34 +2,19 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { useApi } from '@/composables/useApi'
 import { useAppStore } from '@/stores/app'
-import { useDataStore } from '@/stores/data'
 import { DEFAULT_SORT, MAX_SEARCH_LENGTH, MERGE_CANDIDATE_LIMIT } from '@/constants/library'
 import type {
   ContentItemResponse,
   EnrichmentCandidate,
   EnrichmentCandidatesResponse,
-  EnrichmentJobStatusResponse,
   EnrichmentPinResponse,
   EnrichmentResetResponse,
-  EnrichmentRun,
   ItemEditRequest,
   MergeRecord,
 } from '@/types/api'
 
 const PAGE_SIZE = 50
 const SEARCH_DEBOUNCE_MS = 250
-const RUN_POLL_MS = 1000
-// A one-item run that outlasts a minute has stalled; the dialog stops waiting.
-const RUN_POLL_LIMIT = 60
-
-function runOutcome(job: EnrichmentJobStatusResponse | null): string {
-  if (!job) return ''
-  const state = job.cancelled ? 'cancelled' : job.completed ? 'completed' : 'stopped on an error'
-  return (
-    `Enrichment ${state}. Items enriched: ${job.items_enriched},` +
-    ` not found: ${job.items_not_found}, failed: ${job.items_failed}.`
-  )
-}
 
 export const useLibraryStore = defineStore('library', () => {
   const api = useApi()
@@ -282,7 +267,6 @@ export const useLibraryStore = defineStore('library', () => {
       })
       pinned.value = result.pinned
       pinMessage.value = result.message
-      await followEnrichmentRun(dbId, result.run)
     } catch (err) {
       editError.value = err instanceof Error ? err.message : 'Failed to pin'
     }
@@ -299,26 +283,9 @@ export const useLibraryStore = defineStore('library', () => {
         user_id: useAppStore().currentUserId,
       })
       pinMessage.value = result.message
-      await followEnrichmentRun(dbId, result.run)
     } catch (err) {
       editError.value = err instanceof Error ? err.message : 'Failed to queue a retry'
     }
-  }
-
-  // The scoped run publishes to the job record the Data tab polls, so it is
-  // followed through that store rather than a second status poller.
-  async function followEnrichmentRun(dbId: number, run: EnrichmentRun) {
-    if (run !== 'started') return
-    const data = useDataStore()
-    for (let poll = 0; poll < RUN_POLL_LIMIT; poll++) {
-      await new Promise((resolve) => setTimeout(resolve, RUN_POLL_MS))
-      await data.checkEnrichmentStatus()
-      // The dialog closed under the run: reopening it would be a surprise.
-      if (editingItem.value?.db_id !== dbId) return
-      if (!data.enrichmentJob?.running) break
-    }
-    await openEdit(dbId)
-    pinMessage.value = runOutcome(data.enrichmentJob)
   }
 
   async function saveEdit(dbId: number, data: ItemEditRequest) {

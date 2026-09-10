@@ -477,16 +477,18 @@ uv run python -m src.cli enrichment pin --id 42 --provider rawg --clear
 An item whose title matches nothing, or the wrong thing, is pointed at a record
 by hand: `candidates` searches every enabled provider (add `--query` to search
 under a different title), `pin` binds the item to one of them, and `--clear`
-hands it back to title matching. A pin enriches the item then and there, where
-enrichment is on with a provider for its type; a clear leaves it queued.
+hands it back to title matching. `candidates` and `pin` both need enrichment on
+with a provider for the item's type. A pin then enriches the item and waits for
+the run; a clear leaves it queued.
 
 Only a provider that reads a pin can be pinned, and only to an id it can look
 up; the refusal names the ones that can.
 
-`reset --id` re-queues one item and enriches it on the same terms, without
-re-fetching a whole provider or content type, which is the door for an item a
-run left on a timeout or a 503, and the one **Enrich this again** opens in the
-library's edit dialog. It takes no `--provider` or `--type` beside it.
+`reset --id` re-queues one item and enriches it on the same terms, waiting the
+same way, without re-fetching a whole provider or content type, which is the
+door for an item a run left on a timeout or a 503, and the one **Enrich this
+again** opens in the library's edit dialog. It takes no `--provider` or `--type`
+beside it.
 
 `enrichment job` and `enrichment stop` reach the run whatever started it — the
 Data tab, another terminal, a backgrounded process — because the job lives in

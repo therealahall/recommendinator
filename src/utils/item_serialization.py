@@ -116,7 +116,7 @@ ENRICHMENT_UNAVAILABLE = (
 )
 
 _RUN_CLAUSES = {
-    EnrichmentStart.STARTED: "Enriching it now.",
+    EnrichmentStart.STARTED: "Enriching it now. The Data tab shows the run.",
     EnrichmentStart.ALREADY_RUNNING: "Queued for the next enrichment run.",
     EnrichmentStart.UNAVAILABLE: (
         "Queued: enrichment is off, or no enabled provider handles this type."
