@@ -332,6 +332,9 @@ def enrichment_candidates(
     storage = ctx.obj["storage"]
     item = _item_or_abort(storage, item_id, user_id)
     manager = EnrichmentManager(storage, ctx.obj["config"])
+    # Searching reaches the providers a run would, so the same switch gates it.
+    if not manager.can_ask_a_provider(item.content_type):
+        abort_with(ENRICHMENT_UNAVAILABLE)
     payload = enrichment_candidates_to_dict(
         item_id, manager.candidates(item, query), pins_of(item.metadata)
     )

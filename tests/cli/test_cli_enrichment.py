@@ -440,6 +440,24 @@ class TestEnrichmentPinning:
         }
         assert manager.candidates.call_args.args[1] == "Prey 2017"
 
+    def test_candidates_reach_no_provider_with_enrichment_switched_off(
+        self, cli_runner: CliRunner
+    ) -> None:
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["enrichment", "candidates", "--id", "7"],
+            self._storage(),
+            config={
+                "enrichment": {
+                    "enabled": False,
+                    "providers": {"rawg": {"enabled": True}},
+                }
+            },
+        )
+
+        assert result.exit_code != 0
+        assert "settings set enrichment.enabled true" in result.output
+
     @pytest.mark.parametrize(
         ("flags", "stored", "record"),
         [
@@ -477,7 +495,7 @@ class TestEnrichmentPinning:
     @pytest.mark.parametrize(
         ("started", "clause"),
         [
-            (EnrichmentStart.STARTED, "Enriching it now."),
+            (EnrichmentStart.STARTED, "Enriching it now. The Data tab shows the run."),
             (
                 EnrichmentStart.ALREADY_RUNNING,
                 "Queued for the next enrichment run.",

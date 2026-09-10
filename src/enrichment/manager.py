@@ -297,7 +297,15 @@ class EnrichmentManager:
         content_item_id: int | None = None,
     ) -> EnrichmentStart:
         """*content_item_id* scopes the run to that one item."""
-        if not self._can_ask_a_provider(content_type, content_item_id, user_id):
+        scope = content_type
+        if scope is None and content_item_id is not None:
+            scope = self._scoped_content_type(content_item_id, user_id)
+            if scope is None:
+                logger.info(
+                    "Enrichment start refused: item %s is gone", content_item_id
+                )
+                return EnrichmentStart.UNAVAILABLE
+        if not self.can_ask_a_provider(scope):
             logger.info("Enrichment start refused: nothing enabled would be asked")
             return EnrichmentStart.UNAVAILABLE
 
@@ -337,26 +345,25 @@ class EnrichmentManager:
             )
             return EnrichmentStart.STARTED
 
-    def _can_ask_a_provider(
-        self,
-        content_type: ContentType | None,
-        content_item_id: int | None,
-        user_id: int | None,
-    ) -> bool:
-        """A run nobody would answer settles its whole queue as not_found."""
+    def can_ask_a_provider(self, scope: ContentType | None) -> bool:
+        """A run no enabled provider could match settles its queue as not_found,
+        an ordinal-only provider being no better than none here.
+        """
         if not self.config.get("enrichment", {}).get("enabled", False):
             return False
-        scope = content_type or self._scoped_content_type(content_item_id, user_id)
-        enabled = self.registry.get_enabled_providers(self.config)
+        matchers = [
+            provider
+            for provider in self.registry.get_enabled_providers(self.config)
+            if states_a_match(provider)
+        ]
         if scope is None:
-            return bool(enabled)
-        return any(scope in provider.content_types for provider in enabled)
+            return bool(matchers)
+        return any(scope in provider.content_types for provider in matchers)
 
     def _scoped_content_type(
-        self, content_item_id: int | None, user_id: int | None
+        self, content_item_id: int, user_id: int | None
     ) -> ContentType | None:
-        if content_item_id is None:
-            return None
+        """None where the item is gone, which is no scope a run could serve."""
         item = self.storage_manager.get_content_item(content_item_id, user_id=user_id)
         if item is None:
             return None
