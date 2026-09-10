@@ -35,6 +35,7 @@ from src.sources.service import (
     source_plugin_not_loaded,
     unusable_detail,
 )
+from src.utils.item_serialization import ENRICHMENT_UNAVAILABLE
 from src.utils.text import humanize_source_id, sanitize_for_log
 
 logger = logging.getLogger(__name__)
@@ -351,4 +352,4 @@ def update(
         if started is EnrichmentStart.ALREADY_RUNNING:
             click.echo("Enrichment is already running; left to finish.", err=True)
         elif started is EnrichmentStart.UNAVAILABLE:
-            click.echo("No enabled provider enriches these items.", err=True)
+            click.echo(ENRICHMENT_UNAVAILABLE, err=True)
