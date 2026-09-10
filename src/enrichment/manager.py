@@ -725,10 +725,7 @@ class EnrichmentManager:
                 "[ENRICHMENT] No match found for %s: %s", content_type_str, safe_title
             )
 
-        # Settling an item no matcher was asked about buried it: an ordinal-only
-        # run left every item not_found, out of every later run's queue.
-        if matchers_existed:
-            self.storage_manager.enrichment.mark_complete(db_id, "none", "not_found")
+        self.storage_manager.enrichment.mark_complete(db_id, "none", "not_found")
         with self._lock:
             self._status.items_processed += 1
             self._status.items_not_found += 1

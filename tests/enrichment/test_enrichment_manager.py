@@ -1987,7 +1987,7 @@ class TestTheOrdinalPass:
         assert manager._wait_for_completion()
         return provider
 
-    def test_an_ordinal_only_run_positions_the_item_and_leaves_it_queued(
+    def test_an_ordinal_only_run_positions_the_item_and_drains_it_from_the_queue(
         self, tmp_path: Path
     ) -> None:
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
@@ -1998,7 +1998,8 @@ class TestTheOrdinalPass:
         item = storage_manager.get_content_item(db_id)
         assert item.metadata["series_position"] == 3.0
         assert item.metadata["series_position_authority"] == "authored"
-        assert queued_ids(storage_manager) == {db_id}
+        assert queued_ids(storage_manager) == set()
+        assert enrichment_buckets(storage_manager)["not_found"] == 1
 
     def test_an_ordinal_a_title_marker_stated_is_asked_about_and_replaced(
         self, tmp_path: Path
