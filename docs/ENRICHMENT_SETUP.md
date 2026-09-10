@@ -27,7 +27,7 @@ Enable them all for full coverage.
 | TMDB | Movies, TV shows | Free, v3 auth | 40 requests/second |
 | RAWG | Video games | Free | 5 requests/second |
 | Wikidata | All four types, series positions only | None | 1 item/second |
-| Hardcover | Books, series positions only | Free, personal access token | 1 request/second |
+| Hardcover | Books | Free, personal access token | 1 request/second |
 
 **OpenLibrary** matches by ISBN when your source supplies one, otherwise by
 title and author search. It fills genres, description, page count, publisher and
@@ -60,12 +60,7 @@ cannot identify beyond doubt, by type and release year, is left unpositioned. So
 is one whose series Wikidata names differently from the series already stored —
 a film numbered within a trilogy is not numbered within the wider franchise.
 
-**Hardcover** states where in its series a book sits and fills nothing else, so
-it runs alongside OpenLibrary rather than instead of it. It matches on an ISBN
-where your source supplies one, otherwise on title and
-author, and refuses a title that matches two books rather than guess a position. Create a free account at
-[hardcover.app](https://hardcover.app/) and copy the token from
-**Account > API**.
+**Hardcover** fills genres, description, cover, publish year and where in its series a book sits. It matches on an ISBN where your source supplies one, otherwise on title and author, and refuses a title that matches two books rather than guess. Books it refuses fall through to OpenLibrary, so enabling both is worthwhile. Create a free account at [hardcover.app](https://hardcover.app/) and copy the token from **Account > API**.
 
 ## Full setup
 

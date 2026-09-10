@@ -1,6 +1,6 @@
 # Hardcover Enrichment Provider
 
-States where a book sits in its series, using the [Hardcover](https://hardcover.app) GraphQL API. It writes no other metadata.
+Fills a book's genres, description, cover, publish year and series position, using the [Hardcover](https://hardcover.app) GraphQL API.
 
 ## Content types
 - `book`
@@ -25,6 +25,10 @@ uv run python -m src.cli settings set-secret enrichment.providers.hardcover.api_
 | `api_key` | str | yes (sensitive) | Hardcover personal access token. |
 
 ## Behavior
+- Fills `genres` and `tags` from the `Genre` category of `cached_tags`, plus the
+  description, cover URL and `year_published` from the matched record. Hardcover's
+  other tag categories rate a reading experience rather than name a genre, so
+  they are left out.
 - Writes `series_position` at the `authored` authority, off the `position`
   Hardcover's `featured_book_series` states, and names that series so the merge
   can check it is the one already stored — the featured series is often a

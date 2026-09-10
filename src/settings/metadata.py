@@ -289,7 +289,7 @@ _REGISTRY: tuple[SettingMetadata, ...] = (
     _entry(
         "enrichment.providers.hardcover.enabled",
         label="Hardcover enabled",
-        help="Enable the Hardcover (book series positions) enrichment provider.",
+        help="Enable the Hardcover (books) enrichment provider.",
         type="bool",
         default=False,
     ),

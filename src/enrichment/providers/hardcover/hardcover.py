@@ -8,6 +8,7 @@ import requests
 from src.enrichment.provider_base import (
     ConfigField,
     EnrichmentProvider,
+    EnrichmentResult,
     ProviderError,
     SeriesOrdinal,
     log_search_title,
@@ -35,13 +36,15 @@ logger = logging.getLogger(__name__)
 
 HARDCOVER_API_URL = "https://api.hardcover.app/v1/graphql"
 
-_SERIES_QUERY = """
-query BookSeriesPosition($where: books_bool_exp!, $limit: Int!) {
+_BOOK_QUERY = """
+query Books($where: books_bool_exp!, $limit: Int!) {
   books(where: $where, limit: $limit, order_by: {users_count: desc}) {
     id
     title
+    description
     release_year
     image { url }
+    cached_tags
     contributions { author { name } }
     featured_book_series { position series { name } }
   }
@@ -58,6 +61,11 @@ _ISBN_FIELDS = {10: "isbn_10", 13: "isbn_13"}
 _LIKE_METACHARACTERS = str.maketrans({"\\": r"\\", "%": r"\%", "_": r"\_"})
 
 _AUTHOR_SEPARATORS = re.compile(r"\s*(?:[,;&]|\band\b)\s*")
+
+#: ``cached_tags`` is keyed by category. The others — "Mood", "Tag" and
+#: "Content Warning" — rate a reading experience rather than name a genre, and
+#: no cluster in genre_clusters.py reaches them.
+_GENRE_CATEGORY = "Genre"
 
 
 def _normalized_isbn(raw: Any) -> str:
@@ -139,6 +147,40 @@ def _series_ordinal(book: dict[str, Any]) -> SeriesOrdinal | None:
     return SeriesOrdinal(position=position, series_name=name)
 
 
+def _genres(book: dict[str, Any]) -> list[str]:
+    categories = book.get("cached_tags")
+    if not isinstance(categories, dict):
+        return []
+    return [
+        name
+        for entry in categories.get(_GENRE_CATEGORY) or []
+        if isinstance(entry, dict) and (name := str(entry.get("tag") or "").strip())
+    ]
+
+
+def _result(book: dict[str, Any]) -> EnrichmentResult:
+    """``year_published`` is the only year column a book has, so Hardcover's
+    work-level release year lands there (see models/detail_fields.py).
+    """
+    extra: dict[str, Any] = {}
+    year = year_of(book.get("release_year"))
+    if year is not None:
+        extra["year_published"] = year
+    ordinal = _series_ordinal(book)
+    if ordinal is not None:
+        extra.update(ordinal.as_metadata())
+
+    genres = _genres(book)
+    return EnrichmentResult(
+        genres=genres or None,
+        tags=genres or None,
+        description=str(book.get("description") or "").strip() or None,
+        cover_url=(book.get("image") or {}).get("url"),
+        extra_metadata=extra,
+        match_quality="high",
+    )
+
+
 def _refusals(errors: Any) -> str:
     codes = {
         sanitize_for_log(str((error.get("extensions") or {}).get("code") or "unknown"))
@@ -159,7 +201,7 @@ class HardcoverProvider(EnrichmentProvider):
 
     @property
     def description(self) -> str:
-        return "Series positions for books from Hardcover"
+        return "Genres, description, cover and series position for books"
 
     @property
     def content_types(self) -> list[ContentType]:
@@ -192,6 +234,18 @@ class HardcoverProvider(EnrichmentProvider):
         if not config.get("api_key"):
             errors.append("'api_key' is required for Hardcover provider")
         return errors
+
+    def enrich(
+        self, item: ContentItem, config: dict[str, Any]
+    ) -> EnrichmentResult | None:
+        api_key = str(config.get("api_key") or "").strip()
+        if not api_key or get_enum_value(item.content_type) != ContentType.BOOK.value:
+            return None
+
+        book = self._match(item, api_key)
+        if book is None:
+            return EnrichmentResult(match_quality="not_found")
+        return _result(book)
 
     def fetch_series_ordinal(
         self, item: ContentItem, config: dict[str, Any]
@@ -240,7 +294,7 @@ class HardcoverProvider(EnrichmentProvider):
 
     def _books(self, clause: dict[str, Any], api_key: str) -> list[dict[str, Any]]:
         payload = {
-            "query": _SERIES_QUERY,
+            "query": _BOOK_QUERY,
             "variables": {
                 "where": {**_ONLY_THE_CANONICAL_RECORD, **clause},
                 "limit": _CANDIDATE_LIMIT,

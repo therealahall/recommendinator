@@ -320,15 +320,13 @@ it after a sync.
 | OpenLibrary | Books, no API key | none |
 | RAWG | Video games | `GET /games/{id}/game-series` |
 | Wikidata | All four, no API key | `P179`, positioned by its `P1545` qualifier |
-| Hardcover | Books, series position only | `books.featured_book_series` |
+| Hardcover | Books | `books.featured_book_series` |
 
 RAWG stores `franchise` and TMDB `series_name` in `extra_metadata`. Neither
 stores a position: both endpoints return an unordered related-titles set, so any
 rank read off one is invented.
 
-Wikidata and Hardcover state a position instead, each implementing
-`fetch_series_ordinal` alone at `authored` authority, so neither settles an item
-as matched.
+Wikidata and Hardcover state a position instead, at `authored` authority. Wikidata implements `fetch_series_ordinal` alone, so it never settles an item as matched; Hardcover states the position in the same result it matches on, so its ordinal costs no second request.
 
 Rules:
 

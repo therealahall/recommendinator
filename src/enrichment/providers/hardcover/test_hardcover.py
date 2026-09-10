@@ -41,7 +41,17 @@ def _hardcover_book(
         "series": {"name": series} if series is not None else None,
     }
     return {
+        "id": 427621,
         "title": title,
+        "description": "Humanity has colonized the solar system.",
+        "release_year": 2011,
+        "image": {"url": "https://assets.hardcover.app/editions/1/cover.jpg"},
+        "cached_tags": {
+            "Genre": [{"tag": "Science Fiction", "count": 18}],
+            "Mood": [{"tag": "tense", "count": 39}],
+            "Tag": [{"tag": "Plot driven", "count": 27}],
+            "Content Warning": [{"tag": "Violence", "count": 3}],
+        },
         "contributions": [{"author": {"name": author}}],
         "featured_book_series": membership if in_a_series else None,
     }
@@ -208,6 +218,78 @@ class TestHardcoverMatching:
                 _books(_hardcover_book(title="The Leviathan Wakes Companion"))
             )
             assert provider.fetch_series_ordinal(_book(), _CONFIG) is None
+
+
+class TestHardcoverEnrichment:
+    def test_a_matched_book_is_enriched_rather_than_only_positioned(
+        self, provider: HardcoverProvider
+    ) -> None:
+        with patch(
+            "src.enrichment.providers.hardcover.hardcover.requests.post"
+        ) as mock_post:
+            mock_post.return_value = _response(_books(_hardcover_book()))
+            result = provider.enrich(_book(), _CONFIG)
+
+        assert result is not None
+        assert result.match_quality == "high"
+        # Hardcover's other tag categories are moods and content warnings.
+        assert result.genres == ["Science Fiction"]
+        assert result.tags == ["Science Fiction"]
+        assert result.description == "Humanity has colonized the solar system."
+        assert result.cover_url == "https://assets.hardcover.app/editions/1/cover.jpg"
+        assert result.extra_metadata["year_published"] == 2011
+        assert result.extra_metadata["series_position"] == 1.0
+        assert (
+            result.extra_metadata[SERIES_AUTHORITY_KEY]
+            == SeriesAuthority.AUTHORED.value
+        )
+
+    def test_a_pinned_record_is_enriched_without_a_title_search(
+        self, provider: HardcoverProvider
+    ) -> None:
+        with patch(
+            "src.enrichment.providers.hardcover.hardcover.requests.post"
+        ) as mock_post:
+            mock_post.return_value = _response(
+                _books(_hardcover_book(title="Allanon's Quest", author="Terry Brooks"))
+            )
+            result = provider.enrich(
+                _book(title="Allanon's Quest", enrichment_ids={"hardcover": "460708"}),
+                _CONFIG,
+            )
+
+        assert mock_post.call_count == 1
+        where = mock_post.call_args.kwargs["json"]["variables"]["where"]
+        assert where["id"] == {"_eq": "460708"}
+        assert "title" not in where
+        assert result is not None and result.match_quality == "high"
+
+    def test_a_book_hardcover_cannot_match_is_not_found_rather_than_partial(
+        self, provider: HardcoverProvider
+    ) -> None:
+        with patch(
+            "src.enrichment.providers.hardcover.hardcover.requests.post"
+        ) as mock_post:
+            mock_post.return_value = _response(
+                _books(_hardcover_book(), _hardcover_book(position=4))
+            )
+            result = provider.enrich(_book(), _CONFIG)
+
+        assert result is not None
+        assert result.match_quality == "not_found"
+        assert result.genres is None
+        assert result.description is None
+        assert result.cover_url is None
+
+    def test_no_token_makes_no_request_rather_than_a_rejected_one(
+        self, provider: HardcoverProvider
+    ) -> None:
+        with patch(
+            "src.enrichment.providers.hardcover.hardcover.requests.post"
+        ) as mock_post:
+            assert provider.enrich(_book(), {}) is None
+
+        assert mock_post.call_count == 0
 
 
 class TestHardcoverSeriesPosition:
