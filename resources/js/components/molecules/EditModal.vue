@@ -376,12 +376,14 @@ function searchRecords() {
         placeholder="Leave empty to search this item's own title..."
         @keydown.enter.prevent="searchRecords"
       >
-      <button class="btn btn-secondary" :aria-disabled="pinSearching || undefined" @click="searchRecords">
-        {{ pinSearching ? 'Searching…' : 'Search providers' }}
-      </button>
-      <button class="btn btn-secondary" @click="emit('retryEnrichment', item.db_id!)">
-        Enrich this again
-      </button>
+      <div class="edit-pin-actions">
+        <button class="btn btn-secondary" :aria-disabled="pinSearching || undefined" @click="searchRecords">
+          {{ pinSearching ? 'Searching…' : 'Search providers' }}
+        </button>
+        <button class="btn btn-secondary" @click="emit('retryEnrichment', item.db_id!)">
+          Enrich this again
+        </button>
+      </div>
       <!-- Mounted whether or not it has anything to say: a region inserted
            already populated reads as content rather than a status change. -->
       <p id="edit-pin-note" class="edit-modal-note" role="status" aria-live="polite">{{ pinNote }}</p>
