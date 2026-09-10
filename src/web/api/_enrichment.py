@@ -3,11 +3,17 @@ from typing import Any, cast
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from src.enrichment.manager import EnrichmentManager, PinRefused, job_status
+from src.enrichment.manager import (
+    EnrichmentManager,
+    EnrichmentStart,
+    PinRefused,
+    job_status,
+)
 from src.enrichment.provider_base import pins_of
 from src.models.content import ContentItem, ContentType
 from src.storage.manager import StorageManager
 from src.utils.item_serialization import (
+    ENRICHMENT_UNAVAILABLE,
     enrichment_candidates_to_dict,
     enrichment_pin_to_dict,
     enrichment_reset_to_dict,
@@ -77,6 +83,7 @@ class EnrichmentPinResponse(BaseModel):
     item_id: int
     pinned: dict[str, str] = Field(default_factory=dict)
     message: str
+    run: str | None = None
 
 
 class EnrichmentJobStatusResponse(BaseModel):
@@ -113,16 +120,6 @@ def start_enrichment(
     storage: RequiredStorage,
     config: RequiredConfig,
 ) -> dict[str, Any]:
-    enrichment_config = config.get("enrichment", {})
-    if not enrichment_config.get("enabled", False):
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Enrichment is disabled. Turn it on from the Data tab, or run: "
-                "settings set enrichment.enabled true"
-            ),
-        )
-
     content_type = None
     if request.content_type:
         try:
@@ -140,7 +137,9 @@ def start_enrichment(
         user_id=request.user_id,
         include_not_found=request.retry_not_found,
     )
-    if not started:
+    if started is EnrichmentStart.UNAVAILABLE:
+        raise HTTPException(status_code=400, detail=ENRICHMENT_UNAVAILABLE)
+    if started is EnrichmentStart.ALREADY_RUNNING:
         raise HTTPException(status_code=409, detail="Enrichment job already running")
 
     type_desc = content_type.value if content_type else "all types"
@@ -238,7 +237,7 @@ def pin_enrichment_record(
     try:
         # The run this starts is fire-and-forget: it publishes to the job record
         # the status endpoint already serves.
-        pinned, enriching = EnrichmentManager(storage, config).pin(
+        pinned, started = EnrichmentManager(storage, config).pin(
             request.item_id,
             item,
             request.provider,
@@ -248,7 +247,7 @@ def pin_enrichment_record(
     except PinRefused as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     payload = enrichment_pin_to_dict(
-        request.item_id, request.provider, request.record_id, pinned, enriching
+        request.item_id, request.provider, request.record_id, pinned, started
     )
     return EnrichmentPinResponse.model_validate(payload)
 
@@ -261,7 +260,7 @@ def reset_enrichment(
 ) -> dict[str, Any]:
     """Re-queue items the next run would otherwise skip: everything a provider
     settled, everything of one content type, or the one item that failed, which
-    is enriched then and there.
+    asks for a run of its own.
     """
     content_type = None
     if request.content_type:
@@ -288,9 +287,9 @@ def reset_enrichment(
         content_item_id=request.item_id,
     )
 
-    enriching = None
+    started = None
     if request.item_id is not None:
-        enriching = EnrichmentManager(storage, config).start_enrichment(
+        started = EnrichmentManager(storage, config).start_enrichment(
             user_id=request.user_id, content_item_id=request.item_id
         )
-    return enrichment_reset_to_dict(count, enriching)
+    return enrichment_reset_to_dict(count, started)

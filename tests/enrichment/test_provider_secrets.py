@@ -80,7 +80,7 @@ def registry() -> EnrichmentRegistry:
 
 
 def _config() -> dict[str, Any]:
-    return {"enrichment": {"providers": {"keyed": {"enabled": True}}}}
+    return {"enrichment": {"enabled": True, "providers": {"keyed": {"enabled": True}}}}
 
 
 class TestProviderConfigInjection:

@@ -7,6 +7,7 @@ import pytest
 from click.testing import CliRunner, Result
 
 from src.cli.main import cli
+from src.enrichment.provider_base import EnrichmentResult
 from src.ingestion.sync import (
     MAX_REPORTED_ERRORS,
     SyncResult,
@@ -666,7 +667,11 @@ def test_update_enriches_what_it_synced_unless_auto_enrich_is_off(
     db_path = tmp_path / "test.db"
     config = {
         "storage": {"database_path": str(db_path)},
-        "enrichment": {"enabled": True, "auto_enrich_on_sync": auto_enrich},
+        "enrichment": {
+            "enabled": True,
+            "auto_enrich_on_sync": auto_enrich,
+            "providers": {"rawg": {"enabled": True, "api_key": "k"}},
+        },
         "inputs": {
             "steam": {
                 "plugin": "steam",
@@ -686,11 +691,16 @@ def test_update_enriches_what_it_synced_unless_auto_enrich_is_off(
         patch(
             "src.ingestion.sources.steam.SteamPlugin.validate_config", return_value=[]
         ),
+        patch(
+            "src.enrichment.providers.rawg.rawg.RAWGProvider.enrich",
+            return_value=EnrichmentResult(genres=["Action"], match_quality="high"),
+        ),
     ):
         result = CliRunner().invoke(cli, ["update", "--source", "steam"])
 
     assert result.exit_code == 0, result.output
     record = StorageManager(sqlite_path=db_path).enrichment_jobs.read()
+    assert record.items_enriched == (1 if auto_enrich else 0)
     assert record.items_processed == (1 if auto_enrich else 0)
     assert (record.started_at is not None) is auto_enrich
     assert record.running is False
@@ -701,7 +711,11 @@ def test_update_json_keeps_the_enrichment_report_off_stdout(tmp_path: Path) -> N
     db_path = tmp_path / "test.db"
     config = {
         "storage": {"database_path": str(db_path)},
-        "enrichment": {"enabled": True, "auto_enrich_on_sync": True},
+        "enrichment": {
+            "enabled": True,
+            "auto_enrich_on_sync": True,
+            "providers": {"rawg": {"enabled": True, "api_key": "k"}},
+        },
         "inputs": {
             "steam": {
                 "plugin": "steam",
@@ -720,6 +734,10 @@ def test_update_json_keeps_the_enrichment_report_off_stdout(tmp_path: Path) -> N
         ),
         patch(
             "src.ingestion.sources.steam.SteamPlugin.validate_config", return_value=[]
+        ),
+        patch(
+            "src.enrichment.providers.rawg.rawg.RAWGProvider.enrich",
+            return_value=EnrichmentResult(genres=["Action"], match_quality="high"),
         ),
     ):
         result = CliRunner().invoke(

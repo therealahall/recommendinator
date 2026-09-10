@@ -5,6 +5,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 import requests
@@ -49,6 +50,12 @@ _MAX_CONSECUTIVE_REJECTIONS = 5
 
 #: The provider the first-success loop settled an item on, and what it said.
 _Match = tuple[EnrichmentProvider, EnrichmentResult]
+
+
+class EnrichmentStart(Enum):
+    STARTED = "started"
+    ALREADY_RUNNING = "already_running"
+    UNAVAILABLE = "unavailable"
 
 
 class PinRefused(ValueError):
@@ -243,10 +250,10 @@ class EnrichmentManager:
         provider_name: str,
         record_id: str | None,
         user_id: int,
-    ) -> tuple[dict[str, str], bool]:
+    ) -> tuple[dict[str, str], EnrichmentStart | None]:
         """Binds *item* to one provider record, *record_id* ``None`` clearing it,
-        and re-queues it. A bound record enriches at once; a cleared one waits
-        for the next run. Raises ``PinRefused`` for a pin no run could read back.
+        and re-queues it. A bound record asks for a run of its own; a cleared one
+        waits for the next. Raises ``PinRefused`` for a pin no run could read back.
         """
         provider = self._pinnable_provider(provider_name)
         if record_id is not None and not provider.accepts_record_id(record_id):
@@ -261,7 +268,7 @@ class EnrichmentManager:
         )
         self.storage_manager.enrichment.reset(content_item_id=db_id)
         if record_id is None:
-            return pins, False
+            return pins, None
         return pins, self.start_enrichment(user_id=user_id, content_item_id=db_id)
 
     def _pinnable_provider(self, provider_name: str) -> EnrichmentProvider:
@@ -288,16 +295,18 @@ class EnrichmentManager:
         user_id: int | None = None,
         include_not_found: bool = False,
         content_item_id: int | None = None,
-    ) -> bool:
-        """*content_item_id* scopes the run to that one item, which is how a pin
-        or a retry is applied then and there. False when the claim is lost.
-        """
+    ) -> EnrichmentStart:
+        """*content_item_id* scopes the run to that one item."""
+        if not self._can_ask_a_provider(content_type, content_item_id, user_id):
+            logger.info("Enrichment start refused: nothing enabled would be asked")
+            return EnrichmentStart.UNAVAILABLE
+
         with self._lock:
             # The claim is the mutual exclusion, and it spans processes: a
             # local flag let the CLI start a second job beside the server's.
             if not self._jobs.claim(content_type.value if content_type else None):
                 logger.warning("Enrichment job already running")
-                return False
+                return EnrichmentStart.ALREADY_RUNNING
 
             self._status = EnrichmentJobStatus(
                 running=True,
@@ -326,7 +335,32 @@ class EnrichmentManager:
                 type_msg,
                 retry_msg,
             )
-            return True
+            return EnrichmentStart.STARTED
+
+    def _can_ask_a_provider(
+        self,
+        content_type: ContentType | None,
+        content_item_id: int | None,
+        user_id: int | None,
+    ) -> bool:
+        """A run nobody would answer settles its whole queue as not_found."""
+        if not self.config.get("enrichment", {}).get("enabled", False):
+            return False
+        scope = content_type or self._scoped_content_type(content_item_id, user_id)
+        enabled = self.registry.get_enabled_providers(self.config)
+        if scope is None:
+            return bool(enabled)
+        return any(scope in provider.content_types for provider in enabled)
+
+    def _scoped_content_type(
+        self, content_item_id: int | None, user_id: int | None
+    ) -> ContentType | None:
+        if content_item_id is None:
+            return None
+        item = self.storage_manager.get_content_item(content_item_id, user_id=user_id)
+        if item is None:
+            return None
+        return ContentType(get_enum_value(item.content_type))
 
     def stop_enrichment(self) -> bool:
         """It stops after the current item."""

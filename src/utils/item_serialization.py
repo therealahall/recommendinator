@@ -5,6 +5,7 @@ model without a line here is a field the CLI stops emitting.
 from typing import TypedDict
 
 from src.covers import cover_payload_url
+from src.enrichment.manager import EnrichmentStart
 from src.enrichment.provider_base import pins_of
 from src.models.content import ContentItem, get_enum_value
 from src.models.detail_fields import to_int
@@ -108,15 +109,19 @@ def enrichment_candidates_to_dict(
     }
 
 
-def _run_clause(enriching: bool) -> str:
-    """A run the claim was lost to still reaches the item, so the wording says
-    which of the two happened rather than promising the same thing for both.
-    """
-    return (
-        "Enriching it now."
-        if enriching
-        else "Queued behind the enrichment run already in progress."
-    )
+#: Both start doors word the refusal identically; drift between them is a defect.
+ENRICHMENT_UNAVAILABLE = (
+    "Enrichment is off, or no enabled provider handles that type. Turn one on "
+    "from the Data tab, or run: settings set enrichment.enabled true"
+)
+
+_RUN_CLAUSES = {
+    EnrichmentStart.STARTED: "Enriching it now.",
+    EnrichmentStart.ALREADY_RUNNING: "Queued for the next enrichment run.",
+    EnrichmentStart.UNAVAILABLE: (
+        "Queued: enrichment is off, or no enabled provider handles this type."
+    ),
+}
 
 
 def enrichment_pin_to_dict(
@@ -124,25 +129,29 @@ def enrichment_pin_to_dict(
     provider: str,
     record_id: str | None,
     pinned: dict[str, str],
-    enriching: bool,
+    started: EnrichmentStart | None,
 ) -> dict[str, object]:
     said = (
-        f"Item {db_id} now enriches from {provider} record {record_id}. "
-        f"{_run_clause(enriching)}"
-        if record_id
-        else f"Item {db_id} is back to matching {provider} by title"
+        f"Item {db_id} is back to matching {provider} by title"
+        if started is None
+        else f"Item {db_id} now enriches from {provider} record {record_id}. "
+        f"{_RUN_CLAUSES[started]}"
     )
-    return {"item_id": db_id, "pinned": pinned, "message": said}
+    return {
+        "item_id": db_id,
+        "pinned": pinned,
+        "message": said,
+        "run": started.value if started else None,
+    }
 
 
-def enrichment_reset_to_dict(count: int, enriching: bool | None) -> dict[str, object]:
-    """*enriching* is ``None`` where the reset asked for no run of its own, as a
-    reset over a whole provider or content type does.
-    """
+def enrichment_reset_to_dict(
+    count: int, started: EnrichmentStart | None
+) -> dict[str, object]:
     said = f"Reset enrichment status for {count} item(s)"
-    if enriching is not None:
-        said = f"{said}. {_run_clause(enriching)}"
-    return {"message": said, "count": count}
+    if started is not None:
+        said = f"{said}. {_RUN_CLAUSES[started]}"
+    return {"message": said, "count": count, "run": started.value if started else None}
 
 
 def completion_to_dict(title: str, db_id: int) -> dict[str, object]:

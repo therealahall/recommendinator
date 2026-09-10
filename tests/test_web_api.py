@@ -27,7 +27,7 @@ from src.auth.epic import EpicAuthError
 from src.auth.gog import GogAuthError
 from src.auth.trakt import DevicePollResult, DevicePollStatus, TraktAuthError
 from src.config.service import load_config
-from src.enrichment.manager import EnrichmentManager
+from src.enrichment.manager import EnrichmentManager, EnrichmentStart
 from src.ingestion.paths import get_allowed_source_roots
 from src.ingestion.sync import (
     ALL_SOURCES_KEY,
@@ -910,7 +910,7 @@ def _sync_a_source_typed(client, content_type):
     sync_manager.is_running.return_value = False
     sync_manager.start_sync.return_value = None
     enrichment_manager = Mock(spec=EnrichmentManager)
-    enrichment_manager.start_enrichment.return_value = True
+    enrichment_manager.start_enrichment.return_value = EnrichmentStart.STARTED
 
     with (
         patch("src.web.api._sync.get_sync_manager", return_value=sync_manager),

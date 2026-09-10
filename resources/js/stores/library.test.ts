@@ -417,6 +417,62 @@ describe('useLibraryStore', () => {
     expect(store.pinMessage).toBe('Reset enrichment status for 1 item(s)')
   })
 
+  it('waits out the run a pin started, then shows what it wrote and how it ended', async () => {
+    vi.useFakeTimers()
+    try {
+      const enriched = {
+        db_id: 7, title: 'Prey', content_type: 'movie', status: 'unread', ignored: false,
+        genres: ['Action'], pinned: { rawg: '41494' },
+      }
+      mockGet.mockImplementation((url: string) => {
+        if (url === '/enrichment/status') {
+          return Promise.resolve({
+            running: false, completed: true, cancelled: false,
+            items_enriched: 1, items_not_found: 0, items_failed: 0,
+          })
+        }
+        if (url === '/enrichment/stats') return Promise.resolve({ enabled: true })
+        return Promise.resolve(enriched)
+      })
+      mockPost.mockResolvedValue({
+        item_id: 7,
+        pinned: { rawg: '41494' },
+        message: 'Item 7 now enriches from rawg record 41494. Enriching it now.',
+        run: 'started',
+      })
+      const store = useLibraryStore()
+      store.editingItem = { db_id: 7 } as any
+
+      const pinning = store.pinEnrichment(7, 'rawg', '41494')
+      await vi.runAllTimersAsync()
+      await pinning
+
+      expect(store.editingItem).toMatchObject({ genres: ['Action'] })
+      expect(store.pinMessage).toBe(
+        'Enrichment completed. Items enriched: 1, not found: 0, failed: 0.',
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not poll for a run that never started, and keeps the reason on screen', async () => {
+    const store = useLibraryStore()
+    store.editingItem = { db_id: 7 } as any
+    mockPost.mockResolvedValue({
+      message:
+        'Reset enrichment status for 1 item(s). Queued: enrichment is off,' +
+        ' or no enabled provider handles this type.',
+      count: 1,
+      run: 'unavailable',
+    })
+
+    await store.retryEnrichment(7)
+
+    expect(mockGet).not.toHaveBeenCalled()
+    expect(store.pinMessage).toContain('Queued: enrichment is off')
+  })
+
   it('a repeat blanks the note while it waits, so the same sentence is announced again', async () => {
     const reset = { message: 'Reset enrichment status for 1 item(s)', count: 1 }
     const store = useLibraryStore()
