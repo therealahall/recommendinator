@@ -326,7 +326,7 @@ RAWG stores `franchise` and TMDB `series_name` in `extra_metadata`. Neither
 stores a position: both endpoints return an unordered related-titles set, so any
 rank read off one is invented.
 
-Wikidata and Hardcover state a position instead, at `authored` authority. Wikidata implements `fetch_series_ordinal` alone, so it never settles an item as matched; Hardcover states the position in the same result it matches on, so its ordinal costs no second request.
+Wikidata and Hardcover state a position instead, at `authored` authority. Wikidata implements `fetch_series_ordinal` alone, never settling an item as matched. Hardcover's ordinal rides its match.
 
 Rules:
 

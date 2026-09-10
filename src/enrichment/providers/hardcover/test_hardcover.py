@@ -8,7 +8,12 @@ import requests
 from src.enrichment.provider_base import ProviderError
 from src.enrichment.providers.hardcover.hardcover import HardcoverProvider
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
-from src.utils.series import SERIES_AUTHORITY_KEY, SeriesAuthority, reconcile_series
+from src.utils.series import (
+    SERIES_AUTHORITY_KEY,
+    SERIES_POSITION_KEY,
+    SeriesAuthority,
+    reconcile_series,
+)
 
 _TOKEN = "hardcover-personal-access-token"
 
@@ -75,6 +80,21 @@ def _books(*books: dict[str, Any]) -> dict[str, Any]:
     return {"data": {"books": list(books)}}
 
 
+def _enriched(
+    provider: HardcoverProvider,
+    book: dict[str, Any],
+    item: ContentItem | None = None,
+) -> dict[str, Any]:
+    with patch(
+        "src.enrichment.providers.hardcover.hardcover.requests.post"
+    ) as mock_post:
+        mock_post.return_value = _response(_books(book))
+        result = provider.enrich(item if item is not None else _book(), _CONFIG)
+
+    assert result is not None
+    return result.extra_metadata
+
+
 @pytest.fixture
 def provider() -> HardcoverProvider:
     return HardcoverProvider()
@@ -89,18 +109,6 @@ class TestHardcoverConfig:
             in provider.validate_config({})
         )
 
-    def test_no_token_is_skipped_rather_than_failing_the_item(
-        self, provider: HardcoverProvider, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        caplog.set_level(logging.DEBUG)
-        with patch(
-            "src.enrichment.providers.hardcover.hardcover.requests.post"
-        ) as mock_post:
-            assert provider.fetch_series_ordinal(_book(), {}) is None
-
-        assert mock_post.call_count == 0
-        assert _TOKEN not in caplog.text
-
 
 class TestHardcoverMatching:
     def test_an_isbn_is_filtered_on_in_place_of_the_title(
@@ -112,12 +120,12 @@ class TestHardcoverMatching:
             "src.enrichment.providers.hardcover.hardcover.requests.post"
         ) as mock_post:
             mock_post.return_value = _response(_books(_hardcover_book()))
-            ordinal = provider.fetch_series_ordinal(item, _CONFIG)
+            result = provider.enrich(item, _CONFIG)
 
         where = mock_post.call_args.kwargs["json"]["variables"]["where"]
         assert where["editions"] == {"isbn_13": {"_eq": "9780316129084"}}
         assert "title" not in where
-        assert ordinal is not None
+        assert result is not None and result.match_quality == "high"
 
     def test_an_isbn_hardcover_does_not_hold_falls_back_to_the_title(
         self, provider: HardcoverProvider
@@ -131,25 +139,22 @@ class TestHardcoverMatching:
                 _response(_books()),
                 _response(_books(_hardcover_book())),
             ]
-            ordinal = provider.fetch_series_ordinal(item, _CONFIG)
+            result = provider.enrich(item, _CONFIG)
 
         second_where = mock_post.call_args.kwargs["json"]["variables"]["where"]
         assert second_where["title"] == {"_ilike": "%Leviathan Wakes%"}
-        assert ordinal is not None
+        assert result is not None and result.match_quality != "not_found"
 
-    def test_two_books_sharing_a_title_are_refused(
+    def test_a_title_search_is_reported_as_resembling_rather_than_identifying(
         self, provider: HardcoverProvider
     ) -> None:
         with patch(
             "src.enrichment.providers.hardcover.hardcover.requests.post"
         ) as mock_post:
-            mock_post.return_value = _response(
-                _books(
-                    _hardcover_book(position=1),
-                    _hardcover_book(position=4),
-                )
-            )
-            assert provider.fetch_series_ordinal(_book(), _CONFIG) is None
+            mock_post.return_value = _response(_books(_hardcover_book()))
+            result = provider.enrich(_book(), _CONFIG)
+
+        assert result is not None and result.match_quality == "medium"
 
     def test_another_authors_book_of_the_same_name_is_refused(
         self, provider: HardcoverProvider
@@ -160,7 +165,9 @@ class TestHardcoverMatching:
             mock_post.return_value = _response(
                 _books(_hardcover_book(author="Someone Else"))
             )
-            assert provider.fetch_series_ordinal(_book(), _CONFIG) is None
+            result = provider.enrich(_book(), _CONFIG)
+
+        assert result is not None and result.match_quality == "not_found"
 
     def test_a_book_whose_two_authors_share_one_stored_field_still_matches(
         self, provider: HardcoverProvider
@@ -172,11 +179,11 @@ class TestHardcoverMatching:
             "src.enrichment.providers.hardcover.hardcover.requests.post"
         ) as mock_post:
             mock_post.return_value = _response(_books(illuminae))
-            ordinal = provider.fetch_series_ordinal(
+            result = provider.enrich(
                 _book(title="Illuminae", author="Amie Kaufman, Jay Kristoff"), _CONFIG
             )
 
-        assert ordinal is not None
+        assert result is not None and result.match_quality != "not_found"
 
     def test_an_isbn_column_holding_no_digits_falls_back_to_the_title(
         self, provider: HardcoverProvider
@@ -185,28 +192,12 @@ class TestHardcoverMatching:
             "src.enrichment.providers.hardcover.hardcover.requests.post"
         ) as mock_post:
             mock_post.return_value = _response(_books(_hardcover_book()))
-            ordinal = provider.fetch_series_ordinal(_book(isbn13='=""'), _CONFIG)
+            result = provider.enrich(_book(isbn13='=""'), _CONFIG)
 
         assert mock_post.call_count == 1
         where = mock_post.call_args.kwargs["json"]["variables"]["where"]
         assert "editions" not in where
-        assert ordinal is not None
-
-    def test_a_pinned_record_settles_two_candidates_the_title_gate_refuses(
-        self, provider: HardcoverProvider
-    ) -> None:
-        with patch(
-            "src.enrichment.providers.hardcover.hardcover.requests.post"
-        ) as mock_post:
-            mock_post.return_value = _response(_books(_hardcover_book()))
-            ordinal = provider.fetch_series_ordinal(
-                _book(enrichment_ids={"hardcover": "4231"}), _CONFIG
-            )
-
-        where = mock_post.call_args.kwargs["json"]["variables"]["where"]
-        assert where["id"] == {"_eq": "4231"}
-        assert "title" not in where
-        assert ordinal is not None and ordinal.position == 1
+        assert result is not None and result.match_quality != "not_found"
 
     def test_a_title_that_only_contains_the_searched_one_is_refused(
         self, provider: HardcoverProvider
@@ -217,7 +208,9 @@ class TestHardcoverMatching:
             mock_post.return_value = _response(
                 _books(_hardcover_book(title="The Leviathan Wakes Companion"))
             )
-            assert provider.fetch_series_ordinal(_book(), _CONFIG) is None
+            result = provider.enrich(_book(), _CONFIG)
+
+        assert result is not None and result.match_quality == "not_found"
 
 
 class TestHardcoverEnrichment:
@@ -231,14 +224,13 @@ class TestHardcoverEnrichment:
             result = provider.enrich(_book(), _CONFIG)
 
         assert result is not None
-        assert result.match_quality == "high"
         # Hardcover's other tag categories are moods and content warnings.
         assert result.genres == ["Science Fiction"]
         assert result.tags == ["Science Fiction"]
         assert result.description == "Humanity has colonized the solar system."
         assert result.cover_url == "https://assets.hardcover.app/editions/1/cover.jpg"
         assert result.extra_metadata["year_published"] == 2011
-        assert result.extra_metadata["series_position"] == 1.0
+        assert result.extra_metadata[SERIES_POSITION_KEY] == 1.0
         assert (
             result.extra_metadata[SERIES_AUTHORITY_KEY]
             == SeriesAuthority.AUTHORED.value
@@ -291,107 +283,107 @@ class TestHardcoverEnrichment:
 
         assert mock_post.call_count == 0
 
-
-class TestHardcoverSeriesPosition:
-    def test_a_featured_series_becomes_an_authored_ordinal(
+    def test_the_ordinal_pass_never_repeats_the_lookup_enrich_already_made(
         self, provider: HardcoverProvider
     ) -> None:
         with patch(
             "src.enrichment.providers.hardcover.hardcover.requests.post"
         ) as mock_post:
-            mock_post.return_value = _response(_books(_hardcover_book()))
-            ordinal = provider.fetch_series_ordinal(
-                _book(isbn13="9780316129084"), _CONFIG
-            )
+            assert provider.fetch_series_ordinal(_book(), _CONFIG) is None
 
-        assert ordinal is not None
-        assert ordinal.position == 1.0
-        assert ordinal.authority is SeriesAuthority.AUTHORED
+        assert mock_post.call_count == 0
 
+    def test_a_long_tail_of_one_reader_tags_is_ranked_and_cut_to_ten(
+        self, provider: HardcoverProvider
+    ) -> None:
+        crowded = _hardcover_book()
+        crowded["cached_tags"]["Genre"] = [
+            {"tag": f"Niche {index}", "count": 1} for index in range(12)
+        ] + [{"tag": "Science Fiction", "count": 18}]
+
+        with patch(
+            "src.enrichment.providers.hardcover.hardcover.requests.post"
+        ) as mock_post:
+            mock_post.return_value = _response(_books(crowded))
+            result = provider.enrich(_book(), _CONFIG)
+
+        assert result is not None and result.genres is not None
+        assert result.genres[0] == "Science Fiction"
+        assert len(result.genres) == 10
+
+    @pytest.mark.parametrize("url", ["http://assets.hardcover.app/c.jpg", {"src": 1}])
+    def test_only_an_https_string_becomes_a_cover_the_backfill_dials(
+        self, provider: HardcoverProvider, url: Any
+    ) -> None:
+        insecure = _hardcover_book()
+        insecure["image"] = {"url": url}
+
+        with patch(
+            "src.enrichment.providers.hardcover.hardcover.requests.post"
+        ) as mock_post:
+            mock_post.return_value = _response(_books(insecure))
+            result = provider.enrich(_book(), _CONFIG)
+            candidates = provider.search(_book(), _CONFIG)
+
+        assert result is not None and result.cover_url is None
+        assert candidates[0].cover_url is None
+
+
+class TestHardcoverSeriesPosition:
     def test_a_book_in_no_series_states_no_ordinal(
         self, provider: HardcoverProvider
     ) -> None:
-        with patch(
-            "src.enrichment.providers.hardcover.hardcover.requests.post"
-        ) as mock_post:
-            mock_post.return_value = _response(
-                _books(_hardcover_book(in_a_series=False))
-            )
-            assert provider.fetch_series_ordinal(_book(), _CONFIG) is None
+        stated = _enriched(provider, _hardcover_book(in_a_series=False))
+        assert SERIES_POSITION_KEY not in stated
 
     def test_a_series_membership_with_no_position_states_no_ordinal(
         self, provider: HardcoverProvider
     ) -> None:
-        with patch(
-            "src.enrichment.providers.hardcover.hardcover.requests.post"
-        ) as mock_post:
-            mock_post.return_value = _response(_books(_hardcover_book(position=None)))
-            assert provider.fetch_series_ordinal(_book(), _CONFIG) is None
+        stated = _enriched(provider, _hardcover_book(position=None))
+        assert SERIES_POSITION_KEY not in stated
 
     def test_a_position_no_reader_could_read_back_is_never_stated(
         self, provider: HardcoverProvider
     ) -> None:
-        with patch(
-            "src.enrichment.providers.hardcover.hardcover.requests.post"
-        ) as mock_post:
-            mock_post.return_value = _response(_books(_hardcover_book(position=1001)))
-            assert provider.fetch_series_ordinal(_book(), _CONFIG) is None
+        stated = _enriched(provider, _hardcover_book(position=1001))
+        assert SERIES_POSITION_KEY not in stated
 
     def test_an_unnamed_series_states_no_ordinal(
         self, provider: HardcoverProvider
     ) -> None:
-        with patch(
-            "src.enrichment.providers.hardcover.hardcover.requests.post"
-        ) as mock_post:
-            mock_post.return_value = _response(_books(_hardcover_book(series=None)))
-            assert provider.fetch_series_ordinal(_book(), _CONFIG) is None
+        stated = _enriched(provider, _hardcover_book(series=None))
+        assert SERIES_POSITION_KEY not in stated
 
     def test_a_featured_sub_series_never_positions_the_stored_parent_series(
         self, provider: HardcoverProvider
     ) -> None:
         stored = {"series_name": "The Expanse"}
+        stated = _enriched(
+            provider,
+            _hardcover_book(
+                title="Gods of Risk", position=1, series="The Expanse: Novellas"
+            ),
+            _book(title="Gods of Risk", **stored),
+        )
 
-        with patch(
-            "src.enrichment.providers.hardcover.hardcover.requests.post"
-        ) as mock_post:
-            mock_post.return_value = _response(
-                _books(
-                    _hardcover_book(
-                        title="Gods of Risk",
-                        position=1,
-                        series="The Expanse: Novellas",
-                    )
-                )
-            )
-            ordinal = provider.fetch_series_ordinal(
-                _book(title="Gods of Risk", **stored), _CONFIG
-            )
-
-        assert ordinal is not None
-        assert reconcile_series(stored, ordinal.as_metadata()) == {}
+        assert reconcile_series(stored, stated) == {}
 
     def test_a_stated_position_keeps_its_value_and_gains_authored_authority(
         self, provider: HardcoverProvider
     ) -> None:
         stored = {
             "series_name": "The Expanse",
-            "series_position": 2.5,
+            SERIES_POSITION_KEY: 2.5,
             SERIES_AUTHORITY_KEY: SeriesAuthority.STATED.value,
         }
+        stated = _enriched(
+            provider,
+            _hardcover_book(title="Gods of Risk", position=2.5),
+            _book(title="Gods of Risk (The Expanse, #2.5)", **stored),
+        )
 
-        with patch(
-            "src.enrichment.providers.hardcover.hardcover.requests.post"
-        ) as mock_post:
-            mock_post.return_value = _response(
-                _books(_hardcover_book(title="Gods of Risk", position=2.5))
-            )
-            ordinal = provider.fetch_series_ordinal(
-                _book(title="Gods of Risk (The Expanse, #2.5)", **stored), _CONFIG
-            )
-
-        assert ordinal is not None
-        settled = reconcile_series(stored, ordinal.as_metadata())
-        assert settled["series_position"] == 2.5
+        settled = reconcile_series(stored, stated)
+        assert settled[SERIES_POSITION_KEY] == 2.5
         assert settled[SERIES_AUTHORITY_KEY] == SeriesAuthority.AUTHORED.value
 
 
@@ -405,7 +397,7 @@ class TestHardcoverFailures:
         ) as mock_post:
             mock_post.return_value = _response({}, status=401)
             with pytest.raises(ProviderError) as raised:
-                provider.fetch_series_ordinal(_book(), _CONFIG)
+                provider.enrich(_book(), _CONFIG)
 
         assert "HTTP 401" in str(raised.value)
         assert _TOKEN not in str(raised.value)
@@ -429,7 +421,7 @@ class TestHardcoverFailures:
                 }
             )
             with pytest.raises(ProviderError) as raised:
-                provider.fetch_series_ordinal(_book(), _CONFIG)
+                provider.enrich(_book(), _CONFIG)
 
         assert "invalid-headers" in str(raised.value)
         assert _TOKEN not in str(raised.value)
@@ -447,7 +439,7 @@ class TestHardcoverFailures:
                 headers={"Location": "https://elsewhere.example.com/v1/graphql"},
             )
             with pytest.raises(ProviderError) as raised:
-                provider.fetch_series_ordinal(_book(), _CONFIG)
+                provider.enrich(_book(), _CONFIG)
 
         assert mock_post.call_count == 1
         assert "elsewhere.example.com" in str(raised.value)
