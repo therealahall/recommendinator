@@ -1,6 +1,67 @@
 # CHANGELOG
 
 
+## v0.56.0 (2026-09-10)
+
+### Bug Fixes
+
+- **enrichment**: Let only an operator pin a record
+  ([`cd8c408`](https://github.com/therealahall/recommendinator/commit/cd8c408fda3e00f148204fd3db33094ae3850d65))
+
+- **enrichment**: Make honouring a pin opt-in for a provider
+  ([`57c9178`](https://github.com/therealahall/recommendinator/commit/57c917821a1de71730e3f83502a2ab37a8bdc87c))
+
+- **enrichment**: Reach the single-item retry from the web too
+  ([`f6c5ce5`](https://github.com/therealahall/recommendinator/commit/f6c5ce52ff1432e2974108d943822b6e07e52ce8))
+
+- **search**: Rank an exact title above the looser matches
+  ([`34d05a2`](https://github.com/therealahall/recommendinator/commit/34d05a26df42ee92b54826ddfb1356e6e12c6a3c))
+
+- **storage**: Keep a status hold when a new season lands
+  ([`e3b6c53`](https://github.com/therealahall/recommendinator/commit/e3b6c53393383b264d081ce3b63bfb56dd8684ca))
+
+- **web**: Announce a dropped pin once
+  ([`3e605a5`](https://github.com/therealahall/recommendinator/commit/3e605a53a8b3662cd1f83bcb71b0a518842c33f5))
+
+- **web**: Announce a repeated enrichment action
+  ([`38371f5`](https://github.com/therealahall/recommendinator/commit/38371f599345202995ade1c77889f8502d932236))
+
+### Documentation
+
+- Cut the enrichment and architecture prose to budget
+  ([`c48e857`](https://github.com/therealahall/recommendinator/commit/c48e857cf1eacfe4d4096285ec303bf66d375012))
+
+### Features
+
+- **enrichment**: Pin an item to a provider record
+  ([`99260dd`](https://github.com/therealahall/recommendinator/commit/99260dd524b0317ac447d3eed9e3ca00ad09a661))
+
+- **library**: Hold each field an edit writes against its source
+  ([`45ec362`](https://github.com/therealahall/recommendinator/commit/45ec36246e27b4f1ebf3e8c4bc7330b0f1a2494c))
+
+- **library**: Merge a pair the duplicate detector never suggests
+  ([`a156931`](https://github.com/therealahall/recommendinator/commit/a156931d9907ae09e88d491bbc83ce0f9f2dc391))
+
+- **library**: Rename a content item from either interface
+  ([`a25fd54`](https://github.com/therealahall/recommendinator/commit/a25fd5483830a6fe5ae3fe0d44ce6695096afde4))
+
+### Refactoring
+
+- **enrichment**: Delete the result fields nothing reads
+  ([`aa4e6f6`](https://github.com/therealahall/recommendinator/commit/aa4e6f605c7d9169becef79ed4c72c7eb63d2288))
+
+- **storage**: Collapse the hold table to one schema version
+  ([`46de3c3`](https://github.com/therealahall/recommendinator/commit/46de3c3efe5872780ff4f82bab0bdc1c220e9f18))
+
+- **storage**: Reduce a manual hold to a boolean
+  ([`861bbca`](https://github.com/therealahall/recommendinator/commit/861bbcac45aa1ac64514113bae4c422a2d518c30))
+
+### Testing
+
+- **library**: Drop the coverage the retired hold shapes left behind
+  ([`e72abcb`](https://github.com/therealahall/recommendinator/commit/e72abcb938df88592fed4a6f28eb237635503334))
+
+
 ## v0.55.0 (2026-09-08)
 
 ### Bug Fixes
