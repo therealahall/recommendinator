@@ -109,17 +109,24 @@ def enrichment_candidates_to_dict(
     }
 
 
-#: Both start doors word the refusal identically; drift between them is a defect.
+_TURN_ONE_ON = (
+    "Turn one on from the Data tab, or run: settings set enrichment.enabled true"
+)
+
+#: Two refusals, because searching is a capability of its own: a provider can
+#: cover a type it can neither be asked to search nor to match.
 ENRICHMENT_UNAVAILABLE = (
-    "Enrichment is off, or no enabled provider handles that type. Turn one on "
-    "from the Data tab, or run: settings set enrichment.enabled true"
+    f"Enrichment is off, or no enabled provider covers that type. {_TURN_ONE_ON}"
+)
+CANDIDATES_UNAVAILABLE = (
+    f"Enrichment is off, or no enabled provider searches that type. {_TURN_ONE_ON}"
 )
 
 _RUN_CLAUSES = {
-    EnrichmentStart.STARTED: "Enriching it now. The Data tab shows the run.",
+    EnrichmentStart.STARTED: "Enriching it now.",
     EnrichmentStart.ALREADY_RUNNING: "Queued for the next enrichment run.",
     EnrichmentStart.UNAVAILABLE: (
-        "Queued: enrichment is off, or no enabled provider handles this type."
+        "Queued: enrichment is off, or no enabled provider covers this type."
     ),
 }
 

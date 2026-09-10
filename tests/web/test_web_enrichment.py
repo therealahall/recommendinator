@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.enrichment.manager import EnrichmentManager, EnrichmentStart, PinRefused
+from src.enrichment.providers.hardcover.hardcover import HardcoverProvider
 from src.enrichment.registry import EnrichmentRegistry
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.manager import StorageManager
@@ -257,6 +258,36 @@ class TestEnrichmentPinning:
         }
         assert manager.candidates.call_args.args[1] == "Prey 2017"
 
+    def test_candidates_come_from_a_provider_that_searches_without_enriching(
+        self,
+    ) -> None:
+        storage = make_storage_mock()
+        storage.get_content_item.return_value = ContentItem(
+            db_id=7,
+            title="Dune",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        )
+        config = {
+            "enrichment": {
+                "enabled": True,
+                "providers": {"hardcover": {"enabled": True}},
+            }
+        }
+
+        with (
+            patch.object(
+                HardcoverProvider,
+                "search",
+                return_value=[Candidate(record_id="1234", title="Dune")],
+            ),
+            _client(storage, config) as client,
+        ):
+            response = client.get("/api/enrichment/candidates", params={"item_id": 7})
+
+        assert response.status_code == 200
+        assert response.json()["candidates"][0]["record_id"] == "1234"
+
     def test_candidates_reach_no_provider_with_enrichment_switched_off(self) -> None:
         config = {
             "enrichment": {"enabled": False, "providers": {"rawg": {"enabled": True}}}
@@ -298,14 +329,14 @@ class TestEnrichmentPinning:
     @pytest.mark.parametrize(
         ("started", "clause"),
         [
-            (EnrichmentStart.STARTED, "Enriching it now. The Data tab shows the run."),
+            (EnrichmentStart.STARTED, "Enriching it now."),
             (
                 EnrichmentStart.ALREADY_RUNNING,
                 "Queued for the next enrichment run.",
             ),
             (
                 EnrichmentStart.UNAVAILABLE,
-                "Queued: enrichment is off, or no enabled provider handles this type.",
+                "Queued: enrichment is off, or no enabled provider covers this type.",
             ),
         ],
         ids=["claimed", "claim-lost", "nobody-to-ask"],
@@ -400,10 +431,7 @@ class TestEnrichmentReset:
 
         assert response.status_code == 200
         assert response.json() == {
-            "message": (
-                "Reset enrichment status for 1 item(s)."
-                " Enriching it now. The Data tab shows the run."
-            ),
+            "message": "Reset enrichment status for 1 item(s). Enriching it now.",
             "count": 1,
             "run": "started",
         }
