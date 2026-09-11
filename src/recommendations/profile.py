@@ -131,13 +131,6 @@ def _mean_ratings(ratings: dict[str, list[int]]) -> dict[str, float]:
     return dict(sorted(means.items(), key=lambda pair: pair[1], reverse=True))
 
 
-def _overall_mean_rating(items: list[ContentItem]) -> float | None:
-    ratings = [item.rating for item in items if item.rating is not None]
-    if not ratings:
-        return None
-    return sum(ratings) / len(ratings)
-
-
 def _bucket_genres(
     genre_ratings: dict[str, list[int]], genre_affinities: dict[str, float]
 ) -> tuple[list[str], list[str]]:
@@ -156,21 +149,15 @@ def _bucket_genres(
 
 
 def _anti_preferences(
-    genre_affinities: dict[str, float],
+    liked_genres: list[str],
+    disliked_genres: list[str],
     genre_ratings: dict[str, list[int]],
-    baseline: float | None,
     ignored_items: list[ContentItem],
 ) -> list[str]:
-    """Two signals, worst mean first: a genre rated below the operator's own
-    average, and a genre they mostly ignore. The liked/disliked buckets answer a
-    different question, so a genre can be liked and still sit below the bar.
+    """The disliked bucket worst mean first, then the genres the operator mostly
+    dismisses unrated. A liked genre never lands here whatever its mean: the
+    section reads "not your style".
     """
-    below_baseline = [
-        genre
-        for genre, mean in reversed(list(genre_affinities.items()))
-        if baseline is not None and mean < baseline
-    ]
-
     ignored_counts = Counter(
         genre for item in ignored_items for genre in extract_genres(item)
     )
@@ -181,10 +168,11 @@ def _anti_preferences(
         for genre, count in ignored_counts.most_common()
         if count >= MIN_ITEMS
         and count > len(genre_ratings.get(genre, []))
-        and genre not in below_baseline
+        and genre not in liked_genres
+        and genre not in disliked_genres
     ]
 
-    return below_baseline + mostly_ignored
+    return list(reversed(disliked_genres)) + mostly_ignored
 
 
 class ProfileGenerator:
@@ -215,9 +203,9 @@ class ProfileGenerator:
             disliked_genres=disliked_genres,
             theme_preferences=self._identify_theme_preferences(rated_items),
             anti_preferences=_anti_preferences(
-                genre_affinities,
+                liked_genres,
+                disliked_genres,
                 genre_ratings,
-                _overall_mean_rating(rated_items),
                 ignored_items,
             ),
             cross_media_patterns=self._identify_cross_media_patterns(rated_items),
