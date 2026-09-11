@@ -18,8 +18,6 @@ class PreferenceProfile:
     user_id: int
     genre_affinities: dict[str, float] = field(default_factory=dict)
     author_affinities: dict[str, float] = field(default_factory=dict)
-    liked_genres: list[str] = field(default_factory=list)
-    disliked_genres: list[str] = field(default_factory=list)
     theme_preferences: list[str] = field(default_factory=list)
     anti_preferences: list[str] = field(default_factory=list)
     cross_media_patterns: list[str] = field(default_factory=list)
@@ -182,21 +180,18 @@ def _mean_ratings(ratings: dict[str, list[int]]) -> dict[str, float]:
     return dict(sorted(means.items(), key=lambda pair: pair[1], reverse=True))
 
 
-def _bucket_genres(
+def _disliked_genres(
     genre_ratings: dict[str, list[int]], genre_affinities: dict[str, float]
-) -> tuple[list[str], list[str]]:
-    """Whichever bucket holds more of a genre's items wins, best mean first. A
-    tie is liked: an even split is not a complaint."""
-    liked: list[str] = []
+) -> list[str]:
+    """The genres most of whose items fell short of the liked floor, best mean
+    first. A tie is liked: an even split is not a complaint."""
     disliked: list[str] = []
     for genre in genre_affinities:
         ratings = genre_ratings[genre]
         likes = sum(1 for rating in ratings if rating >= LIKED_RATING)
-        if likes * 2 >= len(ratings):
-            liked.append(genre)
-        else:
+        if likes * 2 < len(ratings):
             disliked.append(genre)
-    return liked, disliked
+    return disliked
 
 
 def _anti_preferences(
@@ -248,14 +243,12 @@ class ProfileGenerator:
 
         genre_ratings = _ratings_by_genre(rated_items)
         genre_affinities = _mean_ratings(genre_ratings)
-        liked_genres, disliked_genres = _bucket_genres(genre_ratings, genre_affinities)
+        disliked_genres = _disliked_genres(genre_ratings, genre_affinities)
 
         return PreferenceProfile(
             user_id=user_id,
             genre_affinities=genre_affinities,
             author_affinities=_mean_ratings(_ratings_by_author(rated_items)),
-            liked_genres=liked_genres,
-            disliked_genres=disliked_genres,
             theme_preferences=self._identify_theme_preferences(rated_items),
             anti_preferences=_anti_preferences(
                 disliked_genres,

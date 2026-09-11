@@ -291,7 +291,25 @@ class TestAntiPreferences:
 
         profile = profile_generator.generate_profile(user_id=1)
 
-        assert "horror" in profile.liked_genres
+        assert profile.anti_preferences == []
+
+    def test_a_genre_most_of_whose_ratings_reach_the_liked_floor_is_not_anti(
+        self, profile_generator: ProfileGenerator, storage_manager: StorageManager
+    ) -> None:
+        _save_rated(storage_manager, "mystery", [3, 3, 3, 2])
+        _save_rated(storage_manager, "horror", [2, 2, 1, 4])
+
+        profile = profile_generator.generate_profile(user_id=1)
+
+        assert profile.anti_preferences == ["horror"]
+
+    def test_an_even_split_is_not_an_anti_preference(
+        self, profile_generator: ProfileGenerator, storage_manager: StorageManager
+    ) -> None:
+        _save_rated(storage_manager, "western", [4, 4, 1, 1])
+
+        profile = profile_generator.generate_profile(user_id=1)
+
         assert profile.anti_preferences == []
 
     def test_anti_preferences_run_worst_mean_first(
@@ -612,7 +630,6 @@ class TestProfileIgnoredSignalRegression:
 
         profile = profile_generator.generate_profile(user_id=1)
 
-        assert "western" in profile.liked_genres
         assert profile.anti_preferences == []
 
     def test_a_genre_rated_once_and_dismissed_twice_is_not_an_anti_preference(
@@ -731,31 +748,6 @@ class TestGenreVocabulary:
         assert profile.genre_affinities["simulation"] == 3.5
         assert profile.genre_affinities["racing"] == 4.0
         assert profile.genre_affinities["walking simulator"] == 4.5
-
-
-class TestLikedAndDislikedBuckets:
-    def test_a_genre_the_liked_bucket_holds_more_of_is_liked(
-        self, profile_generator: ProfileGenerator, storage_manager: StorageManager
-    ) -> None:
-        """3 is "liked it but do not love it", so three 3s against one 2 is a
-        liked genre however low its mean reads."""
-        _save_rated(storage_manager, "mystery", [3, 3, 3, 2])
-        _save_rated(storage_manager, "horror", [2, 2, 1, 4])
-
-        profile = profile_generator.generate_profile(user_id=1)
-
-        assert profile.liked_genres == ["mystery"]
-        assert profile.disliked_genres == ["horror"]
-
-    def test_an_even_split_is_liked(
-        self, profile_generator: ProfileGenerator, storage_manager: StorageManager
-    ) -> None:
-        _save_rated(storage_manager, "western", [4, 4, 1, 1])
-
-        profile = profile_generator.generate_profile(user_id=1)
-
-        assert profile.liked_genres == ["western"]
-        assert profile.disliked_genres == []
 
 
 def _stored(**profile: object) -> dict:
