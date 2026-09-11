@@ -127,10 +127,7 @@ class TestBothDoorsSweepOnBoot:
         self, storage: StorageManager
     ) -> None:
         self._stale(storage)
-        config: dict[str, Any] = {
-            "storage": {"database_path": "data/test.db"},
-            "inputs": {},
-        }
+        config: dict[str, Any] = {"storage": {"database_path": "data/test.db"}}
 
         with booted_web_app(storage, config):
             pass
@@ -142,7 +139,7 @@ class TestBothDoorsSweepOnBoot:
         self, storage: StorageManager
     ) -> None:
         self._stale(storage)
-        config: dict[str, Any] = {"inputs": {}}
+        config: dict[str, Any] = {}
 
         with (
             patch("src.cli.main.load_config", return_value=config),

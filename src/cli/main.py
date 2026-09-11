@@ -84,8 +84,8 @@ def cli(ctx: click.Context, config: Path | None, verbose: bool) -> None:
 
     try:
         ctx.obj["storage"] = create_storage_manager(ctx.obj["config"])
-        # Assemble the effective global config (const default < YAML < DB) so
-        # the database wins over YAML for the rest of the invocation.
+        # Assemble the effective global config (const default < database) for
+        # the rest of the invocation.
         migrate_config_settings(ctx.obj["config"], ctx.obj["storage"])
         # After the overlay, since logging.level and logging.file are DB-backed
         # settings; before the migrations below, whose diagnostics went to a

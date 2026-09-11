@@ -132,7 +132,7 @@ def save_trakt_token(
 
 
 def resolve_trakt_client_credentials(
-    storage: StorageManager | None,
+    storage: StorageManager,
     source_id: str = TRAKT_SOURCE_ID,
     user_id: int = 1,
 ) -> tuple[str, str]:
@@ -159,7 +159,7 @@ def resolve_trakt_client_credentials(
 
 
 def has_trakt_token(
-    storage: StorageManager | None = None,
+    storage: StorageManager,
     source_id: str = TRAKT_SOURCE_ID,
     user_id: int = 1,
 ) -> bool:

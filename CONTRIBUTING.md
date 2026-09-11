@@ -202,8 +202,11 @@ python-semantic-release owns the version. Never edit it by hand.
 
 ## Security
 
-**Never reference `config/config.yaml`** in code, tests or documentation. It
-holds secrets and is git-ignored. Use `config/example.yaml` or a mock config.
+**Never reference `config/config.yaml`** in code, tests or documentation. It is
+git-ignored and names one operator's machine — the database path, the bind
+address, the directories a file source may read. It never holds a secret: those
+are encrypted in the credentials table. Use `config/example.yaml` or a mock
+config.
 
 Every `/api` route but the four under `/api/auth` requires a session cookie,
 applied to the routers so a new endpoint is authenticated by being registered.

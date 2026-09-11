@@ -145,16 +145,14 @@ def _configured_source(db_row: SourceConfigDict | None) -> ConfiguredSource | No
 
 
 def _source_row(
-    source_id: str, storage: StorageManager | None, user_id: int
+    source_id: str, storage: StorageManager, user_id: int
 ) -> SourceConfigDict | None:
-    return storage.sources.get(user_id, source_id) if storage is not None else None
+    return storage.sources.get(user_id, source_id)
 
 
 def _rows_by_source_id(
-    storage: StorageManager | None, user_id: int
+    storage: StorageManager, user_id: int
 ) -> dict[str, SourceConfigDict]:
-    if storage is None:
-        return {}
     return {row["source_id"]: row for row in storage.sources.list(user_id)}
 
 
@@ -188,8 +186,8 @@ def enrichment_content_type(resolved: list[ResolvedInput]) -> ContentType | None
     # Anything but one source enriches every type: nothing narrows a mixed run.
     if len(resolved) != 1:
         return None
-    # str() at the read, not at the log call: config.yaml can put anything
-    # here, and ContentType refuses a non-member either way.
+    # str() at the read, not at the log call: the source's stored config can
+    # hold anything here, and ContentType refuses a non-member either way.
     raw_content_type = resolved[0].config.get("content_type")
     content_type_str = str(raw_content_type) if raw_content_type else ""
     if not content_type_str:
@@ -236,25 +234,17 @@ def assemble_plugin_config(
     source_id: str,
     plugin: SourcePlugin,
     fields: dict[str, Any],
-    storage: StorageManager | None,
+    storage: StorageManager,
     user_id: int = 1,
 ) -> dict[str, Any]:
     """Stored credentials go on last, overriding the field values, so validation
     judges the config the sync would really run.
     """
     assembled = _plugin_config_without_credentials(source_id, plugin, fields)
-    if storage is not None:
-        for key, value in storage.credentials.get_for_source(
-            user_id, source_id
-        ).items():
-            if value:
-                assembled[key] = value
+    for key, value in storage.credentials.get_for_source(user_id, source_id).items():
+        if value:
+            assembled[key] = value
     return assembled
-
-
-def resolve_source_interval(row: SourceConfigDict | None, plugin: SourcePlugin) -> str:
-    """``None`` for the row is the plugin's own default, not never."""
-    return "off" if row is None else resolve_interval(row["sync_interval"], plugin)
 
 
 @dataclass(frozen=True)
@@ -265,15 +255,15 @@ class ScheduleState:
 
 
 def schedule_state(
-    storage: StorageManager | None,
+    storage: StorageManager,
     user_id: int,
     source_id: str,
-    row: SourceConfigDict | None,
+    row: SourceConfigDict,
     plugin: SourcePlugin,
     latest_run: SyncRunDict | None,
 ) -> ScheduleState:
     return ScheduleState(
-        interval=resolve_source_interval(row, plugin),
+        interval=resolve_interval(row["sync_interval"], plugin),
         last_finished_at=(
             parse_iso_timestamp(latest_run["finished_at"])
             if latest_run is not None
@@ -281,16 +271,14 @@ def schedule_state(
         ),
         failures=(
             storage.sync_runs.consecutive_failures(user_id, source_id)
-            if storage is not None
-            and latest_run is not None
-            and latest_run["status"] != "completed"
+            if latest_run is not None and latest_run["status"] != "completed"
             else 0
         ),
     )
 
 
 def get_available_sync_sources(
-    storage: StorageManager | None = None,
+    storage: StorageManager,
     user_id: int = 1,
 ) -> list[SyncSourceInfo]:
     """``resolve_inputs`` is still the gate for sync execution — it continues
@@ -298,9 +286,7 @@ def get_available_sync_sources(
     """
     rows = _rows_by_source_id(storage, user_id)
     # One read for the whole listing, not a query per source.
-    latest_runs: dict[str, SyncRunDict] = (
-        storage.sync_runs.latest_per_source(user_id) if storage is not None else {}
-    )
+    latest_runs: dict[str, SyncRunDict] = storage.sync_runs.latest_per_source(user_id)
 
     sources: list[SyncSourceInfo] = []
     now = utc_now()
@@ -354,7 +340,7 @@ def get_available_sync_sources(
 
 def source_plugin_not_loaded(
     source_id: str,
-    storage: StorageManager | None = None,
+    storage: StorageManager,
     user_id: int = 1,
 ) -> PluginNotLoaded | None:
     db_row = _source_row(source_id, storage, user_id)
@@ -372,7 +358,7 @@ def unusable_detail(not_loaded: PluginNotLoaded) -> str:
 def resolve_input_for_plugin(
     source_id: str,
     plugin_name: str,
-    storage: StorageManager | None = None,
+    storage: StorageManager,
     user_id: int = 1,
 ) -> ResolvedInput | None:
     """A client-supplied id is a credential key: unchecked, a GOG exchange files
@@ -421,7 +407,7 @@ def field_type_name(field_type: type) -> str:
 
 def resolve_source_plugin(
     source_id: str,
-    storage: StorageManager | None,
+    storage: StorageManager,
     user_id: int = 1,
 ) -> SourcePlugin | None:
     """The enabled flag is not consulted."""
@@ -505,7 +491,7 @@ def build_schema_view(source_id: str, plugin: SourcePlugin) -> dict[str, Any]:
 def build_config_view(
     source_id: str,
     plugin: SourcePlugin,
-    storage: StorageManager | None,
+    storage: StorageManager,
     user_id: int = 1,
 ) -> dict[str, Any]:
     """Sensitive field values are never included — only their presence in
@@ -531,12 +517,15 @@ def build_config_view(
             if name in source_values
         },
         "secret_status": {
-            field.name: storage is not None
-            and storage.credentials.exists(user_id, source_id, field.name)
+            field.name: storage.credentials.exists(user_id, source_id, field.name)
             for field in schema
             if field.sensitive
         },
-        "sync_interval": resolve_source_interval(db_row, plugin),
+        "sync_interval": (
+            resolve_interval(db_row["sync_interval"], plugin)
+            if db_row is not None
+            else "off"
+        ),
     }
 
 

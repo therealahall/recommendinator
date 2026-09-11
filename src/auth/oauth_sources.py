@@ -19,7 +19,7 @@ REFRESH_TOKEN_KEY = "refresh_token"
 def may_revoke(
     plugin_name: str,
     source_id: str,
-    storage: StorageManager | None,
+    storage: StorageManager,
     user_id: int = 1,
 ) -> bool:
     """Refusing an id no source claims would leave the credential undeletable."""
@@ -35,7 +35,7 @@ class OAuthSourceBinding:
 
     def resolve(
         self,
-        storage: StorageManager | None,
+        storage: StorageManager,
         source_id: str,
         user_id: int,
     ) -> dict[str, Any] | None:
@@ -46,7 +46,7 @@ class OAuthSourceBinding:
 
     def is_enabled(
         self,
-        storage: StorageManager | None,
+        storage: StorageManager,
         source_id: str,
         user_id: int,
     ) -> bool:
@@ -54,16 +54,14 @@ class OAuthSourceBinding:
 
     def has_token(
         self,
-        storage: StorageManager | None,
+        storage: StorageManager,
         source_id: str,
         user_id: int,
     ) -> bool:
         """The stored row, not the resolved value: disconnect deletes rows."""
-        return (
-            storage is not None
-            and may_revoke(self.plugin_name, source_id, storage, user_id)
-            and storage.credentials.exists(user_id, source_id, REFRESH_TOKEN_KEY)
-        )
+        return may_revoke(
+            self.plugin_name, source_id, storage, user_id
+        ) and storage.credentials.exists(user_id, source_id, REFRESH_TOKEN_KEY)
 
     def save_token(
         self,

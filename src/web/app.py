@@ -121,12 +121,12 @@ def create_app(config_path: Path | None = None) -> FastAPI:
 
     try:
         # Storage must come first: the effective global settings (incl. logging
-        # and CORS origins) are assembled from const/YAML/DB layers before
-        # anything reads them.
+        # and CORS origins) are assembled from the database before anything
+        # reads them.
         storage = create_storage_manager(config)
 
-        # Assemble the effective global config (const default < YAML < DB) so
-        # the database wins over YAML for the rest of the process.
+        # Assemble the effective global config (const default < database) for
+        # the rest of the process.
         migrate_config_settings(config, storage)
 
         # Through the module so the root conftest's patch of the one definition
@@ -205,9 +205,9 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         default_response_class=SurrogateSafeJSONResponse,
     )
 
-    # Type-guarded because config.yaml is unvalidated: a blank `allowed_origins:`
-    # yields None and `"*" not in None` raises outside the try/except, killing
-    # boot with a bare traceback.
+    # Type-guarded because the settings row is stored as JSON and only validated
+    # on the way in: a row holding null reaches `"*" not in None`, which raises
+    # outside the try/except and kills boot with a bare traceback.
     raw_origins = web_config.get("allowed_origins")
     # A scalar string is passed straight to Starlette, whose check is `origin in
     # self.allow_origins` — a SUBSTRING test on a string, so "https://app.example.co"

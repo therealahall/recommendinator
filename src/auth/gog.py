@@ -111,7 +111,7 @@ def save_gog_token(
 
 
 def is_gog_enabled(
-    storage: StorageManager | None = None,
+    storage: StorageManager,
     source_id: str = GOG_SOURCE_ID,
     user_id: int = 1,
 ) -> bool:
@@ -119,7 +119,7 @@ def is_gog_enabled(
 
 
 def has_gog_token(
-    storage: StorageManager | None = None,
+    storage: StorageManager,
     source_id: str = GOG_SOURCE_ID,
     user_id: int = 1,
 ) -> bool:

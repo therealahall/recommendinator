@@ -50,13 +50,12 @@ _FIELD_TYPE_ERRORS = {
 
 
 def _resolve_cli_plugin(ctx: click.Context, source_id: str) -> SourcePlugin:
-    plugin = resolve_source_plugin(
-        source_id, ctx.obj.get("storage"), user_id=_SOURCE_DEFAULT_USER_ID
-    )
+    storage = require_storage(ctx)
+    plugin = resolve_source_plugin(source_id, storage, user_id=_SOURCE_DEFAULT_USER_ID)
     if plugin is None:
         # `source list` shows this one, so "Unknown source" contradicts it.
         not_loaded = source_plugin_not_loaded(
-            source_id, ctx.obj.get("storage"), user_id=_SOURCE_DEFAULT_USER_ID
+            source_id, storage, user_id=_SOURCE_DEFAULT_USER_ID
         )
         if not_loaded is not None:
             abort_with(unusable_detail(not_loaded))
@@ -67,7 +66,7 @@ def _resolve_cli_plugin(ctx: click.Context, source_id: str) -> SourcePlugin:
 def _config_view(
     ctx: click.Context, source_id: str, plugin: SourcePlugin
 ) -> dict[str, Any]:
-    """The SourceConfigResponse-shaped view a mutation hands back."""
+    """The SourceConfigResponse-shaped view this group hands back."""
     return build_config_view(
         source_id, plugin, require_storage(ctx), user_id=_SOURCE_DEFAULT_USER_ID
     )
@@ -90,7 +89,7 @@ def source() -> None:
 def source_list(ctx: click.Context, output_format: str) -> None:
     """List configured data sources (mirrors GET /api/sync/sources)."""
     sources = get_available_sync_sources(
-        ctx.obj.get("storage"), user_id=_SOURCE_DEFAULT_USER_ID
+        require_storage(ctx), user_id=_SOURCE_DEFAULT_USER_ID
     )
 
     if output_format == "json":
@@ -150,9 +149,7 @@ def source_list(ctx: click.Context, output_format: str) -> None:
 def source_show(ctx: click.Context, source_id: str, output_format: str) -> None:
     """Show current values for a source (mirrors GET /api/sync/sources/<id>/config)."""
     plugin = _resolve_cli_plugin(ctx, source_id)
-    view = build_config_view(
-        source_id, plugin, ctx.obj.get("storage"), user_id=_SOURCE_DEFAULT_USER_ID
-    )
+    view = _config_view(ctx, source_id, plugin)
 
     if output_format == "json":
         click.echo(json.dumps(view, indent=2))

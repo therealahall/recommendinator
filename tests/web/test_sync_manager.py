@@ -4,7 +4,6 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -638,8 +637,6 @@ class TestSyncManagerLogInjectionRegression:
 SCHEDULER_LOGGER = "src.web.scheduler"
 STEAM_LABEL = "Steam"
 
-_YAML_ONLY_STEAM = {"inputs": {"steam": {"plugin": "steam", "enabled": True}}}
-
 
 def _steam_source(
     storage: StorageManager, interval: str, *, enabled: bool = True
@@ -676,13 +673,9 @@ class TestScheduledSyncDispatch:
         return StorageManager(sqlite_path=tmp_path / "test.db")
 
     @staticmethod
-    def _tick(
-        storage: StorageManager,
-        manager: MagicMock,
-        config: dict[str, Any] | None = None,
-    ) -> None:
+    def _tick(storage: StorageManager, manager: MagicMock) -> None:
         with patch("src.web.scheduler.get_sync_manager", return_value=manager):
-            dispatch_due_syncs(storage, config or {})
+            dispatch_due_syncs(storage, {})
 
     def test_an_hourly_source_last_run_two_hours_ago_is_dispatched(
         self, storage: StorageManager
@@ -722,15 +715,6 @@ class TestScheduledSyncDispatch:
         manager = _accepting_manager()
 
         self._tick(storage, manager)
-
-        manager.start_sync.assert_not_called()
-
-    def test_a_source_with_no_database_row_is_never_dispatched(
-        self, storage: StorageManager
-    ) -> None:
-        manager = _accepting_manager()
-
-        self._tick(storage, manager, _YAML_ONLY_STEAM)
 
         manager.start_sync.assert_not_called()
 

@@ -96,7 +96,7 @@ def save_epic_token(
 
 
 def is_epic_enabled(
-    storage: StorageManager | None = None,
+    storage: StorageManager,
     source_id: str = EPIC_SOURCE_ID,
     user_id: int = 1,
 ) -> bool:
@@ -104,7 +104,7 @@ def is_epic_enabled(
 
 
 def has_epic_token(
-    storage: StorageManager | None = None,
+    storage: StorageManager,
     source_id: str = EPIC_SOURCE_ID,
     user_id: int = 1,
 ) -> bool:
