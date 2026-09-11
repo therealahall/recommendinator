@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from src.storage.settings_migration import IN_SCOPE_SECTIONS, SENSITIVE_LEAF_KEYS
+from src.storage.settings_migration import IN_SCOPE_SECTIONS
 
 SettingType = Literal["bool", "int", "float", "string", "list", "enum"]
 Widget = Literal["toggle", "number", "text", "tags", "select"]
@@ -67,6 +67,7 @@ def _entry(
     choices: tuple[str, ...] | None = None,
     validation: Validation | None = None,
     widget: Widget | None = None,
+    sensitive: bool = False,
     restart_required: bool = False,
     advanced: bool = False,
 ) -> SettingMetadata:
@@ -78,7 +79,7 @@ def _entry(
         type=type,
         default=default,
         widget=widget or _DEFAULT_WIDGETS[type],
-        sensitive=key.rsplit(".", 1)[-1] in SENSITIVE_LEAF_KEYS,
+        sensitive=sensitive,
         restart_required=restart_required,
         advanced=advanced,
         choices=choices,
@@ -232,6 +233,7 @@ _REGISTRY: tuple[SettingMetadata, ...] = (
         help="API key for The Movie Database enrichment provider.",
         type="string",
         default="",
+        sensitive=True,
     ),
     _entry(
         "enrichment.providers.tmdb.enabled",
@@ -246,9 +248,7 @@ _REGISTRY: tuple[SettingMetadata, ...] = (
         help="Language for TMDB results: a lowercase ISO 639-1 code, optionally with an uppercase region (en, en-US, pt-BR).",
         type="string",
         default="en-US",
-        # The region is optional — TMDB accepts a bare ISO 639-1 code too, and
-        # rejecting "en" in the UI while config.yaml still accepted it would be
-        # an arbitrary asymmetry.
+        # The region is optional: TMDB accepts a bare ISO 639-1 code too.
         validation=Validation(pattern=r"[a-z]{2}(-[A-Z]{2})?"),
     ),
     _entry(
@@ -271,6 +271,7 @@ _REGISTRY: tuple[SettingMetadata, ...] = (
         help="API key for the RAWG video-game database enrichment provider.",
         type="string",
         default="",
+        sensitive=True,
     ),
     _entry(
         "enrichment.providers.rawg.enabled",
@@ -285,6 +286,7 @@ _REGISTRY: tuple[SettingMetadata, ...] = (
         help="Personal access token for the Hardcover enrichment provider.",
         type="string",
         default="",
+        sensitive=True,
     ),
     _entry(
         "enrichment.providers.hardcover.enabled",
@@ -391,10 +393,3 @@ def default_config() -> dict[str, Any]:
             node = node.setdefault(part, {})
         node[parts[-1]] = value
     return nested
-
-
-def is_sensitive(key: str) -> bool:
-    entry = _BY_KEY.get(key)
-    if entry is not None:
-        return entry.sensitive
-    return key.rsplit(".", 1)[-1] in SENSITIVE_LEAF_KEYS

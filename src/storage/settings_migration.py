@@ -25,20 +25,6 @@ IN_SCOPE_SECTIONS: tuple[str, ...] = (
     "logging",
 )
 
-# These are NEVER written to the plaintext ``settings`` table.
-SENSITIVE_LEAF_KEYS: frozenset[str] = frozenset(
-    {
-        "api_key",
-        "token",
-        "password",
-        "secret",
-        "refresh_token",
-        "access_token",
-        "client_secret",
-        "steam_id",
-    }
-)
-
 
 #: Where ``logging.file`` pointed before the log moved under the ``data/`` mount.
 _PRE_MOVE_LOG_DIR = "logs/"
@@ -62,9 +48,8 @@ def migrate_config_settings(
     assembled result so existing ``config[section][key]`` read sites resolve the
     layered value.
     """
-    # Deferred import: the metadata registry imports IN_SCOPE_SECTIONS /
-    # SENSITIVE_LEAF_KEYS from this module, so importing it at module top would
-    # be a circular import.
+    # Deferred import: the metadata registry imports IN_SCOPE_SECTIONS from this
+    # module, so importing it at module top would be a circular import.
     from src.settings.metadata import default_config
 
     defaults = default_config()
@@ -72,13 +57,12 @@ def migrate_config_settings(
 
     for section in IN_SCOPE_SECTIONS:
         section_defaults = defaults.get(section, {})
-        yaml_section = config.get(section)
-        if isinstance(yaml_section, dict):
-            merged = deep_merge(section_defaults, yaml_section)
+        loaded_section = config.get(section)
+        if isinstance(loaded_section, dict):
+            # Merged rather than replaced so the bootstrap leaves ``web`` also
+            # carries — host, port, debug — survive the overlay.
+            merged = deep_merge(section_defaults, loaded_section)
         else:
-            # A non-dict (or absent) YAML section cannot deep-merge onto the
-            # dict defaults — fall back to the const defaults and let any DB
-            # leaves overlay on top.
             merged = copy.deepcopy(section_defaults)
 
         section_prefix = f"{section}."

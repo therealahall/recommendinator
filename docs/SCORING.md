@@ -1,8 +1,8 @@
 # How Scoring Works
 
 The engine scores every candidate through weighted factors. Setting a weight to
-`0` disables that scorer. Weights resolve as **built-in default <
-`config.yaml` < global settings < per-user preferences**.
+`0` disables that scorer. Weights resolve as **built-in default < global
+settings < per-user preferences**.
 
 | Weight key | What the scorer does | Default |
 |------------|----------------------|---------|
@@ -48,9 +48,6 @@ effect immediately:
 uv run python -m src.cli settings set recommendations.scorer_weights.genre_match 3.0
 uv run python -m src.cli settings list --section recommendations   # every weight
 ```
-
-A `recommendations.scorer_weights` block in `config.yaml` moves the baseline
-before anything is saved, but the database wins once it holds a value.
 
 ## Per-user overrides
 

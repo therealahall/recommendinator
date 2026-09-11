@@ -128,21 +128,24 @@ touching `config.yaml`).
 
 #### Global configuration precedence
 
-**const default < YAML < database**, for `recommendations`, `sync`,
-`enrichment`, `web` and `logging`.
+**const default < database**, for `recommendations`, `sync`, `enrichment`, `web`
+and `logging`.
 
 1. Const defaults for every in-scope leaf, declared in `src/settings/metadata.py`
    (`default_config()`).
-2. `config.yaml`, deep-merged over them.
-3. The `settings` table, keyed by dotted leaf path, holding only what a user set.
+2. The `settings` table, keyed by dotted leaf path, holding only what a user set.
+
+There is no file layer. `load_config` copies exactly `storage.database_path`,
+`web.host`, `web.port`, `web.debug` and `security.allowed_source_roots` out of
+`config.yaml` onto the const defaults, so a global setting written in the file is
+dropped rather than layered — the file and the Settings page cannot disagree.
 
 `migrate_config_settings` assembles this on every boot and hot-reload, replacing
 `config[section]` in place. **Nothing is written to the database here**, so a
 fresh install runs on an empty `settings` table.
 
-`storage` is out of scope and stays YAML-only, because it bootstraps the database
-itself. `inputs` and credentials belong to the `source_configs` and `credentials`
-migrations.
+`storage` is out of scope because it bootstraps the database itself. `inputs` and
+credentials belong to the `source_configs` and `credentials` migrations.
 
 **Secrets are never plaintext.** `migrate_config_secrets`
 (`src/storage/global_secrets.py`) sweeps every `sensitive` registry leaf out of
@@ -273,7 +276,7 @@ Every contribution to the score is one of those scorers, so the Score Details
 panel's rows and their weights reproduce the number displayed beside them.
 See [docs/SCORING.md](docs/SCORING.md).
 
-**Weights resolve const default < `config.yaml` < `settings` table < per-user.**
+**Weights resolve const default < `settings` table < per-user.**
 `min_rating_for_preference` and the counts have no per-user field.
 
 Invariants:
@@ -458,7 +461,7 @@ Enrichment (background)           Recommendation Engine
 ## Configuration
 
 `config/config.yaml` (git-ignored) holds the bootstrap: the `web` bind settings
-and the `storage` paths, both read before the database opens. The web account
+and `storage.database_path`, both read before the database opens. The web account
 lives in the database instead, so no credential is needed here.
 `config/example.yaml` is that template and nothing more. Everything else
 resolves through

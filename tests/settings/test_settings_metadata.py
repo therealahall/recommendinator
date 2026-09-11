@@ -1,7 +1,4 @@
-from pathlib import Path
-
 import pytest
-import yaml
 
 from src.enrichment.provider_base import EnrichmentProvider
 from src.enrichment.registry import EnrichmentRegistry
@@ -12,12 +9,7 @@ from src.settings.metadata import (
     default_of,
     flat_defaults,
     get_entry,
-    is_sensitive,
 )
-from src.storage.settings_migration import SENSITIVE_LEAF_KEYS
-from src.utils.dotted_path import get_leaf
-
-_EXAMPLE_CONFIG = Path("config/example.yaml")
 
 _BUILTIN_PROVIDER_PACKAGE = "src.enrichment.providers."
 
@@ -30,20 +22,6 @@ def _builtin_providers() -> dict[str, EnrichmentProvider]:
         for name, provider in registry.get_all_providers().items()
         if type(provider).__module__.startswith(_BUILTIN_PROVIDER_PACKAGE)
     }
-
-
-class TestExampleConfigIsBootstrapOnly:
-    def test_no_registry_leaf_appears_in_example(self) -> None:
-        config = yaml.safe_load(_EXAMPLE_CONFIG.read_text())
-        sentinel = object()
-        present = [
-            key
-            for key in flat_defaults()
-            if get_leaf(config, tuple(key.split(".")), sentinel) is not sentinel
-        ]
-        assert (
-            present == []
-        ), f"registry leaves must not appear in example.yaml: {present}"
 
 
 class TestDefaultOfIsolation:
@@ -99,21 +77,10 @@ class TestEveryDiscoveredProviderIsConfigurable:
             ]
 
         assert [key for key in (*toggles, *secrets) if get_entry(key) is None] == []
-        assert [key for key in secrets if not is_sensitive(key)] == []
-
-
-class TestSensitivity:
-    def test_sensitive_registry_leaves_are_flagged(self) -> None:
-        sensitive_keys = {
-            entry.key
-            for entry in all_entries()
-            if entry.key.rsplit(".", 1)[-1] in SENSITIVE_LEAF_KEYS
-        }
-        for key in sensitive_keys:
-            entry = get_entry(key)
-            assert entry is not None
-            assert entry.sensitive is True
-            assert is_sensitive(key) is True
+        # An unflagged secret leaf is one the settings table would hold in
+        # plaintext instead of the encrypted credentials store.
+        entries = [get_entry(key) for key in secrets]
+        assert [e.key for e in entries if e is not None and not e.sensitive] == []
 
 
 class TestOutOfScope:
@@ -121,7 +88,6 @@ class TestOutOfScope:
         "key",
         [
             "storage.database_path",
-            "storage.cache_dir",
             "inputs.steam.api_key",
             "inputs.goodreads.path",
             "web.host",

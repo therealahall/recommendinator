@@ -22,9 +22,8 @@
 #     connect flow (Data tab), or via `source set-secret` / `settings
 #     set-secret`.
 #
-# Global settings resolve as: built-in default < this file < database. You MAY
-# add a global section here to change a value before anything has been saved to
-# the database, but you never need to, and the database wins once it has one.
+# The keys below are the only ones this file feeds. A global setting added here
+# is ignored: those resolve as built-in default < database, and nothing else.
 
 # Web server bind settings.
 # BOOTSTRAP: read to open the listening socket before the database exists, so
@@ -46,14 +45,10 @@ web:
 # in the container — leave it false, or /docs and /redoc get published on that
 # 0.0.0.0 bind. See docs/DOCKER.md.
 
-# Storage paths.
-# BOOTSTRAP: these locate the database itself.
+# BOOTSTRAP: this locates the database itself. Cover art is cached beside it.
 storage:
   # SQLite database path
   database_path: "data/recommendations.db"
-
-  # Cache directory
-  cache_dir: "data/cache"
 
 # Where a directory-scanning source (the ROM library) may read.
 # BOOTSTRAP: source config is writable over the API, so this list is

@@ -45,7 +45,7 @@ if [ ! -f "$CONFIG_PATH" ]; then
         # Do not advertise web.host/web.port here: the image's CMD passes
         # --host/--port, and CLI flags beat config.yaml — editing them in this
         # file under Docker changes nothing. Map the port with APP_PORT instead.
-        echo "[entrypoint] Under Docker it carries only the storage paths and web.debug; the bind comes from --host/--port (set the published port with APP_PORT)."
+        echo "[entrypoint] Under Docker it carries only the database path and web.debug; the bind comes from --host/--port (set the published port with APP_PORT)."
         echo "[entrypoint] Data sources, settings, and API keys are managed in the app."
     else
         echo "[entrypoint] WARNING: no config.yaml in $CONFIG_DIR and no seed at $SEED_CONFIG." >&2
