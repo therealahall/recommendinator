@@ -24,7 +24,6 @@ from src.config.service import (
     load_config,
     resolve_bootstrap_web,
     resolve_config_path,
-    warn_about_dropped_keys,
 )
 from src.settings.metadata import default_of
 from src.storage.import_source_cleanup import drop_sources_replaced_by_upload
@@ -145,7 +144,6 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
         logging.getLogger("watchfiles").setLevel(logging.WARNING)
         logger.info("Logging configured from application config")
-        warn_about_dropped_keys()
         log_dependency_drift()
 
         # get_config, not the dict: a hot-reload swaps in a fresh one, and the

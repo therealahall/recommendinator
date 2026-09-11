@@ -1,5 +1,5 @@
 import logging
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -19,7 +19,7 @@ from src.recommendations.scorers import (
     SeriesOrderScorer,
     TagOverlapScorer,
 )
-from src.settings.metadata import default_config, default_of, get_entry
+from src.settings.metadata import default_config, default_of
 from src.storage.manager import StorageManager
 from src.utils.dotted_path import get_leaf, set_leaf
 
@@ -138,63 +138,6 @@ def resolve_config_path(config_path: Path | None = None) -> Path:
     return config_path
 
 
-def _dotted_leaves(node: dict[str, Any], prefix: str = "") -> Iterator[str]:
-    for key, value in node.items():
-        path = f"{prefix}{key}"
-        if isinstance(value, dict):
-            yield from _dotted_leaves(value, f"{path}.")
-        else:
-            yield path
-
-
-#: Held between load_config and the replay below, because a warning raised
-#: before the log handlers are installed reaches only ``logging.lastResort``.
-_dropped_key_warnings: list[str] = []
-
-
-def warn_about_dropped_keys() -> None:
-    """Call after ``configure_logging``."""
-    for message in _dropped_key_warnings:
-        logger.warning(message)
-    _dropped_key_warnings.clear()
-
-
-def _record_dropped_keys(yaml_config: dict[str, Any]) -> None:
-    # Registry-leaf resolution, not "any key nothing consumed": the retired
-    # sections (llm, ollama, features, conversation, ingestion) name nothing the
-    # app ever reads again, and warning about them helps nobody.
-    entries = [
-        (key, entry)
-        for key in sorted(_dotted_leaves(yaml_config))
-        if (entry := get_entry(key)) is not None
-    ]
-    # `settings set` refuses a secret, and the api_key leaves are exactly the
-    # ones whose silent drop stops enrichment, so they get the command that works.
-    plain = [key for key, entry in entries if not entry.sensitive]
-    secret = [key for key, entry in entries if entry.sensitive]
-    _dropped_key_warnings.clear()
-    if plain:
-        _dropped_key_warnings.append(
-            f"Ignoring {', '.join(plain)} in config.yaml: global settings are "
-            "read from the database now. Re-apply each with "
-            "`settings set <key> <value>`."
-        )
-    if secret:
-        _dropped_key_warnings.append(
-            f"Ignoring {', '.join(secret)} in config.yaml: secrets are read "
-            "from the encrypted store now. Re-apply each with "
-            "`settings set-secret <key>`."
-        )
-    if "inputs" in yaml_config:
-        # Not `source create`: it clears the source's stored credentials first,
-        # so an OAuth source following that advice loses its refresh token.
-        _dropped_key_warnings.append(
-            "Ignoring the inputs: block in config.yaml: sources are read from "
-            "the database now. Add each again from the Data tab, which prompts "
-            "for its fields; an OAuth source must be reconnected."
-        )
-
-
 def load_config(config_path: Path | None = None) -> dict[str, Any]:
     resolved = resolve_config_path(config_path)
 
@@ -202,7 +145,6 @@ def load_config(config_path: Path | None = None) -> dict[str, Any]:
         raw = yaml.safe_load(f)
 
     yaml_config = raw if isinstance(raw, dict) else {}
-    _record_dropped_keys(yaml_config)
 
     config: dict[str, Any] = default_config()
     for path in _FILE_OWNED_PATHS:
