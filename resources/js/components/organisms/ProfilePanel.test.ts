@@ -8,8 +8,6 @@ const NEVER_GENERATED = {
   user_id: 1,
   genre_affinities: [],
   author_affinities: [],
-  liked_genres: [],
-  disliked_genres: [],
   theme_preferences: [],
   cross_media_patterns: [],
   has_content: false,
@@ -83,6 +81,34 @@ describe('ProfilePanel', () => {
     expect(wrapper.find('[data-testid="profile-empty"]').exists()).toBe(true)
   })
 
+  it('stops asking for a regenerate once an empty one has answered', async () => {
+    mockGet.mockResolvedValue(NEVER_GENERATED)
+    mockPost.mockResolvedValue(GENERATED_BUT_EMPTY)
+
+    const wrapper = mount(ProfilePanel)
+    await flushPromises()
+    const beforeRun = wrapper.get('.state-hint').text()
+
+    await wrapper.find('button').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('.state-hint').text()).not.toBe(beforeRun)
+  })
+
+  it('does not blame an unrated library for a regenerate that failed', async () => {
+    mockGet.mockResolvedValue(NEVER_GENERATED)
+    mockPost.mockRejectedValue(new Error('Profile generation failed'))
+
+    const wrapper = mount(ProfilePanel)
+    await flushPromises()
+    const beforeRun = wrapper.get('.state-hint').text()
+
+    await wrapper.find('button').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('.state-hint').text()).toBe(beforeRun)
+  })
+
   it('renders a profile carrying nothing but themes', async () => {
     mockGet.mockResolvedValue(THEMES_ONLY)
 
@@ -103,18 +129,57 @@ describe('ProfilePanel', () => {
     expect(wrapper.text()).toContain('Terry Brooks 4.0')
   })
 
-  it('names a disliked genre once, flagged, rather than in a second list', async () => {
+  it('names a disliked genre once rather than in a second list', async () => {
     mockGet.mockResolvedValue(A_DISLIKED_GENRE)
 
     const wrapper = mount(ProfilePanel)
     await flushPromises()
 
     const badges = wrapper.findAll('.badge')
-    expect(badges.map((badge) => badge.text())).toEqual([
-      'science fiction 4.5',
-      'literary fiction 2.0',
-    ])
-    expect(badges[1].attributes('data-tone')).toBe('error')
+    expect(badges).toHaveLength(2)
+    expect(wrapper.text()).toContain('literary fiction 2.0')
+  })
+
+  it("says in words, not in hue, that a genre is not the operator's style", async () => {
+    mockGet.mockResolvedValue(A_DISLIKED_GENRE)
+
+    const wrapper = mount(ProfilePanel)
+    await flushPromises()
+
+    const spoken = wrapper.findAll('.sr-only').map((node) => node.text())
+    expect(spoken).toContain('literary fiction, rated 2.0 out of 5 on average — not your style')
+    expect(spoken).toContain('science fiction, rated 4.5 out of 5 on average')
+  })
+
+  it('speaks an unscored anti-preference, which has no mean to read out', async () => {
+    mockGet.mockResolvedValue({
+      ...NEVER_GENERATED,
+      genre_affinities: [{ genre: 'western', score: null, anti: true }],
+      has_content: true,
+    })
+
+    const wrapper = mount(ProfilePanel)
+    await flushPromises()
+
+    expect(wrapper.get('.sr-only').text()).toBe('western — not your style')
+  })
+
+  it('gives every badge row item boundaries a reader can hear', async () => {
+    mockGet.mockResolvedValue({
+      ...A_DISLIKED_GENRE,
+      author_affinities: [{ author: 'Terry Brooks', score: 4.0 }],
+      theme_preferences: ['immersive'],
+    })
+
+    const wrapper = mount(ProfilePanel)
+    await flushPromises()
+
+    expect(wrapper.findAll('ul[role="list"] > li > .badge')).toHaveLength(
+      wrapper.findAll('.badge').length,
+    )
+    for (const list of wrapper.findAll('ul[role="list"]')) {
+      expect(list.attributes('aria-labelledby')).toBeTruthy()
+    }
   })
 
   it('renders the whole bounded genre list rather than a shorter slice', async () => {

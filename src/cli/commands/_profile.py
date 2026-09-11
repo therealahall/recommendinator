@@ -21,6 +21,11 @@ PROFILE_REGENERATE_FAILED = "Failed to regenerate profile"
 
 ANTI_FLAG = "(not your style)"
 
+#: What an empty profile means depends on which command asked: only one of them
+#: leaves ``profile regenerate`` still worth running.
+NO_PROFILE_STORED = "No profile generated yet. Run 'profile regenerate' to create one."
+NOTHING_TO_PROFILE = "No profile generated: nothing in your library is rated yet."
+
 
 def _genre_line(entry: GenreAffinity) -> str:
     score = "" if entry["score"] is None else f": {entry['score']:.1f}"
@@ -28,13 +33,15 @@ def _genre_line(entry: GenreAffinity) -> str:
     return f"  {entry['genre']}{score}{flag}"
 
 
-def _emit_profile(payload: ProfilePayload, output_format: str) -> None:
+def _emit_profile(
+    payload: ProfilePayload, output_format: str, empty_message: str
+) -> None:
     if output_format == "json":
         click.echo(json.dumps(payload, indent=2))
         return
 
     if not payload["has_content"]:
-        click.echo("No profile generated yet. Run 'profile regenerate' to create one.")
+        click.echo(empty_message)
         return
 
     if payload["genre_affinities"]:
@@ -84,7 +91,9 @@ def profile_show(ctx: click.Context, output_format: str, user_id: int) -> None:
     except Exception as error:
         abort_after_failure(ctx, PROFILE_LOAD_FAILED, error)
 
-    _emit_profile(profile_payload(user_id, profile_record), output_format)
+    _emit_profile(
+        profile_payload(user_id, profile_record), output_format, NO_PROFILE_STORED
+    )
 
 
 @profile.command("regenerate")
@@ -107,4 +116,4 @@ def profile_regenerate(ctx: click.Context, output_format: str, user_id: int) -> 
     except Exception as error:
         abort_after_failure(ctx, PROFILE_REGENERATE_FAILED, error)
 
-    _emit_profile(payload, output_format)
+    _emit_profile(payload, output_format, NOTHING_TO_PROFILE)

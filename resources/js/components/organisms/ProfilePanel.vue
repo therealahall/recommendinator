@@ -1,24 +1,39 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, useId } from 'vue'
 import { useProfileStore } from '@/stores/profile'
 import { formatDate } from '@/utils/format'
 
 const profileStore = useProfileStore()
 
+// A bare number reads as part of the name it follows.
+function spokenScore(name: string, score: number | null): string {
+  return score === null ? name : `${name}, rated ${score.toFixed(1)} out of 5 on average`
+}
+
 const genres = computed(() =>
   (profileStore.profile?.genre_affinities ?? []).map((entry) => ({
     genre: entry.genre,
-    label: entry.score === null ? entry.genre : `${entry.genre} ${entry.score.toFixed(1)}`,
+    shown: entry.score === null ? entry.genre : `${entry.genre} ${entry.score.toFixed(1)}`,
+    spoken: spokenScore(entry.genre, entry.score),
     anti: entry.anti,
   })),
 )
 
+const likedGenres = computed(() => genres.value.filter((entry) => !entry.anti))
+const antiGenres = computed(() => genres.value.filter((entry) => entry.anti))
+
 const authors = computed(() =>
   (profileStore.profile?.author_affinities ?? []).map((entry) => ({
     author: entry.author,
-    label: `${entry.author} ${entry.score.toFixed(1)}`,
+    shown: `${entry.author} ${entry.score.toFixed(1)}`,
+    spoken: spokenScore(entry.author, entry.score),
   })),
 )
+
+const likedGenresLabel = useId()
+const antiGenresLabel = useId()
+const authorsLabel = useId()
+const themesLabel = useId()
 
 const generatedAt = computed(() => {
   const stamp = profileStore.profile?.generated_at
@@ -40,11 +55,18 @@ const announcement = computed(() => {
   return regenerated.value ? 'Profile regenerated.' : ''
 })
 
+const emptyHint = computed(() =>
+  regenerated.value
+    ? 'Nothing in your library is rated yet, so there is nothing to read a profile from. Rate a few items, then regenerate.'
+    : 'Regenerate to read your library into the genres, themes and patterns the scorers weigh.',
+)
+
 async function regenerate(): Promise<void> {
   if (profileStore.regenerating) return
   regenerated.value = false
   await profileStore.regenerate()
-  regenerated.value = true
+  // A failed run leaves the state a never-generated profile has, not an unrated library.
+  regenerated.value = profileStore.error === ''
 }
 </script>
 
@@ -58,23 +80,46 @@ async function regenerate(): Promise<void> {
     </p>
     <div class="profile-summary">
       <template v-if="profileStore.profile">
-        <div v-if="genres.length > 0" class="profile-section">
-          <h4>Genres</h4>
-          <div class="profile-tags">
-            <span v-for="g in genres" :key="g.genre" class="badge" :data-tone="g.anti ? 'error' : 'accent'">{{ g.label }}</span>
-          </div>
+        <div v-if="likedGenres.length > 0" class="profile-section">
+          <h4 :id="likedGenresLabel">Genres you love</h4>
+          <ul class="profile-tags" role="list" :aria-labelledby="likedGenresLabel">
+            <li v-for="g in likedGenres" :key="g.genre">
+              <span class="badge" data-tone="accent">
+                <span aria-hidden="true">{{ g.shown }}</span>
+                <span class="sr-only">{{ g.spoken }}</span>
+              </span>
+            </li>
+          </ul>
+        </div>
+        <div v-if="antiGenres.length > 0" class="profile-section">
+          <h4 :id="antiGenresLabel">Not your style</h4>
+          <ul class="profile-tags" role="list" :aria-labelledby="antiGenresLabel">
+            <li v-for="g in antiGenres" :key="g.genre">
+              <span class="badge">
+                <span aria-hidden="true">{{ g.shown }}</span>
+                <span class="sr-only">{{ g.spoken }} — not your style</span>
+              </span>
+            </li>
+          </ul>
         </div>
         <div v-if="authors.length > 0" class="profile-section">
-          <h4>Authors and creators</h4>
-          <div class="profile-tags">
-            <span v-for="a in authors" :key="a.author" class="badge" data-tone="accent">{{ a.label }}</span>
-          </div>
+          <h4 :id="authorsLabel">Authors and creators</h4>
+          <ul class="profile-tags" role="list" :aria-labelledby="authorsLabel">
+            <li v-for="a in authors" :key="a.author">
+              <span class="badge" data-tone="accent">
+                <span aria-hidden="true">{{ a.shown }}</span>
+                <span class="sr-only">{{ a.spoken }}</span>
+              </span>
+            </li>
+          </ul>
         </div>
         <div v-if="profileStore.profile.theme_preferences.length > 0" class="profile-section">
-          <h4>Themes you enjoy</h4>
-          <div class="profile-tags">
-            <span v-for="t in profileStore.profile.theme_preferences" :key="t" class="badge" data-tone="accent">{{ t }}</span>
-          </div>
+          <h4 :id="themesLabel">Themes you enjoy</h4>
+          <ul class="profile-tags" role="list" :aria-labelledby="themesLabel">
+            <li v-for="t in profileStore.profile.theme_preferences" :key="t">
+              <span class="badge" data-tone="accent">{{ t }}</span>
+            </li>
+          </ul>
         </div>
         <div v-if="profileStore.profile.cross_media_patterns.length > 0" class="profile-section">
           <h4>Patterns</h4>
@@ -83,10 +128,7 @@ async function regenerate(): Promise<void> {
       </template>
       <div v-else class="state state--empty" data-testid="profile-empty">
         <p class="state-title">No profile yet</p>
-        <p class="state-hint">
-          Regenerate to read your library into the genres, themes and patterns
-          the scorers weigh.
-        </p>
+        <p class="state-hint">{{ emptyHint }}</p>
       </div>
     </div>
     <p
@@ -138,11 +180,16 @@ async function regenerate(): Promise<void> {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
+  list-style: none;
 }
 
 /* A theme phrase that cannot wrap sets the row's floor (WCAG 1.4.10). */
+.profile-tags li,
 .profile-tags .badge {
   max-width: 100%;
+}
+
+.profile-tags .badge {
   white-space: normal;
 }
 

@@ -545,6 +545,7 @@ uv run python -m src.cli profile show --format json
 uv run python -m src.cli profile regenerate    # rebuild from current library data
 ```
 
-Both commands print the rebuilt profile and take `--user` and `--format json`. A
-genre the profile holds against the operator is flagged in the affinity list
-rather than repeated under a heading of its own.
+`show` prints the stored profile and `regenerate` the one it just rebuilt; both
+take `--user` and `--format json`. A genre the profile holds against the
+operator is flagged in the affinity list rather than repeated under a heading of
+its own.
