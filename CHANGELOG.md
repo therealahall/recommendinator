@@ -1,6 +1,55 @@
 # CHANGELOG
 
 
+## v0.57.0 (2026-09-11)
+
+### Bug Fixes
+
+- **enrichment**: Ask a provider whatever it can answer
+  ([`badda8d`](https://github.com/therealahall/recommendinator/commit/badda8dc3897603db6e15e647a16fc3f3fbe8f92))
+
+- **enrichment**: Never start a run with no provider to ask
+  ([`524fefe`](https://github.com/therealahall/recommendinator/commit/524fefe4a21768d2b2ca35acc378f6481274b419))
+
+- **enrichment**: Settle an item no matcher was asked about
+  ([`f016fbc`](https://github.com/therealahall/recommendinator/commit/f016fbc8ac9f35db9203b2d4b7707502ae6b5528))
+
+- **web**: Space the pin actions off the search field
+  ([`87234ec`](https://github.com/therealahall/recommendinator/commit/87234ec5a0af934ffacbc2366bacb504c888059f))
+
+- **web**: Stop following an enrichment run from the edit dialog
+  ([`b5492a5`](https://github.com/therealahall/recommendinator/commit/b5492a512b98cb6ccb7a5a74e928103a157a7acf))
+
+### Chores
+
+- Bump the actions group with 2 updates
+  ([`2f9887f`](https://github.com/therealahall/recommendinator/commit/2f9887f181cd6292a419b2796ef8b97967c1c931))
+
+- Bump the frontend group with 3 updates
+  ([`050c436`](https://github.com/therealahall/recommendinator/commit/050c436375ca2d33fbe8e35ab37ceea062d6252b))
+
+- Bump the python group across 1 directory with 4 updates
+  ([`f3e23c0`](https://github.com/therealahall/recommendinator/commit/f3e23c074bdb9c5a12e97d85ded2ae7bbb451f58))
+
+### Features
+
+- **enrichment**: Enrich an item as soon as it is pinned
+  ([`618e983`](https://github.com/therealahall/recommendinator/commit/618e983f267b3dbab1d85e867652b0091f9f439e))
+
+- **hardcover**: Enrich a book, not just position it
+  ([`bb8cec1`](https://github.com/therealahall/recommendinator/commit/bb8cec1f6f380f1e4fefeb846633f61daae37550))
+
+### Performance Improvements
+
+- **hardcover**: Answer a book in one lookup
+  ([`3baf202`](https://github.com/therealahall/recommendinator/commit/3baf202b1757b6ea1fa7449551fee4b66f7b44bf))
+
+### Testing
+
+- **hardcover**: Stop the series tests passing on a miss
+  ([`8f2f1e1`](https://github.com/therealahall/recommendinator/commit/8f2f1e1c838558d2f21ed39d05206a269db36802))
+
+
 ## v0.56.0 (2026-09-10)
 
 ### Bug Fixes
