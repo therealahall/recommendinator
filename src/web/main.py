@@ -74,9 +74,7 @@ def main() -> None:
     config_path = args.config
 
     try:
-        # warn=False: create_app loads the same file a moment later, and one
-        # boot should not report a dropped key twice.
-        config = load_config(config_path, warn=False)
+        config = load_config(config_path)
     except FileNotFoundError:
         config = {}
 
