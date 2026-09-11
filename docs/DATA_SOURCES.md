@@ -87,8 +87,8 @@ section) or the CLI:
 uv run python -m src.cli settings set sync.max_workers 8   # default 4, 1 for sequential
 ```
 
-The stored value wins over any `sync.max_workers` left in `config.yaml`. Pass
-`--workers N` to override one run: `uv run python -m src.cli update --workers 8`.
+Pass `--workers N` to override one run:
+`uv run python -m src.cli update --workers 8`.
 Per-source rate limits are enforced inside each plugin and are untouched by this.
 
 ## Library export

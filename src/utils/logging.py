@@ -51,8 +51,8 @@ class _OneLineFormatter(logging.Formatter):
 
 
 def _safe_log_path(log_file: str) -> tuple[Path, str | None]:
-    """The backstop behind the registry pattern, for what it cannot see: an
-    unvalidated ``config.yaml``, a row predating the ``..`` lookahead, a symlink.
+    """The backstop behind the registry pattern, for what it cannot see: a row
+    predating the ``..`` lookahead, a symlink.
     """
     base = _LOG_BASE_DIR.resolve()
     resolved = Path(log_file).resolve()
@@ -82,7 +82,7 @@ def _resolve_level(section: dict[str, Any]) -> tuple[int, list[str]]:
 
     log_level_str = default_of("logging.level")
     return _LOG_LEVELS[log_level_str], [
-        f"Ignoring unusable logging.level {raw_level!r} in config.yaml; using "
+        f"Ignoring unusable logging.level {raw_level!r}; using "
         f"{log_level_str} instead. It must be one of: "
         f"{', '.join(sorted(_LOG_LEVELS))}."
     ]
@@ -98,7 +98,7 @@ def _resolve_path(section: dict[str, Any]) -> tuple[Path, list[str]]:
     else:
         log_file = default_of("logging.file")
         fallbacks.append(
-            f"Ignoring unusable logging.file {raw_file!r} in config.yaml; using "
+            f"Ignoring unusable logging.file {raw_file!r}; using "
             f"{log_file} instead. It must be a string."
         )
 

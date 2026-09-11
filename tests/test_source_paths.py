@@ -157,6 +157,17 @@ class TestConfigureAllowedSourceRoots:
         load_config(Path("config/example.yaml"))
         assert get_allowed_source_roots() == DEFAULT_ALLOWED_SOURCE_ROOTS
 
+    def test_load_config_installs_the_list_the_file_names(self, tmp_path: Path) -> None:
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            f"security:\n  allowed_source_roots:\n    - {tmp_path / 'media'}\n",
+            encoding="utf-8",
+        )
+
+        load_config(config_path)
+
+        assert get_allowed_source_roots() == (str(tmp_path / "media"),)
+
 
 class TestResolveSourcePath:
     def test_accepts_a_file_under_an_allowed_root(self, tmp_path: Path) -> None:

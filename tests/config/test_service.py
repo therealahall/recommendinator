@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 import src.settings
 from src.config.service import (
@@ -17,11 +18,12 @@ from src.config.service import (
     BOOTSTRAP_WEB_PORT,
     auto_enrich_enabled,
     build_scorers_from_config,
+    database_path,
     load_config,
     resolve_bootstrap_web,
 )
 from src.recommendations.scorers import SCORER_NAME_MAP, Scorer
-from src.settings.metadata import default_config, default_of, flat_defaults
+from src.settings.metadata import default_of, flat_defaults, get_entry
 from src.storage.manager import StorageManager
 from src.storage.settings_migration import migrate_config_settings
 from src.utils.dotted_path import get_leaf
@@ -32,10 +34,23 @@ _ENGINE_MANAGED_SCORERS = {"custom_preference"}
 
 _SRC = Path(__file__).resolve().parents[2] / "src"
 
+_EXAMPLE_CONFIG = Path("config/example.yaml")
+
+
+def _leaves(
+    node: dict[str, Any], prefix: tuple[str, ...] = ()
+) -> Iterator[tuple[tuple[str, ...], Any]]:
+    for key, value in node.items():
+        path = (*prefix, key)
+        if isinstance(value, dict):
+            yield from _leaves(value, path)
+        else:
+            yield path, value
+
 
 @pytest.fixture()
 def example_config() -> dict[str, Any]:
-    return load_config(Path("config/example.yaml"))
+    return load_config(_EXAMPLE_CONFIG)
 
 
 class TestLoadConfigDefaults:
@@ -47,31 +62,67 @@ class TestLoadConfigDefaults:
             resolved = get_leaf(example_config, tuple(key.split(".")), sentinel)
             assert resolved == expected, f"{key} did not resolve to its default"
 
-    def test_yaml_overrides_const_default(self, tmp_path: Path) -> None:
+    def test_the_file_cannot_override_a_db_backed_leaf(self, tmp_path: Path) -> None:
         config_path = tmp_path / "config.yaml"
-        config_path.write_text("recommendations:\n  default_count: 11\n")
+        config_path.write_text(
+            "recommendations:\n  default_count: 99\nlogging:\n  level: DEBUG\n"
+        )
 
         config = load_config(config_path)
 
-        assert config["recommendations"]["default_count"] == 11
-        assert (
-            config["recommendations"]["max_count"]
-            == default_config()["recommendations"]["max_count"]
+        assert config["recommendations"]["default_count"] == default_of(
+            "recommendations.default_count"
         )
+        assert config["logging"]["level"] == default_of("logging.level")
 
-    def test_db_overlay_wins_over_loaded_defaults(self, tmp_path: Path) -> None:
+    def test_db_overlay_wins_over_a_value_the_file_also_names(
+        self, tmp_path: Path
+    ) -> None:
         storage = StorageManager(sqlite_path=tmp_path / "test.db")
         storage.settings.set("recommendations.default_count", 9)
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text("recommendations:\n  default_count: 99\n")
 
-        config = load_config(Path("config/example.yaml"))
-        assert (
-            config["recommendations"]["default_count"]
-            == default_config()["recommendations"]["default_count"]
-        )
-
+        config = load_config(config_path)
         migrate_config_settings(config, storage)
 
         assert config["recommendations"]["default_count"] == 9
+
+    def test_the_bootstrap_leaves_still_come_from_the_file(
+        self, tmp_path: Path
+    ) -> None:
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "web:\n  host: 0.0.0.0\n  port: 9001\n  debug: true\n"
+            f"storage:\n  database_path: {tmp_path / 'boot.db'}\n"
+        )
+
+        config = load_config(config_path)
+
+        assert resolve_bootstrap_web(config) == ("0.0.0.0", 9001, True)
+        assert database_path(config) == tmp_path / "boot.db"
+
+
+class TestTheExampleShipsNoKeyTheLoaderIgnores:
+    def test_every_key_it_names_survives_into_the_loaded_config(
+        self, example_config: dict[str, Any]
+    ) -> None:
+        shipped = yaml.safe_load(_EXAMPLE_CONFIG.read_text(encoding="utf-8"))
+        sentinel = object()
+
+        assert list(
+            _leaves(shipped)
+        ), "the example named nothing, so this proves nothing"
+        assert [
+            ".".join(path)
+            for path, value in _leaves(shipped)
+            if get_leaf(example_config, path, sentinel) != value
+        ] == []
+        # A registry leaf at its own default would survive the check above while
+        # still offering the operator a knob the Settings page overrules.
+        assert [
+            ".".join(path) for path, _ in _leaves(shipped) if get_entry(".".join(path))
+        ] == []
 
 
 class TestResolveBootstrapWeb:
@@ -182,8 +233,8 @@ class TestTheAutoEnrichGate:
         )
 
 
-class TestARetiredAiConfigBlockIsIgnored:
-    def test_a_config_still_naming_llm_and_ollama_loads_clean(
+class TestAKeyWithNoReaderIsDroppedAtTheDoor:
+    def test_an_upgraded_config_still_naming_the_retired_keys_loads_clean(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         config_file = tmp_path / "config.yaml"
@@ -191,14 +242,25 @@ class TestARetiredAiConfigBlockIsIgnored:
             "llm:\n  provider: ollama\n"
             "ollama:\n  base_url: http://ollama:11434\n  model: mistral:7b\n"
             "features:\n  ai_enabled: true\n"
-            "recommendations:\n  default_count: 6\n",
+            "conversation:\n  llm:\n    temperature: 0.7\n"
+            "ingestion:\n  batch_size: 100\n"
+            "web:\n  host: 0.0.0.0\n  api_token: leftover\n"
+            "storage:\n  database_path: data/kept.db\n"
+            "  cache_dir: data/cache\n  vector_db_path: data/vectors\n",
             encoding="utf-8",
         )
 
         with caplog.at_level(logging.WARNING):
             config = load_config(config_file)
 
-        assert config["recommendations"]["default_count"] == 6
+        assert "llm" not in config
+        assert "ollama" not in config
+        assert "features" not in config
+        assert "conversation" not in config
+        assert "ingestion" not in config
+        assert "api_token" not in config["web"]
+        assert config["storage"] == {"database_path": "data/kept.db"}
+        assert config["web"]["host"] == "0.0.0.0"
         assert caplog.messages == []
 
 

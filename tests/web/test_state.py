@@ -10,6 +10,11 @@ from unittest.mock import patch
 import pytest
 import yaml
 
+from src.ingestion.paths import (
+    DEFAULT_ALLOWED_SOURCE_ROOTS,
+    get_allowed_source_roots,
+)
+from src.settings.metadata import default_of
 from src.storage.manager import StorageManager
 from src.web.api._settings import SettingsUpdateRequest, update_settings
 from src.web.app import create_app
@@ -29,13 +34,18 @@ _LOCK_TIMEOUT_SECONDS = 5.0
 _BLOCKED_SECONDS = 0.2
 
 
-def _config_yaml(tmp_path: Path, default_count: int = 5) -> str:
-    return yaml.safe_dump(
-        {
-            "storage": {"database_path": str(tmp_path / "recommendations.db")},
-            "recommendations": {"default_count": default_count},
-        }
-    )
+def _config_yaml(
+    tmp_path: Path,
+    default_count: int = 5,
+    allowed_source_roots: list[str] | None = None,
+) -> str:
+    document: dict[str, Any] = {
+        "storage": {"database_path": str(tmp_path / "recommendations.db")},
+        "recommendations": {"default_count": default_count},
+    }
+    if allowed_source_roots is not None:
+        document["security"] = {"allowed_source_roots": allowed_source_roots}
+    return yaml.safe_dump(document)
 
 
 @pytest.fixture(autouse=True)
@@ -91,7 +101,9 @@ class TestReloadConfig:
         self, tmp_path: Path
     ) -> None:
         config_file = tmp_path / "config.yaml"
-        config_file.write_text("recommendations:\n  min_rating_for_preference: 2\n")
+        config_file.write_text(
+            f"storage:\n  database_path: {tmp_path / 'swapped.db'}\n"
+        )
 
         running: dict[str, Any] = {"old": "config"}
         app_state.config_path = str(config_file)
@@ -103,7 +115,9 @@ class TestReloadConfig:
         assert running == {"old": "config"}
         assert app_state.config is not running
         assert "old" not in app_state.config
-        assert app_state.config["recommendations"]["min_rating_for_preference"] == 2
+        assert app_state.config["storage"]["database_path"] == str(
+            tmp_path / "swapped.db"
+        )
 
     def test_reload_config_preserves_old_config_on_failure(self) -> None:
         original_config = {"preserved": True}
@@ -240,20 +254,34 @@ class TestConfigWatcher:
 
 
 class TestAHotReloadReachesTheRunningConfig:
-    def test_a_reloaded_leaf_reaches_the_running_config(self, tmp_path: Path) -> None:
+    def test_a_widened_source_allowlist_lands_without_a_restart(
+        self, tmp_path: Path
+    ) -> None:
         config_path = tmp_path / "config.yaml"
-        config_path.write_text(_config_yaml(tmp_path, default_count=5))
+        config_path.write_text(_config_yaml(tmp_path))
         create_app(config_path)
-        config = get_config()
-        assert config is not None
-        assert config["recommendations"]["default_count"] == 5
+        assert get_allowed_source_roots() == DEFAULT_ALLOWED_SOURCE_ROOTS
+
+        config_path.write_text(
+            _config_yaml(tmp_path, allowed_source_roots=[str(tmp_path / "media")])
+        )
+
+        assert reload_config() is True
+        assert get_allowed_source_roots() == (str(tmp_path / "media"),)
+
+    def test_a_setting_the_file_names_never_reaches_it(self, tmp_path: Path) -> None:
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(_config_yaml(tmp_path))
+        create_app(config_path)
 
         config_path.write_text(_config_yaml(tmp_path, default_count=12))
 
         assert reload_config() is True
         reloaded = get_config()
         assert reloaded is not None
-        assert reloaded["recommendations"]["default_count"] == 12
+        assert reloaded["recommendations"]["default_count"] == default_of(
+            "recommendations.default_count"
+        )
 
 
 class TestSettingsWritesStillRunUnderTheConfigLock:

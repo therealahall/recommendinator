@@ -19,11 +19,27 @@ from src.recommendations.scorers import (
     SeriesOrderScorer,
     TagOverlapScorer,
 )
-from src.settings.metadata import default_config, default_of
+from src.settings.metadata import all_entries, default_config, default_of
 from src.storage.manager import StorageManager
-from src.utils.deep_merge import deep_merge
+from src.utils.dotted_path import get_leaf, set_leaf
 
 logger = logging.getLogger(__name__)
+
+# Read before the database opens, so config.yaml carries only what gets us
+# there. Every other global setting resolves from the registry default and the
+# settings table alone: a value left in the file is dropped, not layered.
+_FILE_OWNED_PATHS: tuple[tuple[str, ...], ...] = (
+    ("storage", "database_path"),
+    ("web", "host"),
+    ("web", "port"),
+    ("web", "debug"),
+    ("security", "allowed_source_roots"),
+    # Neither of these is a setting the file feeds: the legacy source block and
+    # any secret left behind are drained into the database at boot and stripped
+    # out of the running config.
+    ("inputs",),
+    *(tuple(entry.key.split(".")) for entry in all_entries() if entry.sensitive),
+)
 
 # The uvicorn launcher (``src/web/main.py``) reads these to bind the socket
 # before any database is open, so they are deliberately NOT settings-registry
@@ -148,10 +164,13 @@ def load_config(config_path: Path | None = None) -> dict[str, Any]:
 
     yaml_config = _without_childless_headers(raw) if isinstance(raw, dict) else {}
 
-    # Layer the registry const defaults UNDER the parsed YAML (const default <
-    # YAML) so a minimal, bootstrap-only config still yields a complete
-    # effective config for every in-scope global section.
-    config: dict[str, Any] = deep_merge(default_config(), yaml_config)
+    config: dict[str, Any] = default_config()
+    for path in _FILE_OWNED_PATHS:
+        # None means absent: _without_childless_headers has already dropped
+        # every key the file left empty.
+        value = get_leaf(yaml_config, path)
+        if value is not None:
+            set_leaf(config, path, value)
 
     # Never from the database overlay: the settings API must not be able to
     # widen what a file-based source is allowed to read.
