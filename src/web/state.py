@@ -118,8 +118,8 @@ def reload_config() -> bool:
         with _config_lock:
             config = load_config(Path(config_path))
             # Re-assemble the effective config on hot-reload. Mutates config in
-            # place: in-scope sections are rebuilt from const/YAML/DB layers,
-            # DB wins.
+            # place: in-scope sections are rebuilt from the const defaults with
+            # the database over them.
             if app_state.storage is not None:
                 migrate_config_settings(config, app_state.storage)
             app_state.config = config

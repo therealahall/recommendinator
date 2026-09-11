@@ -30,9 +30,9 @@ _PRE_MOVE_LOG_DIR = "logs/"
 
 
 def _relocate_pre_move_log_file(section: dict[str, Any]) -> None:
-    """Nothing rewrites the row or the YAML holding it, so otherwise containment
-    discards that file name for the default on every boot while the Settings
-    page still shows the old path.
+    """Nothing rewrites the row holding it, so otherwise containment discards
+    that file name for the default on every boot while the Settings page still
+    shows the old path.
     """
     configured = section.get("file")
     if isinstance(configured, str) and configured.startswith(_PRE_MOVE_LOG_DIR):

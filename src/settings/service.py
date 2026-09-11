@@ -74,8 +74,8 @@ def setting_view(
     else:
         view["value"] = effective_value(config, entry.key)
         stored = storage.settings.get(entry.key)
-        # A row equal to the const default still shadows the YAML layer, so
-        # resetting is offered off the row's existence, not off the comparison.
+        # Resetting is offered off the row's existence rather than the
+        # comparison, so a row equal to the default can still be cleared.
         view["has_stored_value"] = stored is not None
         # default_of, not entry.default: a tuple default comes back out of the
         # database as a list, and would compare unequal to itself forever.
@@ -113,9 +113,8 @@ def apply_settings(
 
 
 def reset_setting(config: dict[str, Any], storage: StorageManager, key: str) -> None:
-    """Deletes the stored leaf so it falls back to the YAML/const layers, and
-    live-applies the const default to *config* for non-``restart_required``
-    leaves (a full config reload re-derives any YAML value).
+    """Deletes the stored leaf so it falls back to the const default, and
+    live-applies that default to *config* for non-``restart_required`` leaves.
     """
     entry = get_entry(key)
     if entry is None:

@@ -68,7 +68,7 @@ class TestStorageManagerSourceConfigs:
         assert result["config"] == {"a": 2}
         assert result["sync_interval"] == "6h"
 
-    def test_set_schedule_reports_an_unmigrated_source(
+    def test_set_schedule_reports_a_source_id_with_no_row(
         self, storage: StorageManager
     ) -> None:
         assert storage.sources.set_schedule(1, "steam", "6h") is False

@@ -161,6 +161,11 @@ to move them is gone. A source that was migrated to the database — everything
 the Data tab or `source list` shows — carries on unchanged. Anything still
 defined only under `inputs:` is not read; add it again with **+ Add source**.
 
+A global setting the file still names — `logging.file`, `web.allowed_origins`, a
+scorer weight — is not read either. The boot log names each one; re-apply it on
+the Settings page or with `settings set <key> <value>`, or with `settings
+set-secret <key>` for an API key.
+
 ## CLI usage
 
 ```bash

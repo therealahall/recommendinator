@@ -80,9 +80,9 @@ def job_label(key: str) -> str:
     return ALL_SOURCES_LABEL if key == ALL_SOURCES_KEY else key
 
 
-# Hard ceiling on the parallel-sync worker pool. Bounds both the CLI flag
-# (via Click IntRange) and the config-file path so a malicious or
-# misconfigured config.yaml cannot exhaust OS thread limits.
+# Hard ceiling on the parallel-sync worker pool. Bounds both the CLI flag (via
+# Click IntRange) and the stored setting, so a mistyped value cannot exhaust OS
+# thread limits.
 MAX_WORKERS_CEILING = 32
 
 
@@ -232,9 +232,8 @@ def execute_sync(
     source_name = humanize_source_id(source_id) if source_id else plugin.display_name
     result = SyncResult(source_name=source_name, source_id=source_id)
 
-    # ``_source_id`` is typed into config.yaml and the web source form, so the
-    # logged copy is escaped while ``SyncResult`` keeps the raw name for the
-    # JSON body /api/sync/status serves.
+    # ``_source_id`` is operator-typed, so the logged copy is escaped while
+    # ``SyncResult`` keeps the raw name for the JSON body /api/sync/status serves.
     safe_source_name = sanitize_for_log(source_name)
 
     if progress_callback:

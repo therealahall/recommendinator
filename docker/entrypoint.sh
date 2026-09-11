@@ -1,5 +1,6 @@
 #!/bin/sh
-# Once configuration moves into the application itself, this script goes away.
+# This stays: the bootstrap settings it seeds are read before the database the
+# rest of the configuration lives in can be opened.
 
 set -eu
 
@@ -42,10 +43,9 @@ if [ ! -f "$CONFIG_PATH" ]; then
         # No secret is minted here, and none is needed: the first visitor to
         # the web UI creates the account, and nobody else can once they have.
         echo "[entrypoint] Open the web UI and create your account — until you do, whoever reaches it first can."
-        # Do not advertise web.host/web.port here: the image's CMD passes
-        # --host/--port, and CLI flags beat config.yaml — editing them in this
-        # file under Docker changes nothing. Map the port with APP_PORT instead.
-        echo "[entrypoint] Under Docker it carries only the database path and web.debug; the bind comes from --host/--port (set the published port with APP_PORT)."
+        # web.host/web.port are named only to say they do nothing here: the
+        # image's CMD passes --host/--port, and CLI flags beat config.yaml.
+        echo "[entrypoint] It carries only bootstrap settings: the database path, web.debug and security.allowed_source_roots; web.host/web.port are ignored under Docker, where the bind comes from --host/--port (publish another with APP_PORT)."
         echo "[entrypoint] Data sources, settings, and API keys are managed in the app."
     else
         echo "[entrypoint] WARNING: no config.yaml in $CONFIG_DIR and no seed at $SEED_CONFIG." >&2

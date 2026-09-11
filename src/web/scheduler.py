@@ -38,11 +38,16 @@ def dispatch_due_syncs(
     now = utc_now()
 
     for entry in resolve_inputs(storage, user_id):
+        # ``resolve_inputs`` lists the table a second time, so a source deleted
+        # between the two reads has no row here and no cadence to be due on.
+        row = rows.get(entry.source_id)
+        if row is None:
+            continue
         state = schedule_state(
             storage,
             user_id,
             entry.source_id,
-            rows.get(entry.source_id),
+            row,
             entry.plugin,
             latest_runs.get(entry.source_id),
         )

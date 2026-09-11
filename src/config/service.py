@@ -1,5 +1,5 @@
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -19,7 +19,7 @@ from src.recommendations.scorers import (
     SeriesOrderScorer,
     TagOverlapScorer,
 )
-from src.settings.metadata import default_config, default_of
+from src.settings.metadata import default_config, default_of, get_entry
 from src.storage.manager import StorageManager
 from src.utils.dotted_path import get_leaf, set_leaf
 
@@ -138,13 +138,63 @@ def resolve_config_path(config_path: Path | None = None) -> Path:
     return config_path
 
 
-def load_config(config_path: Path | None = None) -> dict[str, Any]:
+def _dotted_leaves(node: dict[str, Any], prefix: str = "") -> Iterator[str]:
+    for key, value in node.items():
+        path = f"{prefix}{key}"
+        if isinstance(value, dict):
+            yield from _dotted_leaves(value, f"{path}.")
+        else:
+            yield path
+
+
+def _warn_about_dropped_keys(yaml_config: dict[str, Any]) -> None:
+    """Upgrading from a release that layered the file over the database is
+    otherwise silent: the value simply stops being read, and the first sign is a
+    log that stopped growing or a browser rejecting an origin.
+    """
+    # Registry-leaf resolution, not "any key nothing consumed": the retired
+    # sections (llm, ollama, features, conversation, ingestion) name nothing the
+    # app ever reads again, and warning about them helps nobody.
+    entries = [
+        (key, entry)
+        for key in sorted(_dotted_leaves(yaml_config))
+        if (entry := get_entry(key)) is not None
+    ]
+    # `settings set` refuses a secret, and the api_key leaves are exactly the
+    # ones whose silent drop stops enrichment, so they get the command that works.
+    plain = [key for key, entry in entries if not entry.sensitive]
+    secret = [key for key, entry in entries if entry.sensitive]
+    if plain:
+        logger.warning(
+            "Ignoring %s in config.yaml: global settings are read from the "
+            "database now. Re-apply each with `settings set <key> <value>`.",
+            ", ".join(plain),
+        )
+    if secret:
+        logger.warning(
+            "Ignoring %s in config.yaml: secrets are read from the encrypted "
+            "store now. Re-apply each with `settings set-secret <key>`.",
+            ", ".join(secret),
+        )
+    if "inputs" in yaml_config:
+        logger.warning(
+            "Ignoring the inputs: block in config.yaml: sources are read from "
+            "the database now. Add each again with `source create <id> <plugin>` "
+            "or the Data tab."
+        )
+
+
+def load_config(
+    config_path: Path | None = None, *, warn: bool = True
+) -> dict[str, Any]:
     resolved = resolve_config_path(config_path)
 
     with open(resolved, encoding="utf-8") as f:
         raw = yaml.safe_load(f)
 
     yaml_config = raw if isinstance(raw, dict) else {}
+    if warn:
+        _warn_about_dropped_keys(yaml_config)
 
     config: dict[str, Any] = default_config()
     for path in _FILE_OWNED_PATHS:

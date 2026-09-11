@@ -544,8 +544,8 @@ def create_schema(conn: sqlite3.Connection) -> None:
         "INTEGER NOT NULL DEFAULT 0",
     )
 
-    # Nothing is seeded here on boot; a stored leaf wins over YAML and the
-    # registry const default.
+    # Nothing is seeded here on boot; a stored leaf wins over the registry's
+    # const default.
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
