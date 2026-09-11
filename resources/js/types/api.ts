@@ -380,8 +380,6 @@ export interface ProfileResponse {
   user_id: number
   genre_affinities: GenreAffinity[]
   author_affinities: AuthorAffinity[]
-  liked_genres: string[]
-  disliked_genres: string[]
   theme_preferences: string[]
   cross_media_patterns: string[]
   has_content: boolean

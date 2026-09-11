@@ -43,8 +43,6 @@ class ProfilePayload(TypedDict):
     user_id: int
     genre_affinities: list[GenreAffinity]
     author_affinities: list[AuthorAffinity]
-    liked_genres: list[str]
-    disliked_genres: list[str]
     theme_preferences: list[str]
     cross_media_patterns: list[str]
     has_content: bool
@@ -97,8 +95,6 @@ def profile_payload(
         "user_id": user_id,
         "genre_affinities": genres,
         "author_affinities": authors,
-        "liked_genres": profile.get("liked_genres") or [],
-        "disliked_genres": profile.get("disliked_genres") or [],
         "theme_preferences": themes,
         "cross_media_patterns": patterns,
         # Regenerating an unrated library stamps generated_at over an empty
@@ -204,14 +200,13 @@ def _bucket_genres(
 
 
 def _anti_preferences(
-    liked_genres: list[str],
     disliked_genres: list[str],
     genre_ratings: dict[str, list[int]],
     ignored_items: list[ContentItem],
 ) -> list[str]:
-    """The disliked bucket worst mean first, then the genres the operator mostly
-    dismisses unrated. A liked genre never lands here whatever its mean: the
-    section reads "not your style".
+    """The disliked bucket worst mean first, then genres dismissed unrated. One
+    rating at the liked floor keeps a genre out; the liked bucket cannot say
+    that, holding only genres past ``MIN_ITEMS``.
     """
     ignored_counts = Counter(
         genre for item in ignored_items for genre in extract_genres(item)
@@ -221,10 +216,10 @@ def _anti_preferences(
     mostly_ignored = [
         genre
         for genre, count in ignored_counts.most_common()
-        if count >= MIN_ITEMS
-        and count > len(genre_ratings.get(genre, []))
-        and genre not in liked_genres
-        and genre not in disliked_genres
+        if genre not in disliked_genres
+        and count >= MIN_ITEMS
+        and count > len(genre_ratings.get(genre, ()))
+        and not any(rating >= LIKED_RATING for rating in genre_ratings.get(genre, ()))
     ]
 
     return list(reversed(disliked_genres)) + mostly_ignored
@@ -242,8 +237,13 @@ class ProfileGenerator:
         # items are read separately because dismissing something is its own
         # verdict, and the signal read drops them before anything sees them.
         rated_items = self.storage.get_signal_items(user_id=user_id, limit=SAMPLE_LIMIT)
+        # Most recently dismissed first: the default title order makes the cut
+        # past SAMPLE_LIMIT an alphabetical prefix rather than a sample.
         ignored_items = self.storage.get_content_items(
-            user_id=user_id, ignored_only=True, limit=SAMPLE_LIMIT
+            user_id=user_id,
+            ignored_only=True,
+            limit=SAMPLE_LIMIT,
+            sort_by="updated_at",
         )
 
         genre_ratings = _ratings_by_genre(rated_items)
@@ -258,7 +258,6 @@ class ProfileGenerator:
             disliked_genres=disliked_genres,
             theme_preferences=self._identify_theme_preferences(rated_items),
             anti_preferences=_anti_preferences(
-                liked_genres,
                 disliked_genres,
                 genre_ratings,
                 ignored_items,

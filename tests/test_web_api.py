@@ -5069,8 +5069,6 @@ _PROFILE_BODY = {
         {"genre": "gore", "score": 1.5, "anti": True},
     ],
     "author_affinities": [{"author": "Terry Brooks", "score": 4.0}],
-    "liked_genres": ["sci-fi"],
-    "disliked_genres": [],
     "theme_preferences": ["space exploration"],
     "cross_media_patterns": ["Generally rates books higher than games"],
     "has_content": True,
@@ -5081,13 +5079,27 @@ _PROFILE_BODY = {
 class TestProfileBodyIsBuiltFromTheStoredRecord:
     """``GET /api/profile`` shares its body builder with ``profile show``."""
 
-    def test_every_stored_field_reaches_the_body(self, client, mock_components):
+    def test_every_stored_field_a_surface_reads_reaches_the_body(
+        self, client, mock_components
+    ):
         mock_components["storage"].profiles.get.return_value = _STORED_PROFILE
 
         response = client.get("/api/profile?user_id=1")
 
         assert response.status_code == 200, response.text
         assert response.json() == _PROFILE_BODY
+
+    def test_the_genre_buckets_no_renderer_reads_stay_off_the_wire(
+        self, client, mock_components
+    ):
+        """They are the only lists escaping ``AFFINITY_LIMIT``, so a real library
+        shipped a couple of hundred strings nothing rendered."""
+        mock_components["storage"].profiles.get.return_value = _STORED_PROFILE
+
+        body = client.get("/api/profile?user_id=1").json()
+
+        assert "liked_genres" not in body
+        assert "disliked_genres" not in body
 
     def test_a_user_with_no_profile_gets_the_empty_shape_not_a_404(
         self, client, mock_components
@@ -5101,8 +5113,6 @@ class TestProfileBodyIsBuiltFromTheStoredRecord:
             "user_id": 1,
             "genre_affinities": [],
             "author_affinities": [],
-            "liked_genres": [],
-            "disliked_genres": [],
             "theme_preferences": [],
             "cross_media_patterns": [],
             "has_content": False,

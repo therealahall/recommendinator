@@ -144,6 +144,18 @@ class TestProfileRegenerate:
         assert "Analyzing your library..." in result.stderr
         assert "Analyzing your library..." not in result.stdout
 
+    def test_an_empty_regenerate_does_not_ask_for_a_regenerate(self) -> None:
+        mock_storage = make_storage_mock()
+        mock_storage.profiles.get.return_value = None
+        with patch("src.recommendations.profile.ProfileGenerator"):
+            result = _invoke_with_mocks(
+                CliRunner(), ["profile", "regenerate"], mock_storage
+            )
+
+        assert result.exit_code == 0
+        assert "nothing in your library is rated yet" in result.stdout
+        assert "profile regenerate" not in result.stdout
+
     def test_regenerate_json_matches_the_web_response_shape(self) -> None:
         mock_storage = make_storage_mock()
         mock_storage.profiles.get.return_value = _stored_profile()

@@ -281,7 +281,7 @@ class TestThemePreferences:
 
 
 class TestAntiPreferences:
-    def test_a_liked_genre_below_the_operators_own_average_is_not_an_anti_preference(
+    def test_a_genre_rated_below_the_operators_own_average_is_not_an_anti_preference(
         self, profile_generator: ProfileGenerator, storage_manager: StorageManager
     ) -> None:
         """The panel heads this list "Not your style", and a below-average bar
@@ -614,6 +614,83 @@ class TestProfileIgnoredSignalRegression:
 
         assert "western" in profile.liked_genres
         assert profile.anti_preferences == []
+
+    def test_a_genre_rated_once_and_dismissed_twice_is_not_an_anti_preference(
+        self, profile_generator: ProfileGenerator, storage_manager: StorageManager
+    ) -> None:
+        """One rating is under MIN_ITEMS, so the genre joins no bucket, and
+        excluding by bucket membership read a 5/5 genre as "not your style"."""
+        _save_rated(storage_manager, "western", [5])
+        for index in range(2):
+            db_id = storage_manager.save_content_item(
+                ContentItem(
+                    id=f"ignored-western{index}",
+                    title=f"Dismissed Western {index}",
+                    content_type=ContentType.BOOK,
+                    status=ConsumptionStatus.UNREAD,
+                    metadata={"genres": ["western"]},
+                ),
+                user_id=1,
+            )
+            storage_manager.set_item_ignored(db_id, True, user_id=1)
+
+        profile = profile_generator.generate_profile(user_id=1)
+
+        assert profile.anti_preferences == []
+
+    def test_a_genre_rated_at_the_liked_floor_and_dismissed_twice_is_not_anti(
+        self, profile_generator: ProfileGenerator, storage_manager: StorageManager
+    ) -> None:
+        _save_rated(storage_manager, "romance", [3])
+        for index in range(2):
+            db_id = storage_manager.save_content_item(
+                ContentItem(
+                    id=f"ignored-romance{index}",
+                    title=f"Dismissed Romance {index}",
+                    content_type=ContentType.BOOK,
+                    status=ConsumptionStatus.UNREAD,
+                    metadata={"genres": ["romance"]},
+                ),
+                user_id=1,
+            )
+            storage_manager.set_item_ignored(db_id, True, user_id=1)
+
+        profile = profile_generator.generate_profile(user_id=1)
+
+        assert profile.anti_preferences == []
+
+    def test_the_dismissal_sample_is_the_latest_not_an_alphabetical_prefix(
+        self,
+        profile_generator: ProfileGenerator,
+        storage_manager: StorageManager,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Past the sample limit a title-ordered read answers with whatever the
+        alphabet put first, which is no sample of what the operator dismisses."""
+        dismissed: dict[str, list[int]] = {}
+        for genre, title in (("western", "Zeta"), ("horror", "Alpha")):
+            dismissed[genre] = [
+                storage_manager.save_content_item(
+                    ContentItem(
+                        id=f"{genre}{index}",
+                        title=f"{title} {index}",
+                        content_type=ContentType.BOOK,
+                        status=ConsumptionStatus.UNREAD,
+                        metadata={"genres": [genre]},
+                    ),
+                    user_id=1,
+                )
+                for index in range(2)
+            ]
+        # Last dismissed and lowest id, so it heads the read on either side of a
+        # clock tick the two writes may fall across.
+        for db_id in [*dismissed["horror"], *dismissed["western"]]:
+            storage_manager.set_item_ignored(db_id, True, user_id=1)
+        monkeypatch.setattr("src.recommendations.profile.SAMPLE_LIMIT", 2)
+
+        profile = profile_generator.generate_profile(user_id=1)
+
+        assert profile.anti_preferences == ["western"]
 
     def test_a_disliked_genre_the_operator_also_ignores_is_listed_once(
         self, profile_generator: ProfileGenerator, storage_manager: StorageManager

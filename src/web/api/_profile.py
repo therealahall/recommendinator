@@ -24,8 +24,6 @@ class ProfileResponse(BaseModel):
     user_id: int
     genre_affinities: list[GenreAffinityResponse]
     author_affinities: list[AuthorAffinityResponse]
-    liked_genres: list[str]
-    disliked_genres: list[str]
     theme_preferences: list[str]
     cross_media_patterns: list[str]
     has_content: bool
