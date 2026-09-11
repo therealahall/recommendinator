@@ -162,9 +162,9 @@ the Data tab or `source list` shows — carries on unchanged. Anything still
 defined only under `inputs:` is not read; add it again with **+ Add source**.
 
 A global setting the file still names — `logging.file`, `web.allowed_origins`, a
-scorer weight — is not read either. The boot log names each one; re-apply it on
-the Settings page or with `settings set <key> <value>`, or with `settings
-set-secret <key>` for an API key.
+scorer weight — is not read either. Re-apply it on the Settings page or with
+`settings set <key> <value>`, or `settings set-secret <key>` for an API key,
+then delete it from the file.
 
 ## CLI usage
 
