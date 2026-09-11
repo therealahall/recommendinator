@@ -45,7 +45,7 @@ def _emit_profile(
         return
 
     if payload["genre_affinities"]:
-        click.echo("Genre Affinities:")
+        click.echo("Genre and Tag Affinities:")
         for entry in payload["genre_affinities"]:
             click.echo(_genre_line(entry))
 
