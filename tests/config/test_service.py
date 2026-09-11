@@ -21,6 +21,7 @@ from src.config.service import (
     database_path,
     load_config,
     resolve_bootstrap_web,
+    warn_about_dropped_keys,
 )
 from src.recommendations.scorers import SCORER_NAME_MAP, Scorer
 from src.settings.metadata import default_of, flat_defaults, get_entry
@@ -275,14 +276,28 @@ class TestAKeyTheDatabaseNowOwnsIsReportedNotSwallowed:
             encoding="utf-8",
         )
 
+        config = load_config(config_file)
         with caplog.at_level(logging.WARNING, logger="src.config.service"):
-            config = load_config(config_file)
+            warn_about_dropped_keys()
 
         assert len(caplog.messages) == 1
         assert "logging.file" in caplog.messages[0]
         assert "recommendations.scorer_weights.genre_match" in caplog.messages[0]
         assert "settings set" in caplog.messages[0]
         assert config["logging"]["file"] == default_of("logging.file")
+
+    def test_the_warning_waits_for_the_log_handlers_rather_than_lastresort(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("logging:\n  level: DEBUG\n", encoding="utf-8")
+
+        with caplog.at_level(logging.WARNING, logger="src.config.service"):
+            load_config(config_file)
+            assert caplog.messages == []
+            warn_about_dropped_keys()
+
+        assert len(caplog.messages) == 1
 
     def test_a_dropped_api_key_names_the_command_that_can_re_apply_a_secret(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
@@ -293,8 +308,9 @@ class TestAKeyTheDatabaseNowOwnsIsReportedNotSwallowed:
             encoding="utf-8",
         )
 
+        load_config(config_file)
         with caplog.at_level(logging.WARNING, logger="src.config.service"):
-            load_config(config_file)
+            warn_about_dropped_keys()
 
         assert "enrichment.providers.tmdb.api_key" in caplog.messages[0]
         assert "settings set-secret" in caplog.messages[0]
@@ -303,8 +319,9 @@ class TestAKeyTheDatabaseNowOwnsIsReportedNotSwallowed:
     def test_the_bootstrap_keys_the_example_carries_are_not_reported_as_dropped(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
+        load_config(_EXAMPLE_CONFIG)
         with caplog.at_level(logging.WARNING, logger="src.config.service"):
-            load_config(_EXAMPLE_CONFIG)
+            warn_about_dropped_keys()
 
         assert caplog.messages == []
 
@@ -316,12 +333,15 @@ class TestAKeyTheDatabaseNowOwnsIsReportedNotSwallowed:
             "inputs:\n  steam:\n    plugin: steam\n", encoding="utf-8"
         )
 
+        load_config(config_file)
         with caplog.at_level(logging.WARNING, logger="src.config.service"):
-            load_config(config_file)
+            warn_about_dropped_keys()
 
         assert len(caplog.messages) == 1
         assert "inputs" in caplog.messages[0]
-        assert "source create" in caplog.messages[0]
+        # `source create` clears the source's credentials, so it must not be named.
+        assert "source create" not in caplog.messages[0]
+        assert "Data tab" in caplog.messages[0]
 
 
 class TestAChildlessRecommendationsHeaderStillBoots:

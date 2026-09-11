@@ -28,6 +28,7 @@ from src.config.service import (
     create_recommendation_engine,
     create_storage_manager,
     load_config,
+    warn_about_dropped_keys,
 )
 from src.storage.import_source_cleanup import drop_sources_replaced_by_upload
 from src.storage.settings_migration import migrate_config_settings
@@ -115,6 +116,7 @@ def cli(ctx: click.Context, config: Path | None, verbose: bool) -> None:
                 console_tracebacks=False,
                 console_floor=logging.WARNING,
             )
+        warn_about_dropped_keys()
         log_dependency_drift()
         drop_sources_replaced_by_upload(ctx.obj["storage"])
         ctx.obj["engine"] = create_recommendation_engine(
