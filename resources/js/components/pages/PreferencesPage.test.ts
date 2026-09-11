@@ -11,8 +11,6 @@ const PROFILE = {
     { genre: 'horror', score: 1.5, anti: true },
   ],
   author_affinities: [],
-  liked_genres: [],
-  disliked_genres: [],
   theme_preferences: [],
   cross_media_patterns: ['Reads the book before the film'],
   has_content: true,

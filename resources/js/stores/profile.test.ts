@@ -16,8 +16,6 @@ const AUTHORS_ONLY = {
   user_id: 1,
   genre_affinities: [],
   author_affinities: [{ author: 'Terry Brooks', score: 4.0 }],
-  liked_genres: [],
-  disliked_genres: [],
   theme_preferences: [],
   cross_media_patterns: [],
   has_content: true,

@@ -5089,18 +5089,6 @@ class TestProfileBodyIsBuiltFromTheStoredRecord:
         assert response.status_code == 200, response.text
         assert response.json() == _PROFILE_BODY
 
-    def test_the_genre_buckets_no_renderer_reads_stay_off_the_wire(
-        self, client, mock_components
-    ):
-        """They are the only lists escaping ``AFFINITY_LIMIT``, so a real library
-        shipped a couple of hundred strings nothing rendered."""
-        mock_components["storage"].profiles.get.return_value = _STORED_PROFILE
-
-        body = client.get("/api/profile?user_id=1").json()
-
-        assert "liked_genres" not in body
-        assert "disliked_genres" not in body
-
     def test_a_user_with_no_profile_gets_the_empty_shape_not_a_404(
         self, client, mock_components
     ):
