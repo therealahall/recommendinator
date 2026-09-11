@@ -26,18 +26,62 @@ class PreferenceProfile:
     generated_at: datetime | None = None
 
 
+class GenreAffinity(TypedDict):
+    genre: str
+    score: float | None
+    anti: bool
+
+
+class AuthorAffinity(TypedDict):
+    author: str
+    score: float
+
+
 class ProfilePayload(TypedDict):
     """The JSON shape both interfaces emit, declared by ``ProfileResponse``."""
 
     user_id: int
-    genre_affinities: dict[str, float]
-    author_affinities: dict[str, float]
+    genre_affinities: list[GenreAffinity]
+    author_affinities: list[AuthorAffinity]
     liked_genres: list[str]
     disliked_genres: list[str]
     theme_preferences: list[str]
-    anti_preferences: list[str]
     cross_media_patterns: list[str]
+    has_content: bool
     generated_at: str | None
+
+
+#: How many entries of each affinity list a surface renders. Decided here so
+#: the two cannot drift; a real library yields a couple of hundred genres.
+AFFINITY_LIMIT = 12
+
+
+def _genre_affinities(profile: dict[str, Any]) -> list[GenreAffinity]:
+    """Anti-preferences are a filtered view of the same genres, so a second list
+    of them printed a disliked genre twice. One the operator only ignores has no
+    mean, hence the null score."""
+    means: dict[str, float] = profile.get("genre_affinities") or {}
+    anti: list[str] = profile.get("anti_preferences") or []
+    ranked = sorted(means.items(), key=lambda pair: pair[1], reverse=True)
+    flagged = set(anti)
+    liked: list[GenreAffinity] = [
+        {"genre": genre, "score": score, "anti": False}
+        for genre, score in ranked
+        if genre not in flagged
+    ]
+    disliked: list[GenreAffinity] = [
+        {"genre": genre, "score": means.get(genre), "anti": True}
+        for genre in anti[:AFFINITY_LIMIT]
+    ]
+    return liked[:AFFINITY_LIMIT] + disliked
+
+
+def _author_affinities(profile: dict[str, Any]) -> list[AuthorAffinity]:
+    means: dict[str, float] = profile.get("author_affinities") or {}
+    ranked = sorted(means.items(), key=lambda pair: pair[1], reverse=True)
+    return [
+        {"author": author, "score": score} for author, score in ranked[:AFFINITY_LIMIT]
+    ]
 
 
 def profile_payload(
@@ -45,19 +89,30 @@ def profile_payload(
 ) -> ProfilePayload:
     """Serialise a ``profiles.get`` record; ``None`` is the empty shape."""
     profile: dict[str, Any] = (record["profile"] if record else None) or {}
+    genres = _genre_affinities(profile)
+    authors = _author_affinities(profile)
+    themes: list[str] = profile.get("theme_preferences") or []
+    patterns: list[str] = profile.get("cross_media_patterns") or []
     return {
         "user_id": user_id,
-        "genre_affinities": profile.get("genre_affinities") or {},
-        "author_affinities": profile.get("author_affinities") or {},
+        "genre_affinities": genres,
+        "author_affinities": authors,
         "liked_genres": profile.get("liked_genres") or [],
         "disliked_genres": profile.get("disliked_genres") or [],
-        "theme_preferences": profile.get("theme_preferences") or [],
-        "anti_preferences": profile.get("anti_preferences") or [],
-        "cross_media_patterns": profile.get("cross_media_patterns") or [],
-        # The blob's stamp, never the row's column: one clock, in UTC, so a
-        # reader sees the moment the generator ran.
+        "theme_preferences": themes,
+        "cross_media_patterns": patterns,
+        # Regenerating an unrated library stamps generated_at over an empty
+        # body, so the stamp cannot tell an absent profile from a vacuous one.
+        "has_content": bool(genres or authors or themes or patterns),
         "generated_at": profile.get("generated_at"),
     }
+
+
+def regenerated_payload(storage: "StorageManager", user_id: int) -> ProfilePayload:
+    """Serialise what was stored: a body built from the in-memory profile drifts
+    from what the next read answers."""
+    ProfileGenerator(storage).regenerate_and_save(user_id)
+    return profile_payload(user_id, storage.profiles.get(user_id))
 
 
 # Themes only. Length, player mode, structure and complexity describe the

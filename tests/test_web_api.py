@@ -5047,39 +5047,47 @@ def test_edit_item_reports_a_type_that_states_no_release_year(client, mock_compo
     assert "release year" in response.json()["detail"]
 
 
+_STORED_PROFILE = {
+    "id": 1,
+    "user_id": 1,
+    "profile": {
+        "genre_affinities": {"sci-fi": 4.5, "gore": 1.5},
+        "author_affinities": {"Terry Brooks": 4.0},
+        "liked_genres": ["sci-fi"],
+        "disliked_genres": [],
+        "theme_preferences": ["space exploration"],
+        "anti_preferences": ["gore"],
+        "cross_media_patterns": ["Generally rates books higher than games"],
+        "generated_at": "2026-01-01T00:00:00",
+    },
+}
+
+_PROFILE_BODY = {
+    "user_id": 1,
+    "genre_affinities": [
+        {"genre": "sci-fi", "score": 4.5, "anti": False},
+        {"genre": "gore", "score": 1.5, "anti": True},
+    ],
+    "author_affinities": [{"author": "Terry Brooks", "score": 4.0}],
+    "liked_genres": ["sci-fi"],
+    "disliked_genres": [],
+    "theme_preferences": ["space exploration"],
+    "cross_media_patterns": ["Generally rates books higher than games"],
+    "has_content": True,
+    "generated_at": "2026-01-01T00:00:00",
+}
+
+
 class TestProfileBodyIsBuiltFromTheStoredRecord:
     """``GET /api/profile`` shares its body builder with ``profile show``."""
 
     def test_every_stored_field_reaches_the_body(self, client, mock_components):
-        mock_components["storage"].profiles.get.return_value = {
-            "id": 1,
-            "user_id": 1,
-            "profile": {
-                "genre_affinities": {"sci-fi": 4.5},
-                "author_affinities": {"Terry Brooks": 4.0},
-                "liked_genres": ["sci-fi"],
-                "disliked_genres": [],
-                "theme_preferences": ["space exploration"],
-                "anti_preferences": ["gore"],
-                "cross_media_patterns": ["Generally rates books higher than games"],
-                "generated_at": "2026-01-01T00:00:00",
-            },
-        }
+        mock_components["storage"].profiles.get.return_value = _STORED_PROFILE
 
         response = client.get("/api/profile?user_id=1")
 
         assert response.status_code == 200, response.text
-        assert response.json() == {
-            "user_id": 1,
-            "genre_affinities": {"sci-fi": 4.5},
-            "author_affinities": {"Terry Brooks": 4.0},
-            "liked_genres": ["sci-fi"],
-            "disliked_genres": [],
-            "theme_preferences": ["space exploration"],
-            "anti_preferences": ["gore"],
-            "cross_media_patterns": ["Generally rates books higher than games"],
-            "generated_at": "2026-01-01T00:00:00",
-        }
+        assert response.json() == _PROFILE_BODY
 
     def test_a_user_with_no_profile_gets_the_empty_shape_not_a_404(
         self, client, mock_components
@@ -5091,12 +5099,24 @@ class TestProfileBodyIsBuiltFromTheStoredRecord:
         assert response.status_code == 200, response.text
         assert response.json() == {
             "user_id": 1,
-            "genre_affinities": {},
-            "author_affinities": {},
+            "genre_affinities": [],
+            "author_affinities": [],
             "liked_genres": [],
             "disliked_genres": [],
             "theme_preferences": [],
-            "anti_preferences": [],
             "cross_media_patterns": [],
+            "has_content": False,
             "generated_at": None,
         }
+
+    def test_regenerate_answers_what_the_next_read_will(self, client, mock_components):
+        """The body was hand-rolled off the in-memory profile, so a field the
+        serialiser derives reached ``GET`` and not ``POST``."""
+        mock_components["storage"].profiles.get.return_value = _STORED_PROFILE
+
+        with patch("src.recommendations.profile.ProfileGenerator") as generator:
+            response = client.post("/api/profile/regenerate?user_id=1")
+
+        generator.return_value.regenerate_and_save.assert_called_once_with(1)
+        assert response.status_code == 200, response.text
+        assert response.json() == _PROFILE_BODY
