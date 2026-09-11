@@ -170,6 +170,7 @@ class StorageManager:
         offset: int = 0,
         sort_by: str = "title",
         include_ignored: bool = True,
+        ignored_only: bool = False,
         enrichment: EnrichmentFilter | None = None,
         search: str | None = None,
     ) -> list[ContentItem]:
@@ -183,6 +184,7 @@ class StorageManager:
             offset=offset,
             sort_by=sort_by,
             include_ignored=include_ignored,
+            ignored_only=ignored_only,
             enrichment=enrichment,
             search=search,
         )
@@ -223,16 +225,17 @@ class StorageManager:
         content_type: ContentType | None = None,
         limit: int | None = None,
     ) -> list[ContentItem]:
-        """*limit* bounds the completed read, before the rating filter, so a
-        caller that passes one may get back fewer items than it asked for.
+        """*limit* cuts the rated set, not the completed one, so a large library
+        samples what the operator rated rather than an alphabetical prefix of
+        everything finished. Ratings start at 1, so ``min_rating`` is that filter.
         """
-        completed = self.get_completed_items(
+        return self.get_completed_items(
             user_id=user_id,
             content_type=content_type,
+            min_rating=1,
             limit=limit,
             include_ignored=False,
         )
-        return [item for item in completed if item.rating is not None]
 
     def get_consumption_items(
         self,

@@ -109,6 +109,28 @@ def sample_items(storage_manager: StorageManager) -> list[int]:
     return db_ids
 
 
+def _save_rated(
+    storage: StorageManager,
+    genre: str,
+    ratings: list[int],
+    content_type: ContentType = ContentType.BOOK,
+    author: str | None = None,
+) -> None:
+    for index, rating in enumerate(ratings):
+        storage.save_content_item(
+            ContentItem(
+                id=f"{genre}-{author}-{index}",
+                title=f"{genre.title()} {index}",
+                content_type=content_type,
+                status=ConsumptionStatus.COMPLETED,
+                rating=rating,
+                author=author,
+                metadata={"genres": [genre]},
+            ),
+            user_id=1,
+        )
+
+
 class TestProfileGeneration:
     def test_generate_profile_empty_user(
         self,
@@ -181,7 +203,7 @@ class TestThemePreferences:
                 content_type=ContentType.VIDEO_GAME,
                 status=ConsumptionStatus.COMPLETED,
                 rating=5,
-                metadata={"themes": ["exploration", "narrative depth"]},
+                metadata={"tags": ["exploration", "narrative depth"]},
             ),
             ContentItem(
                 id="test2",
@@ -189,7 +211,7 @@ class TestThemePreferences:
                 content_type=ContentType.VIDEO_GAME,
                 status=ConsumptionStatus.COMPLETED,
                 rating=5,
-                metadata={"themes": ["exploration", "atmosphere"]},
+                metadata={"tags": ["exploration", "atmosphere"]},
             ),
         ]
         for item in items:
@@ -265,6 +287,19 @@ class TestAntiPreferences:
         profile = profile_generator.generate_profile(user_id=1)
 
         assert "horror" in profile.anti_preferences
+
+    def test_a_genre_below_the_operators_own_average_is_an_anti_preference(
+        self, profile_generator: ProfileGenerator, storage_manager: StorageManager
+    ) -> None:
+        """The majority rule alone nearly empties the list: in a library averaging
+        3.8, almost nothing collects more 1s and 2s than 3s and above."""
+        _save_rated(storage_manager, "fantasy", [5, 5, 5, 5])
+        _save_rated(storage_manager, "horror", [3, 3])
+
+        profile = profile_generator.generate_profile(user_id=1)
+
+        assert profile.anti_preferences == ["horror"]
+        assert "horror" in profile.liked_genres
 
 
 class TestCrossMediaPatterns:
@@ -367,7 +402,10 @@ class TestRegenerateAndSave:
 
         assert payload["genre_affinities"] == generated.genre_affinities
         assert payload["genre_affinities"]
-        assert payload["generated_at"]
+        # One clock: the generator's own UTC stamp, not the row's column, which
+        # ticks on a different write in a different timezone.
+        assert generated.generated_at is not None
+        assert payload["generated_at"] == generated.generated_at.isoformat()
 
 
 class TestProfileRegression:
@@ -479,56 +517,6 @@ class TestProfileRegression:
         assert "science fiction" in profile.genre_affinities
         assert "sci-fi" not in profile.genre_affinities
 
-    def test_niche_tags_excluded_from_profile_regression(
-        self,
-        storage_manager: StorageManager,
-    ) -> None:
-        items = [
-            ContentItem(
-                id="test1",
-                title="Book 1",
-                content_type=ContentType.BOOK,
-                status=ConsumptionStatus.COMPLETED,
-                rating=5,
-                metadata={"genres": ["sci-fi"], "tags": ["hacker", "computer"]},
-            ),
-            ContentItem(
-                id="test2",
-                title="Book 2",
-                content_type=ContentType.BOOK,
-                status=ConsumptionStatus.COMPLETED,
-                rating=5,
-                metadata={"genres": ["sci-fi"], "tags": ["hacker", "grand"]},
-            ),
-            ContentItem(
-                id="test3",
-                title="Book 3",
-                content_type=ContentType.BOOK,
-                status=ConsumptionStatus.COMPLETED,
-                rating=5,
-                metadata={"genres": ["fantasy"], "tags": ["wizards", "grand"]},
-            ),
-            ContentItem(
-                id="test4",
-                title="Book 4",
-                content_type=ContentType.BOOK,
-                status=ConsumptionStatus.COMPLETED,
-                rating=5,
-                metadata={"genres": ["fantasy"], "tags": ["wizards"]},
-            ),
-        ]
-        for item in items:
-            storage_manager.save_content_item(item, user_id=1)
-
-        generator = ProfileGenerator(storage_manager)
-        profile = generator.generate_profile(user_id=1)
-
-        assert "science fiction" in profile.genre_affinities
-        assert "fantasy" in profile.genre_affinities
-
-        for niche_tag in ("hacker", "computer", "wizards", "grand"):
-            assert niche_tag not in profile.genre_affinities
-
     def test_divergence_requires_data_in_both_types_regression(
         self,
         storage_manager: StorageManager,
@@ -611,3 +599,106 @@ class TestProfileIgnoredSignalRegression:
 
         assert "western" not in profile.genre_affinities
         assert "science fiction" in profile.genre_affinities
+
+    def test_a_genre_the_operator_only_ignores_is_an_anti_preference(
+        self, profile_generator: ProfileGenerator, storage_manager: StorageManager
+    ) -> None:
+        """Ignoring is a verdict; the signal read drops it before anything sees
+        it, so an ignored-only genre used to leave no trace at all."""
+        _save_rated(storage_manager, "science fiction", [5, 5])
+        for index in range(2):
+            db_id = storage_manager.save_content_item(
+                ContentItem(
+                    id=f"western{index}",
+                    title=f"Western {index}",
+                    content_type=ContentType.BOOK,
+                    status=ConsumptionStatus.UNREAD,
+                    metadata={"genres": ["western"]},
+                ),
+                user_id=1,
+            )
+            storage_manager.set_item_ignored(db_id, True, user_id=1)
+
+        profile = profile_generator.generate_profile(user_id=1)
+
+        assert "western" in profile.anti_preferences
+
+
+class TestGenreVocabulary:
+    def test_a_genre_the_profile_allowlist_dropped_reaches_the_profile(
+        self, profile_generator: ProfileGenerator, storage_manager: StorageManager
+    ) -> None:
+        """A second allowlist on top of the genre normalizer silently dropped
+        half the game vocabulary, simulation and racing among it."""
+        _save_rated(storage_manager, "simulation", [4, 3], ContentType.VIDEO_GAME)
+        _save_rated(storage_manager, "racing", [4, 4], ContentType.VIDEO_GAME)
+        _save_rated(
+            storage_manager, "walking simulator", [5, 4], ContentType.VIDEO_GAME
+        )
+
+        profile = profile_generator.generate_profile(user_id=1)
+
+        assert profile.genre_affinities["simulation"] == 3.5
+        assert profile.genre_affinities["racing"] == 4.0
+        assert profile.genre_affinities["walking simulator"] == 4.5
+
+
+class TestLikedAndDislikedBuckets:
+    def test_a_genre_the_liked_bucket_holds_more_of_is_liked(
+        self, profile_generator: ProfileGenerator, storage_manager: StorageManager
+    ) -> None:
+        """3 is "liked it but do not love it", so three 3s against one 2 is a
+        liked genre however low its mean reads."""
+        _save_rated(storage_manager, "mystery", [3, 3, 3, 2])
+        _save_rated(storage_manager, "horror", [2, 2, 1, 4])
+
+        profile = profile_generator.generate_profile(user_id=1)
+
+        assert profile.liked_genres == ["mystery"]
+        assert profile.disliked_genres == ["horror"]
+
+    def test_an_even_split_is_liked(
+        self, profile_generator: ProfileGenerator, storage_manager: StorageManager
+    ) -> None:
+        _save_rated(storage_manager, "western", [4, 4, 1, 1])
+
+        profile = profile_generator.generate_profile(user_id=1)
+
+        assert profile.liked_genres == ["western"]
+        assert profile.disliked_genres == []
+
+
+class TestAuthorAffinities:
+    def test_mean_rating_per_author_above_the_item_floor(
+        self, profile_generator: ProfileGenerator, storage_manager: StorageManager
+    ) -> None:
+        """The most-read author must not net out neutral, which is what the
+        scorer's max-normalized sums do to them."""
+        _save_rated(storage_manager, "fantasy", [5, 4, 3], author="Terry Brooks")
+        _save_rated(storage_manager, "fantasy", [5], author="One Book Author")
+
+        profile = profile_generator.generate_profile(user_id=1)
+
+        assert profile.author_affinities == {"Terry Brooks": 4.0}
+
+    def test_a_game_developer_is_an_author(
+        self, profile_generator: ProfileGenerator, storage_manager: StorageManager
+    ) -> None:
+        """Game, film and show plugins state the creator in metadata rather than
+        ``author``, so reading a book's field alone empties three content types."""
+        for index, rating in enumerate((5, 3)):
+            storage_manager.save_content_item(
+                ContentItem(
+                    id=f"game{index}",
+                    title=f"Game {index}",
+                    content_type=ContentType.VIDEO_GAME,
+                    status=ConsumptionStatus.COMPLETED,
+                    rating=rating,
+                    metadata={"developer": "Larian Studios", "genres": ["rpg"]},
+                ),
+                user_id=1,
+            )
+
+        profile = profile_generator.generate_profile(user_id=1)
+
+        assert profile.author_affinities == {"Larian Studios": 4.0}

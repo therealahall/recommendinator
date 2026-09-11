@@ -1,9 +1,8 @@
 import json
-import logging
 import re
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypedDict
 
 from src.models.content import ContentItem, ContentType
@@ -13,13 +12,14 @@ from src.storage.schema import PreferenceProfileRow
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
 
-logger = logging.getLogger(__name__)
-
 
 @dataclass
 class PreferenceProfile:
     user_id: int
     genre_affinities: dict[str, float] = field(default_factory=dict)
+    author_affinities: dict[str, float] = field(default_factory=dict)
+    liked_genres: list[str] = field(default_factory=list)
+    disliked_genres: list[str] = field(default_factory=list)
     theme_preferences: list[str] = field(default_factory=list)
     anti_preferences: list[str] = field(default_factory=list)
     cross_media_patterns: list[str] = field(default_factory=list)
@@ -31,6 +31,9 @@ class ProfilePayload(TypedDict):
 
     user_id: int
     genre_affinities: dict[str, float]
+    author_affinities: dict[str, float]
+    liked_genres: list[str]
+    disliked_genres: list[str]
     theme_preferences: list[str]
     anti_preferences: list[str]
     cross_media_patterns: list[str]
@@ -45,13 +48,15 @@ def profile_payload(
     return {
         "user_id": user_id,
         "genre_affinities": profile.get("genre_affinities") or {},
+        "author_affinities": profile.get("author_affinities") or {},
+        "liked_genres": profile.get("liked_genres") or [],
+        "disliked_genres": profile.get("disliked_genres") or [],
         "theme_preferences": profile.get("theme_preferences") or [],
         "anti_preferences": profile.get("anti_preferences") or [],
         "cross_media_patterns": profile.get("cross_media_patterns") or [],
-        # The row's column and the blob's field stamp the same generation; the
-        # blob's is in the host's own time, which is what a reader expects.
-        "generated_at": profile.get("generated_at")
-        or (record["generated_at"] if record else None),
+        # The blob's stamp, never the row's column: one clock, in UTC, so a
+        # reader sees the moment the generator ran.
+        "generated_at": profile.get("generated_at"),
     }
 
 
@@ -83,140 +88,103 @@ _THEME_KEYWORD_PATTERN = re.compile(
     + r")\b"
 )
 
-# Broad genre/subgenre categories for user-facing profile display.
-# Excludes themes, moods, settings, character archetypes, and game mechanics
-# that are useful for item-to-item matching but too granular for a profile.
-PROFILE_GENRES = {
-    # Core genres
-    "action",
-    "adventure",
-    "animation",
-    "biography",
-    "comedy",
-    "crime",
-    "documentary",
-    "drama",
-    "family",
-    "fantasy",
-    "history",
-    "horror",
-    "music",
-    "musical",
-    "mystery",
-    "romance",
-    "science fiction",
-    "sport",
-    "sports",
-    "thriller",
-    "war",
-    "western",
-    # Sci-fi subgenres
-    "hard science fiction",
-    "military science fiction",
-    "space opera",
-    "cyberpunk",
-    "steampunk",
-    "biopunk",
-    "dieselpunk",
-    "solarpunk",
-    "post-cyberpunk",
-    "climate fiction",
-    "science fantasy",
-    "alternate history",
-    # Fantasy subgenres
-    "high fantasy",
-    "epic fantasy",
-    "low fantasy",
-    "dark fantasy",
-    "urban fantasy",
-    "historical fantasy",
-    "grimdark",
-    "sword and sorcery",
-    "portal fantasy",
-    "magical realism",
-    "cozy fantasy",
-    "romantasy",
-    "progression fantasy",
-    "litrpg",
-    # Horror subgenres
-    "cosmic horror",
-    "body horror",
-    "folk horror",
-    "psychological horror",
-    "supernatural horror",
-    "southern gothic",
-    # Mystery / thriller subgenres
-    "cozy mystery",
-    "police procedural",
-    "whodunit",
-    "psychological thriller",
-    "espionage",
-    "noir",
-    # Romance subgenres
-    "contemporary romance",
-    "historical romance",
-    "paranormal romance",
-    "romantic suspense",
-    "romantic comedy",
-    "dark romance",
-    # Drama / literary
-    "literary fiction",
-    "family saga",
-    "satire",
-    "social drama",
-    # Western subgenres
-    "neo-western",
-    "weird western",
-    # Nonfiction
-    "memoir",
-    "autobiography",
-    "true crime",
-    "narrative nonfiction",
-    "popular science",
-    # Apocalyptic / dystopian
-    "apocalyptic",
-    "post-apocalyptic",
-    "dystopian",
-    # Game genres
-    "rpg",
-    "action rpg",
-    "jrpg",
-    "crpg",
-    "mmorpg",
-    "tactical rpg",
-    "strategy",
-    "grand strategy",
-    "4x",
-    "puzzle",
-    "platformer",
-    "shooter",
-    "first person shooter",
-    "stealth",
-    "roguelike",
-    "roguelite",
-    "metroidvania",
-    "souls-like",
-    "sandbox",
-    "open world",
-    "visual novel",
-    "immersive sim",
-    "city builder",
-    "farming sim",
-    "survival crafting",
-    # Media formats
-    "anime",
-    "manga",
-    "slice of life",
-    # Audience
-    "young adult",
-    "indie",
-}
+#: How many items a genre or an author needs before the profile says anything
+#: about it.
+MIN_ITEMS = 2
 
-MIN_ITEMS_PER_GENRE = 2
+#: The floor for liking something: the operator reads 3 as "liked it but do not
+#: love it", so only 1 and 2 are complaints.
+LIKED_RATING = 3
+
+#: How many items one profile reads, per set.
+SAMPLE_LIMIT = 1000
 
 
-def _extract_profile_genres(item: ContentItem) -> list[str]:
-    return [genre for genre in extract_genres(item) if genre in PROFILE_GENRES]
+def _ratings_by_genre(items: list[ContentItem]) -> dict[str, list[int]]:
+    ratings: dict[str, list[int]] = defaultdict(list)
+    for item in items:
+        if item.rating is None:
+            continue
+        for genre in extract_genres(item):
+            ratings[genre].append(item.rating)
+    return ratings
+
+
+def _ratings_by_author(items: list[ContentItem]) -> dict[str, list[int]]:
+    """Keyed on the creator column every content type fills — a book's author, a
+    film's director, a show's creators, a game's developer."""
+    ratings: dict[str, list[int]] = defaultdict(list)
+    for item in items:
+        author = (item.author or "").strip()
+        if item.rating is None or not author:
+            continue
+        ratings[author].append(item.rating)
+    return ratings
+
+
+def _mean_ratings(ratings: dict[str, list[int]]) -> dict[str, float]:
+    means = {
+        key: round(sum(values) / len(values), 2)
+        for key, values in ratings.items()
+        if len(values) >= MIN_ITEMS
+    }
+    return dict(sorted(means.items(), key=lambda pair: pair[1], reverse=True))
+
+
+def _overall_mean_rating(items: list[ContentItem]) -> float | None:
+    ratings = [item.rating for item in items if item.rating is not None]
+    if not ratings:
+        return None
+    return sum(ratings) / len(ratings)
+
+
+def _bucket_genres(
+    genre_ratings: dict[str, list[int]], genre_affinities: dict[str, float]
+) -> tuple[list[str], list[str]]:
+    """Whichever bucket holds more of a genre's items wins, best mean first. A
+    tie is liked: an even split is not a complaint."""
+    liked: list[str] = []
+    disliked: list[str] = []
+    for genre in genre_affinities:
+        ratings = genre_ratings[genre]
+        likes = sum(1 for rating in ratings if rating >= LIKED_RATING)
+        if likes * 2 >= len(ratings):
+            liked.append(genre)
+        else:
+            disliked.append(genre)
+    return liked, disliked
+
+
+def _anti_preferences(
+    genre_affinities: dict[str, float],
+    genre_ratings: dict[str, list[int]],
+    baseline: float | None,
+    ignored_items: list[ContentItem],
+) -> list[str]:
+    """Two signals, worst mean first: a genre rated below the operator's own
+    average, and a genre they mostly ignore. The liked/disliked buckets answer a
+    different question, so a genre can be liked and still sit below the bar.
+    """
+    below_baseline = [
+        genre
+        for genre, mean in reversed(list(genre_affinities.items()))
+        if baseline is not None and mean < baseline
+    ]
+
+    ignored_counts = Counter(
+        genre for item in ignored_items for genre in extract_genres(item)
+    )
+    # Concentrated, not merely present: a genre the operator rates more often
+    # than they dismiss is theirs, ignored copies and all.
+    mostly_ignored = [
+        genre
+        for genre, count in ignored_counts.most_common()
+        if count >= MIN_ITEMS
+        and count > len(genre_ratings.get(genre, []))
+        and genre not in below_baseline
+    ]
+
+    return below_baseline + mostly_ignored
 
 
 class ProfileGenerator:
@@ -227,47 +195,34 @@ class ProfileGenerator:
         self.storage = storage_manager
 
     def generate_profile(self, user_id: int) -> PreferenceProfile:
-        # Only rated, non-ignored items carry a taste signal for the profile;
-        # ignored/unrated content must not shape it (issue #99).
-        completed_items = self.storage.get_signal_items(user_id=user_id, limit=1000)
-
-        genre_affinities = self._calculate_genre_affinities(completed_items)
-
-        theme_preferences = self._identify_theme_preferences(completed_items)
-
-        anti_preferences = self._identify_anti_preferences(completed_items)
-
-        cross_media_patterns = self._identify_cross_media_patterns(
-            completed_items, genre_affinities
+        # Rated, non-ignored items are the taste signal (issue #99). Ignored
+        # items are read separately because dismissing something is its own
+        # verdict, and the signal read drops them before anything sees them.
+        rated_items = self.storage.get_signal_items(user_id=user_id, limit=SAMPLE_LIMIT)
+        ignored_items = self.storage.get_content_items(
+            user_id=user_id, ignored_only=True, limit=SAMPLE_LIMIT
         )
+
+        genre_ratings = _ratings_by_genre(rated_items)
+        genre_affinities = _mean_ratings(genre_ratings)
+        liked_genres, disliked_genres = _bucket_genres(genre_ratings, genre_affinities)
 
         return PreferenceProfile(
             user_id=user_id,
             genre_affinities=genre_affinities,
-            theme_preferences=theme_preferences,
-            anti_preferences=anti_preferences,
-            cross_media_patterns=cross_media_patterns,
-            generated_at=datetime.now(),
+            author_affinities=_mean_ratings(_ratings_by_author(rated_items)),
+            liked_genres=liked_genres,
+            disliked_genres=disliked_genres,
+            theme_preferences=self._identify_theme_preferences(rated_items),
+            anti_preferences=_anti_preferences(
+                genre_affinities,
+                genre_ratings,
+                _overall_mean_rating(rated_items),
+                ignored_items,
+            ),
+            cross_media_patterns=self._identify_cross_media_patterns(rated_items),
+            generated_at=datetime.now(UTC),
         )
-
-    def _calculate_genre_affinities(self, items: list[ContentItem]) -> dict[str, float]:
-        genre_ratings: dict[str, list[int]] = defaultdict(list)
-
-        for item in items:
-            if item.rating is None:
-                continue
-
-            genres = _extract_profile_genres(item)
-
-            for genre in genres:
-                genre_ratings[genre].append(item.rating)
-
-        affinities: dict[str, float] = {}
-        for genre, ratings in genre_ratings.items():
-            if len(ratings) >= MIN_ITEMS_PER_GENRE:
-                affinities[genre] = round(sum(ratings) / len(ratings), 2)
-
-        return dict(sorted(affinities.items(), key=lambda pair: pair[1], reverse=True))
 
     def _identify_theme_preferences(self, items: list[ContentItem]) -> list[str]:
         theme_counts: dict[str, int] = defaultdict(int)
@@ -289,42 +244,7 @@ class ProfileGenerator:
         preferences.sort(key=lambda theme: theme_counts[theme], reverse=True)
         return preferences[:10]
 
-    def _identify_anti_preferences(
-        self,
-        completed_items: list[ContentItem],
-    ) -> list[str]:
-        genre_ratings: dict[str, list[int]] = defaultdict(list)
-
-        for item in completed_items:
-            if item.rating is None:
-                continue
-            genres = _extract_profile_genres(item)
-            for genre in genres:
-                genre_ratings[genre].append(item.rating)
-
-        anti_prefs: dict[str, float] = {}
-        for genre, ratings in genre_ratings.items():
-            if len(ratings) < MIN_ITEMS_PER_GENRE:
-                continue
-
-            average_rating = sum(ratings) / len(ratings)
-            if average_rating > 3.0:
-                continue
-
-            high_count = sum(1 for rating in ratings if rating >= 4)
-            high_ratio = high_count / len(ratings)
-
-            if high_count <= 1 or high_ratio <= 0.2:
-                anti_prefs[genre] = average_rating
-
-        sorted_anti = sorted(anti_prefs.items(), key=lambda pair: pair[1])
-        return [genre for genre, _average in sorted_anti[:10]]
-
-    def _identify_cross_media_patterns(
-        self,
-        items: list[ContentItem],
-        genre_affinities: dict[str, float],
-    ) -> list[str]:
+    def _identify_cross_media_patterns(self, items: list[ContentItem]) -> list[str]:
         patterns: list[str] = []
 
         by_type: dict[str, list[ContentItem]] = defaultdict(list)
@@ -334,7 +254,7 @@ class ProfileGenerator:
 
         type_genre_affinities: dict[str, dict[str, float]] = {}
         for content_type, type_items in by_type.items():
-            type_affinities = self._calculate_genre_affinities(type_items)
+            type_affinities = _mean_ratings(_ratings_by_genre(type_items))
             if type_affinities:
                 type_genre_affinities[content_type] = type_affinities
 
@@ -349,29 +269,25 @@ class ProfileGenerator:
     def _extract_themes(self, item: ContentItem) -> list[str]:
         themes: list[str] = []
 
-        metadata = item.metadata or {}
-
-        theme_fields = ["themes", "tags", "keywords", "features"]
-
-        for theme_field in theme_fields:
-            if theme_field in metadata:
-                value = metadata[theme_field]
-                if isinstance(value, list):
-                    themes.extend(str(v).lower() for v in value)
-                elif isinstance(value, str):
-                    for delimiter in [",", ";", "/", "|"]:
-                        if delimiter in value:
-                            themes.extend(
-                                t.strip().lower() for t in value.split(delimiter)
-                            )
-                            break
-                    else:
-                        themes.append(value.lower())
+        # Only ``tags`` is live: no row in any detail table carries a themes,
+        # keywords or features key.
+        value = (item.metadata or {}).get("tags")
+        if isinstance(value, list):
+            themes.extend(str(entry).lower() for entry in value)
+        elif isinstance(value, str):
+            for delimiter in [",", ";", "/", "|"]:
+                if delimiter in value:
+                    themes.extend(
+                        part.strip().lower() for part in value.split(delimiter)
+                    )
+                    break
+            else:
+                themes.append(value.lower())
 
         if item.review:
             themes.extend(_THEME_KEYWORD_PATTERN.findall(item.review.lower()))
 
-        known_themes = [t for t in themes if t in THEME_KEYWORDS]
+        known_themes = [theme for theme in themes if theme in THEME_KEYWORDS]
         return list(set(known_themes))
 
     def _find_genre_divergence_patterns(

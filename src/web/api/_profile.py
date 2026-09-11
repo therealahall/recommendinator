@@ -12,6 +12,9 @@ router = APIRouter()
 class ProfileResponse(BaseModel):
     user_id: int
     genre_affinities: dict[str, float]
+    author_affinities: dict[str, float]
+    liked_genres: list[str]
+    disliked_genres: list[str]
     theme_preferences: list[str]
     anti_preferences: list[str]
     cross_media_patterns: list[str]
@@ -36,6 +39,9 @@ def regenerate_profile(
     return ProfileResponse(
         user_id=profile.user_id,
         genre_affinities=profile.genre_affinities,
+        author_affinities=profile.author_affinities,
+        liked_genres=profile.liked_genres,
+        disliked_genres=profile.disliked_genres,
         theme_preferences=profile.theme_preferences,
         anti_preferences=profile.anti_preferences,
         cross_media_patterns=profile.cross_media_patterns,
