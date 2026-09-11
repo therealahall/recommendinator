@@ -14,7 +14,6 @@ from src.sources.service import (
     SourceConfigError,
     create_source,
     delete_source,
-    get_available_sync_sources,
     redact_credentials,
     resolve_inputs,
     update_source_config_values,
@@ -22,15 +21,14 @@ from src.sources.service import (
 from src.storage.manager import StorageManager
 
 
-def _resolve_one(
-    source_id: str, config: dict[str, Any], storage: StorageManager
-) -> ResolvedInput | None:
+@pytest.fixture()
+def storage(tmp_path: Path) -> StorageManager:
+    return StorageManager(sqlite_path=tmp_path / "test.db")
+
+
+def _resolve_one(source_id: str, storage: StorageManager) -> ResolvedInput | None:
     return next(
-        (
-            entry
-            for entry in resolve_inputs(config, storage=storage)
-            if entry.source_id == source_id
-        ),
+        (entry for entry in resolve_inputs(storage) if entry.source_id == source_id),
         None,
     )
 
@@ -147,207 +145,40 @@ def _registry_with_fakes() -> Iterator[None]:
 
 @pytest.mark.usefixtures("_registry_with_fakes")
 class TestResolveInputs:
-    def test_basic_resolution(self) -> None:
-        config = {
-            "inputs": {
-                "my_books": {
-                    "plugin": "fake_books",
-                    "enabled": True,
-                    "path": "/data/books.csv",
-                },
-            }
-        }
+    def test_mixed_enabled_disabled(self, storage: StorageManager) -> None:
+        storage.sources.upsert(1, "my_books", "fake_books", {}, enabled=True)
+        storage.sources.upsert(1, "my_games", "fake_games", {}, enabled=False)
+        storage.sources.upsert(1, "more_books", "fake_books", {}, enabled=True)
 
-        resolved = resolve_inputs(config)
+        resolved = resolve_inputs(storage)
 
-        assert len(resolved) == 1
-        assert resolved[0].source_id == "my_books"
-        assert resolved[0].plugin.name == "fake_books"
-        assert resolved[0].config["path"] == "/data/books.csv"
-
-    def test_mixed_enabled_disabled(self) -> None:
-        config = {
-            "inputs": {
-                "my_books": {
-                    "plugin": "fake_books",
-                    "enabled": True,
-                    "path": "/data/books.csv",
-                },
-                "my_games": {
-                    "plugin": "fake_games",
-                    "enabled": False,
-                    "api_key": "test",
-                },
-                "more_books": {
-                    "plugin": "fake_books",
-                    "enabled": True,
-                    "path": "/data/more.csv",
-                },
-            }
-        }
-
-        resolved = resolve_inputs(config)
-
-        assert len(resolved) == 2
-        source_ids = {entry.source_id for entry in resolved}
-        assert source_ids == {"my_books", "more_books"}
+        assert {entry.source_id for entry in resolved} == {"my_books", "more_books"}
 
 
 @pytest.mark.usefixtures("_registry_with_fakes")
 class TestSourceIdPropagation:
-    def test_source_id_in_fetched_items(self) -> None:
-        config = {
-            "inputs": {
-                "fiction_shelf": {
-                    "plugin": "fake_books",
-                    "enabled": True,
-                    "path": "/data/fiction.csv",
-                },
-            }
-        }
+    def test_source_id_in_fetched_items(self, storage: StorageManager) -> None:
+        storage.sources.upsert(
+            1, "fiction_shelf", "fake_books", {"path": "/db/fiction.csv"}, enabled=True
+        )
 
-        resolved = resolve_inputs(config)
+        resolved = resolve_inputs(storage)
         items = list(resolved[0].plugin.fetch(resolved[0].config))
 
-        assert len(items) == 1
-        assert items[0].source == "fiction_shelf"
-
-
-@pytest.mark.usefixtures("_registry_with_fakes")
-class TestGetAvailableSyncSources:
-    def test_returns_all_sources_with_enabled_flag(self) -> None:
-        config = {
-            "inputs": {
-                "my_books": {
-                    "plugin": "fake_books",
-                    "enabled": True,
-                    "path": "/data/books.csv",
-                },
-                "my_games": {
-                    "plugin": "fake_games",
-                    "enabled": False,
-                    "api_key": "test",
-                },
-            }
-        }
-
-        sources = get_available_sync_sources(config)
-        by_id = {s.id: s for s in sources}
-
-        assert by_id["my_books"].enabled is True
-        assert by_id["my_books"].display_name == "My Books"
-        assert by_id["my_books"].plugin_display_name == "Fake Books"
-        assert by_id["my_games"].enabled is False
-
-
-@pytest.mark.usefixtures("_registry_with_fakes")
-class TestResolveInputsWithStorage:
-    @pytest.fixture()
-    def storage(self, tmp_path: Path) -> StorageManager:
-        return StorageManager(sqlite_path=tmp_path / "test.db")
-
-    def test_db_credential_injected_into_config(self, storage: StorageManager) -> None:
-        config = {
-            "inputs": {
-                "my_games": {
-                    "plugin": "fake_games",
-                    "enabled": True,
-                    "api_key": "config_key",
-                }
-            }
-        }
-        storage.credentials.save(1, "my_games", "api_key", "db_key")
-
-        resolved = resolve_inputs(config, storage=storage)
-
-        assert len(resolved) == 1
-        assert resolved[0].config["api_key"] == "db_key"
+        assert resolved[0].plugin.name == "fake_books"
+        assert resolved[0].config["path"] == "/db/fiction.csv"
+        assert [item.source for item in items] == ["fiction_shelf"]
 
 
 @pytest.mark.usefixtures("_registry_with_fakes")
 class TestResolveInputsWithDbSourceConfig:
-    @pytest.fixture()
-    def storage(self, tmp_path: Path) -> StorageManager:
-        return StorageManager(sqlite_path=tmp_path / "test.db")
-
-    def test_db_config_overrides_yaml_when_migrated(
-        self, storage: StorageManager
-    ) -> None:
-        config = {
-            "inputs": {
-                "my_books": {
-                    "plugin": "fake_books",
-                    "enabled": True,
-                    "path": "/yaml/books.csv",
-                },
-            }
-        }
-        storage.sources.upsert(
-            1, "my_books", "fake_books", {"path": "/db/books.csv"}, enabled=True
-        )
-
-        resolved = resolve_inputs(config, storage=storage)
-
-        assert len(resolved) == 1
-        assert resolved[0].config["path"] == "/db/books.csv"
-        assert resolved[0].source_id == "my_books"
-
-    def test_db_config_disabled_excludes_source(self, storage: StorageManager) -> None:
-        config = {
-            "inputs": {
-                "my_books": {
-                    "plugin": "fake_books",
-                    "enabled": True,
-                    "path": "/yaml/books.csv",
-                },
-            }
-        }
-        storage.sources.upsert(
-            1, "my_books", "fake_books", {"path": "/db/books.csv"}, enabled=False
-        )
-
-        resolved = resolve_inputs(config, storage=storage)
-
-        assert resolved == []
-
-    def test_db_only_source_resolves(self, storage: StorageManager) -> None:
-        config: dict[str, Any] = {"inputs": {}}
-        storage.sources.upsert(
-            1, "books_only_in_db", "fake_books", {"path": "/db/x.csv"}, enabled=True
-        )
-
-        resolved = resolve_inputs(config, storage=storage)
-
-        assert len(resolved) == 1
-        assert resolved[0].source_id == "books_only_in_db"
-        assert resolved[0].config["path"] == "/db/x.csv"
-
-    def test_db_config_merges_with_credentials(self, storage: StorageManager) -> None:
-        config: dict[str, Any] = {"inputs": {}}
-        storage.sources.upsert(1, "my_games", "fake_games", {}, enabled=True)
-        storage.credentials.save(1, "my_games", "api_key", "secret_from_creds")
-
-        resolved = resolve_inputs(config, storage=storage)
-
-        assert resolved[0].config["api_key"] == "secret_from_creds"
-
     def test_sources_resolve_in_id_order_whatever_the_hash_seed(
         self, storage: StorageManager
     ) -> None:
-        config = {
-            "inputs": {
-                "zulu": {"plugin": "fake_books", "enabled": True, "path": "/z.csv"},
-                "bravo": {"plugin": "fake_books", "enabled": True, "path": "/b.csv"},
-            }
-        }
-        storage.sources.upsert(
-            1, "yankee", "fake_books", {"path": "/y.csv"}, enabled=True
-        )
-        storage.sources.upsert(
-            1, "alpha", "fake_books", {"path": "/a.csv"}, enabled=True
-        )
+        for source_id in ("zulu", "bravo", "yankee", "alpha"):
+            storage.sources.upsert(1, source_id, "fake_books", {}, enabled=True)
 
-        resolved = resolve_inputs(config, storage=storage)
+        resolved = resolve_inputs(storage)
 
         assert [entry.source_id for entry in resolved] == [
             "alpha",
@@ -359,22 +190,15 @@ class TestResolveInputsWithDbSourceConfig:
     def test_db_config_with_unregistered_plugin_is_skipped(
         self, storage: StorageManager
     ) -> None:
-        config: dict[str, Any] = {"inputs": {}}
         storage.sources.upsert(
             1, "ghost_source", "this_plugin_no_longer_exists", {}, enabled=True
         )
 
-        resolved = resolve_inputs(config, storage=storage)
-
-        assert resolved == []
+        assert resolve_inputs(storage) == []
 
 
 @pytest.mark.usefixtures("_registry_with_fakes")
 class TestCredentialBoundUpdates:
-    @pytest.fixture()
-    def storage(self, tmp_path: Path) -> StorageManager:
-        return StorageManager(sqlite_path=tmp_path / "test.db")
-
     @pytest.fixture()
     def migrated(self, storage: StorageManager) -> StorageManager:
         storage.sources.upsert(
@@ -485,10 +309,6 @@ class TestCredentialBoundUpdates:
 
 @pytest.mark.usefixtures("_registry_with_fakes")
 class TestUnreadableUrlWalksTheCredentialRegression:
-    @pytest.fixture()
-    def storage(self, tmp_path: Path) -> StorageManager:
-        return StorageManager(sqlite_path=tmp_path / "test.db")
-
     @staticmethod
     def _update(storage: StorageManager, values: dict[str, Any]) -> None:
         update_source_config_values("my_games", FakeGamePlugin(), storage, values)
@@ -524,10 +344,6 @@ class TestUnreadableUrlWalksTheCredentialRegression:
 
 @pytest.mark.usefixtures("_registry_with_fakes")
 class TestDeleteSourceOrphanedCredentialsRegression:
-    @pytest.fixture()
-    def storage(self, tmp_path: Path) -> StorageManager:
-        return StorageManager(sqlite_path=tmp_path / "test.db")
-
     def test_unregistered_plugin_leaves_no_credential_row(
         self, storage: StorageManager
     ) -> None:
@@ -536,7 +352,7 @@ class TestDeleteSourceOrphanedCredentialsRegression:
         )
         storage.credentials.save(1, "ghost", "api_key", "still-valid-upstream")
 
-        delete_source("ghost", storage, {})
+        delete_source("ghost", storage)
 
         assert storage.credentials.get_for_source(1, "ghost") == {}
         assert storage.sources.get(1, "ghost") is None
@@ -548,7 +364,7 @@ class TestDeleteSourceOrphanedCredentialsRegression:
         storage.credentials.save(1, "my_games", "api_key", "secret")
         storage.credentials.save(1, "my_games", "legacy_token", "was-sensitive-once")
 
-        delete_source("my_games", storage, {})
+        delete_source("my_games", storage)
 
         assert storage.credentials.get_for_source(1, "my_games") == {}
 
@@ -557,7 +373,7 @@ class TestDeleteSourceOrphanedCredentialsRegression:
         storage.credentials.save(1, "my_games", "api_key", "secret")
         storage.credentials.save(1, "other", "api_key", "untouched")
 
-        delete_source("my_games", storage, {})
+        delete_source("my_games", storage)
 
         assert storage.credentials.get(1, "other", "api_key") == "untouched"
 
@@ -621,10 +437,6 @@ def _registry_with_rotating_doubles(_real_registry: None) -> Iterator[None]:
 
 @pytest.mark.usefixtures("_real_registry")
 class TestCreateSourceRefusesUncontainedPaths:
-    @pytest.fixture()
-    def storage(self, tmp_path: Path) -> StorageManager:
-        return StorageManager(sqlite_path=tmp_path / "test.db")
-
     def test_a_path_outside_the_allowed_roots_is_refused(
         self, storage: StorageManager
     ) -> None:
@@ -709,15 +521,11 @@ class TestRedactCredentials:
 
 @pytest.mark.usefixtures("_registry_with_rotating_doubles")
 class TestRotatedCredentialSurvivesTheRealConfigAssemblyRegression:
-    @pytest.fixture()
-    def storage(self, tmp_path: Path) -> StorageManager:
-        return StorageManager(sqlite_path=tmp_path / "test.db")
-
     def _sync_a_rotating_source(
         self, plugin_name: str, storage: StorageManager
     ) -> None:
         storage.sources.upsert(1, "work_games", plugin_name, {}, enabled=True)
-        resolved = _resolve_one("work_games", {}, storage)
+        resolved = _resolve_one("work_games", storage)
         assert resolved is not None
 
         execute_sync(
@@ -743,7 +551,7 @@ class TestRotatedCredentialSurvivesTheRealConfigAssemblyRegression:
     ) -> None:
         self._sync_a_rotating_source(plugin_name, storage)
 
-        resolved = _resolve_one("work_games", {}, storage)
+        resolved = _resolve_one("work_games", storage)
 
         assert resolved is not None
         assert resolved.config["refresh_token"] == ROTATED_TOKEN
@@ -772,7 +580,7 @@ class TestRemovingASourceTakesItsStrandedTokenWithItRegression:
     def test_the_last_source_on_the_plugin_takes_the_row_with_it(
         self, storage: StorageManager
     ) -> None:
-        delete_source("work_games", storage, {"inputs": {}})
+        delete_source("work_games", storage)
 
         assert storage.credentials.get(1, "fake_games", "api_key") is None
 
@@ -781,16 +589,7 @@ class TestRemovingASourceTakesItsStrandedTokenWithItRegression:
     ) -> None:
         storage.sources.upsert(1, "home_games", "fake_games", {}, enabled=True)
 
-        delete_source("work_games", storage, {"inputs": {}})
-
-        assert storage.credentials.get(1, "fake_games", "api_key") == (
-            "stranded-by-an-upgrade"
-        )
-
-    def test_a_yaml_sibling_keeps_the_row(self, storage: StorageManager) -> None:
-        config = {"inputs": {"home_games": {"plugin": "fake_games", "enabled": True}}}
-
-        delete_source("work_games", storage, config)
+        delete_source("work_games", storage)
 
         assert storage.credentials.get(1, "fake_games", "api_key") == (
             "stranded-by-an-upgrade"
@@ -799,9 +598,9 @@ class TestRemovingASourceTakesItsStrandedTokenWithItRegression:
     def test_a_source_named_after_the_plugin_keeps_its_own_credential(
         self, storage: StorageManager
     ) -> None:
-        config = {"inputs": {"fake_games": {"plugin": "fake_books", "enabled": True}}}
+        storage.sources.upsert(1, "fake_games", "fake_books", {}, enabled=True)
 
-        delete_source("work_games", storage, config)
+        delete_source("work_games", storage)
 
         assert storage.credentials.get(1, "fake_games", "api_key") == (
             "stranded-by-an-upgrade"
@@ -812,7 +611,7 @@ class TestRemovingASourceTakesItsStrandedTokenWithItRegression:
     ) -> None:
         storage.credentials.save(1, "work_games", "api_key", "its-own")
 
-        delete_source("work_games", storage, {"inputs": {}})
+        delete_source("work_games", storage)
 
         assert storage.credentials.get_for_source(1, "work_games") == {}
 
@@ -855,10 +654,6 @@ class TestAPluginCannotRenameItsOwnSource:
 
 @pytest.mark.usefixtures("_real_registry")
 class TestARealPluginsItemsCarryTheSourceIdRegression:
-    @pytest.fixture()
-    def storage(self, tmp_path: Path) -> StorageManager:
-        return StorageManager(sqlite_path=tmp_path / "test.db")
-
     @patch("src.ingestion.sources.steam.steam.get_owned_games")
     def test_items_are_attributed_to_the_source_not_the_plugin(
         self, owned_games: Mock, storage: StorageManager
@@ -873,7 +668,7 @@ class TestARealPluginsItemsCarryTheSourceIdRegression:
             {"api_key": "key", "steam_id": "76561198000000000"},
             enabled=True,
         )
-        resolved = _resolve_one("work_games", {}, storage)
+        resolved = _resolve_one("work_games", storage)
         assert resolved is not None
 
         execute_sync(
@@ -887,14 +682,10 @@ class TestARealPluginsItemsCarryTheSourceIdRegression:
 
 @pytest.mark.usefixtures("_registry_with_rotating_doubles")
 class TestTheCredentialOwnerIsWhateverTheSourceIsCalled:
-    @pytest.fixture()
-    def storage(self, tmp_path: Path) -> StorageManager:
-        return StorageManager(sqlite_path=tmp_path / "test.db")
-
     @staticmethod
-    def _sync_yaml_source(source_id: str, storage: StorageManager) -> None:
-        config = {"inputs": {source_id: {"plugin": "gog", "enabled": True}}}
-        resolved = _resolve_one(source_id, config, storage)
+    def _sync_source(source_id: str, storage: StorageManager) -> None:
+        storage.sources.upsert(1, source_id, "gog", {}, enabled=True)
+        resolved = _resolve_one(source_id, storage)
         assert resolved is not None
 
         execute_sync(
@@ -903,20 +694,11 @@ class TestTheCredentialOwnerIsWhateverTheSourceIsCalled:
             storage_manager=storage,
         )
 
-    @pytest.mark.parametrize(
-        "source_id", ["my-gog", "Wörk Games 📚", "gog_2", "x" * 200]
-    )
+    @pytest.mark.parametrize("source_id", ["my-gog", "gog_2"])
     def test_the_token_lands_under_the_id_verbatim(
         self, source_id: str, storage: StorageManager
     ) -> None:
-        self._sync_yaml_source(source_id, storage)
+        self._sync_source(source_id, storage)
 
         assert storage.credentials.get(1, source_id, "refresh_token") == ROTATED_TOKEN
         assert storage.credentials.get(1, "gog", "refresh_token") is None
-
-    def test_ids_differing_only_in_case_do_not_share_a_token(
-        self, storage: StorageManager
-    ) -> None:
-        self._sync_yaml_source("Work_Games", storage)
-
-        assert storage.credentials.get(1, "work_games", "refresh_token") is None

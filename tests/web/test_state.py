@@ -14,7 +14,6 @@ from src.ingestion.paths import (
     DEFAULT_ALLOWED_SOURCE_ROOTS,
     get_allowed_source_roots,
 )
-from src.settings.metadata import default_of
 from src.storage.manager import StorageManager
 from src.web.api._settings import SettingsUpdateRequest, update_settings
 from src.web.app import create_app
@@ -80,7 +79,7 @@ class TestReloadConfig:
         assert result is True
         assert app_state.config["recommendations"]["default_count"] == 9
 
-    def test_reload_sweeps_config_secret_into_storage(self, tmp_path: Path) -> None:
+    def test_reload_leaves_a_config_secret_unread(self, tmp_path: Path) -> None:
         config_file = tmp_path / "config.yaml"
         config_file.write_text(
             "enrichment:\n  providers:\n    tmdb:\n      api_key: tmdb-secret\n"
@@ -93,9 +92,8 @@ class TestReloadConfig:
         result = reload_config()
 
         assert result is True
-        assert storage.secrets.has("enrichment.providers.tmdb.api_key") is True
-        providers = app_state.config["enrichment"]["providers"]
-        assert providers.get("tmdb", {}).get("api_key") is None
+        assert storage.secrets.has("enrichment.providers.tmdb.api_key") is False
+        assert "tmdb-secret" not in str(app_state.config)
 
     def test_reload_swaps_the_running_config_without_touching_the_old_one(
         self, tmp_path: Path
@@ -268,20 +266,6 @@ class TestAHotReloadReachesTheRunningConfig:
 
         assert reload_config() is True
         assert get_allowed_source_roots() == (str(tmp_path / "media"),)
-
-    def test_a_setting_the_file_names_never_reaches_it(self, tmp_path: Path) -> None:
-        config_path = tmp_path / "config.yaml"
-        config_path.write_text(_config_yaml(tmp_path))
-        create_app(config_path)
-
-        config_path.write_text(_config_yaml(tmp_path, default_count=12))
-
-        assert reload_config() is True
-        reloaded = get_config()
-        assert reloaded is not None
-        assert reloaded["recommendations"]["default_count"] == default_of(
-            "recommendations.default_count"
-        )
 
 
 class TestSettingsWritesStillRunUnderTheConfigLock:

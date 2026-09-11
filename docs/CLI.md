@@ -286,16 +286,15 @@ Add, edit, enable, disable and remove data sources without touching YAML.
 uv run python -m src.cli source plugins            # available plugin types
 uv run python -m src.cli source create my_roms roms
 uv run python -m src.cli source set my_roms paths inputs/roms
-uv run python -m src.cli source migrate my_roms    # or move a YAML source in, once
 uv run python -m src.cli source show my_roms       # also schema, enable, disable, remove
 uv run python -m src.cli source schedule my_roms weekly   # off, hourly, 6h, daily, weekly
 uv run python -m src.cli source history my_roms    # past runs; omit the id for all
 ```
 
-`source schedule` takes a migrated source and one of those five keys. The web
-server syncs each source on its cadence while it is running; `off` leaves it to
-`update`. Unscheduled, a migrated source uses its plugin's default, and one that
-has never synced is due on the next tick. One still in `config.yaml` stays off.
+`source schedule` takes one of those five keys. The web server syncs each source
+on its cadence while it is running; `off` leaves it to `update`. Unscheduled, a
+source uses its plugin's default, and one that has never synced is due on the
+next tick.
 
 `source history` lists finished runs newest first — what each moved and what a
 failure said, so a failed sync is readable without the server log. `--limit`

@@ -104,27 +104,40 @@ def mock_config():
             "host": "0.0.0.0",
             "port": 8000,
         },
-        "inputs": {
-            "goodreads_rss": {
-                "plugin": "goodreads_rss",
-                "user_id": "12345",
-                "enabled": True,
-            }
-        },
         "recommendations": {
             "min_rating_for_preference": 4,
         },
     }
 
 
+#: A source is a source_configs row; the mocked storage answers from here.
+SOURCE_ROWS: dict[str, Any] = {}
+
+
+def configure_source(source_id, plugin, **config):
+    SOURCE_ROWS[source_id] = {
+        "enabled": bool(config.pop("enabled", True)),
+        "source_id": source_id,
+        "plugin": plugin,
+        "config": config,
+        "sync_interval": None,
+        "migrated_at": "",
+        "updated_at": "",
+    }
+
+
 @pytest.fixture
 def mock_components(mock_config):
     reset_sync_manager()
+    SOURCE_ROWS.clear()
+    configure_source("goodreads_rss", "goodreads_rss", user_id="12345")
 
     mock_storage_manager = make_storage_mock()
     mock_storage_manager.credentials.get_for_source.return_value = {}
-    mock_storage_manager.sources.list.return_value = []
-    mock_storage_manager.sources.get.return_value = None
+    mock_storage_manager.sources.list.side_effect = lambda *_: list(
+        SOURCE_ROWS.values()
+    )
+    mock_storage_manager.sources.get.side_effect = lambda _u, sid: SOURCE_ROWS.get(sid)
 
     mock_engine_instance = Mock(spec=RecommendationEngine)
     mock_engine_instance.storage = mock_storage_manager
@@ -243,10 +256,9 @@ class TestCreateAppSettingsMigration:
             assert _cors_origins(app) == default_of("web.allowed_origins")
         reset_sync_manager()
 
-    def test_create_app_migrates_config_secret_into_storage(self, tmp_path) -> None:
-        """Regression: the ``migrate_config_secrets`` boot hook must actually run
-        during ``create_app`` — asserted end-to-end against a real temp-DB
-        (no stub)."""
+    def test_create_app_leaves_a_config_secret_unread(self, tmp_path) -> None:
+        """A secret is a credentials row: boot neither reads nor stores the copy
+        an old config.yaml left behind."""
         reset_sync_manager()
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
         config = {
@@ -254,11 +266,8 @@ class TestCreateAppSettingsMigration:
             "enrichment": {"providers": {"tmdb": {"api_key": "tmdb-secret"}}},
         }
         with booted_web_app(storage_manager, config):
-            assert (
-                storage_manager.secrets.has("enrichment.providers.tmdb.api_key") is True
-            )
-            providers = app_state.config["enrichment"]["providers"]
-            assert providers.get("tmdb", {}).get("api_key") is None
+            key = "enrichment.providers.tmdb.api_key"
+            assert storage_manager.secrets.has(key) is False
         reset_sync_manager()
 
 
@@ -323,47 +332,13 @@ class TestStatusRecommendationsConfig:
         assert rec_cfg["default_count"] == 10
 
 
-def test_sync_sources_endpoint(client, mock_config):
-    response = client.get("/api/sync/sources")
-    assert response.status_code == 200
-    sources = response.json()
-    assert isinstance(sources, list)
-    assert len(sources) == 1
-    goodreads = next((s for s in sources if s["id"] == "goodreads_rss"), None)
-    assert goodreads is not None
-    assert goodreads["display_name"] == "Goodreads RSS"
-
-
 def test_sync_sources_lists_all_with_enabled_flag(client):
     """The UI renders disabled sources in a muted state instead of hiding them
     entirely, so the listing endpoint must surface them."""
-    app_state.config = {
-        "inputs": {
-            "goodreads_rss": {
-                "plugin": "goodreads_rss",
-                "user_id": "12345",
-                "enabled": True,
-            },
-            "steam": {
-                "plugin": "steam",
-                "api_key": "x",
-                "steam_id": "y",
-                "enabled": False,
-            },
-            "sonarr": {
-                "plugin": "sonarr",
-                "url": "http://localhost:8989",
-                "api_key": "key",
-                "enabled": True,
-            },
-            "radarr": {
-                "plugin": "radarr",
-                "url": "http://localhost:7878",
-                "api_key": "key",
-                "enabled": False,
-            },
-        },
-    }
+    configure_source("goodreads_rss", "goodreads_rss", user_id="12345")
+    configure_source("steam", "steam", enabled=False)
+    configure_source("sonarr", "sonarr", url="http://localhost:8989")
+    configure_source("radarr", "radarr", url="http://localhost:7878", enabled=False)
 
     response = client.get("/api/sync/sources")
     assert response.status_code == 200
@@ -596,12 +571,7 @@ def test_update_endpoint(client, mock_components):
 def test_update_endpoint_steam(client, mock_components):
     """The sync manager is stubbed because the real one spawns a thread that
     outlives the test calling the live Steam API."""
-    app_state.config["inputs"]["steam"] = {
-        "plugin": "steam",
-        "api_key": "test_api_key",
-        "steam_id": "76561198000000000",
-        "enabled": True,
-    }
+    configure_source("steam", "steam", api_key="k", steam_id="76561198000000000")
     sync_manager = Mock(spec=SyncManager)
     sync_manager.is_running.return_value = False
     sync_manager.start_sync.return_value = None
@@ -619,12 +589,7 @@ def test_update_endpoint_steam_disabled(client, mock_components):
     """The single-source /update branch must answer 4xx for a disabled or
     unconfigured source so the web UI's Sync button clears its optimistic
     "syncing" state."""
-    app_state.config["inputs"]["steam"] = {
-        "plugin": "steam",
-        "api_key": "test_api_key",
-        "steam_id": "76561198000000000",
-        "enabled": False,
-    }
+    configure_source("steam", "steam", api_key="k", enabled=False)
 
     response = client.post("/api/update", json={"source": "steam"})
 
@@ -634,12 +599,7 @@ def test_update_endpoint_steam_disabled(client, mock_components):
 
 
 def test_update_endpoint_steam_missing_api_key(client, mock_components, caplog):
-    app_state.config["inputs"]["steam"] = {
-        "plugin": "steam",
-        "api_key": "",
-        "steam_id": "76561198000000000",
-        "enabled": True,
-    }
+    configure_source("steam", "steam", api_key="", steam_id="76561198000000000")
 
     with caplog.at_level(logging.WARNING, logger="src.web.api._sync"):
         response = client.post("/api/update", json={"source": "steam"})
@@ -652,12 +612,7 @@ def test_update_endpoint_steam_missing_api_key(client, mock_components, caplog):
 
 
 def test_update_endpoint_all_sources(client, mock_components):
-    app_state.config["inputs"]["steam"] = {
-        "plugin": "steam",
-        "api_key": "test_api_key",
-        "steam_id": "76561198000000000",
-        "enabled": True,
-    }
+    configure_source("steam", "steam", api_key="k", steam_id="76561198000000000")
 
     mock_book = ContentItem(
         id="1",
@@ -712,12 +667,7 @@ def test_update_all_excludes_a_misconfigured_source_and_names_it(
 ):
     """Reported: Sync All validated nothing, so a misconfigured source was
     dispatched and failed inside ``fetch`` instead of being refused."""
-    app_state.config["inputs"]["steam"] = {
-        "plugin": "steam",
-        "api_key": "",
-        "steam_id": "76561198000000000",
-        "enabled": True,
-    }
+    configure_source("steam", "steam", api_key="", steam_id="76561198000000000")
     sync_manager = Mock(spec=SyncManager)
     sync_manager.is_running.return_value = False
     sync_manager.start_sync.return_value = None
@@ -744,12 +694,7 @@ def test_update_all_refuses_with_a_4xx_when_every_source_is_misconfigured(
 ):
     """A 200 carrying the refusals started no job for the frontend's poll to
     ever see, leaving Sync All stuck on "Syncing…" until a reload."""
-    app_state.config["inputs"]["steam"] = {
-        "plugin": "steam",
-        "api_key": "",
-        "steam_id": "76561198000000000",
-        "enabled": True,
-    }
+    configure_source("steam", "steam", api_key="", steam_id="76561198000000000")
     sync_manager = Mock(spec=SyncManager)
     sync_manager.is_running.return_value = False
 
@@ -794,13 +739,7 @@ class TestUpdateDetailKeepsCallerInputOffTheWireRegression:
     ):
         """Named distinctly because the steam plugin's own messages say "steam",
         which would pass this assertion without the endpoint keeping quiet."""
-        app_state.config["inputs"]["probe_me_42"] = {
-            "plugin": "steam",
-            "api_key": "",
-            "steam_id": "",
-            "vanity_url": "",
-            "enabled": True,
-        }
+        configure_source("probe_me_42", "steam", api_key="", steam_id="", vanity_url="")
 
         with caplog.at_level(logging.WARNING, logger="src.web.api._sync"):
             response = client.post("/api/update", json={"source": "probe_me_42"})
@@ -820,11 +759,7 @@ class TestUpdateDetailKeepsCallerInputOffTheWireRegression:
     ):
         """Keeps the oracle closed: whether the file is there must not change the
         wording, only the status code the caller already had."""
-        app_state.config["inputs"]["games"] = {
-            "plugin": "roms",
-            "paths": ["/srv/private/roms"],
-            "enabled": True,
-        }
+        configure_source("games", "roms", paths=["/srv/private/roms"])
 
         with patch(
             "src.ingestion.sources.roms.roms.RomScannerPlugin.validate_config",
@@ -838,11 +773,7 @@ class TestUpdateDetailKeepsCallerInputOffTheWireRegression:
 
     def test_a_containment_refusal_discloses_neither_path_nor_allowlist(self, client):
         """Unmocked: the real refusal quotes the path and the config key."""
-        app_state.config["inputs"]["games"] = {
-            "plugin": "roms",
-            "paths": ["/etc/shadow"],
-            "enabled": True,
-        }
+        configure_source("games", "roms", paths=["/etc/shadow"])
 
         response = client.post("/api/update", json={"source": "games"})
 
@@ -872,19 +803,14 @@ class TestUpdateResolvesTheSourceOnceRegression:
     ):
         """The sync manager is stubbed because the real one spawns a thread that
         outlives the test calling the live Steam API."""
-        app_state.config["inputs"]["probe_me_42"] = {
-            "plugin": "steam",
-            "api_key": "test_api_key",
-            "steam_id": "76561198000000000",
-            "enabled": True,
-        }
+        configure_source("probe_me_42", "steam", api_key="k", steam_id="765611980")
         sync_manager = Mock(spec=SyncManager)
         sync_manager.is_running.return_value = False
         sync_manager.start_sync.return_value = None
 
         def resolve_then_delete(*args, **kwargs):
             entries = resolve_inputs(*args, **kwargs)
-            app_state.config["inputs"].pop("probe_me_42", None)
+            SOURCE_ROWS.pop("probe_me_42", None)
             return entries
 
         with (
@@ -901,11 +827,7 @@ def _sync_a_source_typed(client, content_type):
     """Returns the response and the content type auto-enrichment was started with,
     which is the only place the endpoint's reading of the config value is observable."""
     app_state.config["enrichment"] = {"enabled": True, "auto_enrich_on_sync": True}
-    app_state.config["inputs"]["typed"] = {
-        "plugin": "goodreads_rss",
-        "content_type": content_type,
-        "enabled": True,
-    }
+    configure_source("typed", "goodreads_rss", content_type=content_type)
     sync_manager = Mock(spec=SyncManager)
     sync_manager.is_running.return_value = False
     sync_manager.start_sync.return_value = None
@@ -2085,7 +2007,7 @@ class TestExchangeGogTokenEndpoint:
     def test_successful_exchange_saves_to_db(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        app_state.config["inputs"]["gog"] = {"plugin": "gog", "enabled": True}
+        configure_source("gog", "gog")
 
         with (
             patch("src.web.api._oauth.extract_gog_code", return_value="valid_code"),
@@ -2116,7 +2038,7 @@ class TestExchangeGogTokenEndpoint:
     ) -> None:
         """Bug: Docker mounts config read-only, causing OSError when
         update_config_with_token tried to write."""
-        app_state.config["inputs"]["gog"] = {"plugin": "gog", "enabled": True}
+        configure_source("gog", "gog")
 
         with (
             patch("src.web.api._oauth.extract_gog_code", return_value="valid_code"),
@@ -2141,7 +2063,7 @@ class TestExchangeGogTokenEndpoint:
     def test_auth_error_returns_generic_400(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        app_state.config["inputs"]["gog"] = {"plugin": "gog", "enabled": True}
+        configure_source("gog", "gog")
 
         with patch(
             "src.web.api._oauth.extract_gog_code",
@@ -2157,7 +2079,7 @@ class TestExchangeGogTokenEndpoint:
     def test_unexpected_exception_returns_generic_500(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        app_state.config["inputs"]["gog"] = {"plugin": "gog", "enabled": True}
+        configure_source("gog", "gog")
 
         with patch(
             "src.web.api._oauth.extract_gog_code",
@@ -2173,7 +2095,7 @@ class TestExchangeGogTokenEndpoint:
     def test_gog_not_enabled_returns_400(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        app_state.config["inputs"]["gog"] = {"plugin": "gog", "enabled": False}
+        configure_source("gog", "gog", enabled=False)
 
         response = client.post("/api/gog/exchange", json={"code_or_url": "some_code"})
 
@@ -2544,11 +2466,7 @@ class TestASourceAnotherProcessHoldsIsRefused:
     def test_syncing_everything_names_the_source_it_could_not_claim(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        app_state.config["inputs"]["shelf"] = {
-            "plugin": "goodreads_rss",
-            "user_id": "999",
-            "enabled": True,
-        }
+        configure_source("shelf", "goodreads_rss", user_id="999")
         storage = mock_components["storage"]
         storage.sync_runs.claim.side_effect = lambda _user, source_id: (
             None if source_id == "shelf" else 7
@@ -2830,10 +2748,7 @@ class TestExchangeEpicTokenEndpoint:
     def test_successful_exchange_saves_to_db(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        app_state.config["inputs"]["epic_games"] = {
-            "plugin": "epic_games",
-            "enabled": True,
-        }
+        configure_source("epic_games", "epic_games")
 
         with (
             patch("src.web.api._oauth.extract_epic_code", return_value="valid_code"),
@@ -2863,10 +2778,7 @@ class TestExchangeEpicTokenEndpoint:
     def test_auth_error_returns_generic_400(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        app_state.config["inputs"]["epic_games"] = {
-            "plugin": "epic_games",
-            "enabled": True,
-        }
+        configure_source("epic_games", "epic_games")
 
         with patch(
             "src.web.api._oauth.extract_epic_code",
@@ -2882,10 +2794,7 @@ class TestExchangeEpicTokenEndpoint:
     def test_epic_not_enabled_returns_400(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        app_state.config["inputs"]["epic_games"] = {
-            "plugin": "epic_games",
-            "enabled": False,
-        }
+        configure_source("epic_games", "epic_games", enabled=False)
 
         response = client.post("/api/epic/exchange", json={"code_or_json": "some_code"})
 
@@ -2898,10 +2807,7 @@ class TestExchangeEpicTokenEndpoint:
     def test_unexpected_error_returns_500(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        app_state.config["inputs"]["epic_games"] = {
-            "plugin": "epic_games",
-            "enabled": True,
-        }
+        configure_source("epic_games", "epic_games")
 
         with (
             patch("src.web.api._oauth.extract_epic_code", return_value="valid_code"),
@@ -2966,49 +2872,12 @@ class TestEpicStatus:
         assert data["auth_url"] is None
 
 
-class TestExchangeEpicTokenEndpointRegression:
-    def test_exchange_succeeds_with_readonly_config_regression(
-        self, client: TestClient, mock_components: dict
-    ) -> None:
-        """Bug reported: Docker mounts config as a read-only volume."""
-        app_state.config["inputs"]["epic_games"] = {
-            "plugin": "epic_games",
-            "enabled": True,
-        }
-
-        with (
-            patch("src.web.api._oauth.extract_epic_code", return_value="valid_code"),
-            patch(
-                "src.web.api._oauth.exchange_epic_tokens",
-                return_value={
-                    "access_token": "access123",
-                    "refresh_token": "super_secret_token",
-                },
-            ),
-            patch("src.web.api._oauth.save_epic_token") as mock_save,
-        ):
-            response = client.post(
-                "/api/epic/exchange", json={"code_or_json": "valid_code"}
-            )
-
-        assert response.status_code == 200
-        body = response.json()
-        assert body["success"] is True
-        mock_save.assert_called_once_with(
-            mock_components["storage"], "super_secret_token", source_id="epic_games"
-        )
-
-
 class TestAuthDisconnectEndpoints:
     @pytest.fixture(autouse=True)
     def oauth_sources(self, mock_components):
-        app_state.config["inputs"].update(
-            {
-                "gog": {"plugin": "gog", "enabled": True},
-                "epic_games": {"plugin": "epic_games", "enabled": True},
-                "trakt": {"plugin": "trakt", "enabled": True},
-            }
-        )
+        configure_source("gog", "gog")
+        configure_source("epic_games", "epic_games")
+        configure_source("trakt", "trakt")
 
     @pytest.mark.parametrize(
         ("provider", "source_id"),
@@ -3649,68 +3518,62 @@ _GUARDED_ENDPOINTS = [
         ("storage", "config"),
         url="/api/covers/1",
     ),
-    _Endpoint("GET", "/api/sync/sources", ("config", "storage")),
+    _Endpoint("GET", "/api/sync/sources", ("storage",)),
     _Endpoint(
         "POST",
         "/api/sync/sources",
-        ("storage", "config"),
+        ("storage",),
         body={"id": "my_books", "plugin": "goodreads_rss"},
     ),
     _Endpoint(
         "DELETE",
         "/api/sync/sources/{source_id}",
-        ("storage", "config"),
+        ("storage",),
         url="/api/sync/sources/my_books",
     ),
     _Endpoint(
         "GET",
         "/api/sync/sources/{source_id}/schema",
-        ("storage", "config"),
+        ("storage",),
         url="/api/sync/sources/my_books/schema",
     ),
     _Endpoint(
         "GET",
         "/api/sync/sources/{source_id}/config",
-        ("storage", "config"),
+        ("storage",),
         url="/api/sync/sources/my_books/config",
-    ),
-    _Endpoint(
-        "POST",
-        "/api/sync/sources/{source_id}/migrate",
-        ("storage", "config"),
-        url="/api/sync/sources/my_books/migrate",
     ),
     _Endpoint(
         "PUT",
         "/api/sync/sources/{source_id}/config",
-        ("storage", "config"),
+        ("storage",),
         url="/api/sync/sources/my_books/config",
         body={"values": {}},
     ),
     _Endpoint(
         "PUT",
         "/api/sync/sources/{source_id}/secret/{key}",
-        ("storage", "config"),
+        ("storage",),
         url="/api/sync/sources/my_books/secret/api_key",
         body={"value": "secret"},
     ),
     _Endpoint(
         "DELETE",
         "/api/sync/sources/{source_id}/secret/{key}",
-        ("storage", "config"),
+        ("storage",),
         url="/api/sync/sources/my_books/secret/api_key",
     ),
     _Endpoint(
         "PUT",
         "/api/sync/sources/{source_id}/enabled",
-        ("storage", "config"),
+        ("storage",),
         url="/api/sync/sources/my_books/enabled",
         body={"enabled": True},
     ),
     _Endpoint(
         "PUT",
         "/api/sync/sources/{source_id}/schedule",
-        ("storage", "config"),
+        ("storage",),
         url="/api/sync/sources/my_books/schedule",
         body={"interval": "daily"},
     ),
@@ -3750,31 +3613,23 @@ _GUARDED_ENDPOINTS = [
         ("storage", "config"),
         body={"item_id": 1, "provider": "tmdb", "record_id": "603"},
     ),
-    _Endpoint("GET", "/api/gog/status", ("config", "storage")),
+    _Endpoint("GET", "/api/gog/status", ("storage",)),
+    _Endpoint("POST", "/api/gog/exchange", ("storage",), body={"code_or_url": "code"}),
+    _Endpoint("DELETE", "/api/gog/token", ("storage",)),
+    _Endpoint("GET", "/api/epic/status", ("storage",)),
     _Endpoint(
-        "POST",
-        "/api/gog/exchange",
-        ("config", "storage"),
-        body={"code_or_url": "code"},
+        "POST", "/api/epic/exchange", ("storage",), body={"code_or_json": "code"}
     ),
-    _Endpoint("DELETE", "/api/gog/token", ("config", "storage")),
-    _Endpoint("GET", "/api/epic/status", ("config", "storage")),
-    _Endpoint(
-        "POST",
-        "/api/epic/exchange",
-        ("config", "storage"),
-        body={"code_or_json": "code"},
-    ),
-    _Endpoint("DELETE", "/api/epic/token", ("config", "storage")),
-    _Endpoint("GET", "/api/trakt/status", ("config", "storage")),
-    _Endpoint("POST", "/api/trakt/start-device-flow", ("config", "storage")),
+    _Endpoint("DELETE", "/api/epic/token", ("storage",)),
+    _Endpoint("GET", "/api/trakt/status", ("storage",)),
+    _Endpoint("POST", "/api/trakt/start-device-flow", ("storage",)),
     _Endpoint(
         "POST",
         "/api/trakt/poll-device-approval",
-        ("config", "storage"),
+        ("storage",),
         body={"device_code": "dev1234567"},
     ),
-    _Endpoint("DELETE", "/api/trakt/token", ("config", "storage")),
+    _Endpoint("DELETE", "/api/trakt/token", ("storage",)),
     _Endpoint("GET", "/api/profile", ("storage",)),
     _Endpoint("POST", "/api/profile/regenerate", ("storage",)),
     _Endpoint("POST", "/api/enrichment/stop", ("storage",)),
@@ -4043,36 +3898,6 @@ class TestSourceReadGuardsRegression:
         assert response.status_code == 503
         assert response.json()["detail"] == _STORAGE_UNAVAILABLE
 
-    @pytest.mark.parametrize(
-        "url",
-        ["/api/sync/sources/my_books/schema", "/api/sync/sources/my_books/config"],
-    )
-    def test_read_reports_unavailable_with_config_down_regression(
-        self, client, mock_components, url
-    ) -> None:
-        """The DB row is what makes this fail on the bug rather than on an id
-        nothing could resolve: with it the lookup succeeds, so the 503 is the guard
-        firing and nothing else."""
-        mock_components["storage"].sources.get.return_value = {
-            "source_id": "my_books",
-            "plugin": "goodreads_rss",
-            "enabled": 1,
-        }
-        app_state.config = None
-
-        response = client.get(url)
-
-        assert response.status_code == 503
-        assert response.json()["detail"] == _CONFIG_UNAVAILABLE
-
-    def test_write_on_the_same_source_answers_503(self, client) -> None:
-        _clear_dependencies()
-
-        response = client.post("/api/sync/sources/my_books/migrate")
-
-        assert response.status_code == 503
-        assert response.json()["detail"] == _CONFIG_UNAVAILABLE
-
 
 class TestDependencyGuardPrecedence:
     """The guard answers before anything else the request could be faulted for."""
@@ -4095,14 +3920,6 @@ class TestDependencyGuardPrecedence:
 
         assert response.status_code == 503
         assert response.json()["detail"] == _ENGINE_UNAVAILABLE
-
-    def test_guard_precedes_lookup_of_an_unresolvable_source_id(self, client) -> None:
-        _clear_dependencies()
-
-        response = client.post("/api/sync/sources/%F0%9F%92%A9/migrate")
-
-        assert response.status_code == 503
-        assert response.json()["detail"] == _CONFIG_UNAVAILABLE
 
 
 class TestUnguardedReadsAreOptional:
@@ -4131,47 +3948,6 @@ class TestUnguardedReadsAreOptional:
 
         assert response.status_code == 200
         assert response.json()["id"] == 7
-
-
-class TestSourceCreateReadsBothHalvesRegression:
-    """Bug reported: ``POST /api/sync/sources`` passed ``get_config()`` straight
-    into ``create_source``, which refuses an id YAML already defines."""
-
-    def test_create_refuses_rather_than_shadowing_a_yaml_source(
-        self, client, mock_components
-    ) -> None:
-        storage = mock_components["storage"]
-        storage.sources.get.return_value = None
-        app_state.config = None
-
-        response = client.post(
-            "/api/sync/sources", json={"id": "my_books", "plugin": "goodreads_rss"}
-        )
-
-        assert response.status_code == 503
-        assert response.json()["detail"] == _CONFIG_UNAVAILABLE
-        storage.sources.upsert.assert_not_called()
-
-    def test_delete_refuses_rather_than_sweeping_off_half_a_source_list(
-        self, client, mock_components
-    ) -> None:
-        """Config down, a YAML source on the plugin reads as no source at all."""
-        storage = mock_components["storage"]
-        storage.sources.get.return_value = {
-            "source_id": "my_books",
-            "plugin": "goodreads_rss",
-            "enabled": 1,
-            "config": {},
-            "migrated_at": "2026-01-01T00:00:00",
-        }
-        app_state.config = None
-
-        response = client.delete("/api/sync/sources/my_books")
-
-        assert response.status_code == 503
-        assert response.json()["detail"] == _CONFIG_UNAVAILABLE
-        storage.sources.delete.assert_not_called()
-        storage.credentials.delete_for_source.assert_not_called()
 
 
 _PLUGIN_ROUTES_WITH_A_BODY = [

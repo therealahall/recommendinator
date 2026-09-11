@@ -41,7 +41,7 @@ from src.auth.trakt import (
 from src.sources.service import SOURCE_ID_PATTERN
 from src.storage.manager import StorageManager
 from src.utils.text import exception_for_log, sanitize_for_log
-from src.web.guards import RequiredConfig, RequiredStorage
+from src.web.guards import RequiredStorage
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +84,6 @@ def _source_id_query(default: str) -> Any:
 def _disconnect_source(
     source_id: str,
     plugin_name: str,
-    config: dict[str, Any],
     storage: StorageManager,
     user_id: int,
     detail: str,
@@ -92,7 +91,7 @@ def _disconnect_source(
     """An id this route may not act on gets the same refusal as one holding no
     token: telling them apart names sources the caller did not ask about.
     """
-    if not may_revoke(plugin_name, source_id, config, storage, user_id):
+    if not may_revoke(plugin_name, source_id, storage, user_id):
         logger.info(
             "Disconnect refused for source_id=%s on plugin %s",
             sanitize_for_log(source_id),
@@ -106,12 +105,11 @@ def _disconnect_source(
 
 @router.get("/gog/status")
 def get_gog_status(
-    config: RequiredConfig,
     storage: RequiredStorage,
     source_id: str = _source_id_query(GOG_SOURCE_ID),
 ) -> dict[str, Any]:
-    enabled = is_gog_enabled(config, storage=storage, source_id=source_id)
-    connected = has_gog_token(config, storage=storage, source_id=source_id)
+    enabled = is_gog_enabled(storage, source_id=source_id)
+    connected = has_gog_token(storage, source_id=source_id)
 
     return {
         "enabled": enabled,
@@ -123,11 +121,10 @@ def get_gog_status(
 @router.post("/gog/exchange")
 def exchange_gog_token(
     request: GogExchangeRequest,
-    config: RequiredConfig,
     storage: RequiredStorage,
     source_id: str = _source_id_query(GOG_SOURCE_ID),
 ) -> dict[str, Any]:
-    if not is_gog_enabled(config, storage=storage, source_id=source_id):
+    if not is_gog_enabled(storage, source_id=source_id):
         raise HTTPException(
             status_code=400,
             detail="GOG is not enabled for that source.",
@@ -161,7 +158,6 @@ def exchange_gog_token(
 
 @router.delete("/gog/token")
 def disconnect_gog(
-    config: RequiredConfig,
     storage: RequiredStorage,
     source_id: str = _source_id_query(GOG_SOURCE_ID),
     user_id: int = Query(1, ge=1),
@@ -169,7 +165,6 @@ def disconnect_gog(
     _disconnect_source(
         source_id,
         GOG_PLUGIN,
-        config,
         storage,
         user_id,
         "No active GOG connection found",
@@ -182,12 +177,11 @@ def disconnect_gog(
 
 @router.get("/epic/status")
 def get_epic_status(
-    config: RequiredConfig,
     storage: RequiredStorage,
     source_id: str = _source_id_query(EPIC_SOURCE_ID),
 ) -> dict[str, Any]:
-    enabled = is_epic_enabled(config, storage=storage, source_id=source_id)
-    connected = has_epic_token(config, storage=storage, source_id=source_id)
+    enabled = is_epic_enabled(storage, source_id=source_id)
+    connected = has_epic_token(storage, source_id=source_id)
 
     auth_url: str | None = None
     if enabled:
@@ -208,11 +202,10 @@ def get_epic_status(
 @router.post("/epic/exchange")
 def exchange_epic_token(
     request: EpicExchangeRequest,
-    config: RequiredConfig,
     storage: RequiredStorage,
     source_id: str = _source_id_query(EPIC_SOURCE_ID),
 ) -> dict[str, Any]:
-    if not is_epic_enabled(config, storage=storage, source_id=source_id):
+    if not is_epic_enabled(storage, source_id=source_id):
         raise HTTPException(
             status_code=400,
             detail="Epic Games is not enabled in the current configuration.",
@@ -248,7 +241,6 @@ def exchange_epic_token(
 
 @router.delete("/epic/token")
 def disconnect_epic(
-    config: RequiredConfig,
     storage: RequiredStorage,
     source_id: str = _source_id_query(EPIC_SOURCE_ID),
     user_id: int = Query(1, ge=1),
@@ -256,7 +248,6 @@ def disconnect_epic(
     _disconnect_source(
         source_id,
         EPIC_PLUGIN,
-        config,
         storage,
         user_id,
         "No active Epic Games connection found",
@@ -279,7 +270,6 @@ _TRAKT_POLL_MESSAGES: dict[DevicePollStatus, str] = {
 
 @router.get("/trakt/status")
 def get_trakt_status(
-    config: RequiredConfig,
     storage: RequiredStorage,
     source_id: str = _source_id_query(TRAKT_SOURCE_ID),
     user_id: int = Query(1, ge=1),
@@ -289,9 +279,7 @@ def get_trakt_status(
     under an id this route owns.
     """
     try:
-        resolve_trakt_client_credentials(
-            config, storage, source_id=source_id, user_id=user_id
-        )
+        resolve_trakt_client_credentials(storage, source_id=source_id, user_id=user_id)
         enabled = True
     except TraktAuthError:
         enabled = False
@@ -299,14 +287,13 @@ def get_trakt_status(
     # Ownership, not credential completeness: clearing the client secret would
     # otherwise read as disconnected while the token is still stored, and the
     # Data tab hangs its only revoke control off ``connected``.
-    connected = has_trakt_token(config, storage, source_id, user_id)
+    connected = has_trakt_token(storage, source_id, user_id)
 
     return {"enabled": enabled, "connected": connected}
 
 
 @router.post("/trakt/start-device-flow")
 def start_trakt_device_flow(
-    config: RequiredConfig,
     storage: RequiredStorage,
     source_id: str = _source_id_query(TRAKT_SOURCE_ID),
     user_id: int = Query(1, ge=1),
@@ -319,7 +306,7 @@ def start_trakt_device_flow(
     """
     try:
         client_id, _ = resolve_trakt_client_credentials(
-            config, storage, source_id=source_id, user_id=user_id
+            storage, source_id=source_id, user_id=user_id
         )
         flow = start_device_auth_flow(client_id)
     except TraktAuthError as error:
@@ -340,7 +327,6 @@ def start_trakt_device_flow(
 @router.post("/trakt/poll-device-approval")
 def poll_trakt_device_approval(
     request: TraktPollRequest,
-    config: RequiredConfig,
     storage: RequiredStorage,
     source_id: str = _source_id_query(TRAKT_SOURCE_ID),
     user_id: int = Query(1, ge=1),
@@ -348,7 +334,7 @@ def poll_trakt_device_approval(
     """The frontend calls this repeatedly at the cadence Trakt returned."""
     try:
         client_id, client_secret = resolve_trakt_client_credentials(
-            config, storage, source_id=source_id, user_id=user_id
+            storage, source_id=source_id, user_id=user_id
         )
         result = poll_device_token(request.device_code, client_id, client_secret)
     except TraktAuthError as error:
@@ -399,7 +385,6 @@ def poll_trakt_device_approval(
 
 @router.delete("/trakt/token")
 def disconnect_trakt(
-    config: RequiredConfig,
     storage: RequiredStorage,
     source_id: str = _source_id_query(TRAKT_SOURCE_ID),
     user_id: int = Query(1, ge=1),
@@ -407,7 +392,6 @@ def disconnect_trakt(
     _disconnect_source(
         source_id,
         TRAKT_PLUGIN,
-        config,
         storage,
         user_id,
         "No active Trakt connection found",

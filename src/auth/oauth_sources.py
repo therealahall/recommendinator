@@ -19,12 +19,11 @@ REFRESH_TOKEN_KEY = "refresh_token"
 def may_revoke(
     plugin_name: str,
     source_id: str,
-    config: dict[str, Any] | None,
     storage: StorageManager | None,
     user_id: int = 1,
 ) -> bool:
     """Refusing an id no source claims would leave the credential undeletable."""
-    owner = resolve_source_plugin(source_id, config, storage, user_id)
+    owner = resolve_source_plugin(source_id, storage, user_id)
     return owner is None or owner.name == plugin_name
 
 
@@ -36,31 +35,25 @@ class OAuthSourceBinding:
 
     def resolve(
         self,
-        config: dict[str, Any],
         storage: StorageManager | None,
         source_id: str,
         user_id: int,
     ) -> dict[str, Any] | None:
-        """Reads the database as well as ``inputs``, so a source added from the
-        Data tab is found too.
-        """
         resolved = resolve_input_for_plugin(
-            source_id, self.plugin_name, config, storage, user_id
+            source_id, self.plugin_name, storage, user_id
         )
         return resolved.config if resolved is not None else None
 
     def is_enabled(
         self,
-        config: dict[str, Any],
         storage: StorageManager | None,
         source_id: str,
         user_id: int,
     ) -> bool:
-        return self.resolve(config, storage, source_id, user_id) is not None
+        return self.resolve(storage, source_id, user_id) is not None
 
     def has_token(
         self,
-        config: dict[str, Any],
         storage: StorageManager | None,
         source_id: str,
         user_id: int,
@@ -68,7 +61,7 @@ class OAuthSourceBinding:
         """The stored row, not the resolved value: disconnect deletes rows."""
         return (
             storage is not None
-            and may_revoke(self.plugin_name, source_id, config, storage, user_id)
+            and may_revoke(self.plugin_name, source_id, storage, user_id)
             and storage.credentials.exists(user_id, source_id, REFRESH_TOKEN_KEY)
         )
 

@@ -17,8 +17,9 @@ logger = logging.getLogger(__name__)
 
 GOG_PLUGIN = "gog"
 
-# The id of the source a plain ``inputs.gog`` entry gets. Every entry point
-# takes the real source id instead, so a second GOG source keeps its own token.
+# The default source id a client that predates the parameter addresses. Every
+# entry point takes the real source id instead, so a second GOG source keeps
+# its own token.
 GOG_SOURCE_ID = GOG_PLUGIN
 
 GOG_AUTH_URL = "https://auth.gog.com/auth"
@@ -110,18 +111,16 @@ def save_gog_token(
 
 
 def is_gog_enabled(
-    config: dict[str, Any],
     storage: StorageManager | None = None,
     source_id: str = GOG_SOURCE_ID,
     user_id: int = 1,
 ) -> bool:
-    return _GOG.is_enabled(config, storage, source_id, user_id)
+    return _GOG.is_enabled(storage, source_id, user_id)
 
 
 def has_gog_token(
-    config: dict[str, Any],
     storage: StorageManager | None = None,
     source_id: str = GOG_SOURCE_ID,
     user_id: int = 1,
 ) -> bool:
-    return _GOG.has_token(config, storage, source_id, user_id)
+    return _GOG.has_token(storage, source_id, user_id)

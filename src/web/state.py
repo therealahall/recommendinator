@@ -12,8 +12,6 @@ from typing import TYPE_CHECKING, Any
 import watchfiles
 
 from src.config.service import load_config
-from src.storage.credential_migration import migrate_config_credentials
-from src.storage.global_secrets import migrate_config_secrets
 from src.storage.settings_migration import migrate_config_settings
 
 if TYPE_CHECKING:
@@ -120,12 +118,10 @@ def reload_config() -> bool:
         with _config_lock:
             config = load_config(Path(config_path))
             # Re-assemble the effective config on hot-reload. Mutates config in
-            # place: in-scope sections are rebuilt from const/YAML/DB layers (DB
-            # wins), and sensitive fields are popped after credential migration.
+            # place: in-scope sections are rebuilt from const/YAML/DB layers,
+            # DB wins.
             if app_state.storage is not None:
                 migrate_config_settings(config, app_state.storage)
-                migrate_config_credentials(config, app_state.storage)
-                migrate_config_secrets(config, app_state.storage)
             app_state.config = config
         logger.info("Reloaded config from %s", config_path)
         return True

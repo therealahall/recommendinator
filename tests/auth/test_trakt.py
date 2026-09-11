@@ -8,7 +8,6 @@ import requests
 from src.auth.trakt import (
     DevicePollStatus,
     TraktAuthError,
-    has_trakt_token,
     poll_device_token,
     resolve_trakt_client_credentials,
     save_trakt_token,
@@ -120,50 +119,19 @@ class TestResolveTraktClientCredentials:
     def storage(self, tmp_path: Path) -> StorageManager:
         return StorageManager(sqlite_path=tmp_path / "test.db")
 
-    @staticmethod
-    def _trakt_source(source_id: str = "trakt", **fields: str) -> dict[str, Any]:
-        return {"inputs": {source_id: {"plugin": "trakt", "enabled": True, **fields}}}
+    def test_resolves_from_the_source_row_and_its_credentials(
+        self, storage: StorageManager
+    ) -> None:
+        storage.sources.upsert(1, "trakt", "trakt", {"client_id": "cid"}, enabled=True)
+        storage.credentials.save(1, "trakt", "client_secret", "secret")
 
-    def test_resolves_from_resolved_inputs(self, storage: StorageManager) -> None:
-        config = self._trakt_source(client_id="cid", client_secret="secret")
-
-        assert resolve_trakt_client_credentials(config, storage) == ("cid", "secret")
+        assert resolve_trakt_client_credentials(storage) == ("cid", "secret")
 
     def test_a_source_running_another_plugin_is_refused(
         self, storage: StorageManager
     ) -> None:
-        config = {
-            "inputs": {
-                "my_games": {
-                    "plugin": "gog",
-                    "enabled": True,
-                    "client_id": "cid",
-                    "client_secret": "secret",
-                }
-            }
-        }
+        storage.sources.upsert(1, "my_games", "gog", {"client_id": "cid"}, enabled=True)
+        storage.credentials.save(1, "my_games", "client_secret", "secret")
 
         with pytest.raises(TraktAuthError, match="not configured"):
-            resolve_trakt_client_credentials(config, storage, source_id="my_games")
-
-
-class TestHasTraktToken:
-    @pytest.fixture()
-    def storage(self, tmp_path: Path) -> StorageManager:
-        return StorageManager(sqlite_path=tmp_path / "test.db")
-
-    @staticmethod
-    def _trakt_source(plugin: str = "trakt") -> dict[str, Any]:
-        return {"inputs": {"trakt": {"plugin": plugin, "enabled": True}}}
-
-    def test_true_when_token_present(self, storage: StorageManager) -> None:
-        storage.credentials.save(1, "trakt", "refresh_token", "token")
-
-        assert has_trakt_token(self._trakt_source(), storage) is True
-
-    def test_another_plugins_source_is_never_reported_connected(
-        self, storage: StorageManager
-    ) -> None:
-        storage.credentials.save(1, "trakt", "refresh_token", "gog-token")
-
-        assert has_trakt_token(self._trakt_source(plugin="gog"), storage) is False
+            resolve_trakt_client_credentials(storage, source_id="my_games")

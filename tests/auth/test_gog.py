@@ -1,7 +1,6 @@
 import logging
 import traceback
 from pathlib import Path
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -109,18 +108,15 @@ class TestSaveGogToken:
         assert not any(record.exc_info for record in records)
 
 
-def _gog_source(**fields: object) -> dict[str, Any]:
-    return {"inputs": {"gog": {"plugin": "gog", "enabled": True, **fields}}}
-
-
 class TestIsGogEnabled:
-    def test_returns_true_when_enabled(self) -> None:
-        assert is_gog_enabled(_gog_source()) is True
+    @pytest.fixture()
+    def storage(self, tmp_path: Path) -> StorageManager:
+        return StorageManager(sqlite_path=tmp_path / "test.db")
 
-    def test_returns_false_for_a_source_running_another_plugin(self) -> None:
-        config = {"inputs": {"gog": {"plugin": "trakt", "enabled": True}}}
+    def test_returns_true_when_enabled(self, storage: StorageManager) -> None:
+        storage.sources.upsert(1, "gog", "gog", {}, enabled=True)
 
-        assert is_gog_enabled(config) is False
+        assert is_gog_enabled(storage) is True
 
 
 class TestHasGogToken:
@@ -129,25 +125,18 @@ class TestHasGogToken:
         return StorageManager(sqlite_path=tmp_path / "test.db")
 
     def test_returns_true_when_token_in_db(self, storage: StorageManager) -> None:
+        storage.sources.upsert(1, "gog", "gog", {}, enabled=True)
         storage.credentials.save(1, "gog", "refresh_token", "db_token")
 
-        assert has_gog_token(_gog_source(refresh_token=""), storage=storage) is True
-
-    def test_a_config_only_token_is_not_reported_connected(
-        self, storage: StorageManager
-    ) -> None:
-        assert (
-            has_gog_token(_gog_source(refresh_token="some_token"), storage=storage)
-            is False
-        )
+        assert has_gog_token(storage) is True
 
     def test_another_plugins_source_is_never_reported_connected(
         self, storage: StorageManager
     ) -> None:
-        config = {"inputs": {"gog": {"plugin": "trakt", "enabled": True}}}
+        storage.sources.upsert(1, "gog", "trakt", {}, enabled=True)
         storage.credentials.save(1, "gog", "refresh_token", "trakt_token")
 
-        assert has_gog_token(config, storage=storage) is False
+        assert has_gog_token(storage) is False
 
 
 class TestGogAuthCredentialChainRegression:

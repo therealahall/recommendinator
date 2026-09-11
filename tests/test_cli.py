@@ -40,13 +40,6 @@ from tests.factories import (
 def mock_config():
     return {
         "storage": {"database_path": "data/test.db"},
-        "inputs": {
-            "goodreads_rss": {
-                "plugin": "goodreads_rss",
-                "user_id": "12345",
-                "enabled": True,
-            }
-        },
         "recommendations": {
             "min_rating_for_preference": 4,
         },
@@ -59,7 +52,6 @@ def mock_components(mock_config):
         patch("src.cli.main.load_config", return_value=mock_config),
         patch("src.cli.main.create_storage_manager") as mock_storage,
         patch("src.cli.main.create_recommendation_engine") as mock_engine,
-        patch("src.cli.main.migrate_config_credentials"),
     ):
         mock_storage_manager = make_storage_mock()
         mock_storage_manager.credentials.get_for_source.return_value = {}
@@ -400,21 +392,20 @@ def test_complete_command_invalid_rating(mock_components):
     assert "Rating must be between 1 and 5" in result.output
 
 
+STEAM_ROW = {
+    "source_id": "steam",
+    "plugin": "steam",
+    "config": {"api_key": "k", "steam_id": "76561198000000000"},
+    "enabled": True,
+    "sync_interval": None,
+    "migrated_at": "",
+    "updated_at": "",
+}
+
+
 def test_update_command_steam_success(mock_components):
-    mock_config = {
-        "storage": {"database_path": "data/test.db"},
-        "inputs": {
-            "steam": {
-                "plugin": "steam",
-                "api_key": "test_api_key",
-                "steam_id": "76561198000000000",
-                "enabled": True,
-            }
-        },
-        "recommendations": {
-            "min_rating_for_preference": 4,
-        },
-    }
+    mock_config = {"storage": {"database_path": "data/test.db"}}
+    mock_components["storage"].sources.list.return_value = [STEAM_ROW]
 
     mock_steam_item = ContentItem(
         id="12345",
@@ -449,20 +440,8 @@ def test_update_command_steam_success(mock_components):
 def test_update_command_steam_api_error(mock_components):
     from src.ingestion.plugin_base import SourceError
 
-    mock_config = {
-        "storage": {"database_path": "data/test.db"},
-        "inputs": {
-            "steam": {
-                "plugin": "steam",
-                "api_key": "test_api_key",
-                "steam_id": "76561198000000000",
-                "enabled": True,
-            }
-        },
-        "recommendations": {
-            "min_rating_for_preference": 4,
-        },
-    }
+    mock_config = {"storage": {"database_path": "data/test.db"}}
+    mock_components["storage"].sources.list.return_value = [STEAM_ROW]
 
     with (
         patch("src.cli.main.load_config", return_value=mock_config),
@@ -492,6 +471,10 @@ class TestUpdateWorkersFlag:
         hook (load_config is patched but create_storage_manager is not), so a shared
         on-disk DB would leak seeded ``sync.max_workers`` leaves across tests."""
         self._db_path = tmp_path / "test.db"
+        _steam_source(self._db_path)
+        StorageManager(sqlite_path=self._db_path).sources.upsert(
+            1, "goodreads_rss", "goodreads_rss", {"user_id": "12345"}, enabled=True
+        )
 
     def _config_with_sources(
         self,
@@ -499,19 +482,6 @@ class TestUpdateWorkersFlag:
     ) -> dict:
         config: dict = {
             "storage": {"database_path": str(self._db_path)},
-            "inputs": {
-                "steam": {
-                    "plugin": "steam",
-                    "api_key": "test_api_key",
-                    "steam_id": "76561198000000000",
-                    "enabled": True,
-                },
-                "goodreads_rss": {
-                    "plugin": "goodreads_rss",
-                    "user_id": "12345",
-                    "enabled": True,
-                },
-            },
             "recommendations": {
                 "min_rating_for_preference": 4,
             },
@@ -625,19 +595,18 @@ class TestUpdateWorkersFlag:
         assert captured["max_workers"] == 4
 
 
+def _steam_source(db_path: Path) -> None:
+    """A source is a ``source_configs`` row; config.yaml cannot declare one."""
+    fields = {"api_key": "k", "steam_id": "76561198000000000"}
+    StorageManager(sqlite_path=db_path).sources.upsert(
+        1, "steam", "steam", fields, enabled=True
+    )
+
+
 def test_update_records_the_run_it_just_finished(tmp_path: Path) -> None:
     db_path = tmp_path / "test.db"
-    config = {
-        "storage": {"database_path": str(db_path)},
-        "inputs": {
-            "steam": {
-                "plugin": "steam",
-                "api_key": "test_api_key",
-                "steam_id": "76561198000000000",
-                "enabled": True,
-            }
-        },
-    }
+    config = {"storage": {"database_path": str(db_path)}}
+    _steam_source(db_path)
     games = [make_item("Game", ContentType.VIDEO_GAME, item_id="g1")]
 
     with (
@@ -672,15 +641,8 @@ def test_update_enriches_what_it_synced_unless_auto_enrich_is_off(
             "auto_enrich_on_sync": auto_enrich,
             "providers": {"rawg": {"enabled": True, "api_key": "k"}},
         },
-        "inputs": {
-            "steam": {
-                "plugin": "steam",
-                "api_key": "test_api_key",
-                "steam_id": "76561198000000000",
-                "enabled": True,
-            }
-        },
     }
+    _steam_source(db_path)
     games = [make_item("Game", ContentType.VIDEO_GAME, item_id="g1")]
 
     with (
@@ -716,15 +678,8 @@ def test_update_json_keeps_the_enrichment_report_off_stdout(tmp_path: Path) -> N
             "auto_enrich_on_sync": True,
             "providers": {"rawg": {"enabled": True, "api_key": "k"}},
         },
-        "inputs": {
-            "steam": {
-                "plugin": "steam",
-                "api_key": "test_api_key",
-                "steam_id": "76561198000000000",
-                "enabled": True,
-            }
-        },
     }
+    _steam_source(db_path)
     games = [make_item("Game", ContentType.VIDEO_GAME, item_id="g1")]
 
     with (
@@ -758,15 +713,8 @@ def test_update_reports_the_omitted_error_count_the_web_payload_carries(
     db_path = tmp_path / "test.db"
     config = {
         "storage": {"database_path": str(db_path)},
-        "inputs": {
-            "steam": {
-                "plugin": "steam",
-                "api_key": "test_api_key",
-                "steam_id": "76561198000000000",
-                "enabled": True,
-            }
-        },
     }
+    _steam_source(db_path)
     failures = MAX_REPORTED_ERRORS + 12
     games = [
         make_item(f"Game {index}", ContentType.VIDEO_GAME, item_id=f"g{index}")
@@ -801,10 +749,8 @@ def test_update_in_a_terminal_names_the_error_total_it_did_not_print(
 ) -> None:
     """The count rides on the payload, so the default report has it too: read as
     the whole story, the printed list understates a bad run by thousands."""
-    config = {
-        "storage": {"database_path": str(tmp_path / "test.db")},
-        "inputs": {"steam": {"plugin": "steam", "api_key": "k", "enabled": True}},
-    }
+    config = {"storage": {"database_path": str(tmp_path / "test.db")}}
+    _steam_source(tmp_path / "test.db")
     omitted = 4800
     ran = SyncResult(
         source_name="Steam",
@@ -836,15 +782,8 @@ def test_update_leaves_the_enrichment_run_the_server_already_owns(
     config = {
         "storage": {"database_path": str(db_path)},
         "enrichment": {"enabled": True, "auto_enrich_on_sync": True},
-        "inputs": {
-            "steam": {
-                "plugin": "steam",
-                "api_key": "test_api_key",
-                "steam_id": "76561198000000000",
-                "enabled": True,
-            }
-        },
     }
+    _steam_source(db_path)
     storage = StorageManager(sqlite_path=db_path)
     assert storage.enrichment_jobs.claim(None) is True
     games = [make_item("Game", ContentType.VIDEO_GAME, item_id="g1")]
@@ -872,15 +811,8 @@ def test_update_refuses_a_source_another_process_is_already_syncing(
     db_path = tmp_path / "test.db"
     config = {
         "storage": {"database_path": str(db_path)},
-        "inputs": {
-            "steam": {
-                "plugin": "steam",
-                "api_key": "test_api_key",
-                "steam_id": "76561198000000000",
-                "enabled": True,
-            }
-        },
     }
+    _steam_source(db_path)
     storage = StorageManager(sqlite_path=db_path)
     assert storage.sync_runs.claim(1, "steam") is not None
     games = [make_item("Game", ContentType.VIDEO_GAME, item_id="g1")]
@@ -907,15 +839,8 @@ def test_update_json_answers_with_a_document_when_every_source_is_claimed(
     db_path = tmp_path / "test.db"
     config = {
         "storage": {"database_path": str(db_path)},
-        "inputs": {
-            "steam": {
-                "plugin": "steam",
-                "api_key": "test_api_key",
-                "steam_id": "76561198000000000",
-                "enabled": True,
-            }
-        },
     }
+    _steam_source(db_path)
     storage = StorageManager(sqlite_path=db_path)
     assert storage.sync_runs.claim(1, "steam") is not None
 
@@ -942,15 +867,8 @@ def test_update_interrupted_by_ctrl_c_leaves_the_source_claimable(
     db_path = tmp_path / "test.db"
     config = {
         "storage": {"database_path": str(db_path)},
-        "inputs": {
-            "steam": {
-                "plugin": "steam",
-                "api_key": "test_api_key",
-                "steam_id": "76561198000000000",
-                "enabled": True,
-            }
-        },
     }
+    _steam_source(db_path)
 
     with (
         patch("src.cli.main.load_config", return_value=config),
@@ -973,19 +891,10 @@ def test_update_interrupted_by_ctrl_c_releases_only_the_claims_it_took(
 ) -> None:
     """The operator Ctrl-Cs a run over every source while the web syncs one."""
     db_path = tmp_path / "test.db"
-    config = {
-        "storage": {"database_path": str(db_path)},
-        "inputs": {
-            source_id: {
-                "plugin": "steam",
-                "api_key": "test_api_key",
-                "steam_id": "76561198000000000",
-                "enabled": True,
-            }
-            for source_id in ("steam", "steam_backlog")
-        },
-    }
+    config = {"storage": {"database_path": str(db_path)}}
+    _steam_source(db_path)
     storage = StorageManager(sqlite_path=db_path)
+    storage.sources.upsert(1, "steam_backlog", "steam", {"api_key": "k"}, enabled=True)
     assert storage.sync_runs.claim(1, "steam_backlog") is not None
 
     with (
@@ -1011,15 +920,8 @@ def test_update_interrupted_after_a_source_recorded_keeps_the_next_runs_claim(
     db_path = tmp_path / "test.db"
     config = {
         "storage": {"database_path": str(db_path)},
-        "inputs": {
-            "steam": {
-                "plugin": "steam",
-                "api_key": "test_api_key",
-                "steam_id": "76561198000000000",
-                "enabled": True,
-            }
-        },
     }
+    _steam_source(db_path)
     storage = StorageManager(sqlite_path=db_path)
     taken_by_the_web: list[int | None] = []
 
@@ -1398,39 +1300,21 @@ class TestPreferenceWritesTheStoreRefusesRegression:
 
 class TestConfigLoadingRegression:
     def test_load_config_prefers_config_yaml_over_example_regression(self, tmp_path):
-        """Bug reported: User had Steam enabled in config/config.yaml but web app
-        was loading config/example.yaml (where Steam is disabled)."""
+        """Bug reported: the app read config/example.yaml while the operator's
+        settings were in config/config.yaml."""
 
         from src.config.service import load_config
 
         config_dir = tmp_path / "config"
         config_dir.mkdir()
-
-        config_yaml = config_dir / "config.yaml"
-        config_yaml.write_text("""
-inputs:
-  steam:
-    enabled: true
-    api_key: "test"
-""")
-
-        example_yaml = config_dir / "example.yaml"
-        example_yaml.write_text("""
-inputs:
-  steam:
-    enabled: false
-""")
+        (config_dir / "config.yaml").write_text("web:\n  port: 1234\n")
+        (config_dir / "example.yaml").write_text("web:\n  port: 4321\n")
 
         import os
 
         original_cwd = os.getcwd()
         try:
             os.chdir(tmp_path)
-            config = load_config(None)
-            steam_enabled = config.get("inputs", {}).get("steam", {}).get("enabled")
-            assert steam_enabled is True, (
-                "load_config should prefer config.yaml (steam enabled) "
-                "over example.yaml (steam disabled)"
-            )
+            assert load_config(None)["web"]["port"] == 1234
         finally:
             os.chdir(original_cwd)

@@ -24,35 +24,23 @@ def storage(tmp_path: Path) -> StorageManager:
 
 @pytest.fixture()
 def config() -> dict[str, Any]:
-    return {
-        "storage": {"database_path": "data/test.db"},
-        "inputs": {
-            "gog_work": {"plugin": "gog", "enabled": True},
-            "epic_work": {"plugin": "epic_games", "enabled": True},
-            "trakt_work": {"plugin": "trakt", "enabled": True, "client_id": "cid"},
-        },
-    }
+    return {"storage": {"database_path": "data/test.db"}}
 
 
 @contextmanager
 def booted_client(
-    storage: StorageManager,
-    config: dict[str, Any],
-    migrate_credentials: bool = False,
+    storage: StorageManager, config: dict[str, Any]
 ) -> Iterator[TestClient]:
-    with booted_web_app(
-        storage, config, migrate_credentials=migrate_credentials
-    ) as app:
+    with booted_web_app(storage, config) as app:
         yield authenticated_client(app)
 
 
 @pytest.fixture()
 def client(storage: StorageManager, config: dict[str, Any]) -> Iterator[TestClient]:
-    for source_id, entry in config["inputs"].items():
-        fields = {k: v for k, v in entry.items() if k not in ("plugin", "enabled")}
-        storage.sources.upsert(
-            USER_ID, source_id, entry["plugin"], fields, enabled=True
-        )
+    storage.sources.upsert(USER_ID, "gog_work", "gog", {}, enabled=True)
+    storage.sources.upsert(USER_ID, "epic_work", "epic_games", {}, enabled=True)
+    trakt = {"client_id": "cid"}
+    storage.sources.upsert(USER_ID, "trakt_work", "trakt", trakt, enabled=True)
 
     with booted_client(storage, config) as test_client:
         yield test_client
@@ -91,10 +79,8 @@ READ_ROUTES = [
 ]
 
 
-def resolved_config(
-    config: dict[str, Any], storage: StorageManager, source_id: str
-) -> dict[str, Any]:
-    for resolved in resolve_inputs(config, storage=storage, user_id=USER_ID):
+def resolved_config(storage: StorageManager, source_id: str) -> dict[str, Any]:
+    for resolved in resolve_inputs(storage, USER_ID):
         if resolved.source_id == source_id:
             return resolved.config
     raise AssertionError(f"{source_id} did not resolve, so its reader is unchecked")
@@ -102,7 +88,7 @@ def resolved_config(
 
 class TestOAuthConnectSourceBindingRegression:
     def test_gog_round_trip_regression(
-        self, client: TestClient, storage: StorageManager, config: dict[str, Any]
+        self, client: TestClient, storage: StorageManager
     ) -> None:
         with (
             patch("src.web.api._oauth.extract_gog_code", return_value="code"),
@@ -116,20 +102,17 @@ class TestOAuthConnectSourceBindingRegression:
             )
 
         assert response.status_code == 200
-        assert (
-            resolved_config(config, storage, "gog_work")["refresh_token"]
-            == "gog-work-token"
-        )
+        assert resolved_config(storage, "gog_work")["refresh_token"] == "gog-work-token"
         assert storage.credentials.get(USER_ID, "gog", "refresh_token") is None
         assert client.get("/api/gog/status?source_id=gog_work").json()["connected"]
         assert not client.get("/api/gog/status").json()["connected"]
 
-        delete_source("gog_work", storage, config, user_id=USER_ID)
+        delete_source("gog_work", storage, user_id=USER_ID)
 
         assert storage.credentials.get(USER_ID, "gog_work", "refresh_token") is None
 
     def test_trakt_round_trip_regression(
-        self, client: TestClient, storage: StorageManager, config: dict[str, Any]
+        self, client: TestClient, storage: StorageManager
     ) -> None:
         storage.credentials.save(USER_ID, "trakt_work", "client_secret", "secret")
 
@@ -144,29 +127,21 @@ class TestOAuthConnectSourceBindingRegression:
 
         assert response.status_code == 200
         assert (
-            resolved_config(config, storage, "trakt_work")["refresh_token"]
+            resolved_config(storage, "trakt_work")["refresh_token"]
             == "trakt-work-token"
         )
         assert storage.credentials.get(USER_ID, "trakt", "refresh_token") is None
         assert client.get("/api/trakt/status?source_id=trakt_work").json()["connected"]
         assert not client.get("/api/trakt/status").json()["connected"]
 
-        delete_source("trakt_work", storage, config, user_id=USER_ID)
+        delete_source("trakt_work", storage, user_id=USER_ID)
 
         assert storage.credentials.get(USER_ID, "trakt_work", "refresh_token") is None
 
 
 @pytest.fixture()
-def db_only_config() -> dict[str, Any]:
-    return {
-        "storage": {"database_path": "data/test.db"},
-        "inputs": {},
-    }
-
-
-@pytest.fixture()
 def db_only_client(
-    storage: StorageManager, db_only_config: dict[str, Any]
+    storage: StorageManager, config: dict[str, Any]
 ) -> Iterator[TestClient]:
     storage.sources.upsert(USER_ID, "gog_db", "gog", {}, enabled=True)
     storage.sources.upsert(USER_ID, "epic_db", "epic_games", {}, enabled=True)
@@ -175,7 +150,7 @@ def db_only_client(
     )
     storage.credentials.save(USER_ID, "trakt_db", "client_secret", "secret")
 
-    with booted_client(storage, db_only_config) as test_client:
+    with booted_client(storage, config) as test_client:
         yield test_client
 
 
@@ -249,79 +224,6 @@ class TestDisconnectTargetsTheNamedSource:
             storage.credentials.get(USER_ID, "other_source", "refresh_token")
             == "theirs"
         )
-
-
-YAML_HELD_SOURCES = [
-    ("gog", "gog_work", "gog"),
-    ("epic", "epic_work", "epic_games"),
-    ("trakt", "trakt_work", "trakt"),
-]
-
-
-def yaml_held_token_config(source_id: str, plugin: str) -> dict[str, Any]:
-    return {
-        "storage": {"database_path": "data/test.db"},
-        "inputs": {
-            source_id: {
-                "plugin": plugin,
-                "enabled": True,
-                "refresh_token": "from-yaml",
-            },
-        },
-    }
-
-
-class TestAFileHeldTokenReachesBothWebVerbsRegression:
-    @pytest.mark.parametrize(("provider", "source_id", "plugin"), YAML_HELD_SOURCES)
-    def test_status_reads_connected_and_disconnect_deletes_it(
-        self,
-        storage: StorageManager,
-        provider: str,
-        source_id: str,
-        plugin: str,
-    ) -> None:
-        config = yaml_held_token_config(source_id, plugin)
-
-        with booted_client(storage, config, migrate_credentials=True) as client:
-            assert storage.credentials.get(USER_ID, source_id, "refresh_token") == (
-                "from-yaml"
-            )
-            assert client.get(f"/api/{provider}/status?source_id={source_id}").json()[
-                "connected"
-            ]
-            assert (
-                client.delete(
-                    f"/api/{provider}/token?source_id={source_id}"
-                ).status_code
-                == 200
-            )
-
-        assert storage.credentials.get(USER_ID, source_id, "refresh_token") is None
-
-    @pytest.mark.parametrize(("provider", "source_id", "plugin"), YAML_HELD_SOURCES)
-    def test_a_file_token_on_a_migrated_source_stays_out_of_reach(
-        self,
-        storage: StorageManager,
-        provider: str,
-        source_id: str,
-        plugin: str,
-    ) -> None:
-        storage.sources.upsert(USER_ID, source_id, plugin, {}, enabled=True)
-        config = yaml_held_token_config(source_id, plugin)
-        assert config["inputs"][source_id]["refresh_token"] == "from-yaml"
-
-        with booted_client(storage, config, migrate_credentials=True) as client:
-            assert "refresh_token" not in config["inputs"][source_id]
-            assert storage.credentials.get(USER_ID, source_id, "refresh_token") is None
-            assert not client.get(
-                f"/api/{provider}/status?source_id={source_id}"
-            ).json()["connected"]
-            assert (
-                client.delete(
-                    f"/api/{provider}/token?source_id={source_id}"
-                ).status_code
-                == 404
-            )
 
 
 class TestRouteRefusesASourceRunningAnotherPlugin:

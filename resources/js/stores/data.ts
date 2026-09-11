@@ -14,7 +14,6 @@ import type {
   EnrichmentJobStatusResponse,
   SourceSchemaResponse,
   SourceConfigResponse,
-  SourceMigrationResponse,
   PluginImportErrorResponse,
   PluginInfoResponse,
   PluginListResponse,
@@ -643,14 +642,6 @@ export const useDataStore = defineStore('data', () => {
     return config
   }
 
-  async function migrateSource(sourceId: string): Promise<SourceMigrationResponse> {
-    const migration = await api.post<SourceMigrationResponse>(
-      `/sync/sources/${encodeURIComponent(sourceId)}/migrate`,
-    )
-    await loadSourceConfig(sourceId)
-    return migration
-  }
-
   async function updateSourceConfig(
     sourceId: string,
     values: Record<string, unknown>,
@@ -846,7 +837,6 @@ export const useDataStore = defineStore('data', () => {
     checkEnrichmentStatus,
     loadSourceSchema,
     loadSourceConfig,
-    migrateSource,
     updateSourceConfig,
     setSourceSecret,
     clearSourceSecret,

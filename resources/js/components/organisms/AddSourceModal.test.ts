@@ -92,8 +92,6 @@ function createdConfig(sourceId: string, plugin = 'calibre_web'): SourceConfigRe
     plugin,
     plugin_display_name: 'Calibre-Web',
     enabled: true,
-    migrated: true,
-    migrated_at: '2026-07-22T00:00:00Z',
     field_values: {},
     secret_status: {},
     sync_interval: 'daily',

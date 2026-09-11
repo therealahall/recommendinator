@@ -241,9 +241,7 @@ def execute_sync(
         progress_callback(0, None, "Fetching...", source_name)
 
     # One function decides what a source is called, so the token owner, the
-    # attribution and the delete key agree for every id. That includes the
-    # empty one a YAML ``inputs`` key can produce, which ``source_name`` reads
-    # as absent.
+    # attribution and the delete key agree for every id.
     source_identifier = plugin.get_source_identifier(plugin_config)
 
     def on_credential_rotated(key: str, value: str) -> None:

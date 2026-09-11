@@ -90,7 +90,7 @@ one error per field, since the field name is all the caller sees.
 `requires_network` defaults to `requires_api_key`. Override it for a file-based
 source that needs neither.
 
-`default_sync_interval` is the cadence a migrated source of this plugin gets
+`default_sync_interval` is the cadence a source of this plugin gets
 until the user picks one: `off`, `hourly`, `6h`, `daily` (the default) or
 `weekly`. Declare `weekly` when the plugin reads a file the user maintains by
 hand. Anything else leaves the source off rather than scheduling it.
@@ -369,22 +369,9 @@ one source. It still cannot sync.
 ## Configuration
 
 Sources are **named instances**: a user-defined id plus a plugin name, so one
-plugin can back several sources. They live in the `source_configs` table and are
-created from the Data tab or the `source` CLI. The legacy YAML bootstrap shows
-the same shape most compactly:
-
-```yaml
-inputs:
-  my_roms:
-    plugin: roms
-    paths: ["inputs/roms"]
-    enabled: true
-
-  handhelds:
-    plugin: roms
-    paths: ["inputs/gba"]
-    enabled: true
-```
+plugin can back several sources — `my_roms` and `handhelds`, both on `roms`,
+each scanning its own paths. They live in the `source_configs` table and are
+created from the Data tab or the `source` CLI.
 
 `fetch()` receives a `_source_id` key holding the user-defined name.
 `get_source_identifier(config)` returns it, and it is what lands in
@@ -614,16 +601,8 @@ name is written only where nothing has named the series yet.
 You return one `EnrichmentResult` instead of yielding `ContentItem`s, the manager
 throttles you from `rate_limit_requests_per_second`, the merge is gap-filling bar
 `franchise` and the series fields, and config lives under
-`enrichment.providers.<name>` rather than `inputs`.
-
-```yaml
-enrichment:
-  enabled: true
-  providers:
-    my_api:
-      api_key: "your-key"
-      enabled: true
-```
+`enrichment.providers.<name>` in the settings registry — set from the Settings
+page or the `settings` CLI, with the api key going through `settings set-secret`.
 
 ## Plugins to read
 

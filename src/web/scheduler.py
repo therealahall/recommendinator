@@ -37,7 +37,7 @@ def dispatch_due_syncs(
     latest_runs = storage.sync_runs.latest_per_source(user_id)
     now = utc_now()
 
-    for entry in resolve_inputs(config, storage=storage, user_id=user_id):
+    for entry in resolve_inputs(storage, user_id):
         state = schedule_state(
             storage,
             user_id,

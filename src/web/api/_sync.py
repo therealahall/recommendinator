@@ -156,10 +156,6 @@ def update_data(
     # Two POSTs racing on the same label both pass any pre-check here, so that
     # duplicate is left to ``start_sync``'s atomic check-and-set below.
 
-    # ``resolve_inputs`` is the single source of truth: it merges YAML ``inputs`` with
-    # DB-backed ``source_configs``, injects ``_source_id``, and layers decrypted
-    # credentials — so it covers sources created via the Add-source modal that live
-    # only in the database.
     misconfigured: list[str] = []
     if source == "all":
         # Overlapping whatever single run is already going would fetch and save
@@ -170,7 +166,7 @@ def update_data(
         # again, keeps the run to one credential decrypt per source. Excluding a
         # failing source and naming it mirrors the CLI's all-sources run.
         resolved: list[ResolvedInput] = []
-        for entry in resolve_inputs(config, storage=storage):
+        for entry in resolve_inputs(storage):
             validation_errors = entry.plugin.validate_config(
                 entry.config, storage=storage
             )
@@ -184,12 +180,9 @@ def update_data(
     else:
         if sync_manager.is_running(ALL_SOURCES_KEY):
             raise HTTPException(status_code=409, detail="A sync is already in progress")
-        # Filtering the resolved list (not the YAML ``inputs`` map) is what lets
-        # a DB-only source sync — and a disabled/unknown source yields no entry.
+        # A disabled or unknown source yields no entry.
         resolved = [
-            entry
-            for entry in resolve_inputs(config, storage=storage)
-            if entry.source_id == source
+            entry for entry in resolve_inputs(storage) if entry.source_id == source
         ]
         if not resolved:
             # A 4xx (not a 200 "message") is required so the frontend ``catch``
@@ -198,7 +191,7 @@ def update_data(
             logger.info(
                 "Sync requested for unavailable source_id=%s", sanitize_for_log(source)
             )
-            not_loaded = source_plugin_not_loaded(source, config, storage=storage)
+            not_loaded = source_plugin_not_loaded(source, storage)
             raise HTTPException(
                 status_code=400,
                 detail=(
@@ -270,13 +263,8 @@ def update_data(
 
 
 @router.get("/sync/sources", response_model=list[SyncSourceResponse])
-def get_sync_sources(
-    config: RequiredConfig, storage: RequiredStorage
-) -> list[SyncSourceResponse]:
-    """Both components are guarded because the answer is assembled from both, and
-    a missing half read as a wrong library rather than an outage.
-    """
-    sources = get_available_sync_sources(config, storage=storage)
+def get_sync_sources(storage: RequiredStorage) -> list[SyncSourceResponse]:
+    sources = get_available_sync_sources(storage)
     return [
         SyncSourceResponse(
             id=source.id,

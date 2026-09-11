@@ -496,8 +496,8 @@ class TestEveryWriteNamesTheLeavesItCouldNotApply:
         assert json.loads(result.output)["sections"]
 
 
-class TestSettingsBootSecretMigration:
-    def test_boot_migrates_config_secret_and_strips_it(
+class TestASecretLeftInConfigYamlIsNotRead:
+    def test_the_file_value_neither_lands_in_the_store_nor_on_the_terminal(
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
         config = {"enrichment": {"providers": {"tmdb": {"api_key": "tmdb-secret"}}}}
@@ -510,9 +510,7 @@ class TestSettingsBootSecretMigration:
         )
 
         assert result.exit_code == 0
-        assert storage.secrets.has(_SECRET_KEY) is True
-        providers = config.get("enrichment", {}).get("providers", {})
-        assert providers.get("tmdb", {}).get("api_key") is None
+        assert storage.secrets.has(_SECRET_KEY) is False
         assert "tmdb-secret" not in result.output
 
 

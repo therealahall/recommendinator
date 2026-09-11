@@ -19,7 +19,7 @@ from src.recommendations.scorers import (
     SeriesOrderScorer,
     TagOverlapScorer,
 )
-from src.settings.metadata import all_entries, default_config, default_of
+from src.settings.metadata import default_config, default_of
 from src.storage.manager import StorageManager
 from src.utils.dotted_path import get_leaf, set_leaf
 
@@ -34,11 +34,6 @@ _FILE_OWNED_PATHS: tuple[tuple[str, ...], ...] = (
     ("web", "port"),
     ("web", "debug"),
     ("security", "allowed_source_roots"),
-    # Neither of these is a setting the file feeds: the legacy source block and
-    # any secret left behind are drained into the database at boot and stripped
-    # out of the running config.
-    ("inputs",),
-    *(tuple(entry.key.split(".")) for entry in all_entries() if entry.sensitive),
 )
 
 # The uvicorn launcher (``src/web/main.py``) reads these to bind the socket
@@ -127,19 +122,6 @@ def resolve_bootstrap_web(
     )
 
 
-def _without_childless_headers(section: dict[str, Any]) -> dict[str, Any]:
-    """A ``.get(name, {})`` default fires on an absent key, never on a present
-    one holding None, and every config section is read that way."""
-    pruned: dict[str, Any] = {}
-    for key, value in section.items():
-        if value is None:
-            continue
-        pruned[key] = (
-            _without_childless_headers(value) if isinstance(value, dict) else value
-        )
-    return pruned
-
-
 def resolve_config_path(config_path: Path | None = None) -> Path:
     if config_path is None:
         config_path = Path("config/config.yaml")
@@ -162,12 +144,13 @@ def load_config(config_path: Path | None = None) -> dict[str, Any]:
     with open(resolved, encoding="utf-8") as f:
         raw = yaml.safe_load(f)
 
-    yaml_config = _without_childless_headers(raw) if isinstance(raw, dict) else {}
+    yaml_config = raw if isinstance(raw, dict) else {}
 
     config: dict[str, Any] = default_config()
     for path in _FILE_OWNED_PATHS:
-        # None means absent: _without_childless_headers has already dropped
-        # every key the file left empty.
+        # A childless `storage:` header parses to None, and so does a key the
+        # file leaves empty; get_leaf answers None for both, and neither is a
+        # value to lay over the default.
         value = get_leaf(yaml_config, path)
         if value is not None:
             set_leaf(config, path, value)
