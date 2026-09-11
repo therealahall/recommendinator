@@ -279,27 +279,29 @@ class TestThemePreferences:
 
 
 class TestAntiPreferences:
-    def test_anti_preferences_from_low_rated(
-        self,
-        profile_generator: ProfileGenerator,
-        sample_items: list[int],
-    ) -> None:
-        profile = profile_generator.generate_profile(user_id=1)
-
-        assert "horror" in profile.anti_preferences
-
-    def test_a_genre_below_the_operators_own_average_is_an_anti_preference(
+    def test_a_liked_genre_below_the_operators_own_average_is_not_an_anti_preference(
         self, profile_generator: ProfileGenerator, storage_manager: StorageManager
     ) -> None:
-        """The majority rule alone nearly empties the list: in a library averaging
-        3.8, almost nothing collects more 1s and 2s than 3s and above."""
+        """The panel heads this list "Not your style", and a below-average bar
+        puts half of any high-rating library under it."""
         _save_rated(storage_manager, "fantasy", [5, 5, 5, 5])
         _save_rated(storage_manager, "horror", [3, 3])
 
         profile = profile_generator.generate_profile(user_id=1)
 
-        assert profile.anti_preferences == ["horror"]
         assert "horror" in profile.liked_genres
+        assert profile.anti_preferences == []
+
+    def test_anti_preferences_run_worst_mean_first(
+        self, profile_generator: ProfileGenerator, storage_manager: StorageManager
+    ) -> None:
+        _save_rated(storage_manager, "horror", [1, 1, 2])
+        _save_rated(storage_manager, "western", [1, 2, 2, 4])
+        _save_rated(storage_manager, "romance", [2, 2, 4])
+
+        profile = profile_generator.generate_profile(user_id=1)
+
+        assert profile.anti_preferences == ["horror", "western", "romance"]
 
 
 class TestCrossMediaPatterns:
@@ -409,44 +411,6 @@ class TestRegenerateAndSave:
 
 
 class TestProfileRegression:
-    def test_loved_genre_not_in_anti_preferences_regression(
-        self,
-        storage_manager: StorageManager,
-    ) -> None:
-        items = []
-        for index in range(50):
-            items.append(
-                ContentItem(
-                    id=f"scifi_good_{index}",
-                    title=f"Great Sci-Fi Book {index}",
-                    content_type=ContentType.BOOK,
-                    status=ConsumptionStatus.COMPLETED,
-                    rating=5,
-                    metadata={"genres": ["sci-fi"]},
-                )
-            )
-        for index in range(2):
-            items.append(
-                ContentItem(
-                    id=f"scifi_bad_{index}",
-                    title=f"Bad Sci-Fi Book {index}",
-                    content_type=ContentType.BOOK,
-                    status=ConsumptionStatus.COMPLETED,
-                    rating=1,
-                    metadata={"genres": ["sci-fi"]},
-                )
-            )
-
-        for item in items:
-            storage_manager.save_content_item(item, user_id=1)
-
-        generator = ProfileGenerator(storage_manager)
-        profile = generator.generate_profile(user_id=1)
-
-        assert "science fiction" not in profile.anti_preferences
-        assert "science fiction" in profile.genre_affinities
-        assert profile.genre_affinities["science fiction"] >= 4.5
-
     def test_minimum_items_required_for_genre(
         self,
         storage_manager: StorageManager,
@@ -622,6 +586,49 @@ class TestProfileIgnoredSignalRegression:
         profile = profile_generator.generate_profile(user_id=1)
 
         assert "western" in profile.anti_preferences
+
+    def test_a_liked_genre_the_operator_also_ignores_is_not_an_anti_preference(
+        self, profile_generator: ProfileGenerator, storage_manager: StorageManager
+    ) -> None:
+        _save_rated(storage_manager, "western", [5, 5])
+        for index in range(3):
+            db_id = storage_manager.save_content_item(
+                ContentItem(
+                    id=f"ignored-western{index}",
+                    title=f"Dismissed Western {index}",
+                    content_type=ContentType.BOOK,
+                    status=ConsumptionStatus.UNREAD,
+                    metadata={"genres": ["western"]},
+                ),
+                user_id=1,
+            )
+            storage_manager.set_item_ignored(db_id, True, user_id=1)
+
+        profile = profile_generator.generate_profile(user_id=1)
+
+        assert "western" in profile.liked_genres
+        assert profile.anti_preferences == []
+
+    def test_a_disliked_genre_the_operator_also_ignores_is_listed_once(
+        self, profile_generator: ProfileGenerator, storage_manager: StorageManager
+    ) -> None:
+        _save_rated(storage_manager, "horror", [1, 2])
+        for index in range(3):
+            db_id = storage_manager.save_content_item(
+                ContentItem(
+                    id=f"ignored-horror{index}",
+                    title=f"Dismissed Horror {index}",
+                    content_type=ContentType.BOOK,
+                    status=ConsumptionStatus.UNREAD,
+                    metadata={"genres": ["horror"]},
+                ),
+                user_id=1,
+            )
+            storage_manager.set_item_ignored(db_id, True, user_id=1)
+
+        profile = profile_generator.generate_profile(user_id=1)
+
+        assert profile.anti_preferences == ["horror"]
 
 
 class TestGenreVocabulary:
