@@ -72,22 +72,14 @@ const baseSchema: SourceSchemaResponse = {
   ],
 }
 
-const migratedConfig: SourceConfigResponse = {
+const sourceConfig: SourceConfigResponse = {
   source_id: 'steam',
   plugin: 'steam',
   plugin_display_name: 'Steam',
   enabled: true,
-  migrated: true,
-  migrated_at: '2026-05-03T00:00:00Z',
   field_values: { vanity_url: 'me' },
   secret_status: { api_key: true },
   sync_interval: '6h',
-}
-
-const yamlConfig: SourceConfigResponse = {
-  ...migratedConfig,
-  migrated: false,
-  migrated_at: null,
 }
 
 describe('SyncSourceAccordion', () => {
@@ -135,7 +127,7 @@ describe('SyncSourceAccordion', () => {
       props: { source: baseSource, syncing: false },
     })
     const store = useDataStore()
-    const { loadSchema, loadConfig } = primeStore(store, yamlConfig)
+    const { loadSchema, loadConfig } = primeStore(store, sourceConfig)
 
     await wrapper.find('button.accordion-trigger').trigger('click')
     await flushPromises()
@@ -145,65 +137,10 @@ describe('SyncSourceAccordion', () => {
     expect(
       wrapper.find('button.accordion-trigger').attributes('aria-expanded'),
     ).toBe('true')
-  })
-
-  it('shows the config form and enabled toggle once migrated', async () => {
-    const wrapper = mount(SyncSourceAccordion, {
-      props: { source: baseSource, syncing: false },
-    })
-    const store = useDataStore()
-    primeStore(store, migratedConfig)
-
-    await wrapper.find('button.accordion-trigger').trigger('click')
-    await flushPromises()
-
     expect(wrapper.find('[data-testid="form-save"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="form-toggle-enabled"]').exists()).toBe(
       true,
     )
-    expect(wrapper.find('[data-testid="migrate-btn-steam"]').exists()).toBe(
-      false,
-    )
-  })
-
-  it('clicking Migrate calls store.migrateSource', async () => {
-    const wrapper = mount(SyncSourceAccordion, {
-      props: { source: baseSource, syncing: false },
-    })
-    const store = useDataStore()
-    primeStore(store, yamlConfig)
-    const migrate = vi.spyOn(store, 'migrateSource').mockResolvedValue({
-      source_id: 'steam',
-      migrated_at: 'now',
-      fields_migrated: [],
-      secrets_migrated: [],
-    })
-
-    await wrapper.find('button.accordion-trigger').trigger('click')
-    await flushPromises()
-    await wrapper.find('[data-testid="migrate-btn-steam"]').trigger('click')
-    await flushPromises()
-
-    expect(migrate).toHaveBeenCalledWith('steam')
-  })
-
-  it('migrates once when Migrate to DB is activated twice in flight', async () => {
-    const wrapper = mount(SyncSourceAccordion, {
-      props: { source: baseSource, syncing: false },
-    })
-    const store = useDataStore()
-    primeStore(store, yamlConfig)
-    const migrate = vi
-      .spyOn(store, 'migrateSource')
-      .mockImplementation(() => new Promise<never>(() => {}))
-
-    await wrapper.find('button.accordion-trigger').trigger('click')
-    await flushPromises()
-    const button = wrapper.find('[data-testid="migrate-btn-steam"]')
-    await button.trigger('click')
-    await button.trigger('click')
-
-    expect(migrate).toHaveBeenCalledTimes(1)
   })
 
   it('disables the Sync button and shows a Disabled badge when source.enabled is false', () => {
@@ -222,7 +159,7 @@ describe('SyncSourceAccordion', () => {
       props: { source: baseSource, syncing: false },
     })
     const store = useDataStore()
-    primeStore(store, migratedConfig)
+    primeStore(store, sourceConfig)
     const setEnabled = vi
       .spyOn(store, 'setSourceEnabled')
       .mockResolvedValue(undefined)
@@ -241,7 +178,7 @@ describe('SyncSourceAccordion', () => {
       props: { source: baseSource, syncing: false },
     })
     const store = useDataStore()
-    primeStore(store, migratedConfig)
+    primeStore(store, sourceConfig)
     const update = vi
       .spyOn(store, 'updateSourceConfig')
       .mockResolvedValue(undefined)
@@ -287,7 +224,7 @@ describe('SyncSourceAccordion', () => {
 
     it('renders the settings and takes the keyboard there when Retry succeeds', async () => {
       const { wrapper, store } = await expandFailing()
-      primeStore(store, migratedConfig)
+      primeStore(store, sourceConfig)
 
       await wrapper.find('[data-testid="details-retry-steam"]').trigger('click')
       await flushPromises()
@@ -311,25 +248,6 @@ describe('SyncSourceAccordion', () => {
       wrapper.unmount()
     })
 
-    it('says so when Migrate to DB is refused, rather than only restoring the label', async () => {
-      const wrapper = mount(SyncSourceAccordion, {
-        props: { source: baseSource, syncing: false },
-        attachTo: document.body,
-      })
-      const store = useDataStore()
-      primeStore(store, yamlConfig)
-      vi.spyOn(store, 'migrateSource').mockRejectedValue(new Error('already migrated'))
-
-      await wrapper.find('button.accordion-trigger').trigger('click')
-      await flushPromises()
-      await wrapper.find('[data-testid="migrate-btn-steam"]').trigger('click')
-      await flushPromises()
-
-      const alert = wrapper.get('[data-testid="migrate-error-steam"]')
-      expect(alert.text()).toContain('already migrated')
-      expect(document.activeElement).toBe(alert.element)
-      wrapper.unmount()
-    })
   })
 
   describe('removing the source', () => {
@@ -342,7 +260,7 @@ describe('SyncSourceAccordion', () => {
         attachTo: document.body,
       })
       const store = useDataStore()
-      primeStore(store, migratedConfig)
+      primeStore(store, sourceConfig)
       const remove = vi.spyOn(store, 'deleteSource').mockImplementation(deleteSource)
 
       await wrapper.find('button.accordion-trigger').trigger('click')
@@ -385,7 +303,7 @@ describe('SyncSourceAccordion', () => {
         attachTo: document.body,
       })
       const store = useDataStore()
-      primeStore(store, migratedConfig)
+      primeStore(store, sourceConfig)
       const remove = vi.spyOn(store, 'deleteSource').mockImplementation(async () => {})
 
       await wrapper.find('button.accordion-trigger').trigger('click')
@@ -426,7 +344,7 @@ describe('SyncSourceAccordion', () => {
         ...(attach ? { attachTo: document.body } : {}),
       })
       const store = useDataStore()
-      primeStore(store, migratedConfig)
+      primeStore(store, sourceConfig)
       await wrapper.find('button.accordion-trigger').trigger('click')
       await flushPromises()
       return { wrapper, store }
@@ -494,7 +412,7 @@ describe('SyncSourceAccordion', () => {
       props: { source: baseSource, syncing: false },
     })
     const store = useDataStore()
-    primeStore(store, migratedConfig)
+    primeStore(store, sourceConfig)
     vi.spyOn(store, 'updateSourceConfig').mockRejectedValue(
       new Error('save blew up'),
     )
@@ -565,7 +483,7 @@ describe('SyncSourceAccordion', () => {
         props: { source: baseSource, syncing: false },
       })
       const store = useDataStore()
-      primeStore(store, migratedConfig)
+      primeStore(store, sourceConfig)
       const setSchedule = vi
         .spyOn(store, 'setSourceSchedule')
         .mockResolvedValue(undefined)
@@ -593,7 +511,7 @@ describe('SyncSourceAccordion', () => {
         props: { source: baseSource, syncing: false },
       })
       const store = useDataStore()
-      primeStore(store, migratedConfig)
+      primeStore(store, sourceConfig)
       let releaseFirst: () => void = () => {}
       const setSchedule = vi
         .spyOn(store, 'setSourceSchedule')
@@ -618,7 +536,7 @@ describe('SyncSourceAccordion', () => {
         props: { source: baseSource, syncing: false },
       })
       const store = useDataStore()
-      primeStore(store, migratedConfig)
+      primeStore(store, sourceConfig)
       vi.spyOn(store, 'setSourceSchedule').mockImplementation(
         () => new Promise<void>(() => {}),
       )
@@ -640,9 +558,9 @@ describe('SyncSourceAccordion', () => {
         props: { source: baseSource, syncing: false },
       })
       const store = useDataStore()
-      primeStore(store, migratedConfig)
+      primeStore(store, sourceConfig)
       vi.spyOn(store, 'setSourceSchedule').mockRejectedValue(
-        new Error('Source is not migrated to the database'),
+        new Error("Source 'steam' does not exist"),
       )
 
       await wrapper.find('button.accordion-trigger').trigger('click')
@@ -652,7 +570,7 @@ describe('SyncSourceAccordion', () => {
       await flushPromises()
 
       const status = wrapper.get('[data-testid="cadence-status-steam"]')
-      expect(status.text()).toContain('not migrated to the database')
+      expect(status.text()).toContain('does not exist')
       expect(status.attributes('role')).toBe('alert')
       expect((select.element as HTMLSelectElement).value).toBe('6h')
       expect(select.attributes('aria-describedby')).toBe(status.attributes('id'))
@@ -663,7 +581,7 @@ describe('SyncSourceAccordion', () => {
         props: { source: baseSource, syncing: false },
       })
       const store = useDataStore()
-      primeStore(store, migratedConfig)
+      primeStore(store, sourceConfig)
       vi.spyOn(store, 'setSourceSchedule').mockRejectedValue(new Error('refused'))
 
       const trigger = wrapper.find('button.accordion-trigger')
@@ -682,7 +600,7 @@ describe('SyncSourceAccordion', () => {
         props: { source: baseSource, syncing: false },
       })
       const store = useDataStore()
-      primeStore(store, migratedConfig)
+      primeStore(store, sourceConfig)
       vi.spyOn(store, 'setSourceSchedule').mockRejectedValue(new Error('refused'))
 
       const trigger = wrapper.find('button.accordion-trigger')
@@ -804,7 +722,7 @@ describe('SyncSourceAccordion', () => {
       plugin_display_name: 'Trakt',
     }
     const traktConfig: SourceConfigResponse = {
-      ...migratedConfig,
+      ...sourceConfig,
       source_id: 'trakt_work',
       plugin: 'trakt',
       plugin_display_name: 'Trakt',
@@ -930,7 +848,7 @@ describe('SyncSourceAccordion', () => {
       plugin_display_name: 'GOG',
     }
     const gogConfig: SourceConfigResponse = {
-      ...migratedConfig,
+      ...sourceConfig,
       source_id: 'gog_work',
       plugin: 'gog',
       plugin_display_name: 'GOG',
@@ -995,7 +913,7 @@ describe('SyncSourceAccordion', () => {
       plugin_display_name: 'Epic Games',
     }
     const epicConfig: SourceConfigResponse = {
-      ...migratedConfig,
+      ...sourceConfig,
       source_id: 'epic_work',
       plugin: 'epic_games',
       plugin_display_name: 'Epic Games',

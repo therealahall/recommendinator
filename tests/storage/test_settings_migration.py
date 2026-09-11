@@ -75,13 +75,11 @@ class TestMigrateConfigSettings:
     def test_out_of_scope_sections_untouched(self, storage: StorageManager) -> None:
         config: dict[str, Any] = {
             "storage": {"database_path": "data/recommendations.db"},
-            "inputs": {"steam": {"plugin": "steam"}},
         }
 
         migrate_config_settings(config, storage)
 
         assert config["storage"] == {"database_path": "data/recommendations.db"}
-        assert config["inputs"] == {"steam": {"plugin": "steam"}}
         assert storage.settings.list() == {}
 
     def test_does_not_mutate_shared_default_config(

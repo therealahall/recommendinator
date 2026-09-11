@@ -142,8 +142,9 @@ class CalibreWebPlugin(SourcePlugin):
             errors.append("'username' is required")
 
         if not (config.get("password") or "").strip():
-            # The password may live in the encrypted credential store rather
-            # than config.yaml; only flag it if it is missing from both.
+            # A write path validates the row alone, without the decrypted
+            # secrets, so an absent password here is only a fault if the
+            # credential store has none either.
             source_id = config.get("_source_id", self.name)
             stored_password = ""
             if storage is not None:

@@ -35,13 +35,13 @@ class SourceAccess:
 
 
 def source_access_by_origin(
-    config: dict[str, Any], storage: StorageManager, user_id: int = 1
+    storage: StorageManager, user_id: int = 1
 ) -> dict[UrlOrigin, SourceAccess]:
     """Calibre-Web's ``/opds/*`` sits behind basic auth a browser ``<img>`` never
     sends, so a cover on a source's origin is fetched with that source's own.
     """
     access: dict[UrlOrigin, SourceAccess] = {}
-    for entry in resolve_inputs(config, storage=storage, user_id=user_id):
+    for entry in resolve_inputs(storage, user_id):
         base_url = entry.config.get("url")
         origin = url_origin(base_url) if isinstance(base_url, str) else None
         if not isinstance(origin, UrlOrigin):
@@ -72,7 +72,7 @@ def fill_cover(
         return path
 
     if sources is None:
-        sources = source_access_by_origin(config, storage, user_id)
+        sources = source_access_by_origin(storage, user_id)
     outcome = _fetch(item.cover_url, sources)
     if isinstance(outcome, CoverUnavailable):
         if outcome.permanent and storage.clear_cover_url(item.db_id):
@@ -98,7 +98,7 @@ def backfill_covers(
     """Fetch every library cover that is not cached yet, publishing as it goes."""
     record = CoverBackfillRecord(running=True)
     cache_dir = cover_cache_dir(config)
-    sources = source_access_by_origin(config, storage, user_id)
+    sources = source_access_by_origin(storage, user_id)
     pending = [
         item
         for item in storage.get_content_items(user_id=user_id)

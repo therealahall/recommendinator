@@ -7,7 +7,7 @@ your machine except calls to the external APIs you configure.
 
 | File | Contains |
 |------|----------|
-| `config/config.yaml` | Bootstrap secrets migrated to the database on startup |
+| `config/config.yaml` | Where the server binds and where the database lives — no secrets |
 | `data/recommendations.db` | Consumption history, encrypted credentials |
 | `data/.credential_key` | Fernet key for those credentials |
 | `data/chroma_db/` | Vector embeddings of your content, left by a pre-AI-removal release |
@@ -24,11 +24,9 @@ completion history sit in the database as plaintext.
   `RECOMMENDINATOR_KEY_PATH` points. It is created `0600` inside a `0700`
   directory, and loading a group or world readable key file raises
   `PermissionError` rather than decrypting anything.
-- **On startup, sensitive fields in `config.yaml` are moved into the encrypted
-  database and scrubbed from the in-memory config.**
-- **Once a source has a database row it is the only authority for that
-  source's secrets**, and a value left in `config.yaml` is discarded on every
-  startup rather than read.
+- **`config.yaml` holds no secret at all.** Every credential is entered through
+  the UI or `source set-secret` / `settings set-secret` and goes straight into
+  the encrypted table.
 - A status read's `connected` reports the stored credential row, not the
   resolved config, so it never offers a control that answers 404.
 - A connect route refuses an id whose plugin is not its own. The id is the

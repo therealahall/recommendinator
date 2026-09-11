@@ -29,8 +29,6 @@ from src.config.service import (
     create_storage_manager,
     load_config,
 )
-from src.storage.credential_migration import migrate_config_credentials
-from src.storage.global_secrets import migrate_config_secrets
 from src.storage.import_source_cleanup import drop_sources_replaced_by_upload
 from src.storage.settings_migration import migrate_config_settings
 from src.utils import logging as log_config
@@ -118,20 +116,11 @@ def cli(ctx: click.Context, config: Path | None, verbose: bool) -> None:
                 console_floor=logging.WARNING,
             )
         log_dependency_drift()
-        # Per-source credentials, on every command as the web app does it on
-        # every startup: while it ran inside ``update`` alone, ``auth status``
-        # read a file-held token as not connected until a sync had happened.
-        migrate_config_credentials(ctx.obj["config"], ctx.obj["storage"])
-        # Relocate global provider secrets (api keys) into encrypted storage,
-        # stripping them from the in-memory plaintext config.
-        migrate_config_secrets(ctx.obj["config"], ctx.obj["storage"])
         drop_sources_replaced_by_upload(ctx.obj["storage"])
         ctx.obj["engine"] = create_recommendation_engine(
             ctx.obj["storage"], ctx.obj["config"]
         )
     except Exception as error:
-        # Blanket, and ``migrate_config_secrets`` is under it: the one fault
-        # here whose words could quote a credential.
         click.echo(
             f"Error initializing components: {exception_for_log(error)}", err=True
         )

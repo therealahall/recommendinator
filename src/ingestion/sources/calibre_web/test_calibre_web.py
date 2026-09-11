@@ -540,7 +540,7 @@ class TestCalibreWebCredentialMoveRegression:
         return storage
 
     def _resolved(self, storage: StorageManager) -> dict[str, object]:
-        entries = resolve_inputs({}, storage=storage)
+        entries = resolve_inputs(storage)
         assert [entry.source_id for entry in entries] == ["calibre_web"]
         return entries[0].config
 

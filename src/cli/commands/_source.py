@@ -30,7 +30,6 @@ from src.sources.service import (
     delete_source,
     field_type_name,
     get_available_sync_sources,
-    migrate_source,
     resolve_source_plugin,
     set_source_enabled_state,
     set_source_schedule,
@@ -52,18 +51,12 @@ _FIELD_TYPE_ERRORS = {
 
 def _resolve_cli_plugin(ctx: click.Context, source_id: str) -> SourcePlugin:
     plugin = resolve_source_plugin(
-        source_id,
-        ctx.obj.get("config"),
-        ctx.obj.get("storage"),
-        user_id=_SOURCE_DEFAULT_USER_ID,
+        source_id, ctx.obj.get("storage"), user_id=_SOURCE_DEFAULT_USER_ID
     )
     if plugin is None:
         # `source list` shows this one, so "Unknown source" contradicts it.
         not_loaded = source_plugin_not_loaded(
-            source_id,
-            ctx.obj.get("config"),
-            ctx.obj.get("storage"),
-            user_id=_SOURCE_DEFAULT_USER_ID,
+            source_id, ctx.obj.get("storage"), user_id=_SOURCE_DEFAULT_USER_ID
         )
         if not_loaded is not None:
             abort_with(unusable_detail(not_loaded))
@@ -76,11 +69,7 @@ def _config_view(
 ) -> dict[str, Any]:
     """The SourceConfigResponse-shaped view a mutation hands back."""
     return build_config_view(
-        source_id,
-        plugin,
-        ctx.obj.get("config"),
-        require_storage(ctx),
-        user_id=_SOURCE_DEFAULT_USER_ID,
+        source_id, plugin, require_storage(ctx), user_id=_SOURCE_DEFAULT_USER_ID
     )
 
 
@@ -100,10 +89,8 @@ def source() -> None:
 @click.pass_context
 def source_list(ctx: click.Context, output_format: str) -> None:
     """List configured data sources (mirrors GET /api/sync/sources)."""
-    config = ctx.obj.get("config") or {}
-    storage = ctx.obj.get("storage")
     sources = get_available_sync_sources(
-        config, storage=storage, user_id=_SOURCE_DEFAULT_USER_ID
+        ctx.obj.get("storage"), user_id=_SOURCE_DEFAULT_USER_ID
     )
 
     if output_format == "json":
@@ -163,13 +150,8 @@ def source_list(ctx: click.Context, output_format: str) -> None:
 def source_show(ctx: click.Context, source_id: str, output_format: str) -> None:
     """Show current values for a source (mirrors GET /api/sync/sources/<id>/config)."""
     plugin = _resolve_cli_plugin(ctx, source_id)
-    storage = ctx.obj.get("storage")
     view = build_config_view(
-        source_id,
-        plugin,
-        ctx.obj.get("config"),
-        storage,
-        user_id=_SOURCE_DEFAULT_USER_ID,
+        source_id, plugin, ctx.obj.get("storage"), user_id=_SOURCE_DEFAULT_USER_ID
     )
 
     if output_format == "json":
@@ -179,8 +161,6 @@ def source_show(ctx: click.Context, source_id: str, output_format: str) -> None:
     rows: list[list[str]] = [
         ["plugin", view["plugin"]],
         ["enabled", str(view["enabled"])],
-        ["migrated", str(view["migrated"])],
-        ["migrated_at", str(view["migrated_at"] or "—")],
         ["sync_interval", view["sync_interval"]],
     ]
     for name, value in view["field_values"].items():
@@ -228,42 +208,6 @@ def source_schema(ctx: click.Context, source_id: str, output_format: str) -> Non
     )
 
 
-@source.command("migrate")
-@click.argument("source_id")
-@click.option(
-    "--format",
-    "output_format",
-    type=click.Choice(["table", "json"], case_sensitive=False),
-    default="table",
-    help="Output format",
-)
-@click.pass_context
-def source_migrate(ctx: click.Context, source_id: str, output_format: str) -> None:
-    """Migrate a YAML source entry into the database (idempotent)."""
-    plugin = _resolve_cli_plugin(ctx, source_id)
-    storage = require_storage(ctx)
-    try:
-        result = migrate_source(
-            source_id,
-            plugin,
-            ctx.obj.get("config"),
-            storage,
-            user_id=_SOURCE_DEFAULT_USER_ID,
-        )
-    except SourceConfigError as error:
-        abort_with(error.message)
-
-    if output_format == "json":
-        click.echo(json.dumps(result, indent=2))
-        return
-
-    click.echo(f"Migrated source '{source_id}' to the database.")
-    if result["fields_migrated"]:
-        click.echo(f"  Fields: {', '.join(result['fields_migrated'])}")
-    if result["secrets_migrated"]:
-        click.echo(f"  Secrets: {', '.join(result['secrets_migrated'])}")
-
-
 @source.command("enable")
 @click.argument("source_id")
 @click.option(
@@ -275,7 +219,7 @@ def source_migrate(ctx: click.Context, source_id: str, output_format: str) -> No
 )
 @click.pass_context
 def source_enable(ctx: click.Context, source_id: str, output_format: str) -> None:
-    """Enable a migrated source (mirrors PUT /api/sync/sources/<id>/enabled)."""
+    """Enable a source (mirrors PUT /api/sync/sources/<id>/enabled)."""
     plugin = _resolve_cli_plugin(ctx, source_id)
     storage = require_storage(ctx)
     try:
@@ -302,7 +246,7 @@ def source_enable(ctx: click.Context, source_id: str, output_format: str) -> Non
 )
 @click.pass_context
 def source_disable(ctx: click.Context, source_id: str, output_format: str) -> None:
-    """Disable a migrated source (mirrors PUT /api/sync/sources/<id>/enabled)."""
+    """Disable a source (mirrors PUT /api/sync/sources/<id>/enabled)."""
     plugin = _resolve_cli_plugin(ctx, source_id)
     storage = require_storage(ctx)
     try:
@@ -332,7 +276,7 @@ def source_disable(ctx: click.Context, source_id: str, output_format: str) -> No
 def source_schedule(
     ctx: click.Context, source_id: str, interval: str, output_format: str
 ) -> None:
-    """Set a migrated source's cadence (mirrors PUT /api/sync/sources/<id>/schedule).
+    """Set a source's cadence (mirrors PUT /api/sync/sources/<id>/schedule).
 
     Read the cadence back from ``source show`` or ``source list``.
     """
@@ -447,7 +391,7 @@ def source_set(
     value: str,
     output_format: str,
 ) -> None:
-    """Set a non-sensitive config field for a migrated source."""
+    """Set a non-sensitive config field on a source."""
     plugin = _resolve_cli_plugin(ctx, source_id)
     storage = require_storage(ctx)
 
@@ -684,7 +628,6 @@ def source_create(
             storage,
             enabled=enabled,
             user_id=_SOURCE_DEFAULT_USER_ID,
-            config=ctx.obj["config"],
         )
     except SourceConfigError as error:
         abort_with(error.message)
@@ -719,12 +662,7 @@ def source_remove(ctx: click.Context, source_id: str, skip_confirm: bool) -> Non
         click.echo("Aborted.")
         return
     try:
-        delete_source(
-            source_id,
-            storage,
-            user_id=_SOURCE_DEFAULT_USER_ID,
-            config=ctx.obj["config"],
-        )
+        delete_source(source_id, storage, user_id=_SOURCE_DEFAULT_USER_ID)
     except SourceConfigError as error:
         abort_with(error.message)
     click.echo(f"Removed source '{source_id}'.")

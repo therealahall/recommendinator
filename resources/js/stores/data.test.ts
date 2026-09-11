@@ -778,34 +778,6 @@ describe('useDataStore', () => {
   })
 
   describe('source config flows', () => {
-    it('migrateSource POSTs migrate and refreshes config', async () => {
-      const migration = {
-        source_id: 'steam',
-        migrated_at: 'now',
-        fields_migrated: ['vanity_url'],
-        secrets_migrated: ['api_key'],
-      }
-      const cfg = {
-        source_id: 'steam',
-        plugin: 'steam',
-        plugin_display_name: 'Steam',
-        enabled: true,
-        migrated: true,
-        migrated_at: 'now',
-        field_values: { vanity_url: 'me' },
-        secret_status: { api_key: true },
-      }
-      mockPost.mockResolvedValueOnce(migration)
-      mockGet.mockResolvedValueOnce(cfg)
-
-      const store = useDataStore()
-      await store.migrateSource('steam')
-
-      expect(mockPost).toHaveBeenCalledWith('/sync/sources/steam/migrate')
-      expect(mockGet).toHaveBeenCalledWith('/sync/sources/steam/config')
-      expect(store.sourceConfigs.steam).toEqual(cfg)
-    })
-
     it('updateSourceConfig PUTs values and refreshes config', async () => {
       mockPut.mockResolvedValueOnce({})
       mockGet.mockResolvedValueOnce({
@@ -813,8 +785,6 @@ describe('useDataStore', () => {
         plugin: 'steam',
         plugin_display_name: 'Steam',
         enabled: true,
-        migrated: true,
-        migrated_at: 'now',
         field_values: { vanity_url: 'new' },
         secret_status: {},
       })
@@ -835,8 +805,6 @@ describe('useDataStore', () => {
         plugin: 'steam',
         plugin_display_name: 'Steam',
         enabled: false,
-        migrated: true,
-        migrated_at: 'now',
         field_values: {},
         secret_status: {},
       })
@@ -855,8 +823,6 @@ describe('useDataStore', () => {
         plugin: 'steam',
         plugin_display_name: 'Steam',
         enabled: true,
-        migrated: true,
-        migrated_at: 'now',
         field_values: {},
         secret_status: {},
         sync_interval: '6h',
@@ -952,8 +918,6 @@ describe('useDataStore', () => {
         plugin: 'fake_file',
         plugin_display_name: 'Fake File',
         enabled: true,
-        migrated: true,
-        migrated_at: 'now',
         field_values: {},
         secret_status: {},
       }
@@ -992,8 +956,6 @@ describe('useDataStore', () => {
           plugin: 'fake_file',
           plugin_display_name: 'Fake File',
           enabled: true,
-          migrated: true,
-          migrated_at: 'now',
           field_values: {},
           secret_status: {},
           sync_interval: 'off',

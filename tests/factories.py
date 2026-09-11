@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import functools
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager
 from dataclasses import fields
 from typing import Any, get_type_hints
 from unittest.mock import DEFAULT, MagicMock, Mock, NonCallableMock, patch
@@ -153,18 +153,12 @@ def booted_web_app(
     storage: Any,
     config: dict[str, Any],
     engine: Any = None,
-    migrate_credentials: bool = False,
 ) -> Iterator[FastAPI]:
     """The one supported way for a test to obtain the web app."""
     saved = {f.name: getattr(app_state, f.name) for f in fields(app_state)}
     back_mock_settings_store(storage)
     back_mock_session_store(storage)
     defaults = AppState()
-    credential_migration: Any = (
-        nullcontext()
-        if migrate_credentials
-        else patch("src.web.app.migrate_config_credentials")
-    )
     try:
         for field in fields(defaults):
             setattr(app_state, field.name, getattr(defaults, field.name))
@@ -172,7 +166,6 @@ def booted_web_app(
             patch("src.web.app.load_config", return_value=config),
             patch("src.web.app.create_storage_manager", return_value=storage),
             patch("src.web.app.create_recommendation_engine", return_value=engine),
-            credential_migration,
             patch("src.web.app.resolve_config_path", side_effect=FileNotFoundError),
         ):
             app = create_app()

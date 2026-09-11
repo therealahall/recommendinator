@@ -19,13 +19,9 @@ def storage(tmp_path: Path) -> StorageManager:
     return StorageManager(sqlite_path=tmp_path / "test.db")
 
 
-def _sources(**plugins: str) -> dict[str, Any]:
-    return {
-        "inputs": {
-            source_id: {"plugin": plugin, "enabled": True}
-            for source_id, plugin in plugins.items()
-        }
-    }
+def _configure(storage: StorageManager, **plugins: str) -> None:
+    for sid, plugin in plugins.items():
+        storage.sources.upsert(USER_ID, sid, plugin, {}, enabled=True)
 
 
 class TestAuthStatus:
@@ -41,11 +37,11 @@ class TestAuthStatus:
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
         storage.credentials.save(USER_ID, "gog_work", "refresh_token", "token")
-        config = _sources(
-            gog_work="gog", epic_work="epic_games", my_books="calibre_web"
+        _configure(
+            storage, gog_work="gog", epic_work="epic_games", my_books="calibre_web"
         )
 
-        result = _invoke_with_mocks(cli_runner, ["auth", "status"], storage, config)
+        result = _invoke_with_mocks(cli_runner, ["auth", "status"], storage)
 
         assert result.exit_code == 0
         assert "  epic_work (epic_games): enabled, not connected" in result.output
@@ -65,10 +61,9 @@ class TestAuthStatusShowsADisabledSourcesTokenRegression:
         plugin: str,
     ) -> None:
         storage.credentials.save(USER_ID, source_id, "refresh_token", "still-live")
-        config = _sources(**{source_id: plugin})
-        config["inputs"][source_id]["enabled"] = False
+        storage.sources.upsert(USER_ID, source_id, plugin, {}, enabled=False)
 
-        result = _invoke_with_mocks(cli_runner, ["auth", "status"], storage, config)
+        result = _invoke_with_mocks(cli_runner, ["auth", "status"], storage)
 
         assert f"  {source_id} ({plugin}): not enabled, connected" in result.output
 
@@ -107,7 +102,6 @@ class TestAuthConnect:
 
     def test_connect_gog(self, cli_runner: CliRunner) -> None:
         mock_storage = make_storage_mock()
-        config = _sources(gog="gog")
         auth_code = "test-auth-code-abc123xyz"
         with (
             patch("src.cli.commands._auth.is_gog_enabled", return_value=True),
@@ -126,7 +120,6 @@ class TestAuthConnect:
                 cli_runner,
                 ["auth", "connect", "--source", "gog"],
                 mock_storage,
-                config=config,
                 input_text=f"{auth_code}\n",
             )
 
@@ -234,12 +227,7 @@ class TestAuthConnect:
 
 class TestConnectingASourceTheWebCanConnectRegression:
     @staticmethod
-    def _connect(
-        cli_runner: CliRunner,
-        storage: StorageManager,
-        config: dict[str, Any],
-        *extra: str,
-    ) -> Any:
+    def _connect(cli_runner: CliRunner, storage: StorageManager, *extra: str) -> Any:
         with (
             patch(
                 "src.cli.commands._auth.get_gog_auth_url",
@@ -254,7 +242,6 @@ class TestConnectingASourceTheWebCanConnectRegression:
                 cli_runner,
                 ["auth", "connect", "--source", "gog", "--no-browser", *extra],
                 storage,
-                config,
                 input_text="an-authorization-code-long-enough\n",
             )
 
@@ -263,7 +250,7 @@ class TestConnectingASourceTheWebCanConnectRegression:
     ) -> None:
         storage.sources.upsert(USER_ID, "gog", "gog", {}, enabled=True)
 
-        result = self._connect(cli_runner, storage, {})
+        result = self._connect(cli_runner, storage)
 
         assert result.exit_code == 0, result.output
         assert storage.credentials.get(USER_ID, "gog", "refresh_token") == "fresh-token"
@@ -271,9 +258,9 @@ class TestConnectingASourceTheWebCanConnectRegression:
     def test_a_named_source_takes_its_own_token(
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
-        result = self._connect(
-            cli_runner, storage, _sources(gog_work="gog"), "--source-id", "gog_work"
-        )
+        _configure(storage, gog_work="gog")
+
+        result = self._connect(cli_runner, storage, "--source-id", "gog_work")
 
         assert result.exit_code == 0, result.output
         assert (
@@ -285,8 +272,9 @@ class TestConnectingASourceTheWebCanConnectRegression:
     def test_a_named_trakt_source_resolves_its_own_client_credentials(
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
-        config = _sources(trakt_work="trakt")
-        config["inputs"]["trakt_work"]["client_id"] = "cid"
+        storage.sources.upsert(
+            USER_ID, "trakt_work", "trakt", {"client_id": "cid"}, enabled=True
+        )
         storage.credentials.save(USER_ID, "trakt_work", "client_secret", "secret")
 
         with (
@@ -310,7 +298,6 @@ class TestConnectingASourceTheWebCanConnectRegression:
                 cli_runner,
                 ["auth", "connect", "--source", "trakt", "--source-id", "trakt_work"],
                 storage,
-                config,
             )
 
         assert result.exit_code == 0, result.output
@@ -333,13 +320,12 @@ class TestAuthDisconnect:
         plugin: str,
     ) -> None:
         storage.credentials.save(USER_ID, plugin, "refresh_token", "token")
-        config = _sources(**{plugin: plugin})
+        _configure(storage, **{plugin: plugin})
 
         result = _invoke_with_mocks(
             cli_runner,
             ["auth", "disconnect", "--source", source, "--yes"],
             storage,
-            config,
         )
 
         assert result.exit_code == 0
@@ -350,12 +336,12 @@ class TestAuthDisconnect:
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
         storage.credentials.save(USER_ID, "gog", "refresh_token", "token")
+        _configure(storage, gog="gog")
 
         result = _invoke_with_mocks(
             cli_runner,
             ["auth", "disconnect", "--source", "gog"],
             storage,
-            _sources(gog="gog"),
             input_text="n\n",
         )
 
@@ -365,11 +351,12 @@ class TestAuthDisconnect:
     def test_disconnect_no_active_connection(
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
+        _configure(storage, gog="gog")
+
         result = _invoke_with_mocks(
             cli_runner,
             ["auth", "disconnect", "--source", "gog", "--yes"],
             storage,
-            _sources(gog="gog"),
         )
 
         assert result.exit_code != 0
@@ -389,6 +376,7 @@ class TestDisconnectingASourceOfItsOwnNameRegression:
         storage.credentials.save(
             USER_ID, plugin, "refresh_token", "the-plugin-name-row"
         )
+        _configure(storage, **{f"{plugin}_work": plugin})
 
         result = _invoke_with_mocks(
             cli_runner,
@@ -402,7 +390,6 @@ class TestDisconnectingASourceOfItsOwnNameRegression:
                 "--yes",
             ],
             storage,
-            _sources(**{f"{plugin}_work": plugin}),
         )
 
         assert result.exit_code == 0
@@ -418,8 +405,7 @@ class TestDisconnectingASourceOfItsOwnNameRegression:
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
         storage.credentials.save(USER_ID, "gog_work", "refresh_token", "still-live")
-        config = _sources(gog_work="gog")
-        config["inputs"]["gog_work"]["enabled"] = False
+        storage.sources.upsert(USER_ID, "gog_work", "gog", {}, enabled=False)
 
         result = _invoke_with_mocks(
             cli_runner,
@@ -433,7 +419,6 @@ class TestDisconnectingASourceOfItsOwnNameRegression:
                 "--yes",
             ],
             storage,
-            config,
         )
 
         assert result.exit_code == 0
@@ -443,6 +428,7 @@ class TestDisconnectingASourceOfItsOwnNameRegression:
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
         storage.credentials.save(USER_ID, "trakt_work", "refresh_token", "not-gogs")
+        _configure(storage, trakt_work="trakt")
 
         result = _invoke_with_mocks(
             cli_runner,
@@ -456,7 +442,6 @@ class TestDisconnectingASourceOfItsOwnNameRegression:
                 "--yes",
             ],
             storage,
-            _sources(trakt_work="trakt"),
         )
 
         assert result.exit_code != 0
@@ -482,7 +467,6 @@ class TestRevokingATokenNoSourceClaimsRegression:
             cli_runner,
             ["auth", "disconnect", "--source", source, "--yes"],
             storage,
-            _sources(),
         )
 
         assert result.exit_code == 0, result.output
@@ -505,6 +489,7 @@ class TestBothAuthVerbsValidateTheSourceId:
         plugin: str,
     ) -> None:
         storage.credentials.save(USER_ID, plugin, "refresh_token", "the-default-id")
+        _configure(storage, **{plugin: plugin})
 
         result = _invoke_with_mocks(
             cli_runner,
@@ -518,7 +503,6 @@ class TestBothAuthVerbsValidateTheSourceId:
                 *self._VERB_FLAGS[verb],
             ],
             storage,
-            _sources(**{plugin: plugin}),
         )
 
         assert result.exit_code != 0
@@ -526,71 +510,3 @@ class TestBothAuthVerbsValidateTheSourceId:
         assert storage.credentials.get(USER_ID, plugin, "refresh_token") == (
             "the-default-id"
         )
-
-
-class TestAFileHeldTokenReachesBothAuthVerbsRegression:
-    @staticmethod
-    def _yaml_held(
-        storage: StorageManager, source_id: str, plugin: str
-    ) -> dict[str, Any]:
-        config = _sources(**{source_id: plugin})
-        config["inputs"][source_id]["refresh_token"] = "from-yaml"
-        config["inputs"][source_id]["client_id"] = "cid"
-        storage.credentials.save(USER_ID, source_id, "client_secret", "secret")
-        return config
-
-    @pytest.mark.parametrize("plugin", [plugin for _source, plugin in PROVIDERS])
-    def test_status_reads_connected_without_a_sync_first(
-        self, cli_runner: CliRunner, storage: StorageManager, plugin: str
-    ) -> None:
-        source_id = f"{plugin}_work"
-        config = self._yaml_held(storage, source_id, plugin)
-
-        result = _invoke_with_mocks(cli_runner, ["auth", "status"], storage, config)
-
-        assert f"  {source_id} ({plugin}): enabled, connected" in result.output
-
-    @pytest.mark.parametrize(("source", "plugin"), PROVIDERS)
-    def test_disconnect_deletes_the_token_the_status_reported(
-        self,
-        cli_runner: CliRunner,
-        storage: StorageManager,
-        source: str,
-        plugin: str,
-    ) -> None:
-        source_id = f"{plugin}_work"
-        config = self._yaml_held(storage, source_id, plugin)
-
-        result = _invoke_with_mocks(
-            cli_runner,
-            [
-                "auth",
-                "disconnect",
-                "--source",
-                source,
-                "--source-id",
-                source_id,
-                "--yes",
-            ],
-            storage,
-            config,
-        )
-
-        assert result.exit_code == 0, result.output
-        assert storage.credentials.get(USER_ID, source_id, "refresh_token") is None
-
-    @pytest.mark.parametrize("plugin", [plugin for _source, plugin in PROVIDERS])
-    def test_a_migrated_source_drops_the_file_copy_instead(
-        self, cli_runner: CliRunner, storage: StorageManager, plugin: str
-    ) -> None:
-        source_id = f"{plugin}_work"
-        config = self._yaml_held(storage, source_id, plugin)
-        storage.sources.upsert(
-            USER_ID, source_id, plugin, {"client_id": "cid"}, enabled=True
-        )
-
-        result = _invoke_with_mocks(cli_runner, ["auth", "status"], storage, config)
-
-        assert f"  {source_id} ({plugin}): enabled, not connected" in result.output
-        assert "refresh_token" not in config["inputs"][source_id]
-        assert storage.credentials.get(USER_ID, source_id, "refresh_token") is None

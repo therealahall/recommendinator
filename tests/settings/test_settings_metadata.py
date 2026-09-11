@@ -88,8 +88,6 @@ class TestOutOfScope:
         "key",
         [
             "storage.database_path",
-            "inputs.steam.api_key",
-            "inputs.goodreads.path",
             "web.host",
             "web.port",
             "web.debug",

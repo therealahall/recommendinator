@@ -107,21 +107,18 @@ fills an empty column with today and keeps an existing date. A named date is
 written as given, but no further ahead than `MAX_COMPLETION_DATE_SKEW` — one
 day, for a caller in a zone ahead of the server — and the check is at the door.
 
-#### Source configuration precedence
+#### Source configuration
 
-A source lives in YAML only (bootstrap), YAML plus DB (migrated, DB authoritative
-and the YAML entry ignored), or DB only (`+ Add source` or `source create`, never
-touching `config.yaml`).
+A source is a `source_configs` row, written by `+ Add source` or `source create`.
+`config.yaml` cannot define one.
 
 - Listing endpoints return every known source with its `enabled` flag.
 - `resolve_inputs` gates sync execution, filtering disabled and unknown-plugin
   entries before any plugin runs, and merging encrypted credentials over the rest
   of the config.
-- Sensitive fields (`ConfigField(sensitive=True)`) always live in `credentials`,
-  whichever side owns the rest.
-- `POST /api/sync/sources/<id>/migrate` splits a YAML entry across both tables
-  and is idempotent. `POST /api/sync/sources` writes only non-sensitive values,
-  and secrets follow through `PUT /api/sync/sources/<id>/secret/<key>`.
+- Sensitive fields (`ConfigField(sensitive=True)`) live in `credentials`, never
+  in the row. `POST /api/sync/sources` writes only non-sensitive values, and
+  secrets follow through `PUT /api/sync/sources/<id>/secret/<key>`.
 - Deleting the last source on a plugin also deletes any credential left under
   that plugin's own name by an older release; a sibling still on the plugin
   keeps it.
@@ -144,14 +141,13 @@ dropped rather than layered — the file and the Settings page cannot disagree.
 `config[section]` in place. **Nothing is written to the database here**, so a
 fresh install runs on an empty `settings` table.
 
-`storage` is out of scope because it bootstraps the database itself. `inputs` and
-credentials belong to the `source_configs` and `credentials` migrations.
+`storage` is out of scope because it bootstraps the database itself.
 
-**Secrets are never plaintext.** `migrate_config_secrets`
-(`src/storage/global_secrets.py`) sweeps every `sensitive` registry leaf out of
-the in-memory config into `credentials`, under a reserved `settings:`
-`source_id`, and strips it from the running config. Enrichment reads them back at
-runtime. The Settings page and `settings` CLI expose them write-only.
+**Secrets are never plaintext.** Every `sensitive` registry leaf lives in
+`credentials` under a reserved `settings:` `source_id`
+(`src/storage/global_secrets.py`), never in `config.yaml` and never in the
+`settings` table. Enrichment reads them back at runtime. The Settings page and
+`settings` CLI expose them write-only.
 
 **One-time migrations.** `create_schema` (`src/storage/schema.py`) runs on every
 database open. The settings and content steps are guarded by `PRAGMA
@@ -466,19 +462,7 @@ lives in the database instead, so no credential is needed here.
 `config/example.yaml` is that template and nothing more. Everything else
 resolves through
 [global configuration precedence](#global-configuration-precedence), and sources
-through [source configuration precedence](#source-configuration-precedence).
-
-A legacy file may still carry `inputs` sources and secrets. Both migrate into the
-database on boot, and a secret found there logs a deprecation warning. The legacy
-shape, which the `source_configs` table now expresses:
-
-```yaml
-inputs:
-  my_roms:
-    plugin: roms
-    paths: ["inputs/roms"]
-    enabled: true
-```
+through [source configuration](#source-configuration).
 
 ## Extension Points
 

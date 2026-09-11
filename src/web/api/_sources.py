@@ -15,7 +15,6 @@ from src.sources.service import (
     clear_source_secret_value,
     create_source,
     delete_source,
-    migrate_source,
     resolve_source_plugin,
     set_source_enabled_state,
     set_source_schedule,
@@ -26,7 +25,7 @@ from src.sources.service import (
 )
 from src.utils.text import sanitize_for_log
 from src.web.api._shared import PluginImportErrorResponse
-from src.web.guards import RequiredConfig, RequiredStorage
+from src.web.guards import RequiredStorage
 
 logger = logging.getLogger(__name__)
 
@@ -62,8 +61,6 @@ class SourceConfigResponse(BaseModel):
     plugin: str
     plugin_display_name: str
     enabled: bool
-    migrated: bool
-    migrated_at: str | None
     field_values: dict[str, Any]
     secret_status: dict[str, bool]
     sync_interval: str
@@ -83,21 +80,6 @@ class SourceEnabledUpdateRequest(BaseModel):
 
 class SourceScheduleUpdateRequest(BaseModel):
     interval: str
-
-
-class SourceMigrationResponse(BaseModel):
-    source_id: str
-    migrated_at: str
-    fields_migrated: list[str] = Field(
-        description="Non-sensitive fields the source's database row now holds."
-    )
-    secrets_migrated: list[str] = Field(
-        description=(
-            "Sensitive fields the source now holds an encrypted credential "
-            "for, whichever pass stored it — startup migrates a file-held "
-            "secret before any request reaches this route."
-        )
-    )
 
 
 class PluginInfoResponse(BaseModel):
@@ -135,7 +117,6 @@ def list_plugins() -> PluginListResponse:
 def create_source_endpoint(
     payload: SourceCreateRequest,
     storage: RequiredStorage,
-    config: RequiredConfig,
 ) -> SourceConfigResponse:
     """Sensitive fields must be set via ``PUT /secret/{key}`` *after* this
     call returns; the create path rejects them in the body to keep the
@@ -148,7 +129,6 @@ def create_source_endpoint(
             payload.values,
             storage,
             enabled=payload.enabled,
-            config=config,
         )
     except SourceConfigError as error:
         raise _config_error_to_http(error) from error
@@ -156,15 +136,9 @@ def create_source_endpoint(
 
 
 @router.delete("/sync/sources/{source_id}", status_code=204)
-def delete_source_endpoint(
-    source_id: str, storage: RequiredStorage, config: RequiredConfig
-) -> Response:
-    """Config is guarded because clearing a credential stranded under the plugin
-    name reads both halves of the source list: unread, a YAML source still on
-    that plugin is indistinguishable from none.
-    """
+def delete_source_endpoint(source_id: str, storage: RequiredStorage) -> Response:
     try:
-        delete_source(source_id, storage, config=config)
+        delete_source(source_id, storage)
     except SourceConfigError as error:
         raise _config_error_to_http(error) from error
     return Response(status_code=204)
@@ -177,7 +151,6 @@ def delete_source_endpoint(
 
 _ERROR_KIND_TO_STATUS: dict[str, int] = {
     "not_found": 404,
-    "not_migrated": 404,
     "invalid_field": 400,
     "not_sensitive": 400,
     "sensitive_in_config": 400,
@@ -191,7 +164,6 @@ _ERROR_KIND_TO_STATUS: dict[str, int] = {
 # end up in JSON `detail` fields).
 _ERROR_KIND_TO_DETAIL: dict[str, str] = {
     "not_found": "Field or source not found.",
-    "not_migrated": "Source has not been migrated to the database.",
     "invalid_field": "Request references an unknown field.",
     "not_sensitive": "Field is not sensitive — use the config endpoint instead.",
     "sensitive_in_config": "Sensitive fields must be set via the secret endpoint.",
@@ -204,20 +176,14 @@ _ERROR_KIND_TO_DETAIL: dict[str, str] = {
 }
 
 
-def require_plugin(
-    source_id: str, storage: RequiredStorage, config: RequiredConfig
-) -> SourcePlugin:
-    """Resolve a source id to its plugin, or 404 if no source carries that id.
-
-    Both halves are guarded before the lookup because either one missing runs
-    the resolution off the other alone.
-    """
-    plugin = resolve_source_plugin(source_id, config, storage)
+def require_plugin(source_id: str, storage: RequiredStorage) -> SourcePlugin:
+    """Resolve a source id to its plugin, or 404 if no source carries that id."""
+    plugin = resolve_source_plugin(source_id, storage)
     if plugin is None:
         # A source whose plugin died stays in the listing, so answering "not
         # found" here contradicts what the user is looking at. Same words as
         # the sync refusal, per the disclosure carve-out in docs/SECURITY.md.
-        not_loaded = source_plugin_not_loaded(source_id, config, storage)
+        not_loaded = source_plugin_not_loaded(source_id, storage)
         if not_loaded is not None:
             raise HTTPException(status_code=400, detail=unusable_detail(not_loaded))
         # Server-side log carries the identifier; the wire response stays generic.
@@ -255,24 +221,10 @@ def get_source_schema(source_id: str, plugin: ResolvedPlugin) -> SourceSchemaRes
 def get_source_config_endpoint(
     source_id: str,
     plugin: ResolvedPlugin,
-    config: RequiredConfig,
     storage: RequiredStorage,
 ) -> SourceConfigResponse:
     """Return current config values for a source. Sensitive fields are stripped."""
-    return SourceConfigResponse(**build_config_view(source_id, plugin, config, storage))
-
-
-@router.post(
-    "/sync/sources/{source_id}/migrate", response_model=SourceMigrationResponse
-)
-def migrate_source_to_db(
-    source_id: str,
-    plugin: ResolvedPlugin,
-    config: RequiredConfig,
-    storage: RequiredStorage,
-) -> SourceMigrationResponse:
-    """Copy a YAML source entry into the database (idempotent)."""
-    return SourceMigrationResponse(**migrate_source(source_id, plugin, config, storage))
+    return SourceConfigResponse(**build_config_view(source_id, plugin, storage))
 
 
 @router.put("/sync/sources/{source_id}/config", response_model=SourceConfigResponse)
@@ -280,14 +232,13 @@ def update_source_config_endpoint(
     source_id: str,
     payload: SourceConfigUpdateRequest,
     plugin: ResolvedPlugin,
-    config: RequiredConfig,
     storage: RequiredStorage,
 ) -> SourceConfigResponse:
     try:
         update_source_config_values(source_id, plugin, storage, payload.values)
     except SourceConfigError as error:
         raise _config_error_to_http(error) from error
-    return SourceConfigResponse(**build_config_view(source_id, plugin, config, storage))
+    return SourceConfigResponse(**build_config_view(source_id, plugin, storage))
 
 
 @router.put("/sync/sources/{source_id}/secret/{key}", status_code=204)
@@ -324,14 +275,13 @@ def set_source_enabled_endpoint(
     source_id: str,
     payload: SourceEnabledUpdateRequest,
     plugin: ResolvedPlugin,
-    config: RequiredConfig,
     storage: RequiredStorage,
 ) -> SourceConfigResponse:
     try:
         set_source_enabled_state(source_id, storage, payload.enabled)
     except SourceConfigError as error:
         raise _config_error_to_http(error) from error
-    return SourceConfigResponse(**build_config_view(source_id, plugin, config, storage))
+    return SourceConfigResponse(**build_config_view(source_id, plugin, storage))
 
 
 @router.put("/sync/sources/{source_id}/schedule", response_model=SourceConfigResponse)
@@ -339,7 +289,6 @@ def set_source_schedule_endpoint(
     source_id: str,
     payload: SourceScheduleUpdateRequest,
     plugin: ResolvedPlugin,
-    config: RequiredConfig,
     storage: RequiredStorage,
 ) -> SourceConfigResponse:
     if payload.interval not in SYNC_INTERVAL_KEYS:
@@ -351,4 +300,4 @@ def set_source_schedule_endpoint(
         set_source_schedule(source_id, storage, payload.interval)
     except SourceConfigError as error:
         raise _config_error_to_http(error) from error
-    return SourceConfigResponse(**build_config_view(source_id, plugin, config, storage))
+    return SourceConfigResponse(**build_config_view(source_id, plugin, storage))

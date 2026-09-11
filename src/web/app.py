@@ -26,8 +26,6 @@ from src.config.service import (
     resolve_config_path,
 )
 from src.settings.metadata import default_of
-from src.storage.credential_migration import migrate_config_credentials
-from src.storage.global_secrets import migrate_config_secrets
 from src.storage.import_source_cleanup import drop_sources_replaced_by_upload
 from src.storage.schema import get_default_user_id
 from src.storage.settings_migration import migrate_config_settings
@@ -174,13 +172,6 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         purged = storage.accounts.purge_expired_sessions()
         if purged:
             logger.info("Purged %d expired session(s)", purged)
-
-        # Migrate sensitive config credentials to encrypted DB storage
-        migrate_config_credentials(config, storage)
-
-        # Relocate global provider secrets (api keys) into encrypted storage,
-        # stripping them from the in-memory plaintext config.
-        migrate_config_secrets(config, storage)
 
         drop_sources_replaced_by_upload(storage)
 

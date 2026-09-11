@@ -274,16 +274,14 @@ def test_a_cover_on_a_configured_sources_origin_is_fetched_with_its_credentials(
     without the source's own credentials a Calibre-Web cover cannot load at all.
     """
     storage, config = library
-    config["inputs"] = {
-        "calibre_web": {
-            "plugin": "calibre_web",
-            "enabled": True,
-            "url": "http://10.0.0.5:8083",
-            "username": "reader",
-            "password": "hunter2",
-            "verify_ssl": False,
-        }
-    }
+    storage.sources.upsert(
+        1,
+        "calibre_web",
+        "calibre_web",
+        {"url": "http://10.0.0.5:8083", "username": "reader", "verify_ssl": False},
+        enabled=True,
+    )
+    storage.credentials.save(1, "calibre_web", "password", "hunter2")
     db_id = save(storage, LAN)
 
     with patch(

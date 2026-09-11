@@ -39,10 +39,11 @@ from .conftest import _invoke_with_mocks
 _FAULT = "no such table: content_items"
 
 
-def _source_config() -> dict[str, Any]:
-    return {
-        "inputs": {"books": {"plugin": "fake_file", "enabled": True, "path": "b.csv"}}
-    }
+@pytest.fixture()
+def books_source(tmp_path: Path) -> StorageManager:
+    storage = StorageManager(sqlite_path=tmp_path / "sources.db")
+    storage.sources.upsert(1, "books", "fake_file", {"path": "b.csv"}, enabled=True)
+    return storage
 
 
 def _assert_generic(result: Any, message: str) -> None:
@@ -175,7 +176,7 @@ class TestProfileHidesTheStorageFault:
 @pytest.mark.usefixtures("registry_with_source_fakes")
 class TestUpdateHidesTheSyncFault:
     def test_verbose_still_withholds_a_token_the_fault_quotes(
-        self, cli_runner: CliRunner
+        self, cli_runner: CliRunner, books_source: StorageManager
     ) -> None:
         token = "sk-live-9f3c2a"
         with patch(
@@ -185,10 +186,7 @@ class TestUpdateHidesTheSyncFault:
             ),
         ):
             result = _invoke_with_mocks(
-                cli_runner,
-                ["--verbose", "update"],
-                make_storage_mock(),
-                config=_source_config(),
+                cli_runner, ["--verbose", "update"], books_source
             )
 
         assert result.exit_code != 0
@@ -198,16 +196,17 @@ class TestUpdateHidesTheSyncFault:
 
 @pytest.mark.usefixtures("registry_with_source_fakes")
 class TestUpdateNamesTheSettingRatherThanThePath:
+    storage: StorageManager
+
+    @pytest.fixture(autouse=True)
+    def _bind(self, books_source: StorageManager) -> None:
+        self.storage = books_source
+
     def _run_with_validation_error(
         self, cli_runner: CliRunner, args: list[str], reason: str
     ) -> Any:
         with patch.object(FakeFilePlugin, "validate_config", return_value=[reason]):
-            return _invoke_with_mocks(
-                cli_runner,
-                args,
-                make_storage_mock(),
-                config=_source_config(),
-            )
+            return _invoke_with_mocks(cli_runner, args, self.storage)
 
     @pytest.mark.parametrize("args", [["update"], ["update", "--source", "books"]])
     def test_a_quoted_field_is_named_and_the_path_is_not_regression(
@@ -468,9 +467,7 @@ class TestArgvTextIsStoredWithoutItsSurrogatesRegression:
         assert result.exception is None or isinstance(result.exception, SystemExit)
         assert "Unknown plugin" in result.output
 
-    @pytest.mark.parametrize(
-        "command", ["show", "schema", "migrate", "enable", "disable"]
-    )
+    @pytest.mark.parametrize("command", ["show", "schema", "enable", "disable"])
     def test_an_unknown_source_id_is_named_back_without_its_surrogate(
         self, cli_runner: CliRunner, tmp_path: Path, command: str
     ) -> None:

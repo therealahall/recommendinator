@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
 
 import pytest
 from click.testing import CliRunner, Result
@@ -48,57 +47,22 @@ def _record_run(
 
 
 @pytest.fixture()
-def base_config() -> dict[str, Any]:
-    return {
-        "inputs": {
-            "my_books": {
-                "plugin": "fake_file",
-                "enabled": True,
-                "path": "/yaml/books.csv",
-                "content_type": "book",
-            },
-            "my_games": {
-                "plugin": "fake_api",
-                "enabled": True,
-                "api_key": "yaml_key",
-                "user_id": "yaml_user",
-                "min_minutes": 30,
-                "tags": ["rpg", "indie"],
-                "active": True,
-            },
-        }
-    }
+def seeded(storage: StorageManager) -> StorageManager:
+    books = {"path": "/db/books.csv", "content_type": "book"}
+    games = {"user_id": "db_user", "min_minutes": 30, "tags": ["rpg"]}
+    storage.sources.upsert(1, "my_books", "fake_file", books, enabled=True)
+    storage.sources.upsert(1, "my_games", "fake_api", games, enabled=True)
+    storage.credentials.save(1, "my_games", "api_key", "db_key")
+    return storage
 
 
 @pytest.mark.usefixtures("registry_with_source_fakes")
 class TestSourceList:
-    def test_list_table_format_contains_source_ids(
-        self,
-        cli_runner: CliRunner,
-        storage: StorageManager,
-        base_config: dict[str, Any],
-    ) -> None:
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["source", "list"],
-            mock_storage=storage,
-            config=base_config,
-        )
-        assert result.exit_code == 0
-        assert "my_books" in result.output
-        assert "my_games" in result.output
-
     def test_list_json_matches_api_shape(
-        self,
-        cli_runner: CliRunner,
-        storage: StorageManager,
-        base_config: dict[str, Any],
+        self, cli_runner: CliRunner, seeded: StorageManager
     ) -> None:
         result = _invoke_with_mocks(
-            cli_runner,
-            ["source", "list", "--format", "json"],
-            mock_storage=storage,
-            config=base_config,
+            cli_runner, ["source", "list", "--format", "json"], mock_storage=seeded
         )
         assert result.exit_code == 0
         payload = json.loads(result.output)
@@ -117,21 +81,12 @@ class TestSourceList:
         assert payload[0]["plugin_not_loaded"] is None
 
     def test_list_table_shows_the_cadence_and_the_last_outcome(
-        self,
-        cli_runner: CliRunner,
-        storage: StorageManager,
-        base_config: dict[str, Any],
+        self, cli_runner: CliRunner, seeded: StorageManager
     ) -> None:
-        storage.sources.upsert(1, "my_books", "fake_file", {"path": "/x"}, enabled=True)
-        storage.sources.set_schedule(1, "my_books", "weekly")
-        _record_run(storage, status="failed")
+        seeded.sources.set_schedule(1, "my_books", "weekly")
+        _record_run(seeded, status="failed")
 
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["source", "list"],
-            mock_storage=storage,
-            config=base_config,
-        )
+        result = _invoke_with_mocks(cli_runner, ["source", "list"], mock_storage=seeded)
 
         assert result.exit_code == 0
         assert "weekly" in result.output
@@ -141,121 +96,41 @@ class TestSourceList:
 @pytest.mark.usefixtures("registry_with_source_fakes")
 class TestSourceShow:
     def test_show_json_matches_api_response(
-        self,
-        cli_runner: CliRunner,
-        storage: StorageManager,
-        base_config: dict[str, Any],
+        self, cli_runner: CliRunner, seeded: StorageManager
     ) -> None:
         result = _invoke_with_mocks(
             cli_runner,
             ["source", "show", "my_games", "--format", "json"],
-            mock_storage=storage,
-            config=base_config,
+            mock_storage=seeded,
         )
         assert result.exit_code == 0
         body = json.loads(result.output)
         assert body["source_id"] == "my_games"
         assert body["plugin"] == "fake_api"
-        assert body["migrated"] is False
         assert body["enabled"] is True
         assert body["secret_status"] == {"api_key": True}
         assert "api_key" not in body["field_values"]
-        assert body["field_values"]["user_id"] == "yaml_user"
-        assert body["field_values"]["tags"] == ["rpg", "indie"]
-
-    def test_show_unknown_returns_nonzero(
-        self,
-        cli_runner: CliRunner,
-        storage: StorageManager,
-        base_config: dict[str, Any],
-    ) -> None:
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["source", "show", "nope"],
-            mock_storage=storage,
-            config=base_config,
-        )
-        assert result.exit_code != 0
-
-
-@pytest.mark.usefixtures("registry_with_source_fakes")
-class TestSourceMigrate:
-    def test_migrate_leaves_the_source_db_backed(
-        self,
-        cli_runner: CliRunner,
-        storage: StorageManager,
-        base_config: dict[str, Any],
-    ) -> None:
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["source", "migrate", "my_games"],
-            mock_storage=storage,
-            config=base_config,
-        )
-        assert result.exit_code == 0
-        assert "Migrated source 'my_games'" in result.output
-        assert "Secrets: api_key" in result.output
-        row = storage.sources.get(1, "my_games")
-        assert row is not None
-        assert row["plugin"] == "fake_api"
-        assert row["config"]["user_id"] == "yaml_user"
-        assert "api_key" not in row["config"]
-        assert storage.credentials.get(1, "my_games", "api_key") == "yaml_key"
-
-    def test_migrate_is_idempotent(
-        self,
-        cli_runner: CliRunner,
-        storage: StorageManager,
-        base_config: dict[str, Any],
-    ) -> None:
-        first = _invoke_with_mocks(
-            cli_runner,
-            ["source", "migrate", "my_books"],
-            mock_storage=storage,
-            config=base_config,
-        )
-        second = _invoke_with_mocks(
-            cli_runner,
-            ["source", "migrate", "my_books"],
-            mock_storage=storage,
-            config=base_config,
-        )
-        assert first.exit_code == 0
-        assert second.exit_code == 0
-        rows = storage.sources.list(1)
-        assert len([r for r in rows if r["source_id"] == "my_books"]) == 1
+        assert body["field_values"]["user_id"] == "db_user"
+        assert body["field_values"]["tags"] == ["rpg"]
 
 
 @pytest.mark.usefixtures("registry_with_source_fakes")
 class TestSourceEnableDisable:
-    def test_disable_after_migrate_flips_flag(
-        self,
-        cli_runner: CliRunner,
-        storage: StorageManager,
-        base_config: dict[str, Any],
+    def test_disable_flips_the_flag(
+        self, cli_runner: CliRunner, seeded: StorageManager
     ) -> None:
-        storage.sources.upsert(1, "my_books", "fake_file", {"path": "/x"}, enabled=True)
         result = _invoke_with_mocks(
-            cli_runner,
-            ["source", "disable", "my_books"],
-            mock_storage=storage,
-            config=base_config,
+            cli_runner, ["source", "disable", "my_books"], mock_storage=seeded
         )
         assert result.exit_code == 0
-        row = storage.sources.get(1, "my_books")
+        row = seeded.sources.get(1, "my_books")
         assert row is not None and row["enabled"] is False
 
-    def test_enable_when_not_migrated_returns_error(
-        self,
-        cli_runner: CliRunner,
-        storage: StorageManager,
-        base_config: dict[str, Any],
+    def test_enable_of_an_unknown_source_returns_error(
+        self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
         result = _invoke_with_mocks(
-            cli_runner,
-            ["source", "enable", "my_books"],
-            mock_storage=storage,
-            config=base_config,
+            cli_runner, ["source", "enable", "my_books"], mock_storage=storage
         )
         assert result.exit_code != 0
 
@@ -266,7 +141,6 @@ class TestSourceSchedule:
         self,
         cli_runner: CliRunner,
         storage: StorageManager,
-        base_config: dict[str, Any],
     ) -> None:
         storage.sources.upsert(1, "my_books", "fake_file", {"path": "/x"}, enabled=True)
 
@@ -274,13 +148,11 @@ class TestSourceSchedule:
             cli_runner,
             ["source", "schedule", "my_books", "6h", "--format", "json"],
             mock_storage=storage,
-            config=base_config,
         )
         shown = _invoke_with_mocks(
             cli_runner,
             ["source", "show", "my_books"],
             mock_storage=storage,
-            config=base_config,
         )
 
         assert scheduled.exit_code == 0
@@ -291,7 +163,6 @@ class TestSourceSchedule:
         self,
         cli_runner: CliRunner,
         storage: StorageManager,
-        base_config: dict[str, Any],
     ) -> None:
         storage.sources.upsert(1, "my_books", "fake_file", {"path": "/x"}, enabled=True)
 
@@ -299,7 +170,6 @@ class TestSourceSchedule:
             cli_runner,
             ["source", "schedule", "my_books", "fortnightly"],
             mock_storage=storage,
-            config=base_config,
         )
 
         assert result.exit_code != 0
@@ -311,7 +181,6 @@ class TestSourceHistory:
         self,
         cli_runner: CliRunner,
         storage: StorageManager,
-        base_config: dict[str, Any],
     ) -> None:
         failures = ("429 from the API", "book 12 has no title", "timed out")
         _record_run(storage, minute=0)
@@ -323,7 +192,6 @@ class TestSourceHistory:
             cli_runner,
             ["source", "history", "my_books", "--format", "json"],
             mock_storage=storage,
-            config=base_config,
         )
 
         assert result.exit_code == 0
@@ -348,7 +216,6 @@ class TestSourceHistory:
         self,
         cli_runner: CliRunner,
         storage: StorageManager,
-        base_config: dict[str, Any],
     ) -> None:
         _record_run(
             storage,
@@ -362,7 +229,6 @@ class TestSourceHistory:
             cli_runner,
             ["source", "history", "my_books"],
             mock_storage=storage,
-            config=base_config,
         )
 
         assert result.exit_code == 0, result.output
@@ -372,19 +238,16 @@ class TestSourceHistory:
         self,
         cli_runner: CliRunner,
         storage: StorageManager,
-        base_config: dict[str, Any],
     ) -> None:
         as_json = _invoke_with_mocks(
             cli_runner,
             ["source", "history", "my_books", "--format", "json"],
             mock_storage=storage,
-            config=base_config,
         )
         as_table = _invoke_with_mocks(
             cli_runner,
             ["source", "history", "my_books"],
             mock_storage=storage,
-            config=base_config,
         )
 
         assert json.loads(as_json.output) == []
@@ -394,7 +257,6 @@ class TestSourceHistory:
         self,
         cli_runner: CliRunner,
         storage: StorageManager,
-        base_config: dict[str, Any],
     ) -> None:
         _record_run(storage, source_id="my_books", minute=0)
         _record_run(storage, source_id="my_games", minute=10)
@@ -403,7 +265,6 @@ class TestSourceHistory:
             cli_runner,
             ["source", "history", "--limit", "1", "--format", "json"],
             mock_storage=storage,
-            config=base_config,
         )
 
         assert [run["source_id"] for run in json.loads(newest.output)] == ["my_games"]
@@ -415,14 +276,12 @@ class TestSourceSet:
         self,
         cli_runner: CliRunner,
         storage: StorageManager,
-        base_config: dict[str, Any],
     ) -> None:
         storage.sources.upsert(1, "my_games", "fake_api", {}, enabled=True)
         result = _invoke_with_mocks(
             cli_runner,
             ["source", "set", "my_games", "tags", "rpg, indie ,strategy"],
             mock_storage=storage,
-            config=base_config,
         )
         assert result.exit_code == 0
         row = storage.sources.get(1, "my_games")
@@ -434,7 +293,6 @@ class TestSourceSet:
         self,
         cli_runner: CliRunner,
         storage: StorageManager,
-        base_config: dict[str, Any],
         keyword: str,
     ) -> None:
         storage.sources.upsert(1, "my_games", "fake_api", {}, enabled=True)
@@ -442,7 +300,6 @@ class TestSourceSet:
             cli_runner,
             ["source", "set", "my_games", "active", keyword],
             mock_storage=storage,
-            config=base_config,
         )
         assert result.exit_code == 0
         row = storage.sources.get(1, "my_games")
@@ -452,7 +309,6 @@ class TestSourceSet:
         self,
         cli_runner: CliRunner,
         storage: StorageManager,
-        base_config: dict[str, Any],
     ) -> None:
         storage.sources.upsert(
             1, "my_games", "fake_api", {"min_minutes": 30}, enabled=True
@@ -461,23 +317,18 @@ class TestSourceSet:
             cli_runner,
             ["source", "set", "my_games", "min_minutes", "60"],
             mock_storage=storage,
-            config=base_config,
         )
         assert result.exit_code == 0
         row = storage.sources.get(1, "my_games")
         assert row is not None and row["config"]["min_minutes"] == 60
 
-    def test_set_when_not_migrated_returns_error(
-        self,
-        cli_runner: CliRunner,
-        storage: StorageManager,
-        base_config: dict[str, Any],
+    def test_set_on_an_unknown_source_errors(
+        self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
         result = _invoke_with_mocks(
             cli_runner,
             ["source", "set", "my_games", "min_minutes", "5"],
             mock_storage=storage,
-            config=base_config,
         )
         assert result.exit_code != 0
         assert storage.sources.get(1, "my_games") is None
@@ -486,14 +337,12 @@ class TestSourceSet:
         self,
         cli_runner: CliRunner,
         storage: StorageManager,
-        base_config: dict[str, Any],
     ) -> None:
         storage.sources.upsert(1, "my_games", "fake_api", {}, enabled=True)
         result = _invoke_with_mocks(
             cli_runner,
             ["source", "set", "my_games", "no_such_field", "x"],
             mock_storage=storage,
-            config=base_config,
         )
         assert result.exit_code != 0
         row = storage.sources.get(1, "my_games")
@@ -504,14 +353,12 @@ class TestSourceSet:
         self,
         cli_runner: CliRunner,
         storage: StorageManager,
-        base_config: dict[str, Any],
     ) -> None:
         storage.sources.upsert(1, "my_games", "fake_api", {}, enabled=True)
         result = _invoke_with_mocks(
             cli_runner,
             ["source", "set", "my_games", "api_key", "leaked"],
             mock_storage=storage,
-            config=base_config,
         )
         assert result.exit_code != 0
         assert storage.credentials.get(1, "my_games", "api_key") is None
@@ -523,7 +370,6 @@ class TestSourceApply:
         self,
         cli_runner: CliRunner,
         storage: StorageManager,
-        base_config: dict[str, Any],
     ) -> None:
         storage.sources.upsert(1, "my_games", "fake_api", {}, enabled=True)
         payload = json.dumps(
@@ -533,7 +379,6 @@ class TestSourceApply:
             cli_runner,
             ["source", "apply", "my_games", "--from-json", "-"],
             mock_storage=storage,
-            config=base_config,
             input_text=payload,
         )
         assert result.exit_code == 0
@@ -547,17 +392,13 @@ class TestSourceApply:
             "active": False,
         }
 
-    def test_apply_returns_error_when_not_migrated(
-        self,
-        cli_runner: CliRunner,
-        storage: StorageManager,
-        base_config: dict[str, Any],
+    def test_apply_on_an_unknown_source_errors(
+        self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
         result = _invoke_with_mocks(
             cli_runner,
             ["source", "apply", "my_books", "--from-json", "-"],
             mock_storage=storage,
-            config=base_config,
             input_text=json.dumps({"path": "/x"}),
         )
         assert result.exit_code != 0
@@ -567,7 +408,6 @@ class TestSourceApply:
         self,
         cli_runner: CliRunner,
         storage: StorageManager,
-        base_config: dict[str, Any],
         tmp_path: Path,
     ) -> None:
         storage.sources.upsert(1, "my_games", "fake_api", {}, enabled=True)
@@ -577,7 +417,6 @@ class TestSourceApply:
             cli_runner,
             ["source", "apply", "my_games", "--from-json", str(payload_file)],
             mock_storage=storage,
-            config=base_config,
         )
         assert result.exit_code == 0
         row = storage.sources.get(1, "my_games")
@@ -587,14 +426,12 @@ class TestSourceApply:
         self,
         cli_runner: CliRunner,
         storage: StorageManager,
-        base_config: dict[str, Any],
     ) -> None:
         storage.sources.upsert(1, "my_games", "fake_api", {}, enabled=True)
         result = _invoke_with_mocks(
             cli_runner,
             ["source", "apply", "my_games", "--from-json", "-"],
             mock_storage=storage,
-            config=base_config,
             input_text=json.dumps({"api_key": "leaked"}),
         )
         assert result.exit_code != 0
@@ -604,7 +441,6 @@ class TestSourceApply:
         self,
         cli_runner: CliRunner,
         storage: StorageManager,
-        base_config: dict[str, Any],
         tmp_path: Path,
     ) -> None:
         storage.sources.upsert(1, "my_games", "fake_api", {}, enabled=True)
@@ -613,7 +449,6 @@ class TestSourceApply:
             cli_runner,
             ["source", "apply", "my_games", "--from-json", str(missing)],
             mock_storage=storage,
-            config=base_config,
         )
         assert result.exit_code != 0
         assert "Could not read" in result.output
@@ -625,14 +460,12 @@ class TestSourceSecrets:
         self,
         cli_runner: CliRunner,
         storage: StorageManager,
-        base_config: dict[str, Any],
     ) -> None:
         storage.sources.upsert(1, "my_games", "fake_api", {}, enabled=True)
         result = _invoke_with_mocks(
             cli_runner,
             ["source", "set-secret", "my_games", "api_key"],
             mock_storage=storage,
-            config=base_config,
             input_text="rotated_value\n",
         )
         assert result.exit_code == 0
@@ -642,7 +475,6 @@ class TestSourceSecrets:
         self,
         cli_runner: CliRunner,
         storage: StorageManager,
-        base_config: dict[str, Any],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         storage.sources.upsert(1, "my_games", "fake_api", {}, enabled=True)
@@ -651,7 +483,6 @@ class TestSourceSecrets:
             cli_runner,
             ["source", "set-secret", "my_games", "api_key"],
             mock_storage=storage,
-            config=base_config,
         )
         assert result.exit_code == 0
         assert storage.credentials.get(1, "my_games", "api_key") == "env_secret"
@@ -660,7 +491,6 @@ class TestSourceSecrets:
         self,
         cli_runner: CliRunner,
         storage: StorageManager,
-        base_config: dict[str, Any],
     ) -> None:
         storage.sources.upsert(1, "my_games", "fake_api", {}, enabled=True)
         storage.credentials.save(1, "my_games", "api_key", "to_be_cleared")
@@ -668,7 +498,6 @@ class TestSourceSecrets:
             cli_runner,
             ["source", "clear-secret", "my_games", "api_key", "--yes"],
             mock_storage=storage,
-            config=base_config,
         )
         assert result.exit_code == 0
         assert storage.credentials.get(1, "my_games", "api_key") is None
@@ -677,7 +506,6 @@ class TestSourceSecrets:
         self,
         cli_runner: CliRunner,
         storage: StorageManager,
-        base_config: dict[str, Any],
     ) -> None:
         storage.sources.upsert(1, "my_games", "fake_api", {}, enabled=True)
         storage.credentials.save(1, "my_games", "api_key", "keep_me")
@@ -685,7 +513,6 @@ class TestSourceSecrets:
             cli_runner,
             ["source", "clear-secret", "my_games", "api_key"],
             mock_storage=storage,
-            config=base_config,
             input_text="n\n",
         )
         assert result.exit_code == 0
@@ -696,14 +523,12 @@ class TestSourceSecrets:
         self,
         cli_runner: CliRunner,
         storage: StorageManager,
-        base_config: dict[str, Any],
     ) -> None:
         storage.sources.upsert(1, "my_games", "fake_api", {}, enabled=True)
         result = _invoke_with_mocks(
             cli_runner,
             ["source", "set-secret", "my_games", "user_id"],
             mock_storage=storage,
-            config=base_config,
             input_text="x\n",
         )
         assert result.exit_code != 0
@@ -715,7 +540,6 @@ class TestSourceCreate:
         self,
         cli_runner: CliRunner,
         storage: StorageManager,
-        base_config: dict[str, Any],
     ) -> None:
         result = _invoke_with_mocks(
             cli_runner,
@@ -730,7 +554,6 @@ class TestSourceCreate:
                 "json",
             ],
             mock_storage=storage,
-            config=base_config,
             input_text=json.dumps({"path": "/data/fresh.csv", "content_type": "book"}),
         )
         assert result.exit_code == 0
@@ -739,7 +562,6 @@ class TestSourceCreate:
         assert body["plugin"] == "fake_file"
         assert body["plugin_display_name"] == "Fake File"
         assert body["enabled"] is True
-        assert body["migrated"] is True
         assert body["field_values"] == {
             "path": "/data/fresh.csv",
             "content_type": "book",
@@ -750,54 +572,23 @@ class TestSourceCreate:
         assert row["plugin"] == "fake_file"
         assert row["enabled"] is True
 
-    def test_create_rejects_existing_yaml_id(
-        self,
-        cli_runner: CliRunner,
-        storage: StorageManager,
-        base_config: dict[str, Any],
-    ) -> None:
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["source", "create", "my_books", "fake_file"],
-            mock_storage=storage,
-            config=base_config,
-        )
-        assert result.exit_code != 0
-
     def test_create_rejects_unknown_plugin(
         self,
         cli_runner: CliRunner,
         storage: StorageManager,
-        base_config: dict[str, Any],
     ) -> None:
         result = _invoke_with_mocks(
             cli_runner,
             ["source", "create", "no_such", "no_such_plugin"],
             mock_storage=storage,
-            config=base_config,
         )
         assert result.exit_code != 0
         assert storage.sources.get(1, "no_such") is None
-
-    def test_create_rejects_invalid_id(
-        self,
-        cli_runner: CliRunner,
-        storage: StorageManager,
-        base_config: dict[str, Any],
-    ) -> None:
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["source", "create", "Bad-ID!", "fake_file"],
-            mock_storage=storage,
-            config=base_config,
-        )
-        assert result.exit_code != 0
 
     def test_create_rejects_sensitive_field(
         self,
         cli_runner: CliRunner,
         storage: StorageManager,
-        base_config: dict[str, Any],
     ) -> None:
         result = _invoke_with_mocks(
             cli_runner,
@@ -810,7 +601,6 @@ class TestSourceCreate:
                 "-",
             ],
             mock_storage=storage,
-            config=base_config,
             input_text=json.dumps({"api_key": "leaked"}),
         )
         assert result.exit_code != 0
@@ -823,7 +613,6 @@ class TestSourceRemove:
         self,
         cli_runner: CliRunner,
         storage: StorageManager,
-        base_config: dict[str, Any],
     ) -> None:
         storage.sources.upsert(
             1, "to_remove", "fake_api", {"user_id": "x"}, enabled=True
@@ -834,7 +623,6 @@ class TestSourceRemove:
             cli_runner,
             ["source", "remove", "to_remove", "--yes"],
             mock_storage=storage,
-            config=base_config,
         )
         assert result.exit_code == 0
         assert storage.sources.get(1, "to_remove") is None
@@ -844,14 +632,12 @@ class TestSourceRemove:
         self,
         cli_runner: CliRunner,
         storage: StorageManager,
-        base_config: dict[str, Any],
     ) -> None:
         storage.sources.upsert(1, "keep_me", "fake_file", {"path": "/x"}, enabled=True)
         result = _invoke_with_mocks(
             cli_runner,
             ["source", "remove", "keep_me"],
             mock_storage=storage,
-            config=base_config,
             input_text="n\n",
         )
         assert result.exit_code == 0
@@ -873,30 +659,10 @@ class TestRemovingTheLastSourceSweepsThePluginRowRegression:
             cli_runner,
             ["source", "remove", "games_work", "--yes"],
             mock_storage=stranded,
-            config={"inputs": {}},
         )
 
         assert result.exit_code == 0
         assert stranded.credentials.get(1, "fake_api", "api_key") is None
-
-    def test_a_yaml_sibling_on_the_plugin_keeps_it(
-        self,
-        cli_runner: CliRunner,
-        stranded: StorageManager,
-        base_config: dict[str, Any],
-    ) -> None:
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["source", "remove", "games_work", "--yes"],
-            mock_storage=stranded,
-            config=base_config,
-        )
-
-        assert result.exit_code == 0
-        assert (
-            stranded.credentials.get(1, "fake_api", "api_key")
-            == "stranded-by-an-upgrade"
-        )
 
 
 class TestSourceSetGuardsBoundCredentials:
@@ -919,7 +685,6 @@ class TestSourceSetGuardsBoundCredentials:
             cli_runner,
             ["source", "set", "calibre", field, value],
             mock_storage=storage,
-            config={"inputs": {}},
         )
 
     def test_repointing_the_url_is_refused_in_the_same_words_as_the_api(
@@ -948,20 +713,15 @@ class TestSourceSetGuardsBoundCredentials:
 @pytest.mark.usefixtures("registry_with_a_failed_import")
 class TestSourceWhosePluginNeverImported:
     @pytest.fixture()
-    def broken_config(self) -> dict[str, Any]:
-        return {"inputs": {"my_books": {"plugin": UNLOADED_PLUGIN, "enabled": True}}}
+    def broken(self, storage: StorageManager) -> StorageManager:
+        storage.sources.upsert(1, "my_books", UNLOADED_PLUGIN, {}, enabled=True)
+        return storage
 
     def test_show_says_why_it_cannot_be_used_in_the_api_s_words(
-        self,
-        cli_runner: CliRunner,
-        storage: StorageManager,
-        broken_config: dict[str, Any],
+        self, cli_runner: CliRunner, broken: StorageManager
     ) -> None:
         result = _invoke_with_mocks(
-            cli_runner,
-            ["source", "show", "my_books"],
-            mock_storage=storage,
-            config=broken_config,
+            cli_runner, ["source", "show", "my_books"], mock_storage=broken
         )
 
         assert result.exit_code != 0
@@ -969,16 +729,10 @@ class TestSourceWhosePluginNeverImported:
         assert UNLOADED_PLUGIN_DETAIL in result.output
 
     def test_a_source_that_really_is_absent_still_reads_as_unknown(
-        self,
-        cli_runner: CliRunner,
-        storage: StorageManager,
-        broken_config: dict[str, Any],
+        self, cli_runner: CliRunner, broken: StorageManager
     ) -> None:
         result = _invoke_with_mocks(
-            cli_runner,
-            ["source", "show", "nothing_here"],
-            mock_storage=storage,
-            config=broken_config,
+            cli_runner, ["source", "show", "nothing_here"], mock_storage=broken
         )
 
         assert result.exit_code != 0
@@ -992,10 +746,7 @@ class TestPrivateModuleImportFailureIsReported:
         registry_with_a_broken_private_module: None,
     ) -> None:
         result = _invoke_with_mocks(
-            CliRunner(),
-            ["source", "plugins"],
-            mock_storage=storage,
-            config={"inputs": {}},
+            CliRunner(), ["source", "plugins"], mock_storage=storage
         )
 
         assert result.exit_code == 0

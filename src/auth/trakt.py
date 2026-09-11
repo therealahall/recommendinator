@@ -22,9 +22,9 @@ logger = logging.getLogger(__name__)
 
 TRAKT_PLUGIN = "trakt"
 
-# The id of the source a plain ``inputs.trakt`` entry gets. Every entry point
-# takes the real source id instead, so a second Trakt source keeps its own
-# client credentials and token.
+# The default source id a client that predates the parameter addresses. Every
+# entry point takes the real source id instead, so a second Trakt source keeps
+# its own client credentials and token.
 TRAKT_SOURCE_ID = TRAKT_PLUGIN
 TRAKT_API_URL = "https://api.trakt.tv"
 TRAKT_DEVICE_CODE_URL = f"{TRAKT_API_URL}/oauth/device/code"
@@ -132,7 +132,6 @@ def save_trakt_token(
 
 
 def resolve_trakt_client_credentials(
-    config: dict[str, Any],
     storage: StorageManager | None,
     source_id: str = TRAKT_SOURCE_ID,
     user_id: int = 1,
@@ -140,7 +139,7 @@ def resolve_trakt_client_credentials(
     """Refuses a source running another plugin: the token this unlocks is stored
     under the id.
     """
-    trakt_config = _TRAKT.resolve(config, storage, source_id, user_id)
+    trakt_config = _TRAKT.resolve(storage, source_id, user_id)
 
     if trakt_config is None:
         raise TraktAuthError(
@@ -160,9 +159,8 @@ def resolve_trakt_client_credentials(
 
 
 def has_trakt_token(
-    config: dict[str, Any],
     storage: StorageManager | None = None,
     source_id: str = TRAKT_SOURCE_ID,
     user_id: int = 1,
 ) -> bool:
-    return _TRAKT.has_token(config, storage, source_id, user_id)
+    return _TRAKT.has_token(storage, source_id, user_id)

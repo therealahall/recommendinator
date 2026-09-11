@@ -149,12 +149,17 @@ you had on the day you exported. That is how you un-ignore things in bulk.
 
 **From 0.36.0 or earlier.** The CSV, JSON, Markdown, Goodreads and StoryGraph
 plugins are gone: those files are imported once now. Sources on them are deleted
-on first boot and named in the log, and an `inputs:` block naming one is
-ignored — delete it.
+on first boot and named in the log.
 
 **From 0.43.0 or earlier.** Your book titles change once, on first open:
 `Leviathan Wakes (The Expanse, #1)` becomes `Leviathan Wakes`, with the series
 and its number stored beside it.
+
+**From 0.57.0 or earlier.** `config.yaml` can no longer define a source or hold
+a secret: both live in the database now, and the boot-time migration that used
+to move them is gone. A source that was migrated to the database — everything
+the Data tab or `source list` shows — carries on unchanged. Anything still
+defined only under `inputs:` is not read; add it again with **+ Add source**.
 
 ## CLI usage
 

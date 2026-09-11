@@ -13,7 +13,6 @@ from src.recommendations.engine import RecommendationEngine
 from src.sources.service import resolve_inputs
 from src.storage.manager import StorageManager
 from tests.cli.conftest import _invoke_with_mocks
-from tests.factories import make_storage_mock
 from tests.fakes.source_plugins import FakeApiPlugin
 
 
@@ -31,9 +30,8 @@ def test_a_source_named_goodreads_keeps_its_items_across_boots(
         )
         conn.commit()
 
-    config: dict[str, Any] = {"inputs": {}}
     with (
-        patch("src.cli.main.load_config", return_value=config),
+        patch("src.cli.main.load_config", return_value={}),
         patch("src.cli.main.create_storage_manager", return_value=storage),
         patch(
             "src.cli.main.create_recommendation_engine",
@@ -52,7 +50,7 @@ def test_a_source_named_goodreads_keeps_its_items_across_boots(
 @pytest.mark.usefixtures("registry_with_source_fakes")
 class TestUpdateDbOnlySourceRegression:
     def _db_only_config(self) -> dict[str, Any]:
-        return {"inputs": {}, "recommendations": {"min_rating_for_preference": 4}}
+        return {"recommendations": {"min_rating_for_preference": 4}}
 
     def _seed_db_source(self, storage: StorageManager, enabled: bool = True) -> None:
         storage.sources.upsert(
@@ -173,24 +171,16 @@ class TestUpdateDbOnlySourceRegression:
 
 @pytest.mark.usefixtures("registry_with_source_fakes")
 def test_update_all_aborts_when_validation_refuses_every_source_regression(
-    cli_runner: CliRunner,
+    cli_runner: CliRunner, tmp_path: Path
 ) -> None:
-    config: dict[str, Any] = {
-        "inputs": {
-            "books": {"plugin": "fake_file", "enabled": True},
-            "games": {"plugin": "fake_api", "enabled": True},
-        }
-    }
+    storage = StorageManager(sqlite_path=tmp_path / "sources.db")
+    storage.sources.upsert(1, "books", "fake_file", {}, enabled=True)
+    storage.sources.upsert(1, "games", "fake_api", {}, enabled=True)
 
     with patch.object(
         FakeApiPlugin, "validate_config", return_value=["'api_key' is required"]
     ):
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["update", "--source", "all"],
-            make_storage_mock(),
-            config=config,
-        )
+        result = _invoke_with_mocks(cli_runner, ["update", "--source", "all"], storage)
 
     assert result.exit_code != 0
     for display_name, field in (("Fake File", "'path'"), ("Fake API", "'api_key'")):
@@ -235,7 +225,7 @@ class TestUpdateResolvesEachSourceOnceRegression:
             ]
 
         with (
-            patch("src.cli.main.load_config", return_value={"inputs": {}}),
+            patch("src.cli.main.load_config", return_value={}),
             patch("src.cli.main.create_storage_manager", return_value=storage),
             patch(
                 "src.cli.main.create_recommendation_engine",
@@ -265,13 +255,9 @@ class TestUpdateResolvesEachSourceOnceRegression:
 class TestUndecodableRomNameDoesNotAbortUpdateRegression:
     @staticmethod
     def _run(storage: StorageManager, root: Path) -> Any:
-        config: dict[str, Any] = {
-            "inputs": {
-                "roms": {"plugin": "roms", "enabled": True, "paths": [str(root)]}
-            },
-        }
+        storage.sources.upsert(1, "roms", "roms", {"paths": [str(root)]}, enabled=True)
         with (
-            patch("src.cli.main.load_config", return_value=config),
+            patch("src.cli.main.load_config", return_value={}),
             patch("src.cli.main.create_storage_manager", return_value=storage),
             patch(
                 "src.cli.main.create_recommendation_engine",
@@ -337,8 +323,6 @@ class TestCliBootstrapFailures:
             patch("src.cli.main.load_config", return_value={}),
             patch("src.cli.main.create_storage_manager", return_value=MagicMock()),
             patch("src.cli.main.migrate_config_settings"),
-            patch("src.cli.main.migrate_config_credentials"),
-            patch("src.cli.main.migrate_config_secrets"),
             patch("src.cli.main.create_recommendation_engine"),
             patch(f"src.cli.main.{patched}", side_effect=error),
         ):
@@ -368,14 +352,3 @@ class TestCliBootstrapFailures:
         assert result.exit_code == 1
         assert result.stderr == f"{_COMPONENT_EXIT}ConnectionError\n"
         assert token not in result.output
-
-
-class TestAMalformedInputsBlockDoesNotAbortTheBoot:
-    def test_a_read_only_command_still_runs(self, cli_runner: CliRunner) -> None:
-        storage = make_storage_mock()
-        config: dict[str, Any] = {"inputs": [{"plugin": "gog", "enabled": True}]}
-
-        result = _invoke_with_mocks(cli_runner, ["status"], storage, config=config)
-
-        assert result.exit_code == 0, result.output
-        assert "Components:" in result.output

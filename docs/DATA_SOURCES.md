@@ -41,15 +41,10 @@ reads.
 
 The **Data** tab lists every source as an accordion, enabled ones first.
 
-Two ways to create a source:
-
-- **+ Add source**, at the top of the Sync Sources card. Pick a plugin, give the
-  source an id, fill in the plugin's fields. Sensitive fields are password
-  inputs, stored encrypted rather than in the plaintext config. Use **Replace**
-  in the source's panel to rotate a secret later.
-- Define it under `inputs:` in `config.yaml`, then click **Migrate to DB** in
-  its panel. After migration the YAML entry is ignored and every edit goes
-  through the UI.
+Create one with **+ Add source**, at the top of the Sync Sources card: pick a
+plugin, give the source an id, fill in the plugin's fields. Sensitive fields are
+password inputs, stored encrypted in the database. Use **Replace** in the
+source's panel to rotate a secret later. `config.yaml` cannot define a source.
 
 Every field in a source's config schema is then editable inline or through
 `uv run python -m src.cli source`. Run `source schema <id>` to see which fields a
@@ -69,9 +64,8 @@ it to, in `config.yaml` — see
 [SECURITY.md](SECURITY.md#where-a-source-may-read).
 
 Each panel also carries an **Automatic sync** select, the peer of
-`source schedule <id> <interval>`. Only a migrated source is offered one; a
-disabled source and one still in `config.yaml` never sync on a schedule. Until
-you pick a cadence, a migrated source runs on its plugin's
+`source schedule <id> <interval>`. A disabled source never syncs on a schedule.
+Until you pick a cadence, a source runs on its plugin's
 `default_sync_interval`. The web server is what runs them, so nothing syncs on a
 cadence while only the CLI is up.
 

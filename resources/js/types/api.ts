@@ -205,18 +205,9 @@ export interface SourceConfigResponse {
   plugin: string
   plugin_display_name: string
   enabled: boolean
-  migrated: boolean
-  migrated_at: string | null
   field_values: Record<string, unknown>
   secret_status: Record<string, boolean>
   sync_interval: string
-}
-
-export interface SourceMigrationResponse {
-  source_id: string
-  migrated_at: string
-  fields_migrated: string[]
-  secrets_migrated: string[]
 }
 
 export interface PluginInfoResponse {

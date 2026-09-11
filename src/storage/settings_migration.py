@@ -15,8 +15,7 @@ if TYPE_CHECKING:
 
 # Global/system config sections whose effective value is assembled here. The
 # ``storage`` section is intentionally excluded — it bootstraps the database
-# itself and must stay in YAML/env. ``inputs`` (sources) and credentials are
-# owned by their own migrations (source_configs / credentials tables).
+# itself and must stay in YAML/env.
 IN_SCOPE_SECTIONS: tuple[str, ...] = (
     "recommendations",
     "sync",

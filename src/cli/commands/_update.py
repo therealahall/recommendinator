@@ -162,11 +162,8 @@ def update(
         elif message:
             click.echo(message)
 
-    # Use the DB-aware helper so sources that live only in the database (created
-    # via ``source create`` or the web Add-source modal, never in config.yaml)
-    # are discoverable — otherwise a user can't find the id to pass to --source.
     if source == "list":
-        available = get_available_sync_sources(config, storage=storage)
+        available = get_available_sync_sources(storage)
         if output_format == "json":
             click.echo(json.dumps(build_sources_view(available), indent=2))
             return
@@ -192,7 +189,7 @@ def update(
 
     valid: list[ResolvedInput] = []
     if source == "all":
-        resolved = resolve_inputs(config, storage=storage)
+        resolved = resolve_inputs(storage)
         if not resolved:
             report_nothing_ran(
                 "No sources are enabled. Use --source list to see what exists, "
@@ -215,16 +212,13 @@ def update(
                 continue
             valid.append(resolved_entry)
     else:
-        # Resolve a single source through the DB-aware path (mirrors the web
-        # /update endpoint) so a source that lives only in the database — with
-        # no config.yaml entry — is synced, not rejected as "unknown".
         resolved = [
             resolved_entry
-            for resolved_entry in resolve_inputs(config, storage=storage)
+            for resolved_entry in resolve_inputs(storage)
             if resolved_entry.source_id == source
         ]
         if not resolved:
-            not_loaded = source_plugin_not_loaded(source, config, storage=storage)
+            not_loaded = source_plugin_not_loaded(source, storage)
             click.echo(
                 (
                     f"Error: {unusable_detail(not_loaded)}"

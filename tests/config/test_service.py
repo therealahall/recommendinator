@@ -302,7 +302,8 @@ class TestEveryChildlessHeaderIsDroppedAtTheDoor:
     def test_no_section_survives_as_none(self, tmp_path: Path) -> None:
         config_path = tmp_path / "config.yaml"
         config_path.write_text(
-            "storage:\nenrichment:\ninputs:\nrecommendations:\n  scorer_weights:\n",
+            "storage:\nenrichment:\ninputs:\n  steam: {plugin: steam}\n"
+            "recommendations:\n  scorer_weights:\n",
             encoding="utf-8",
         )
 

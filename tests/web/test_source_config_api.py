@@ -35,26 +35,11 @@ def storage(tmp_path: Path) -> StorageManager:
 
 @pytest.fixture()
 def base_config() -> dict[str, Any]:
-    return {
-        "storage": {"database_path": "data/test.db"},
-        "inputs": {
-            "my_books": {
-                "plugin": "fake_file",
-                "enabled": True,
-                "path": "/yaml/books.csv",
-                "content_type": "book",
-            },
-            "my_games": {
-                "plugin": "fake_api",
-                "enabled": True,
-                "api_key": "yaml_api_key",
-                "user_id": "yaml_user",
-                "min_minutes": 30,
-                "tags": ["rpg", "indie"],
-                "active": True,
-            },
-        },
-    }
+    return {"storage": {"database_path": "data/test.db"}}
+
+
+BOOKS = {"path": "/db/books.csv", "content_type": "book"}
+GAMES = {"user_id": "db_user", "min_minutes": 30, "tags": ["rpg"]}
 
 
 @pytest.fixture()
@@ -65,13 +50,16 @@ def client(
 ) -> Iterator[TestClient]:
     engine = Mock(spec=RecommendationEngine)
     engine.storage = storage
+    storage.sources.upsert(1, "my_books", "fake_file", BOOKS, enabled=True)
+    storage.sources.upsert(1, "my_games", "fake_api", GAMES, enabled=True)
+    storage.credentials.save(1, "my_games", "api_key", "db_api_key")
 
     with booted_web_app(storage, base_config, engine=engine) as app:
         yield authenticated_client(app)
 
 
 class TestSchemaEndpoint:
-    def test_returns_schema_for_yaml_source(self, client: TestClient) -> None:
+    def test_returns_the_plugins_schema(self, client: TestClient) -> None:
         response = client.get("/api/sync/sources/my_books/schema")
         assert response.status_code == 200
         body = response.json()
@@ -111,143 +99,27 @@ class TestSchemaEndpoint:
 
 
 class TestConfigEndpoint:
-    def test_yaml_only_source_returns_yaml_values(self, client: TestClient) -> None:
-        response = client.get("/api/sync/sources/my_books/config")
-        assert response.status_code == 200
-        body = response.json()
-        assert body["source_id"] == "my_books"
-        assert body["plugin"] == "fake_file"
-        assert body["enabled"] is True
-        assert body["migrated"] is False
-        assert body["migrated_at"] is None
-        assert body["field_values"] == {
-            "path": "/yaml/books.csv",
-            "content_type": "book",
-        }
-        assert body["secret_status"] == {}
-
-    def test_yaml_secret_value_is_never_returned(self, client: TestClient) -> None:
+    def test_returns_the_stored_values_and_never_a_secret(
+        self, client: TestClient
+    ) -> None:
         response = client.get("/api/sync/sources/my_games/config")
-        body = response.json()
-        assert "api_key" not in body["field_values"]
-        assert body["secret_status"] == {"api_key": True}
-        assert body["field_values"]["user_id"] == "yaml_user"
-        assert body["field_values"]["min_minutes"] == 30
-        assert body["field_values"]["tags"] == ["rpg", "indie"]
-        assert body["field_values"]["active"] is True
-
-    def test_post_migration_returns_db_values(
-        self, client: TestClient, storage: StorageManager
-    ) -> None:
-        storage.sources.upsert(
-            1,
-            "my_books",
-            "fake_file",
-            {"path": "/db/books.csv", "content_type": "book"},
-            enabled=False,
-        )
-        response = client.get("/api/sync/sources/my_books/config")
-        body = response.json()
-        assert body["migrated"] is True
-        assert body["migrated_at"] is not None
-        assert body["enabled"] is False
-        assert body["field_values"]["path"] == "/db/books.csv"
-
-    def test_yaml_secret_status_unset_for_non_string_value(
-        self, client: TestClient, base_config: dict[str, Any]
-    ) -> None:
-        base_config["inputs"]["my_games"]["api_key"] = False
-        response = client.get("/api/sync/sources/my_games/config")
-        body = response.json()
-        assert body["secret_status"] == {"api_key": False}
-
-
-class TestMigrateEndpoint:
-    def test_migrates_yaml_into_db_when_no_boot_pass_ran(
-        self,
-        client: TestClient,
-        storage: StorageManager,
-        base_config: dict[str, Any],
-    ) -> None:
-        response = client.post("/api/sync/sources/my_games/migrate")
         assert response.status_code == 200
         body = response.json()
         assert body["source_id"] == "my_games"
-        assert set(body["fields_migrated"]) == {
-            "user_id",
-            "min_minutes",
-            "tags",
-            "active",
+        assert body["plugin"] == "fake_api"
+        assert body["enabled"] is True
+        assert body["field_values"] == {
+            "user_id": "db_user",
+            "min_minutes": 30,
+            "tags": ["rpg"],
         }
-        assert body["secrets_migrated"] == ["api_key"]
-
-        row = storage.sources.get(1, "my_games")
-        assert row is not None
-        assert row["plugin"] == "fake_api"
-        assert row["enabled"] is True
-        assert row["config"]["user_id"] == "yaml_user"
-        assert row["config"]["min_minutes"] == 30
-        assert "api_key" not in row["config"]
-
-        decrypted = storage.credentials.get(1, "my_games", "api_key")
-        assert decrypted == "yaml_api_key"
-
-        assert "my_games" in base_config["inputs"]
-
-    def test_a_secret_no_key_can_decrypt_is_still_reported(
-        self,
-        client: TestClient,
-        storage: StorageManager,
-        base_config: dict[str, Any],
-    ) -> None:
-        del base_config["inputs"]["my_games"]["api_key"]
-        with storage.connection() as conn:
-            conn.execute(
-                "INSERT INTO credentials "
-                "(user_id, source_id, credential_key, credential_value) "
-                "VALUES (1, 'my_games', 'api_key', 'stale_garbage')"
-            )
-            conn.commit()
-
-        response = client.post("/api/sync/sources/my_games/migrate")
-
-        assert response.status_code == 200, response.text
-        assert storage.credentials.get(1, "my_games", "api_key") is None
-        assert response.json()["secrets_migrated"] == ["api_key"]
-
-    def test_migration_is_idempotent(
-        self, client: TestClient, storage: StorageManager
-    ) -> None:
-        first = client.post("/api/sync/sources/my_books/migrate")
-        second = client.post("/api/sync/sources/my_books/migrate")
-        assert first.status_code == 200
-        assert second.status_code == 200
-        rows = storage.sources.list(1)
-        assert len([r for r in rows if r["source_id"] == "my_books"]) == 1
-
-
-class TestMigrateNamesASecretTheBootPassEncryptedRegression:
-    def test_a_real_boot_still_reports_the_secret(
-        self,
-        registry_with_source_fakes: None,
-        storage: StorageManager,
-        base_config: dict[str, Any],
-    ) -> None:
-        with booted_web_app(storage, base_config, migrate_credentials=True) as app:
-            client = authenticated_client(app)
-            assert storage.credentials.get(1, "my_games", "api_key") == "yaml_api_key"
-            response = client.post("/api/sync/sources/my_games/migrate")
-
-        assert response.status_code == 200, response.text
-        assert response.json()["secrets_migrated"] == ["api_key"]
-        assert storage.credentials.get(1, "my_games", "api_key") == "yaml_api_key"
+        assert body["secret_status"] == {"api_key": True}
 
 
 class TestUpdateConfigEndpoint:
     def test_updates_non_sensitive_fields(
         self, client: TestClient, storage: StorageManager
     ) -> None:
-        client.post("/api/sync/sources/my_games/migrate")
         response = client.put(
             "/api/sync/sources/my_games/config",
             json={
@@ -276,29 +148,26 @@ class TestUpdateConfigEndpoint:
     def test_rejects_attempt_to_set_sensitive_field_through_config(
         self, client: TestClient, storage: StorageManager
     ) -> None:
-        client.post("/api/sync/sources/my_games/migrate")
         response = client.put(
             "/api/sync/sources/my_games/config",
             json={"values": {"api_key": "leaked"}},
         )
         assert response.status_code == 400
         decrypted = storage.credentials.get(1, "my_games", "api_key")
-        assert decrypted == "yaml_api_key"
+        assert decrypted == "db_api_key"
 
     def test_rejects_unknown_field(
         self, client: TestClient, storage: StorageManager
     ) -> None:
-        client.post("/api/sync/sources/my_games/migrate")
         response = client.put(
             "/api/sync/sources/my_games/config",
             json={"values": {"random_field": "x"}},
         )
         assert response.status_code == 400
 
-    def test_returns_404_when_not_migrated(self, client: TestClient) -> None:
+    def test_returns_404_for_an_unknown_source(self, client: TestClient) -> None:
         response = client.put(
-            "/api/sync/sources/my_books/config",
-            json={"values": {"path": "/x"}},
+            "/api/sync/sources/nope/config", json={"values": {"path": "/x"}}
         )
         assert response.status_code == 404
 
@@ -307,7 +176,6 @@ class TestSecretEndpoints:
     def test_put_secret_stores_encrypted_credential(
         self, client: TestClient, storage: StorageManager
     ) -> None:
-        client.post("/api/sync/sources/my_games/migrate")
         response = client.put(
             "/api/sync/sources/my_games/secret/api_key",
             json={"value": "rotated_key"},
@@ -318,7 +186,6 @@ class TestSecretEndpoints:
     def test_put_secret_404_for_unknown_field_name(
         self, client: TestClient, storage: StorageManager
     ) -> None:
-        client.post("/api/sync/sources/my_games/migrate")
         response = client.put(
             "/api/sync/sources/my_games/secret/no_such_field",
             json={"value": "x"},
@@ -329,7 +196,6 @@ class TestSecretEndpoints:
     def test_put_secret_400_for_non_sensitive_field(
         self, client: TestClient, storage: StorageManager
     ) -> None:
-        client.post("/api/sync/sources/my_games/migrate")
         response = client.put(
             "/api/sync/sources/my_games/secret/user_id",
             json={"value": "x"},
@@ -339,17 +205,13 @@ class TestSecretEndpoints:
     def test_delete_secret_removes_credential(
         self, client: TestClient, storage: StorageManager
     ) -> None:
-        client.post("/api/sync/sources/my_games/migrate")
         response = client.delete("/api/sync/sources/my_games/secret/api_key")
         assert response.status_code == 204
         assert storage.credentials.get(1, "my_games", "api_key") is None
 
 
 class TestEnabledEndpoint:
-    def test_toggles_enabled_on_migrated_source(
-        self, client: TestClient, storage: StorageManager
-    ) -> None:
-        client.post("/api/sync/sources/my_books/migrate")
+    def test_toggles_enabled(self, client: TestClient, storage: StorageManager) -> None:
         response = client.put(
             "/api/sync/sources/my_books/enabled", json={"enabled": False}
         )
@@ -357,15 +219,12 @@ class TestEnabledEndpoint:
         body = response.json()
         assert body["enabled"] is False
         assert body["source_id"] == "my_books"
-        assert body["migrated_at"] is not None
         row = storage.sources.get(1, "my_books")
         assert row is not None
         assert row["enabled"] is False
 
-    def test_returns_404_when_not_migrated(self, client: TestClient) -> None:
-        response = client.put(
-            "/api/sync/sources/my_books/enabled", json={"enabled": False}
-        )
+    def test_returns_404_for_an_unknown_source(self, client: TestClient) -> None:
+        response = client.put("/api/sync/sources/nope/enabled", json={"enabled": False})
         assert response.status_code == 404
 
 
@@ -400,7 +259,6 @@ class TestScheduleEndpoint:
     def test_stores_the_interval_and_the_listing_reports_it(
         self, client: TestClient
     ) -> None:
-        client.post("/api/sync/sources/my_books/migrate")
 
         response = client.put(
             "/api/sync/sources/my_books/schedule", json={"interval": "6h"}
@@ -414,7 +272,6 @@ class TestScheduleEndpoint:
     def test_an_interval_outside_the_presets_is_refused_and_stores_nothing(
         self, client: TestClient, storage: StorageManager
     ) -> None:
-        client.post("/api/sync/sources/my_books/migrate")
         client.put("/api/sync/sources/my_books/schedule", json={"interval": "6h"})
 
         response = client.put(
@@ -426,28 +283,17 @@ class TestScheduleEndpoint:
         assert row is not None
         assert row["sync_interval"] == "6h"
 
-    def test_returns_404_when_not_migrated(self, client: TestClient) -> None:
+    def test_returns_404_for_an_unknown_source(self, client: TestClient) -> None:
         response = client.put(
-            "/api/sync/sources/my_books/schedule", json={"interval": "daily"}
+            "/api/sync/sources/nope/schedule", json={"interval": "daily"}
         )
         assert response.status_code == 404
 
 
 class TestSourceListingReportsTheSchedule:
-    def test_a_yaml_only_source_is_off_until_it_is_migrated(
+    def test_an_unscheduled_source_takes_the_plugin_default_and_is_due_now(
         self, client: TestClient
     ) -> None:
-        entry = _listing_entry(client, "my_books")
-
-        assert entry["sync_interval"] == "off"
-        assert entry["last_run_at"] is None
-        assert entry["next_run_at"] is None
-
-    def test_a_migrated_source_takes_the_plugin_default_and_is_due_now(
-        self, client: TestClient
-    ) -> None:
-        client.post("/api/sync/sources/my_books/migrate")
-
         entry = _listing_entry(client, "my_books")
 
         assert entry["sync_interval"] == "daily"
@@ -457,7 +303,6 @@ class TestSourceListingReportsTheSchedule:
     def test_a_source_switched_off_reports_no_next_run(
         self, client: TestClient
     ) -> None:
-        client.post("/api/sync/sources/my_books/migrate")
         client.put("/api/sync/sources/my_books/schedule", json={"interval": "off"})
 
         assert _listing_entry(client, "my_books")["next_run_at"] is None
@@ -465,7 +310,6 @@ class TestSourceListingReportsTheSchedule:
     def test_a_disabled_source_reports_no_next_run_it_would_never_get(
         self, client: TestClient
     ) -> None:
-        client.post("/api/sync/sources/my_books/migrate")
         client.put("/api/sync/sources/my_books/enabled", json={"enabled": False})
 
         entry = _listing_entry(client, "my_books")
@@ -476,7 +320,6 @@ class TestSourceListingReportsTheSchedule:
     def test_a_recorded_run_reaches_the_listing_with_a_due_time(
         self, client: TestClient, storage: StorageManager
     ) -> None:
-        client.post("/api/sync/sources/my_books/migrate")
         _record_run(storage, status="failed")
 
         entry = _listing_entry(client, "my_books")
@@ -488,15 +331,13 @@ class TestSourceListingReportsTheSchedule:
     def test_removing_a_source_leaves_a_namesake_no_history(
         self, client: TestClient, storage: StorageManager
     ) -> None:
-        client.post("/api/sync/sources/my_books/migrate")
         _record_run(storage, status="failed")
 
         client.delete("/api/sync/sources/my_books")
-        client.post("/api/sync/sources/my_books/migrate")
+        storage.sources.upsert(1, "my_books", "fake_file", BOOKS, enabled=True)
 
         entry = _listing_entry(client, "my_books")
         assert entry["last_run_at"] is None
-        assert entry["last_run_status"] is None
 
 
 class TestSyncRunsEndpoint:
@@ -578,10 +419,7 @@ def broken_plugin_client(
     storage: StorageManager,
     base_config: dict[str, Any],
 ) -> Iterator[TestClient]:
-    base_config["inputs"]["my_books"] = {
-        "plugin": UNLOADED_PLUGIN,
-        "enabled": True,
-    }
+    storage.sources.upsert(1, "my_books", UNLOADED_PLUGIN, {}, enabled=True)
     engine = Mock(spec=RecommendationEngine)
     engine.storage = storage
 
@@ -670,7 +508,6 @@ class TestCreateSourceEndpoint:
         assert body["plugin"] == "fake_file"
         assert body["plugin_display_name"] == "Fake File"
         assert body["enabled"] is True
-        assert body["migrated"] is True
         assert body["field_values"] == {
             "path": "/data/new.csv",
             "content_type": "book",
@@ -680,7 +517,7 @@ class TestCreateSourceEndpoint:
         assert row is not None
         assert row["config"]["path"] == "/data/new.csv"
 
-    def test_rejects_existing_yaml_source(self, client: TestClient) -> None:
+    def test_rejects_an_id_a_source_holds(self, client: TestClient) -> None:
         response = client.post(
             "/api/sync/sources",
             json={"id": "my_books", "plugin": "fake_file", "values": {}},
@@ -736,10 +573,7 @@ class TestCreateSourceEndpoint:
 class TestTheWriteBoundaryRefusesWhatTheSyncWouldReject:
     @pytest.fixture()
     def client(self, storage: StorageManager) -> Iterator[TestClient]:
-        config: dict[str, Any] = {
-            "storage": {"database_path": "data/test.db"},
-            "inputs": {},
-        }
+        config: dict[str, Any] = {"storage": {"database_path": "data/test.db"}}
         with booted_web_app(storage, config) as app:
             yield authenticated_client(app)
 
@@ -903,10 +737,7 @@ class TestTheWriteBoundaryRefusesWhatTheSyncWouldReject:
 class TestSyncLogsTheReasonItRefused:
     @pytest.fixture()
     def client(self, storage: StorageManager) -> Iterator[TestClient]:
-        config: dict[str, Any] = {
-            "storage": {"database_path": "data/test.db"},
-            "inputs": {},
-        }
+        config: dict[str, Any] = {"storage": {"database_path": "data/test.db"}}
         with booted_web_app(storage, config) as app:
             yield authenticated_client(app)
 
@@ -1010,9 +841,8 @@ class TestDeleteSourceEndpoint:
     def test_removes_db_row_and_credentials(
         self, client: TestClient, storage: StorageManager
     ) -> None:
-        client.post("/api/sync/sources/my_games/migrate")
         assert storage.sources.get(1, "my_games") is not None
-        assert storage.credentials.get(1, "my_games", "api_key") == "yaml_api_key"
+        assert storage.credentials.get(1, "my_games", "api_key") == "db_api_key"
 
         response = client.delete("/api/sync/sources/my_games")
         assert response.status_code == 204
@@ -1020,8 +850,8 @@ class TestDeleteSourceEndpoint:
         assert storage.sources.get(1, "my_games") is None
         assert storage.credentials.get(1, "my_games", "api_key") is None
 
-    def test_returns_404_when_not_migrated(self, client: TestClient) -> None:
-        response = client.delete("/api/sync/sources/my_books")
+    def test_returns_404_for_an_unknown_source(self, client: TestClient) -> None:
+        response = client.delete("/api/sync/sources/nope")
         assert response.status_code == 404
 
     def test_returns_400_for_invalid_source_id(self, client: TestClient) -> None:
@@ -1029,12 +859,9 @@ class TestDeleteSourceEndpoint:
         assert response.status_code == 400
 
     def test_the_last_source_on_a_plugin_takes_the_stranded_row_with_it(
-        self,
-        client: TestClient,
-        storage: StorageManager,
-        base_config: dict[str, Any],
+        self, client: TestClient, storage: StorageManager
     ) -> None:
-        base_config["inputs"].pop("my_games")
+        storage.sources.delete(1, "my_games")
         storage.sources.upsert(1, "work_games", "fake_api", {}, enabled=True)
         storage.credentials.save(1, "fake_api", "api_key", "stranded-by-an-upgrade")
 
@@ -1043,7 +870,7 @@ class TestDeleteSourceEndpoint:
         assert response.status_code == 204
         assert storage.credentials.get(1, "fake_api", "api_key") is None
 
-    def test_a_yaml_sibling_on_the_plugin_keeps_the_stranded_row(
+    def test_a_sibling_on_the_plugin_keeps_the_stranded_row(
         self, client: TestClient, storage: StorageManager
     ) -> None:
         storage.sources.upsert(1, "work_games", "fake_api", {}, enabled=True)
@@ -1125,10 +952,7 @@ class TestSourceCredentialMoveRegression:
     def real_plugin_client(self, storage: StorageManager) -> Iterator[TestClient]:
         engine = Mock(spec=RecommendationEngine)
         engine.storage = storage
-        config: dict[str, Any] = {
-            "storage": {"database_path": "data/test.db"},
-            "inputs": {},
-        }
+        config: dict[str, Any] = {"storage": {"database_path": "data/test.db"}}
         with booted_web_app(storage, config, engine=engine) as app:
             yield authenticated_client(app)
 

@@ -27,8 +27,6 @@ const detailsLoaded = ref(false)
 const detailsLoading = ref(false)
 const detailsError = ref('')
 const detailsMessage = ref('')
-const migrating = ref(false)
-const migrateError = ref('')
 const gateRevision = ref(0)
 
 // Accordion.vue hides its panel rather than unmounting it, so there is nothing
@@ -39,7 +37,6 @@ function panelControl(testid: string): HTMLElement | null {
 
 const schema = computed(() => data.sourceSchemas[props.source.id])
 const config = computed(() => data.sourceConfigs[props.source.id])
-const isMigrated = computed(() => config.value?.migrated === true)
 
 // Without the catch a rejection left detailsLoaded and detailsLoading both
 // false, which matches neither template branch: the panel opened onto nothing
@@ -89,21 +86,6 @@ function onSyncClick(event: MouseEvent): void {
   event.stopPropagation()
   if (props.syncing) return
   emit('sync', props.source.id)
-}
-
-async function onMigrate(): Promise<void> {
-  if (migrating.value) return
-  migrating.value = true
-  migrateError.value = ''
-  try {
-    await data.migrateSource(props.source.id)
-  } catch (err) {
-    migrateError.value = err instanceof Error ? err.message : 'Unknown error'
-    await nextTick()
-    rescueFocus(panelControl(`migrate-error-${props.source.id}`))
-  } finally {
-    migrating.value = false
-  }
 }
 
 // A disabled source never runs, and the accessible name below says so: letting
@@ -224,53 +206,31 @@ const intervalLabel = computed(
       tabindex="-1"
       class="focus-fallback"
     >
-      <template v-if="!isMigrated">
-        <p class="source-accordion-explainer">
-          This source is configured via <code>config.yaml</code>. Migrate it to the
-          database to edit its settings here.
-        </p>
-        <button
-          type="button"
-          class="btn btn-primary"
-          :data-testid="`migrate-btn-${source.id}`"
-          :aria-disabled="migrating || undefined"
-          @click="onMigrate"
-        >{{ migrating ? 'Migrating…' : 'Migrate to DB' }}</button>
-        <p
-          class="state state--error source-accordion-error focus-fallback"
-          :data-testid="`migrate-error-${source.id}`"
-          role="alert"
-          tabindex="-1"
-        >{{ migrateError }}</p>
-      </template>
+      <SourceConnectPanel
+        :source-id="source.id"
+        :source-name="source.display_name"
+        :plugin="config.plugin"
+        :source-enabled="config.enabled"
+        :disabled="props.syncing"
+        :expanded="expanded"
+        :gate-revision="gateRevision"
+      />
 
-      <template v-else>
-        <SourceConnectPanel
-          :source-id="source.id"
-          :source-name="source.display_name"
-          :plugin="config.plugin"
-          :source-enabled="config.enabled"
-          :disabled="props.syncing"
-          :expanded="expanded"
-          :gate-revision="gateRevision"
-        />
+      <SourceScheduleSelect
+        :source-id="source.id"
+        :source-name="source.display_name"
+        :interval="source.sync_interval"
+        :options="intervalOptions"
+        :expanded="expanded"
+      />
 
-        <SourceScheduleSelect
-          :source-id="source.id"
-          :source-name="source.display_name"
-          :interval="source.sync_interval"
-          :options="intervalOptions"
-          :expanded="expanded"
-        />
-
-        <SourceSettingsPanel
-          :source="source"
-          :fields="schema.fields"
-          :config="config"
-          :verbs-locked="props.syncing"
-          @gate-changed="gateRevision += 1"
-        />
-      </template>
+      <SourceSettingsPanel
+        :source="source"
+        :fields="schema.fields"
+        :config="config"
+        :verbs-locked="props.syncing"
+        @gate-changed="gateRevision += 1"
+      />
     </div>
 
     <!-- Mounted while silent: inserted populated it reads as content (4.1.3). -->
@@ -313,16 +273,6 @@ const intervalLabel = computed(
    without the 3:1 edge that says where it is (WCAG 1.4.3, 1.4.11). */
 .source-accordion--disabled :deep(.accordion-trigger) {
   color: var(--text-secondary);
-}
-
-.source-accordion-explainer {
-  color: var(--text-secondary);
-  font-size: var(--text-sm);
-  margin-bottom: var(--space-3);
-}
-
-.source-accordion-error:not(:empty) {
-  margin-top: var(--space-3);
 }
 
 .source-accordion-details-message {

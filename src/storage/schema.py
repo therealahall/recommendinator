@@ -137,10 +137,8 @@ _CONTENT_ITEMS_TABLE = """
     )
 """
 
-# Parenthesised so no source the app creates can be named it: every door
-# validates against ``SOURCE_ID_PATTERN`` (a lowercase letter, then letters,
-# digits, _ and -). Only a hand-written ``inputs`` key, taken verbatim from
-# config.yaml, could collide.
+# Parenthesised so no source can be named it: every door validates against
+# ``SOURCE_ID_PATTERN`` (a lowercase letter, then letters, digits, _ and -).
 _LEGACY_EXTERNAL_ID_SOURCE = "(legacy)"
 
 # Declared once because ``create_schema`` creates them from here and the guard
@@ -458,8 +456,6 @@ def create_schema(conn: sqlite3.Connection) -> None:
         )
         """)
 
-    # Once a row exists for (user_id, source_id), the YAML entry for that source is
-    # no longer consulted by resolve_inputs — the database is the source of truth.
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS source_configs (
             user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -1680,7 +1676,7 @@ def set_source_config_schedule(
     source_id: str,
     sync_interval: str,
 ) -> bool:
-    """``False`` when the source is not migrated."""
+    """``False`` when no source carries that id."""
     cursor = conn.cursor()
     cursor.execute(
         "UPDATE source_configs SET sync_interval = ?, updated_at = CURRENT_TIMESTAMP "

@@ -14,7 +14,6 @@ from src.enrichment.provider_base import (
 )
 from src.enrichment.registry import EnrichmentRegistry
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
-from src.storage.global_secrets import migrate_config_secrets
 from src.storage.manager import StorageManager
 
 _SECRET_KEY = "enrichment.providers.keyed.api_key"
@@ -84,24 +83,21 @@ def _config() -> dict[str, Any]:
 
 
 class TestProviderConfigInjection:
-    def test_boot_migration_then_enrichment_reads_credential(
-        self, storage: StorageManager
+    def test_a_config_api_key_never_reaches_the_provider(
+        self, storage: StorageManager, registry: EnrichmentRegistry
     ) -> None:
-        registry = EnrichmentRegistry()
-        registry._discovered = True
-        registry.register(KeyedProvider(name="tmdb"))
-
+        """config.yaml holds no secret: a value left under a sensitive field is
+        overwritten by the secret store, not merged in behind it."""
+        storage.secrets.set(_SECRET_KEY, "stored_key")
         config = {
             "enrichment": {
-                "providers": {"tmdb": {"enabled": True, "api_key": "yaml_key"}}
+                "providers": {"keyed": {"enabled": True, "api_key": "file_key"}}
             }
         }
-        migrate_config_secrets(config, storage)
-
-        assert "api_key" not in config["enrichment"]["providers"]["tmdb"]
 
         manager = EnrichmentManager(storage, config, registry)
-        assert manager._get_provider_config("tmdb")["api_key"] == "yaml_key"
+
+        assert manager._get_provider_config("keyed")["api_key"] == "stored_key"
 
 
 class TestSecretResolutionCaching:

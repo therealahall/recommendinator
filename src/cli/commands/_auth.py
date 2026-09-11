@@ -3,7 +3,6 @@ from __future__ import annotations  # noqa: I001
 import time
 import webbrowser
 from collections.abc import Callable
-from typing import Any
 
 import click
 
@@ -74,19 +73,18 @@ def _auth_source_id(source: str, source_id: str | None) -> str:
 
 
 def _is_trakt_enabled(
-    config: dict[str, Any],
     storage: StorageManager,
     source_id: str,
     user_id: int,
 ) -> bool:
     try:
-        resolve_trakt_client_credentials(config, storage, source_id, user_id)
+        resolve_trakt_client_credentials(storage, source_id, user_id)
     except TraktAuthError:
         return False
     return True
 
 
-_StatusCheck = Callable[[dict[str, Any], StorageManager, str, int], bool]
+_StatusCheck = Callable[[StorageManager, str, int], bool]
 
 # What ``GET /api/{provider}/status`` answers for a source on each plugin, so
 # both interfaces call being enabled and holding a token the same thing.
@@ -107,15 +105,14 @@ def auth() -> None:
 @click.pass_context
 def auth_status(ctx: click.Context, user_id: int) -> None:
     """Show enabled and connected state for every configured OAuth source."""
-    config = ctx.obj["config"]
     # Every answer below is a credential-store read, so "storage is down" and
     # "nothing is connected" must not print the same thing.
     storage = require_storage(ctx)
 
     lines = [
-        _auth_status_line(config, storage, source_id, plugin_name, user_id)
+        _auth_status_line(storage, source_id, plugin_name, user_id)
         for source_id, plugin_name in sorted(
-            configured_source_plugins(config, storage, user_id).items()
+            configured_source_plugins(storage, user_id).items()
         )
         if plugin_name in _OAUTH_STATUS
     ]
@@ -128,7 +125,6 @@ def auth_status(ctx: click.Context, user_id: int) -> None:
 
 
 def _auth_status_line(
-    config: dict[str, Any],
     storage: StorageManager,
     source_id: str,
     plugin_name: str,
@@ -139,12 +135,10 @@ def _auth_status_line(
     """
     is_enabled, has_token = _OAUTH_STATUS[plugin_name]
     enabled_state = (
-        "enabled" if is_enabled(config, storage, source_id, user_id) else "not enabled"
+        "enabled" if is_enabled(storage, source_id, user_id) else "not enabled"
     )
     token_state = (
-        "connected"
-        if has_token(config, storage, source_id, user_id)
-        else "not connected"
+        "connected" if has_token(storage, source_id, user_id) else "not connected"
     )
     return f"  {source_id} ({plugin_name}): {enabled_state}, {token_state}"
 
@@ -168,12 +162,11 @@ def auth_connect(
     user_id: int,
 ) -> None:
     """Connect an OAuth source by authenticating in browser."""
-    config = ctx.obj["config"]
     storage = require_storage(ctx)
     connecting = _auth_source_id(source, source_id)
 
     if source == "trakt":
-        _connect_trakt(ctx, config, storage, connecting, user_id)
+        _connect_trakt(ctx, storage, connecting, user_id)
         return
 
     if source == "gog":
@@ -187,7 +180,7 @@ def auth_connect(
         extract_code_fn = extract_epic_code
         exchange_fn, save_fn = exchange_epic_code, save_epic_token
 
-    if not is_enabled_fn(config, storage, connecting, user_id):
+    if not is_enabled_fn(storage, connecting, user_id):
         click.echo(
             f"Error: '{connecting}' is not an enabled {source} source.", err=True
         )
@@ -224,14 +217,13 @@ def auth_connect(
 
 def _connect_trakt(
     ctx: click.Context,
-    config: dict[str, Any],
     storage: StorageManager,
     source_id: str,
     user_id: int,
 ) -> None:
     try:
         client_id, client_secret = resolve_trakt_client_credentials(
-            config, storage, source_id, user_id
+            storage, source_id, user_id
         )
         flow = start_device_auth_flow(client_id)
     except TraktAuthError as error:
@@ -305,7 +297,6 @@ def auth_disconnect(
     user_id: int,
 ) -> None:
     """Disconnect an OAuth source by removing stored credentials."""
-    config = ctx.obj["config"]
     storage = require_storage(ctx)
     plugin_name = _AUTH_PLUGINS[source]
     disconnecting = _auth_source_id(source, source_id)
@@ -316,7 +307,7 @@ def auth_disconnect(
             return
 
     if may_revoke(
-        plugin_name, disconnecting, config, storage, user_id
+        plugin_name, disconnecting, storage, user_id
     ) and storage.credentials.delete(user_id, disconnecting, REFRESH_TOKEN_KEY):
         click.echo(f"{source} disconnected.")
         return

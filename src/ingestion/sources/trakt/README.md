@@ -10,7 +10,7 @@ Imports watched movies and TV shows, ratings, and (optionally) the watchlist fro
 - Your **own Trakt API application**. Register one at [https://trakt.tv/oauth/applications](https://trakt.tv/oauth/applications) to obtain a `client_id` and `client_secret`. There is no shared app: Trakt enforces per-application rate limits and Terms of Service, so each user authenticates against their own registered application.
 - A `refresh_token`, obtained later via the device-code OAuth flow (see Setup). You do not create this by hand.
 
-The `client_secret` and `refresh_token` are stored in an encrypted credential database — never in `config.yaml`. Only the non-sensitive `client_id` lives in YAML.
+The `client_secret` and `refresh_token` are stored in an encrypted credential database. The non-sensitive `client_id` lives in the source's own row beside it.
 
 When registering the application, you can use `urn:ietf:wg:oauth:2.0:oob` as the redirect URI; the device-code flow does not rely on a browser redirect back to your app.
 
@@ -31,7 +31,7 @@ First, save your `client_id` and `client_secret` so the connect flow can run, th
 
 ### Option 2: CLI
 
-After the `client_id` and `client_secret` are saved (via the web UI panel or a migrated config entry), run the device-code flow:
+After the `client_id` and `client_secret` are saved (via the web UI panel or `source set` / `source set-secret`), run the device-code flow:
 
 ```bash
 # Start the Trakt device-code flow — prints a verification URL and code,

@@ -1,7 +1,6 @@
 import logging
 import traceback
 from pathlib import Path
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -13,7 +12,6 @@ from src.auth.epic import (
     EpicAuthError,
     exchange_code_for_tokens,
     extract_code_from_input,
-    has_epic_token,
     save_epic_token,
 )
 from src.storage.manager import StorageManager
@@ -92,23 +90,6 @@ class TestSaveEpicToken:
             "Failed to save Epic Games token to database: OSError"
         ]
         assert not any(record.exc_info for record in records)
-
-
-def _epic_source(**fields: object) -> dict[str, Any]:
-    return {
-        "inputs": {"epic_games": {"plugin": "epic_games", "enabled": True, **fields}}
-    }
-
-
-class TestHasEpicToken:
-    @pytest.fixture()
-    def storage(self, tmp_path: Path) -> StorageManager:
-        return StorageManager(sqlite_path=tmp_path / "test.db")
-
-    def test_returns_true_when_token_in_db(self, storage: StorageManager) -> None:
-        storage.credentials.save(1, "epic_games", "refresh_token", "db_token")
-
-        assert has_epic_token(_epic_source(refresh_token=""), storage=storage) is True
 
 
 class TestEpicAuthTracebackRegression:

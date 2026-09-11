@@ -16,9 +16,9 @@ logger = logging.getLogger(__name__)
 
 EPIC_PLUGIN = "epic_games"
 
-# The id of the source a plain ``inputs.epic_games`` entry gets. Every entry
-# point takes the real source id instead, so a second Epic source keeps its
-# own token.
+# The default source id a client that predates the parameter addresses. Every
+# entry point takes the real source id instead, so a second Epic source keeps
+# its own token.
 EPIC_SOURCE_ID = EPIC_PLUGIN
 
 
@@ -96,18 +96,16 @@ def save_epic_token(
 
 
 def is_epic_enabled(
-    config: dict[str, Any],
     storage: StorageManager | None = None,
     source_id: str = EPIC_SOURCE_ID,
     user_id: int = 1,
 ) -> bool:
-    return _EPIC.is_enabled(config, storage, source_id, user_id)
+    return _EPIC.is_enabled(storage, source_id, user_id)
 
 
 def has_epic_token(
-    config: dict[str, Any],
     storage: StorageManager | None = None,
     source_id: str = EPIC_SOURCE_ID,
     user_id: int = 1,
 ) -> bool:
-    return _EPIC.has_token(config, storage, source_id, user_id)
+    return _EPIC.has_token(storage, source_id, user_id)
