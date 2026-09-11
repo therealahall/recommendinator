@@ -6,10 +6,16 @@ import PreferencesPage from './PreferencesPage.vue'
 
 const PROFILE = {
   user_id: 1,
-  genre_affinities: { 'science fiction': 0.9 },
+  genre_affinities: [
+    { genre: 'science fiction', score: 4.5, anti: false },
+    { genre: 'horror', score: 1.5, anti: true },
+  ],
+  author_affinities: [],
+  liked_genres: [],
+  disliked_genres: [],
   theme_preferences: [],
-  anti_preferences: ['horror'],
   cross_media_patterns: ['Reads the book before the film'],
+  has_content: true,
   generated_at: '2026-01-01T00:00:00+00:00',
 }
 

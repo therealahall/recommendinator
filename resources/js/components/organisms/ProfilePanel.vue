@@ -1,8 +1,29 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useProfileStore } from '@/stores/profile'
+import { formatDate } from '@/utils/format'
 
 const profileStore = useProfileStore()
+
+const genres = computed(() =>
+  (profileStore.profile?.genre_affinities ?? []).map((entry) => ({
+    genre: entry.genre,
+    label: entry.score === null ? entry.genre : `${entry.genre} ${entry.score.toFixed(1)}`,
+    anti: entry.anti,
+  })),
+)
+
+const authors = computed(() =>
+  (profileStore.profile?.author_affinities ?? []).map((entry) => ({
+    author: entry.author,
+    label: `${entry.author} ${entry.score.toFixed(1)}`,
+  })),
+)
+
+const generatedAt = computed(() => {
+  const stamp = profileStore.profile?.generated_at
+  return stamp ? formatDate(stamp) : ''
+})
 
 onMounted(() => {
   profileStore.load()
@@ -30,30 +51,34 @@ async function regenerate(): Promise<void> {
 <template>
   <div class="pref-section">
     <h3>Your profile</h3>
-    <p class="help-text">Derived from your library. Regenerate after a large sync.</p>
+    <p class="help-text">
+      Derived from your library.
+      <span v-if="generatedAt" data-testid="profile-generated">Generated {{ generatedAt }}.</span>
+      Regenerate after a large sync.
+    </p>
     <div class="profile-summary">
       <template v-if="profileStore.profile">
-        <div v-if="Object.keys(profileStore.profile.genre_affinities).length > 0" class="profile-section">
-          <h4>Genres you love</h4>
+        <div v-if="genres.length > 0" class="profile-section">
+          <h4>Genres</h4>
           <div class="profile-tags">
-            <span v-for="g in Object.keys(profileStore.profile.genre_affinities).slice(0, 6)" :key="g" class="badge" data-tone="accent">{{ g }}</span>
+            <span v-for="g in genres" :key="g.genre" class="badge" :data-tone="g.anti ? 'error' : 'accent'">{{ g.label }}</span>
+          </div>
+        </div>
+        <div v-if="authors.length > 0" class="profile-section">
+          <h4>Authors and creators</h4>
+          <div class="profile-tags">
+            <span v-for="a in authors" :key="a.author" class="badge" data-tone="accent">{{ a.label }}</span>
           </div>
         </div>
         <div v-if="profileStore.profile.theme_preferences.length > 0" class="profile-section">
           <h4>Themes you enjoy</h4>
           <div class="profile-tags">
-            <span v-for="t in profileStore.profile.theme_preferences.slice(0, 6)" :key="t" class="badge" data-tone="accent">{{ t }}</span>
-          </div>
-        </div>
-        <div v-if="profileStore.profile.anti_preferences.length > 0" class="profile-section">
-          <h4>Not your style</h4>
-          <div class="profile-tags">
-            <span v-for="p in profileStore.profile.anti_preferences.slice(0, 6)" :key="p" class="badge" data-tone="error">{{ p }}</span>
+            <span v-for="t in profileStore.profile.theme_preferences" :key="t" class="badge" data-tone="accent">{{ t }}</span>
           </div>
         </div>
         <div v-if="profileStore.profile.cross_media_patterns.length > 0" class="profile-section">
           <h4>Patterns</h4>
-          <p v-for="p in profileStore.profile.cross_media_patterns.slice(0, 3)" :key="p" class="text-muted profile-pattern">{{ p }}</p>
+          <p v-for="p in profileStore.profile.cross_media_patterns" :key="p" class="text-muted profile-pattern">{{ p }}</p>
         </div>
       </template>
       <div v-else class="state state--empty" data-testid="profile-empty">

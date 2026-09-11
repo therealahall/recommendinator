@@ -365,12 +365,26 @@ export interface ThemePreferenceResponse {
   theme: string
 }
 
+export interface GenreAffinity {
+  genre: string
+  score: number | null
+  anti: boolean
+}
+
+export interface AuthorAffinity {
+  author: string
+  score: number
+}
+
 export interface ProfileResponse {
   user_id: number
-  genre_affinities: Record<string, number>
+  genre_affinities: GenreAffinity[]
+  author_affinities: AuthorAffinity[]
+  liked_genres: string[]
+  disliked_genres: string[]
   theme_preferences: string[]
-  anti_preferences: string[]
   cross_media_patterns: string[]
+  has_content: boolean
   generated_at: string | null
 }
 

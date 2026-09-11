@@ -7,9 +7,11 @@ import pytest
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.recommendations.content_length import LengthPreference
 from src.recommendations.profile import (
+    AFFINITY_LIMIT,
     PreferenceProfile,
     ProfileGenerator,
     profile_payload,
+    regenerated_payload,
 )
 from src.storage.manager import StorageManager
 
@@ -402,8 +404,12 @@ class TestRegenerateAndSave:
 
         payload = profile_payload(1, storage_manager.profiles.get(user_id=1))
 
-        assert payload["genre_affinities"] == generated.genre_affinities
-        assert payload["genre_affinities"]
+        assert {
+            "genre": "science fiction",
+            "score": generated.genre_affinities["science fiction"],
+            "anti": False,
+        } in payload["genre_affinities"]
+        assert payload["has_content"]
         # One clock: the generator's own UTC stamp, not the row's column, which
         # ticks on a different write in a different timezone.
         assert generated.generated_at is not None
@@ -675,6 +681,80 @@ class TestLikedAndDislikedBuckets:
         assert profile.disliked_genres == []
 
 
+def _stored(**profile: object) -> dict:
+    return {"id": 1, "user_id": 1, "profile": profile}
+
+
+class TestProfilePayload:
+    def test_an_anti_preference_is_flagged_in_place_of_a_second_list(self) -> None:
+        payload = profile_payload(
+            1,
+            _stored(
+                genre_affinities={"fantasy": 4.5, "horror": 2.0},
+                anti_preferences=["horror"],
+            ),
+        )
+
+        assert payload["genre_affinities"] == [
+            {"genre": "fantasy", "score": 4.5, "anti": False},
+            {"genre": "horror", "score": 2.0, "anti": True},
+        ]
+
+    def test_a_genre_the_operator_only_ignores_carries_no_score(self) -> None:
+        payload = profile_payload(
+            1, _stored(genre_affinities={}, anti_preferences=["western"])
+        )
+
+        assert payload["genre_affinities"] == [
+            {"genre": "western", "score": None, "anti": True}
+        ]
+
+    def test_each_affinity_list_stops_at_the_shared_bound(self) -> None:
+        payload = profile_payload(
+            1,
+            _stored(
+                genre_affinities={f"genre{index}": 5.0 for index in range(40)},
+                author_affinities={f"author{index}": 5.0 for index in range(40)},
+                anti_preferences=[f"genre{index}" for index in range(20, 40)],
+            ),
+        )
+
+        genres = payload["genre_affinities"]
+        assert len(payload["author_affinities"]) == AFFINITY_LIMIT
+        assert sum(1 for entry in genres if not entry["anti"]) == AFFINITY_LIMIT
+        assert sum(1 for entry in genres if entry["anti"]) == AFFINITY_LIMIT
+
+    def test_a_library_rated_by_author_with_no_genres_is_not_empty(
+        self, storage_manager: StorageManager
+    ) -> None:
+        for index, rating in enumerate((5, 3)):
+            storage_manager.save_content_item(
+                ContentItem(
+                    id=f"book{index}",
+                    title=f"Shannara {index}",
+                    content_type=ContentType.BOOK,
+                    status=ConsumptionStatus.COMPLETED,
+                    rating=rating,
+                    author="Terry Brooks",
+                ),
+                user_id=1,
+            )
+
+        payload = regenerated_payload(storage_manager, 1)
+
+        assert payload["has_content"]
+        assert payload["genre_affinities"] == []
+        assert payload["author_affinities"] == [
+            {"author": "Terry Brooks", "score": 4.0}
+        ]
+
+    def test_a_stamped_but_vacuous_profile_is_empty(self) -> None:
+        payload = profile_payload(1, _stored(generated_at="2026-01-01T00:00:00"))
+
+        assert payload["has_content"] is False
+        assert payload["generated_at"] == "2026-01-01T00:00:00"
+
+
 class TestAuthorAffinities:
     def test_mean_rating_per_author_above_the_item_floor(
         self, profile_generator: ProfileGenerator, storage_manager: StorageManager
@@ -687,6 +767,43 @@ class TestAuthorAffinities:
         profile = profile_generator.generate_profile(user_id=1)
 
         assert profile.author_affinities == {"Terry Brooks": 4.0}
+
+    def test_a_film_director_and_a_show_creator_are_authors(
+        self, profile_generator: ProfileGenerator, storage_manager: StorageManager
+    ) -> None:
+        for index, rating in enumerate((5, 4)):
+            storage_manager.save_content_item(
+                ContentItem(
+                    id=f"movie{index}",
+                    title=f"Film {index}",
+                    content_type=ContentType.MOVIE,
+                    status=ConsumptionStatus.COMPLETED,
+                    rating=rating,
+                    metadata={"director": "Denis Villeneuve", "genres": ["sci-fi"]},
+                ),
+                user_id=1,
+            )
+        for index, rating in enumerate((3, 3)):
+            storage_manager.save_content_item(
+                ContentItem(
+                    id=f"show{index}",
+                    title=f"Show {index}",
+                    content_type=ContentType.TV_SHOW,
+                    status=ConsumptionStatus.COMPLETED,
+                    rating=rating,
+                    metadata={"creators": "Vince Gilligan", "genres": ["drama"]},
+                ),
+                user_id=1,
+            )
+
+        profile = profile_generator.generate_profile(user_id=1)
+
+        assert profile.author_affinities == {
+            "Denis Villeneuve": 4.5,
+            "Vince Gilligan": 3.0,
+        }
+        assert profile.genre_affinities["science fiction"] == 4.5
+        assert profile.genre_affinities["drama"] == 3.0
 
     def test_a_game_developer_is_an_author(
         self, profile_generator: ProfileGenerator, storage_manager: StorageManager

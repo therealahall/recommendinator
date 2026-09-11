@@ -3,21 +3,32 @@ from datetime import datetime
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
-from src.recommendations.profile import ProfileGenerator, profile_payload
+from src.recommendations.profile import profile_payload, regenerated_payload
 from src.web.guards import RequiredStorage
 
 router = APIRouter()
 
 
+class GenreAffinityResponse(BaseModel):
+    genre: str
+    score: float | None = None
+    anti: bool
+
+
+class AuthorAffinityResponse(BaseModel):
+    author: str
+    score: float
+
+
 class ProfileResponse(BaseModel):
     user_id: int
-    genre_affinities: dict[str, float]
-    author_affinities: dict[str, float]
+    genre_affinities: list[GenreAffinityResponse]
+    author_affinities: list[AuthorAffinityResponse]
     liked_genres: list[str]
     disliked_genres: list[str]
     theme_preferences: list[str]
-    anti_preferences: list[str]
     cross_media_patterns: list[str]
+    has_content: bool
     generated_at: datetime | None = None
 
 
@@ -34,16 +45,4 @@ def get_profile(
 def regenerate_profile(
     storage: RequiredStorage, user_id: int = Query(default=1, ge=1)
 ) -> ProfileResponse:
-    profile = ProfileGenerator(storage).regenerate_and_save(user_id)
-
-    return ProfileResponse(
-        user_id=profile.user_id,
-        genre_affinities=profile.genre_affinities,
-        author_affinities=profile.author_affinities,
-        liked_genres=profile.liked_genres,
-        disliked_genres=profile.disliked_genres,
-        theme_preferences=profile.theme_preferences,
-        anti_preferences=profile.anti_preferences,
-        cross_media_patterns=profile.cross_media_patterns,
-        generated_at=profile.generated_at,
-    )
+    return ProfileResponse.model_validate(regenerated_payload(storage, user_id))
