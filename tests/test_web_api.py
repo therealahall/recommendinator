@@ -5056,6 +5056,9 @@ class TestProfileBodyIsBuiltFromTheStoredRecord:
             "user_id": 1,
             "profile": {
                 "genre_affinities": {"sci-fi": 4.5},
+                "author_affinities": {"Terry Brooks": 4.0},
+                "liked_genres": ["sci-fi"],
+                "disliked_genres": [],
                 "theme_preferences": ["space exploration"],
                 "anti_preferences": ["gore"],
                 "cross_media_patterns": ["Generally rates books higher than games"],
@@ -5069,6 +5072,9 @@ class TestProfileBodyIsBuiltFromTheStoredRecord:
         assert response.json() == {
             "user_id": 1,
             "genre_affinities": {"sci-fi": 4.5},
+            "author_affinities": {"Terry Brooks": 4.0},
+            "liked_genres": ["sci-fi"],
+            "disliked_genres": [],
             "theme_preferences": ["space exploration"],
             "anti_preferences": ["gore"],
             "cross_media_patterns": ["Generally rates books higher than games"],
@@ -5086,6 +5092,9 @@ class TestProfileBodyIsBuiltFromTheStoredRecord:
         assert response.json() == {
             "user_id": 1,
             "genre_affinities": {},
+            "author_affinities": {},
+            "liked_genres": [],
+            "disliked_genres": [],
             "theme_preferences": [],
             "anti_preferences": [],
             "cross_media_patterns": [],

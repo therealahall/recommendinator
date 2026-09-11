@@ -1049,6 +1049,7 @@ class SQLiteDB:
         offset: int = 0,
         sort_by: str = "title",
         include_ignored: bool = True,
+        ignored_only: bool = False,
         enrichment: EnrichmentFilter | None = None,
         search: str | None = None,
     ) -> list[ContentItem]:
@@ -1072,6 +1073,7 @@ class SQLiteDB:
             min_rating=min_rating,
             unrated_only=unrated_only,
             include_ignored=include_ignored,
+            ignored_only=ignored_only,
             enrichment=enrichment,
         )
         order_by = _SORT_ORDER_BY[sort_by]
@@ -1092,6 +1094,7 @@ class SQLiteDB:
         min_rating: int | None,
         unrated_only: bool,
         include_ignored: bool,
+        ignored_only: bool,
         enrichment: EnrichmentFilter | None,
     ) -> tuple[str, list[Any]]:
         where = " WHERE ci.user_id = ? AND ci.merged_into IS NULL"
@@ -1124,6 +1127,9 @@ class SQLiteDB:
 
         if not include_ignored:
             where += " AND (ci.ignored = 0 OR ci.ignored IS NULL)"
+
+        if ignored_only:
+            where += " AND ci.ignored = 1"
 
         return where, params
 

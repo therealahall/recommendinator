@@ -19,6 +19,7 @@ def _stored_profile() -> dict:
             "theme_preferences": ["space exploration", "time travel"],
             "anti_preferences": ["gore"],
             "cross_media_patterns": ["Generally rates books higher than games"],
+            "generated_at": "2026-01-01T00:00:00",
         },
         "generated_at": "2026-01-01T00:00:00",
     }

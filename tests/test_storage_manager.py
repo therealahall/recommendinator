@@ -168,6 +168,39 @@ class TestGetSignalItemsRegression:
         titles = {item.title for item in temp_storage_manager.get_signal_items()}
         assert titles == {"Signal Book"}
 
+    def test_a_limit_samples_rated_items_not_an_alphabetical_prefix(
+        self, temp_storage_manager: StorageManager
+    ) -> None:
+        """The limit used to cut the completed set before the rating filter, so a
+        library whose alphabetical head is unrated profiled nothing."""
+        temp_storage_manager.save_content_item(
+            self._book("a", "Alphabetical Head", ConsumptionStatus.COMPLETED, None)
+        )
+        temp_storage_manager.save_content_item(
+            self._book("b", "Rated Book", ConsumptionStatus.COMPLETED, rating=4)
+        )
+
+        sampled = temp_storage_manager.get_signal_items(limit=1)
+
+        assert [item.title for item in sampled] == ["Rated Book"]
+
+    def test_the_ignored_read_returns_the_items_the_signal_read_drops(
+        self, temp_storage_manager: StorageManager
+    ) -> None:
+        """The profile reads dismissals as their own signal, so they need a read
+        of their own."""
+        temp_storage_manager.save_content_item(
+            self._book("kept", "Kept Book", ConsumptionStatus.COMPLETED, rating=5)
+        )
+        dismissed_id = temp_storage_manager.save_content_item(
+            self._book("dismissed", "Dismissed Book", ConsumptionStatus.UNREAD, None)
+        )
+        temp_storage_manager.set_item_ignored(dismissed_id, True)
+
+        dismissed = temp_storage_manager.get_content_items(ignored_only=True)
+
+        assert [item.title for item in dismissed] == ["Dismissed Book"]
+
 
 class TestGetConsumptionItemsRegression:
     """Bug reported: finishing six books without rating them caused no fatigue."""
