@@ -546,9 +546,9 @@ commit is still main's tip. It uploads `docker-compose.yml` as a release asset.
   GOG, Epic, Sonarr, Radarr, Trakt) and enrichment APIs (TMDB, OpenLibrary,
   RAWG), and nothing else.
 - The web interface is internal network only.
-- API keys and OAuth tokens are stored encrypted in `credentials`. A secret
-  placed in git-ignored `config/config.yaml` for bootstrap is swept into
-  encrypted storage on startup.
+- API keys and OAuth tokens are stored encrypted in `credentials`, entered from
+  the Settings page or `settings set-secret`. `config.yaml` cannot supply one:
+  a secret still sitting in the file is named in the boot log and ignored.
 - See [SECURITY.md](docs/SECURITY.md).
 
 ## Future Enhancements
