@@ -81,7 +81,7 @@ async function regenerate(): Promise<void> {
     <div class="profile-summary">
       <template v-if="profileStore.profile">
         <div v-if="likedGenres.length > 0" class="profile-section">
-          <h4 :id="likedGenresLabel">Genres you love</h4>
+          <h4 :id="likedGenresLabel">Genres and tags you rate highly</h4>
           <ul class="profile-tags" role="list" :aria-labelledby="likedGenresLabel">
             <li v-for="g in likedGenres" :key="g.genre">
               <span class="badge" data-tone="accent">
