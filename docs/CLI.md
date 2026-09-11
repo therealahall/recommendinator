@@ -546,6 +546,6 @@ uv run python -m src.cli profile regenerate    # rebuild from current library da
 ```
 
 `show` prints the stored profile and `regenerate` the one it just rebuilt; both
-take `--user` and `--format json`. A genre the profile holds against the
+take `--user` and `--format json`. A genre or tag the profile holds against the
 operator is flagged in the affinity list rather than repeated under a heading of
 its own.

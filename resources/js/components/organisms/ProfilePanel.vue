@@ -58,7 +58,7 @@ const announcement = computed(() => {
 const emptyHint = computed(() =>
   regenerated.value
     ? 'Nothing in your library is rated yet, so there is nothing to read a profile from. Rate a few items, then regenerate.'
-    : 'Regenerate to read your library into the genres, themes and patterns the scorers weigh.',
+    : 'Regenerate to read your library into the genres, tags, authors, themes and patterns the scorers weigh.',
 )
 
 async function regenerate(): Promise<void> {
