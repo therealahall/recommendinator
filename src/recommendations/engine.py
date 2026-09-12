@@ -45,7 +45,6 @@ from src.utils.series import (
     find_earliest_recommendable,
     inject_seasons_watched_tracking,
     is_active_series_continuation,
-    series_entry,
     should_recommend_item,
 )
 
@@ -413,12 +412,11 @@ class RecommendationEngine:
                     filtered_candidates.append(scored_candidate)
                     seen_keys.add(key)
             else:
-                entry = series_entry(scored_candidate.item)
-                if entry:
-                    candidate_series_name = entry[0]
-                    if candidate_series_name not in substituted_series:
+                candidate_series = series_order.series_of(scored_candidate.item)
+                if candidate_series is not None:
+                    if candidate_series not in substituted_series:
                         substitute = find_earliest_recommendable(
-                            candidate_series_name,
+                            candidate_series,
                             series_tracking,
                             unconsumed_items,
                             series_order,
@@ -436,9 +434,9 @@ class RecommendationEngine:
                                     "Substituted %s with %s (earliest in %s)",
                                     scored_candidate.item.title,
                                     substitute.title,
-                                    candidate_series_name,
+                                    candidate_series,
                                 )
-                        substituted_series.add(candidate_series_name)
+                        substituted_series.add(candidate_series)
                 else:
                     logger.debug(
                         "Filtered out %s - doesn't meet series recommendation rules",

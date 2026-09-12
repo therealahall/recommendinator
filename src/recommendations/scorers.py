@@ -11,12 +11,7 @@ from src.recommendations.genre_clusters import get_clusters_for_terms
 from src.recommendations.genre_normalizer import extract_and_normalize_genres
 from src.recommendations.identity import candidate_key
 from src.recommendations.preferences import UserPreferences
-from src.utils.series import (
-    SeriesOrder,
-    build_series_tracking,
-    is_next_after_consumed,
-    series_entry,
-)
+from src.utils.series import SeriesOrder, build_series_tracking, is_next_after_consumed
 
 logger = logging.getLogger(__name__)
 
@@ -83,9 +78,9 @@ class ScoringContext:
             if creator:
                 creators.add(creator)
 
-            entry = series_entry(item)
-            if entry is not None and item.rating is not None:
-                series_ratings[entry[0]].append(item.rating)
+            series = self.series_order.series_of(item)
+            if series is not None and item.rating is not None:
+                series_ratings[series].append(item.rating)
 
         self.consumed_genres = genres
         self.consumed_clusters = get_clusters_for_terms(list(genres))
@@ -309,11 +304,11 @@ class SeriesAffinityScorer(Scorer):
         super().__init__(weight)
 
     def score(self, candidate: ContentItem, context: ScoringContext) -> float:
-        entry = series_entry(candidate)
-        if entry is None:
+        series = context.series_order.series_of(candidate)
+        if series is None:
             return 0.5  # not in a series – neutral
 
-        avg_rating = _average_series_rating(context.series_ratings.get(entry[0], []))
+        avg_rating = _average_series_rating(context.series_ratings.get(series, []))
         if avg_rating is None:
             return 0.5  # no consumed entries in this series – neutral
 

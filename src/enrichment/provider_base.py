@@ -80,12 +80,12 @@ class EnrichmentResult:
 
 @dataclass(frozen=True)
 class SeriesOrdinal:
-    """A position and the series it counts within. Naming the series is what
-    lets the merge check that this source and whoever stored the name mean the
-    same one, rather than filing a sub-series' number under its parent.
+    """The series a work belongs to, and its position where the source counts
+    one. Naming the series lets the merge check both sources mean the same one,
+    rather than filing a sub-series' number under its parent.
     """
 
-    position: float
+    position: float | None
     series_name: str
     authority: SeriesAuthority = SeriesAuthority.AUTHORED
 
@@ -93,7 +93,7 @@ class SeriesOrdinal:
         """One no reader can read back still counts as an ordinal stored, and
         the authority ladder then never asks for it again.
         """
-        if not valid_series_position(self.position):
+        if self.position is not None and not valid_series_position(self.position):
             raise ValueError(
                 f"A series position must be between 0 and {MAX_SERIES_POSITION}"
             )
@@ -101,8 +101,11 @@ class SeriesOrdinal:
             raise ValueError("A series position must name the series it counts within")
 
     def as_metadata(self) -> dict[str, Any]:
+        named = {SERIES_NAME_KEY: self.series_name.strip()}
+        if self.position is None:
+            return named
         return {
-            SERIES_NAME_KEY: self.series_name.strip(),
+            **named,
             SERIES_POSITION_KEY: self.position,
             SERIES_AUTHORITY_KEY: self.authority.value,
         }

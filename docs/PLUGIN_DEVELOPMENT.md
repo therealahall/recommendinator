@@ -200,7 +200,7 @@ recognised key:
 | Read by | Keys |
 |---|---|
 | [Length scorer](SCORING.md#content-length-preferences), `src/recommendations/content_length.py` | **book** `num_pages`, `number_of_pages`. **TV show** `number_of_seasons`. **video game** `average_playtime_hours` |
-| Series ordering, `src/utils/series.py` | Series name: `series_name`, or the provider-owned `series_title`, `franchise`. Position: `series_position`, `series_number`, `series_num`, `book_number`, `book_num`, `season`, `season_number`, `season_num`, `part`, `part_number`, `episode`, `episode_number`. Expanding a show into seasons: `number_of_seasons` |
+| Series ordering, `src/utils/series.py` | Series name: `series_name`, or the provider-owned `series_title`. Position: `series_position`, `series_number`, `series_num`, `book_number`, `book_num`, `season`, `season_number`, `season_num`, `part`, `part_number`, `episode`, `episode_number`. Expanding a show into seasons: `number_of_seasons` |
 | Season checklist and the [variety ladder](SCORING.md#variety-after-completion), `src/utils/series.py` | `seasons_watched`, `seasons_watched_dates` |
 | Library export, `src/utils/export.py` | `notes` on every type. **TV show** `seasons_watched`, `seasons_watched_dates`. **video game** `playtime_hours` |
 
@@ -211,11 +211,10 @@ blob is yours.
 warning and no error at any layer.** Your own `number_of_seasons` re-classifies
 the show's length.
 
-RAWG writes `average_playtime_hours` and `franchise`, TMDB writes `series_name`
-and `tmdb_collection_id`. Neither writes a position. `merge_enrichment`
-(`src/enrichment/manager.py`) fills each only where the key is missing or empty
-— except `franchise`, which RAWG replaces because it is that key's only writer.
-Write your own franchise name to `series_name` instead.
+RAWG writes `average_playtime_hours`, TMDB writes `series_name` and
+`tmdb_collection_id`. Neither writes a position. `merge_enrichment`
+(`src/enrichment/manager.py`) fills each only where the key is missing or empty.
+Write your own series name to `series_name`.
 
 The series name and position are the other exception: `reconcile_series` decides
 those by rank, and a position naming no series settles nothing. Record yours in
@@ -600,7 +599,7 @@ name is written only where nothing has named the series yet.
 
 You return one `EnrichmentResult` instead of yielding `ContentItem`s, the manager
 throttles you from `rate_limit_requests_per_second`, the merge is gap-filling bar
-`franchise` and the series fields, and config lives under
+the series fields, and config lives under
 `enrichment.providers.<name>` in the settings registry — set from the Settings
 page or the `settings` CLI, with the api key going through `settings set-secret`.
 
@@ -617,6 +616,6 @@ page or the `settings` CLI, with the api key going through `settings set-secret`
 
 Each lives at `src/ingestion/sources/<name>/<name>.py`. Enrichment providers:
 `tmdb` (movies and TV), `openlibrary` (books, no API key), `rawg` (video games),
-`wikidata` (every type, series positions only, no API key — the one provider
+`wikidata` (every type, series only, no API key — the one provider
 implementing `fetch_series_ordinal` and no `enrich` at all) and `hardcover`
 (books) — under `src/enrichment/providers/<name>/<name>.py`.

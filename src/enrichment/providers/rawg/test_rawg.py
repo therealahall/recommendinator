@@ -8,10 +8,10 @@ import requests
 from src.enrichment.provider_base import ProviderError
 from src.enrichment.providers.rawg.rawg import (
     RAWGProvider,
-    _longest_common_prefix,
     clean_game_title_for_search,
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.utils.series import SERIES_NAME_KEY
 
 
 class TestCleanTitleForSearch:
@@ -113,8 +113,6 @@ class TestRAWGProviderEnrichment:
             "background_image": "https://media.rawg.io/media/games/witcher3.jpg",
         }
 
-        mock_series = {"results": []}
-
         with patch("src.enrichment.providers.rawg.rawg.requests.get") as mock_get:
             mock_get.side_effect = [
                 MagicMock(
@@ -122,9 +120,6 @@ class TestRAWGProviderEnrichment:
                 ),
                 MagicMock(
                     spec=requests.Response, status_code=200, json=lambda: mock_game
-                ),
-                MagicMock(
-                    spec=requests.Response, status_code=200, json=lambda: mock_series
                 ),
             ]
 
@@ -141,6 +136,7 @@ class TestRAWGProviderEnrichment:
         assert result.cover_url == "https://media.rawg.io/media/games/witcher3.jpg"
         assert result.extra_metadata.get("average_playtime_hours") == 46
         assert "playtime_hours" not in result.extra_metadata
+        assert SERIES_NAME_KEY not in result.extra_metadata
 
     def test_enrich_game_with_no_playtime_writes_no_average(
         self,
@@ -164,11 +160,6 @@ class TestRAWGProviderEnrichment:
                 ),
                 MagicMock(
                     spec=requests.Response, status_code=200, json=lambda: mock_game
-                ),
-                MagicMock(
-                    spec=requests.Response,
-                    status_code=200,
-                    json=lambda: {"results": []},
                 ),
             ]
 
@@ -198,11 +189,6 @@ class TestRAWGProviderEnrichment:
                 ),
                 MagicMock(
                     spec=requests.Response, status_code=200, json=lambda: mock_game
-                ),
-                MagicMock(
-                    spec=requests.Response,
-                    status_code=200,
-                    json=lambda: {"results": []},
                 ),
             ]
 
@@ -327,140 +313,6 @@ class TestRAWGProviderUnsupportedTypes:
 
         result = provider.enrich(item, {"api_key": "test"})
         assert result is None
-
-
-class TestLongestCommonPrefix:
-    def test_dragon_age_series(self) -> None:
-        titles = [
-            "Dragon Age: Origins",
-            "Dragon Age II",
-            "Dragon Age: Inquisition",
-        ]
-        assert _longest_common_prefix(titles) == "Dragon Age"
-
-    def test_no_common_prefix(self) -> None:
-        titles = ["Halo", "Zelda", "Mario"]
-        assert _longest_common_prefix(titles) == ""
-
-    @pytest.mark.parametrize(
-        ("titles", "expected"),
-        [
-            (["Donkey Kong", "Donkey Kong Country", "Donkey Konga"], "Donkey Kong"),
-            (
-                ["Sonic the Hedgehog", "Sonic the Hedgehog 2", "Sonic the Hedgehog 3"],
-                "Sonic the Hedgehog",
-            ),
-        ],
-    )
-    def test_a_sibling_running_past_the_series_name_does_not_shorten_it(
-        self, titles: list[str], expected: str
-    ) -> None:
-        assert _longest_common_prefix(titles) == expected
-
-    def test_a_prefix_every_sibling_cuts_mid_word_falls_back_to_whole_words(
-        self,
-    ) -> None:
-        titles = ["Mega Man Legends", "Mega Man Legacy"]
-        assert _longest_common_prefix(titles) == "Mega Man"
-
-
-class TestLongestCommonPrefixOutlierFiltering:
-    def test_ff_xiii_with_lightning_returns_outlier_regression(self) -> None:
-        titles = [
-            "Final Fantasy XIII",
-            "Final Fantasy XIII-2",
-            "Lightning Returns: Final Fantasy XIII",
-        ]
-        assert _longest_common_prefix(titles) == "Final Fantasy XIII"
-
-
-class TestRAWGFranchiseExtraction:
-    @pytest.fixture
-    def provider(self) -> RAWGProvider:
-        return RAWGProvider()
-
-    def test_fetch_game_series_api_error_graceful_fallback(
-        self, provider: RAWGProvider
-    ) -> None:
-        with patch("src.enrichment.providers.rawg.rawg.requests.get") as mock_get:
-            mock_get.side_effect = requests.RequestException("Connection failed")
-
-            franchise_name = provider._fetch_game_series(
-                game_id=100,
-                game_name="Dragon Age: Origins",
-                api_key="test-key",
-            )
-
-        assert franchise_name is None
-
-    def test_the_games_own_title_widens_a_franchise_read_off_partial_siblings(
-        self, provider: RAWGProvider
-    ) -> None:
-        siblings = {
-            "results": [
-                {"id": 100, "name": "Halo 3"},
-                {"id": 101, "name": "Halo 3: ODST"},
-            ]
-        }
-
-        with patch("src.enrichment.providers.rawg.rawg.requests.get") as mock_get:
-            mock_get.return_value = MagicMock(
-                spec=requests.Response, status_code=200, json=lambda: siblings
-            )
-
-            franchise_name = provider._fetch_game_series(
-                game_id=102, game_name="Halo Wars", api_key="test-key"
-            )
-
-        assert franchise_name == "Halo"
-
-    def test_full_enrich_flow_populates_a_franchise_but_never_a_position(
-        self, provider: RAWGProvider
-    ) -> None:
-        item = ContentItem(
-            id="game1",
-            title="Dragon Age: Inquisition",
-            content_type=ContentType.VIDEO_GAME,
-            status=ConsumptionStatus.UNREAD,
-        )
-
-        mock_search = {
-            "results": [
-                {"id": 102, "name": "Dragon Age: Inquisition", "released": "2014-11-18"}
-            ]
-        }
-        mock_game = {
-            "id": 102,
-            "name": "Dragon Age: Inquisition",
-            "released": "2014-11-18",
-            "genres": [{"name": "RPG"}],
-            "tags": [],
-        }
-        mock_series = {
-            "results": [
-                {"id": 100, "name": "Dragon Age: Origins", "released": "2009-11-03"},
-                {"id": 101, "name": "Dragon Age II", "released": "2011-03-08"},
-            ]
-        }
-
-        with patch("src.enrichment.providers.rawg.rawg.requests.get") as mock_get:
-            mock_get.side_effect = [
-                MagicMock(
-                    spec=requests.Response, status_code=200, json=lambda: mock_search
-                ),
-                MagicMock(
-                    spec=requests.Response, status_code=200, json=lambda: mock_game
-                ),
-                MagicMock(
-                    spec=requests.Response, status_code=200, json=lambda: mock_series
-                ),
-            ]
-
-            result = provider.enrich(item, {"api_key": "test-key"})
-
-        assert result is not None
-        assert result.extra_metadata.get("franchise") == "Dragon Age"
-        assert "series_position" not in result.extra_metadata
 
 
 class TestRAWGApiKeyScrubbingRegression:

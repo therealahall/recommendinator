@@ -21,6 +21,7 @@ from src.utils.series import (
     SERIES_NAME_KEY,
     SERIES_POSITION_KEY,
     SeriesAuthority,
+    get_series_name_from_metadata,
     split_series_from_title,
 )
 
@@ -89,7 +90,7 @@ class SyncRunDict(TypedDict):
 # Changing ``normalize_title_for_matching``, ``get_sort_title`` or
 # ``build_search_text`` needs a bump and a step to rewrite what the old one
 # stored, or dedup lookups stop matching and duplicates accumulate in silence.
-_SCHEMA_VERSION = 24
+_SCHEMA_VERSION = 25
 
 # Rows for these keys are unreachable from the app but would still
 # be overlaid onto config, so they are pruned once on upgrade.
@@ -417,6 +418,11 @@ def create_schema(conn: sqlite3.Connection) -> None:
         _clear_guessed_series_positions(cursor)
     if stored_version < 24:
         _hold_manually_enriched_metadata(cursor)
+    if stored_version < 25:
+        _drop_retired_series_keys(cursor)
+        # The dropped key was a series name to the build that stored it, so it
+        # is still a word in the search text the backfill below rebuilds.
+        _clear_derived_columns(cursor)
 
     # Filled after the repair, which recovers a creator that existed only in a
     # blob. Unguarded because the fill selects the rows that need it rather
@@ -837,6 +843,48 @@ def _clear_guessed_series_positions(cursor: sqlite3.Cursor) -> None:
                 (json.dumps(blob) if blob else None, row["content_item_id"]),
             )
             _queue_for_enrichment(cursor, row["content_item_id"])
+
+
+#: A series name RAWG built by truncating a title at its number, so the 194x
+#: shooters read as a series called "194".
+_FRANCHISE_KEY = "franchise"
+
+#: Neither key has a writer or a reader now. A blob merge lets a stored key win,
+#: so nothing but a rewrite takes them out of a library that already holds them.
+_RETIRED_SERIES_KEYS = (_FRANCHISE_KEY, "series_group")
+
+
+def _drop_retired_series_keys(cursor: sqlite3.Cursor) -> None:
+    """An item losing its only name is queued for a re-fetch, so a provider that
+    states one can name it; the group key named nothing, so losing it costs
+    nothing.
+    """
+    for spec in DETAIL_FIELDS.values():
+        cursor.execute(
+            f"SELECT content_item_id, metadata FROM {spec.table}"
+            " WHERE metadata IS NOT NULL"
+        )
+        for row in cursor.fetchall():
+            try:
+                blob = json.loads(row["metadata"])
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if not isinstance(blob, dict):
+                continue
+            dropped = [key for key in _RETIRED_SERIES_KEYS if key in blob]
+            if not dropped:
+                continue
+            for key in dropped:
+                blob.pop(key)
+            cursor.execute(
+                f"UPDATE {spec.table} SET metadata = ? WHERE content_item_id = ?",
+                (json.dumps(blob) if blob else None, row["content_item_id"]),
+            )
+            if (
+                _FRANCHISE_KEY in dropped
+                and get_series_name_from_metadata(blob) is None
+            ):
+                _queue_for_enrichment(cursor, row["content_item_id"])
 
 
 #: The canonical key wins where both are stored: readers already preferred it.

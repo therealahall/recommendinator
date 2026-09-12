@@ -322,10 +322,10 @@ def reconcile_series(
 
 
 def get_series_name_from_metadata(metadata: Mapping[str, Any] | None) -> str | None:
-    """The trailing two are read aliases a provider owns and only it writes."""
+    """``series_title`` is a read alias a provider owns and only it writes."""
     if not metadata:
         return None
-    for key in (SERIES_NAME_KEY, "series_title", "franchise"):
+    for key in (SERIES_NAME_KEY, "series_title"):
         val = metadata.get(key)
         if val is not None:
             stripped = str(val).strip()
@@ -370,9 +370,9 @@ def get_series_item_number(
     return info[1] if info else None
 
 
-def series_entry(item: ContentItem) -> tuple[str, float | None] | None:
-    """A name with no position falls through to the title: RAWG names a
-    franchise for every game, and 'Halo 3' states its own number.
+def _named_series_entry(item: ContentItem) -> tuple[str, float | None] | None:
+    """A name with no position falls through to the title: 'Halo 3' states its
+    own number.
     """
     name = get_series_name_from_metadata(item.metadata)
     position = _stated_series_position(item.metadata, item.content_type)
@@ -409,9 +409,15 @@ def _rank_key(placed: _Placed) -> tuple[bool, int, str]:
     return (placed.year is None, placed.year or 0, placed.title)
 
 
-def _dense_ranks(placed: Iterable[_Placed]) -> dict[str, float]:
-    """An undated entry ranks last, by title — which is every book in a series."""
-    ordered = sorted(placed, key=_rank_key)
+def _dense_ranks(placed: Iterable[_Placed]) -> dict[str, float] | None:
+    """None where the set states no year at all — every book, since an edition's
+    year is not the work's. Ranking those on title alone would invent a reading
+    order, and an unordered series beats a wrongly ordered one.
+    """
+    entries = list(placed)
+    if all(entry.year is None for entry in entries):
+        return None
+    ordered = sorted(entries, key=_rank_key)
     return {entry.key: float(rank) for rank, entry in enumerate(ordered, start=1)}
 
 
@@ -420,39 +426,50 @@ def _placement_key(item: ContentItem) -> str:
 
 
 class SeriesOrder:
-    """One entry stating no ordinal drops its whole series to release-year ranks:
-    ranking a date against an ordinal is the disorder this prevents (#195). Ranks
-    start at 1, the scale an authored series already reaches every rule on.
+    """Where a series states no ordinal for one of its members, the whole set is
+    ranked by release year instead. Where no member dates either, none is
+    placed: a part-ordered set offers a sequel as if nothing preceded it.
     """
 
     def __init__(self, items: Iterable[ContentItem] = ()) -> None:
         stated: dict[str, list[float | None]] = defaultdict(list)
         placed: dict[str, dict[str, _Placed]] = defaultdict(dict)
         for item in items:
-            entry = series_entry(item)
+            entry = _named_series_entry(item)
             if entry is None:
                 continue
-            name, ordinal = entry
-            stated[name].append(ordinal)
+            series, ordinal = entry
+            stated[series].append(ordinal)
             key = _placement_key(item)
-            placed[name][key] = _Placed(key, _release_year(item), item.title)
+            placed[series][key] = _Placed(key, _release_year(item), item.title)
 
-        self._ranks: dict[str, dict[str, float]] = {
-            name: _dense_ranks(placed[name].values())
-            for name, ordinals in stated.items()
-            if None in ordinals
-        }
+        self._ranks: dict[str, dict[str, float]] = {}
+        self._unordered: set[str] = set()
+        for series, ordinals in stated.items():
+            if None not in ordinals:
+                continue
+            ranks = _dense_ranks(placed[series].values())
+            if ranks is None:
+                self._unordered.add(series)
+            else:
+                self._ranks[series] = ranks
+
+    def series_of(self, item: ContentItem) -> str | None:
+        entry = _named_series_entry(item)
+        return None if entry is None else entry[0]
 
     def locate(self, item: ContentItem) -> tuple[str, float] | None:
-        entry = series_entry(item)
+        entry = _named_series_entry(item)
         if entry is None:
             return None
-        name, ordinal = entry
-        ranks = self._ranks.get(name)
+        series, ordinal = entry
+        if series in self._unordered:
+            return None
+        ranks = self._ranks.get(series)
         if ranks is None:
-            return (name, ordinal) if ordinal is not None else None
+            return (series, ordinal) if ordinal is not None else None
         rank = ranks.get(_placement_key(item))
-        return None if rank is None else (name, rank)
+        return None if rank is None else (series, rank)
 
 
 def _order_over(
@@ -733,13 +750,13 @@ def should_recommend_item(
     if located is None:
         return True
 
-    series_name, item_num = located
-    consumed_numbers = series_tracking.get(series_name, set())
+    series_key, item_num = located
+    consumed_numbers = series_tracking.get(series_key, set())
 
     unconsumed_item_nums: set[float] = set()
     for unconsumed in unconsumed_items or ():
         other = order.locate(unconsumed)
-        if other is not None and other[0] == series_name:
+        if other is not None and other[0] == series_key:
             unconsumed_item_nums.add(other[1])
 
     if not consumed_numbers:
@@ -760,7 +777,7 @@ def should_recommend_item(
 
 
 def find_earliest_recommendable(
-    series_name: str,
+    series_key: str,
     series_tracking: dict[str, set[float]],
     unconsumed_items: list[ContentItem],
     series_order: SeriesOrder | None = None,
@@ -772,7 +789,7 @@ def find_earliest_recommendable(
     series_candidates: list[tuple[float, ContentItem]] = []
     for item in unconsumed_items:
         located = order.locate(item)
-        if located is not None and located[0] == series_name:
+        if located is not None and located[0] == series_key:
             series_candidates.append((located[1], item))
 
     if not series_candidates:

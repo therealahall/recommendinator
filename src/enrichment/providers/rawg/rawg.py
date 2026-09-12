@@ -1,6 +1,5 @@
 import logging
 import re
-from collections import Counter
 from typing import Any
 
 import requests
@@ -68,57 +67,6 @@ def _https_cover(background_image: Any) -> str | None:
     if isinstance(background_image, str) and background_image.startswith("https://"):
         return background_image
     return None
-
-
-def _longest_common_prefix(titles: list[str]) -> str:
-    if not titles:
-        return ""
-    if len(titles) == 1:
-        return titles[0]
-
-    filtered_titles = _filter_outlier_titles(titles)
-
-    prefix = filtered_titles[0]
-    for title in filtered_titles[1:]:
-        min_length = min(len(prefix), len(title))
-        end = 0
-        for index in range(min_length):
-            if prefix[index].lower() != title[index].lower():
-                break
-            end = index + 1
-        prefix = prefix[:end]
-
-    # Only a prefix every sibling cuts mid-word is an artifact: 'Donkey Konga'
-    # running past 'Donkey Kong' must not shorten the series to 'Donkey'.
-    ends_a_word = any(
-        len(title) == len(prefix) or not title[len(prefix)].isalnum()
-        for title in filtered_titles
-    )
-
-    if not ends_a_word:
-        last_space = prefix.rfind(" ")
-        if last_space > 0:
-            prefix = prefix[:last_space]
-
-    prefix = prefix.rstrip(":- \t")
-
-    return prefix if len(prefix) >= 3 else ""
-
-
-def _filter_outlier_titles(titles: list[str]) -> list[str]:
-    first_word_counts: Counter[str] = Counter()
-    for title in titles:
-        first_word = title.split()[0].lower() if title.strip() else ""
-        first_word_counts[first_word] += 1
-
-    majority_word = first_word_counts.most_common(1)[0][0]
-    filtered = [
-        title
-        for title in titles
-        if (title.split()[0].lower() if title.strip() else "") == majority_word
-    ]
-
-    return filtered if len(filtered) >= 2 else titles
 
 
 def clean_game_title_for_search(title: str) -> str:
@@ -306,14 +254,6 @@ class RAWGProvider(EnrichmentProvider):
             if game.get("esrb_rating"):
                 extra_metadata["esrb_rating"] = game["esrb_rating"]["name"]
 
-            franchise_name = self._fetch_game_series(
-                game_id=game_id,
-                game_name=game.get("name", ""),
-                api_key=api_key,
-            )
-            if franchise_name:
-                extra_metadata["franchise"] = franchise_name
-
             return EnrichmentResult(
                 genres=genres if genres else None,
                 tags=tags if tags else None,
@@ -328,42 +268,6 @@ class RAWGProvider(EnrichmentProvider):
                 self.name,
                 f"Failed to fetch game details: {scrub_request_error(error)}",
             ) from None
-
-    def _fetch_game_series(
-        self,
-        game_id: int,
-        game_name: str,
-        api_key: str,
-    ) -> str | None:
-        try:
-            response = requests.get(
-                f"{RAWG_API_BASE}/games/{game_id}/game-series",
-                params={"key": api_key, "page_size": "40"},
-                timeout=10,
-            )
-            response.raise_for_status()
-            data = response.json()
-
-            series_results: list[dict[str, Any]] = data.get("results", [])
-            if not series_results:
-                return None
-
-            all_titles = [
-                entry["name"] for entry in series_results if entry.get("name")
-            ]
-            # The current game may not be included in its own series results,
-            # and the prefix has to span it too.
-            if game_name and not any(
-                entry.get("id") == game_id for entry in series_results
-            ):
-                all_titles.append(game_name)
-
-            return _longest_common_prefix(all_titles) or None
-
-        except requests.RequestException:
-            # Franchise info is optional — don't fail enrichment
-            logger.warning("Failed to fetch game-series for game %s", game_id)
-            return None
 
     def _clean_description(self, description: str | None) -> str | None:
         if not description:
