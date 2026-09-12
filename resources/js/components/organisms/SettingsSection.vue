@@ -50,13 +50,14 @@ const title = computed(() => humanizeSection(sectionKey.value))
 const expanded = ref(props.initiallyExpanded)
 const expandedGroups = reactive<Record<string, boolean>>({})
 
-const { buffer, changedUpdates } = useSettingsBuffer(() => valueSettings.value)
+const edits = useSettingsBuffer(() => valueSettings.value)
+const { buffer } = edits
 const { message: actionMessage, announce, report } = useAnnouncer()
 
 const { saving, saveStatus, saveErrorText, save } = useSectionSave(
   () => sectionKey.value,
   () => valueSettings.value,
-  changedUpdates,
+  edits,
   announce,
 )
 
@@ -66,6 +67,14 @@ const cautionText = computed(
 
 const resetting = reactive<Record<string, boolean>>({})
 const secretBusy = reactive<Record<string, boolean>>({})
+
+const saveButton = ref<HTMLButtonElement | null>(null)
+const saveLockId = computed(() => `save-lock-${sectionKey.value}`)
+
+// All four verbs refresh the section, and a claimed key goes to whichever view
+// lands first. Read off `write`, not the claims: a secret claims no key, and an
+// enumerated lock has twice been short a verb.
+const locked = edits.writing
 
 // A refused value inside a collapsed accordion is an error nobody can see.
 function reveal(setting: SettingViewValue): void {
@@ -77,8 +86,15 @@ function reveal(setting: SettingViewValue): void {
 }
 
 async function onSave(): Promise<void> {
+  if (locked.value) return
   const refused = await save()
-  if (!refused) return
+  if (!refused) {
+    // A pointer operator who never tabbed out of a field had it disabled under
+    // them for the request, dropping focus to the body (WCAG 2.4.3).
+    await nextTick()
+    rescueFocus(saveButton.value)
+    return
+  }
   // Focus follows the disclosure, so keyboard and AT users land on the field
   // that was rejected rather than on the panel that opened.
   reveal(refused)
@@ -88,7 +104,8 @@ async function onSave(): Promise<void> {
 
 async function onReset(key: string): Promise<void> {
   resetting[key] = true
-  await report(() => store.resetSetting(key), 'Reset to default.', 'Reset failed.')
+  const reset = () => edits.write([key], () => store.resetSetting(key))
+  await report(reset, 'Reset to default.', 'Reset failed.')
   resetting[key] = false
   // Only a landed reset strands anyone: its button unmounts with the override it
   // removed. A refused one is aria-disabled, so it keeps both its place and the
@@ -104,7 +121,9 @@ async function onSecret(
   failed: string,
 ): Promise<void> {
   secretBusy[key] = true
-  await report(action, done, failed)
+  // No keys: a secret is write-only and never in the buffer. It refreshes the
+  // section all the same, so it locks the panel like any other write.
+  await report(() => edits.write([], action), done, failed)
   secretBusy[key] = false
 }
 
@@ -148,7 +167,7 @@ function onUpdate(key: string, value: SettingBufferValue): void {
         v-if="panelSettings.length > 0"
         :settings="panelSettings"
         :values="buffer"
-        :disabled="saving"
+        :disabled="locked"
         :errors="store.fieldErrors"
         :resetting="resetting"
         :secret-busy="secretBusy"
@@ -173,7 +192,7 @@ function onUpdate(key: string, value: SettingBufferValue): void {
         <SettingsFieldList
           :settings="group.settings"
           :values="buffer"
-          :disabled="saving"
+          :disabled="locked"
           :errors="store.fieldErrors"
           :resetting="resetting"
           :secret-busy="secretBusy"
@@ -205,14 +224,19 @@ function onUpdate(key: string, value: SettingBufferValue): void {
           >Error: {{ saveErrorText }}</span>
           <!-- aria-disabled, not disabled: disabling the button the user just
                activated blurs it and drops focus to <body> for the whole save.
-               useSectionSave guards re-entry instead. -->
+               onSave guards re-entry instead. -->
           <button
+            ref="saveButton"
             type="button"
             class="btn btn-primary"
             :data-testid="`save-${sectionKey}`"
-            :aria-disabled="saving || undefined"
+            :aria-disabled="locked || undefined"
+            :aria-describedby="locked && !saving ? saveLockId : undefined"
             @click="onSave"
           >{{ saving ? 'Saving…' : `Save ${title}` }}</button>
+          <span v-if="locked && !saving" :id="saveLockId" class="sr-only"
+            >Unavailable while this section has a change in flight.</span
+          >
         </div>
       </div>
     </Accordion>

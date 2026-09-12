@@ -62,6 +62,14 @@ function numberSetting(key: string, value: number): SettingView {
   return { ...textSetting(key, ''), type: 'int', widget: 'number', value } as SettingView
 }
 
+function boolSetting(key: string, value: boolean): SettingView {
+  return { ...textSetting(key, ''), type: 'bool', widget: 'toggle', value } as SettingView
+}
+
+function secretSetting(key: string, hasSecret: boolean): SettingView {
+  return { ...textSetting(key, ''), sensitive: true, has_secret: hasSecret } as SettingView
+}
+
 enableAutoUnmount(afterEach)
 
 /** Every panel is shut on arrival, so a test that drives a control opens its
@@ -103,25 +111,6 @@ describe('SettingsSection', () => {
     mockGet.mockReset()
     mockPut.mockReset()
     mockDelete.mockReset()
-  })
-
-  it('saves only the changed keys and labels the Save button by section', async () => {
-    mockPut.mockResolvedValue({ sections: [] })
-    const section: SettingsSectionType = {
-      section: 'enrichment',
-      settings: [
-        textSetting('enrichment.providers.tmdb.language', 'en-US'),
-        numberSetting('enrichment.batch_size', 50),
-      ],
-    }
-    const wrapper = await mountSection(section)
-
-    expect(wrapper.find('[data-testid="save-enrichment"]').text()).toBe('Save Enrichment')
-    await wrapper.find('[data-testid="setting-enrichment.providers.tmdb.language"]').setValue('de-DE')
-    await wrapper.find('[data-testid="save-enrichment"]').trigger('click')
-    await flushPromises()
-
-    expect(mockPut).toHaveBeenCalledWith('/settings', { updates: { 'enrichment.providers.tmdb.language': 'de-DE' } })
   })
 
   it('announces each landed save through the region already mounted for it', async () => {
@@ -197,23 +186,233 @@ describe('SettingsSection', () => {
     expect(wrapper.find('p.sr-only').text()).toBe('No changes to save.')
   })
 
-  it('resets an overridden setting via DELETE', async () => {
-    mockDelete.mockResolvedValue({ sections: [] })
-    const section: SettingsSectionType = {
+  it('keeps every unsaved edit in a section a secret save refreshed', async () => {
+    mockPut.mockResolvedValue({ sections: [] })
+    mockGet.mockResolvedValue({ sections: [] })
+    const secret = 'enrichment.providers.igdb.client_secret'
+    const served = (): SettingsSectionType => ({
       section: 'enrichment',
       settings: [
-        textSetting('enrichment.providers.tmdb.language', 'en-US', {
-          db_overridden: true,
-          has_stored_value: true,
-        }),
+        numberSetting('enrichment.batch_size', 20),
+        boolSetting('enrichment.providers.igdb.enabled', false),
+        textSetting('enrichment.providers.tmdb.language', 'en-US'),
+        secretSetting(secret, false),
       ],
-    }
-    const wrapper = await mountSection(section)
+    })
+    const wrapper = await mountSection(served())
+    await wrapper.find('[data-testid="setting-enrichment.batch_size"] input').setValue('40')
+    await wrapper.find('[data-testid="setting-enrichment.providers.igdb.enabled"]').trigger('click')
 
-    await wrapper.find('[data-testid="reset-enrichment.providers.tmdb.language"]').trigger('click')
+    await wrapper.find(`[data-testid="secret-replace-${secret}"]`).trigger('click')
+    await wrapper.find(`#secret-input-${secret.replace(/\./g, '\\.')}`).setValue('sk-999')
+    await wrapper.find(`[data-testid="secret-save-${secret}"]`).trigger('click')
+    await flushPromises()
+    // setSecret refreshes, and the store swaps `sections` for the response, so
+    // the section arrives back as a fresh object of server truth.
+    await wrapper.setProps({ section: served() })
+
+    expect(mockPut).toHaveBeenCalledWith('/settings/secret', { key: secret, value: 'sk-999' })
+    expect(wrapper.find('[data-testid="save-enrichment"]').text()).toBe('Save Enrichment')
+    await wrapper.find('[data-testid="save-enrichment"]').trigger('click')
     await flushPromises()
 
-    expect(mockDelete).toHaveBeenCalledWith('/settings/enrichment.providers.tmdb.language')
+    expect(mockPut).toHaveBeenCalledWith('/settings', {
+      updates: { 'enrichment.batch_size': 40, 'enrichment.providers.igdb.enabled': true },
+    })
+    const toggle = wrapper.get(
+      '[data-testid="setting-enrichment.providers.igdb.enabled"] [role="switch"]',
+    )
+    expect(toggle.attributes('aria-checked')).toBe('true')
+  })
+
+  it('refuses a section save while a secret save in the same section is still refreshing it, and says why it cannot be used', async () => {
+    mockPut.mockResolvedValue({ sections: [] })
+    let landRefresh = (): void => {}
+    mockGet.mockReturnValue(
+      new Promise((resolve) => {
+        landRefresh = () => resolve({ sections: [] })
+      }),
+    )
+    const secret = 'enrichment.providers.igdb.client_secret'
+    const served = (): SettingsSectionType => ({
+      section: 'enrichment',
+      settings: [
+        { ...numberSetting('enrichment.batch_size', 20), has_stored_value: true } as SettingView,
+        secretSetting(secret, false),
+      ],
+    })
+    const wrapper = await mountSection(served())
+    await wrapper.find('[data-testid="setting-enrichment.batch_size"] input').setValue('40')
+    await wrapper.find(`[data-testid="secret-replace-${secret}"]`).trigger('click')
+    await wrapper.find(`#secret-input-${secret.replace(/\./g, '\\.')}`).setValue('sk-999')
+    await wrapper.find(`[data-testid="secret-save-${secret}"]`).trigger('click')
+    await flushPromises()
+
+    const save = wrapper.get('[data-testid="save-enrichment"]')
+    await save.trigger('click')
+    // Reset claims a key the same way a section save does, so it is shut in the
+    // same window.
+    await wrapper.get('[data-testid="reset-enrichment.batch_size"]').trigger('click')
+    await flushPromises()
+
+    expect(mockPut).toHaveBeenCalledTimes(1)
+    expect(mockDelete).not.toHaveBeenCalled()
+    expect(save.attributes('aria-disabled')).toBe('true')
+    // Dimmed with its label unchanged reads as "Save Enrichment, dimmed", so the
+    // description is where the reason lives.
+    expect(wrapper.get(`[id="${save.attributes('aria-describedby')}"]`).text()).toContain(
+      'in flight',
+    )
+    // The refresh carries pre-save truth for every value key, and the edit above
+    // has to outlive it.
+    landRefresh()
+    await flushPromises()
+    await wrapper.setProps({ section: served() })
+
+    await save.trigger('click')
+    await flushPromises()
+
+    expect(mockPut).toHaveBeenCalledWith('/settings', {
+      updates: { 'enrichment.batch_size': 40 },
+    })
+  })
+
+  it('refuses a save and a second reset while a reset in the same section is in flight', async () => {
+    mockPut.mockResolvedValue({ sections: [] })
+    let landReset = (): void => {}
+    mockDelete.mockReturnValue(
+      new Promise((resolve) => {
+        landReset = () => resolve({ sections: [] })
+      }),
+    )
+    const language = 'enrichment.providers.tmdb.language'
+    const served = (): SettingsSectionType => ({
+      section: 'enrichment',
+      settings: [
+        { ...numberSetting('enrichment.batch_size', 20), has_stored_value: true } as SettingView,
+        textSetting(language, 'en-US', { has_stored_value: true }),
+      ],
+    })
+    const wrapper = await mountSection(served())
+    await wrapper.find('[data-testid="setting-enrichment.batch_size"] input').setValue('40')
+
+    await wrapper.get(`[data-testid="reset-${language}"]`).trigger('click')
+    const save = wrapper.get('[data-testid="save-enrichment"]')
+    await save.trigger('click')
+    await wrapper.get('[data-testid="reset-enrichment.batch_size"]').trigger('click')
+    await flushPromises()
+
+    expect(mockDelete).toHaveBeenCalledTimes(1)
+    expect(mockPut).not.toHaveBeenCalled()
+    expect(save.attributes('aria-disabled')).toBe('true')
+    // The DELETE answers with a refreshed view carrying pre-save truth for every
+    // key, and the edit above has to outlive it.
+    landReset()
+    await flushPromises()
+    await wrapper.setProps({ section: served() })
+
+    await save.trigger('click')
+    await flushPromises()
+
+    expect(mockPut).toHaveBeenCalledWith('/settings', {
+      updates: { 'enrichment.batch_size': 40 },
+    })
+  })
+
+  it('stops reporting a key as changed once the section save that wrote it lands', async () => {
+    mockPut.mockResolvedValue({ sections: [] })
+    const served = (batchSize: number): SettingsSectionType => ({
+      section: 'enrichment',
+      settings: [numberSetting('enrichment.batch_size', batchSize)],
+    })
+    const wrapper = await mountSection(served(20))
+    await wrapper.find('[data-testid="setting-enrichment.batch_size"] input').setValue('40')
+
+    await wrapper.find('[data-testid="save-enrichment"]').trigger('click')
+    await flushPromises()
+    // The PUT response is the refreshed view, which the store swaps `sections`
+    // for, so the section comes back carrying what the write actually stored.
+    await wrapper.setProps({ section: served(40) })
+
+    await wrapper.find('[data-testid="save-enrichment"]').trigger('click')
+    await flushPromises()
+
+    expect(mockPut).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('p.sr-only').text()).toBe('No changes to save.')
+  })
+
+  it('keeps a value the server refused when a later refresh arrives', async () => {
+    const key = 'enrichment.providers.tmdb.language'
+    mockPut.mockRejectedValue(
+      new MockApiError(422, 'Unprocessable Entity', {
+        detail: { key, reason: 'invalid language tag' },
+      }),
+    )
+    const served = (): SettingsSectionType => ({
+      section: 'enrichment',
+      settings: [textSetting(key, 'en-US')],
+    })
+    const wrapper = await mountSection(served())
+    await wrapper.find(`[data-testid="setting-${key}"]`).setValue('!!')
+
+    await wrapper.find('[data-testid="save-enrichment"]').trigger('click')
+    await flushPromises()
+    // A refused save stores nothing, so the next section to arrive is the one a
+    // secret save in the same section refreshed.
+    await wrapper.setProps({ section: served() })
+
+    const field = wrapper.get(`[data-testid="setting-${key}"]`)
+    expect((field.element as HTMLInputElement).value).toBe('!!')
+  })
+
+  it('keeps a typed value when a refused reset is followed by a refresh', async () => {
+    mockDelete.mockRejectedValue(new MockApiError(503, 'Service Unavailable'))
+    mockPut.mockResolvedValue({ sections: [] })
+    const key = 'enrichment.providers.tmdb.language'
+    const served = (): SettingsSectionType => ({
+      section: 'enrichment',
+      settings: [textSetting(key, 'de-DE', { db_overridden: true, has_stored_value: true })],
+    })
+    const wrapper = await mountSection(served())
+    await wrapper.find(`[data-testid="setting-${key}"]`).setValue('fr-FR')
+
+    await wrapper.find(`[data-testid="reset-${key}"]`).trigger('click')
+    await flushPromises()
+    // The refused reset removed nothing, so the next section to arrive is the
+    // one a secret save in the same section refreshed.
+    await wrapper.setProps({ section: served() })
+
+    expect(wrapper.find('p.sr-only').text()).toContain('Reset failed.')
+    const field = wrapper.get(`[data-testid="setting-${key}"]`)
+    expect((field.element as HTMLInputElement).value).toBe('fr-FR')
+    await wrapper.find('[data-testid="save-enrichment"]').trigger('click')
+    await flushPromises()
+    expect(mockPut).toHaveBeenCalledWith('/settings', { updates: { [key]: 'fr-FR' } })
+  })
+
+  it('clears a dirtied field on a reset whose default is the value already served', async () => {
+    mockDelete.mockResolvedValue({ sections: [] })
+    // A stored row equal to the default stays resettable on purpose (see
+    // setting_view), so this reset lands without moving the served value.
+    const served = (stored: boolean): SettingsSectionType => ({
+      section: 'enrichment',
+      settings: [
+        { ...numberSetting('enrichment.batch_size', 50), has_stored_value: stored } as SettingView,
+      ],
+    })
+    const wrapper = await mountSection(served(true))
+    await wrapper.find('[data-testid="setting-enrichment.batch_size"] input').setValue('90')
+
+    await wrapper.find('[data-testid="reset-enrichment.batch_size"]').trigger('click')
+    await flushPromises()
+    await wrapper.setProps({ section: served(false) })
+
+    expect(mockDelete).toHaveBeenCalledWith('/settings/enrichment.batch_size')
+    const field = wrapper.get('[data-testid="setting-enrichment.batch_size"] input')
+    expect((field.element as HTMLInputElement).value).toBe('50')
+    await wrapper.find('[data-testid="save-enrichment"]').trigger('click')
+    await flushPromises()
+    expect(mockPut).not.toHaveBeenCalled()
   })
 
   it('catches the focus the Reset button takes with it when the override is gone', async () => {
@@ -243,27 +442,33 @@ describe('SettingsSection', () => {
     )
   })
 
+  it('rescues focus to Save when a landed save strands the pointer operator on <body>', async () => {
+    mockPut.mockResolvedValue({ sections: [] })
+    const key = 'enrichment.providers.tmdb.language'
+    const wrapper = await mountSection({
+      section: 'enrichment',
+      settings: [textSetting(key, 'en-US')],
+    })
+    const field = wrapper.get(`[data-testid="setting-${key}"]`)
+    ;(field.element as HTMLInputElement).focus()
+    await field.setValue('de-DE')
+    // What a pointer operator who never tabbed out meets: the field disables for
+    // the request and takes their focus with it.
+    ;(field.element as HTMLInputElement).blur()
+    expect(document.activeElement).toBe(document.body)
+
+    await wrapper.get('[data-testid="save-enrichment"]').trigger('click')
+    await flushPromises()
+
+    expect(document.activeElement).toBe(wrapper.get('[data-testid="save-enrichment"]').element)
+  })
+
   it('renders secrets in a Secrets fieldset and saves them out of band', async () => {
     mockPut.mockResolvedValue(undefined)
     mockGet.mockResolvedValue({ sections: [] })
     const section: SettingsSectionType = {
       section: 'enrichment',
-      settings: [
-        {
-          key: 'enrichment.providers.tmdb.api_key',
-          section: 'enrichment',
-          label: 'API Key',
-          help: '',
-          type: 'string',
-          widget: 'text',
-          choices: null,
-          validation: null,
-          advanced: false,
-          restart_required: false,
-          sensitive: true,
-          has_secret: false,
-        } as SettingView,
-      ],
+      settings: [secretSetting('enrichment.providers.tmdb.api_key', false)],
     }
     const wrapper = await mountSection(section)
 
@@ -439,22 +644,7 @@ describe('SettingsSection', () => {
 
     const SECRET: SettingsSectionType = {
       section: 'enrichment',
-      settings: [
-        {
-          key: 'enrichment.providers.tmdb.api_key',
-          section: 'enrichment',
-          label: 'API Key',
-          help: '',
-          type: 'string',
-          widget: 'text',
-          choices: null,
-          validation: null,
-          advanced: false,
-          restart_required: false,
-          sensitive: true,
-          has_secret: true,
-        } as SettingView,
-      ],
+      settings: [secretSetting('enrichment.providers.tmdb.api_key', true)],
     }
 
     it('announces a failed reset instead of doing nothing', async () => {

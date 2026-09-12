@@ -603,8 +603,10 @@ textarea.field {
 }
 
 /* `readonly` is not exempt from 1.4.3 the way `disabled` is, so the lock is on
-   the edge and the fill and never a fade. */
-.field[readonly] {
+   the edge and the fill and never a fade. `disabled` shares it: `.field` paints
+   its own fill, leaving the UA's greying nothing to do. */
+.field[readonly],
+.field:disabled {
   border-style: dashed;
   background: var(--bg-elevated);
   cursor: not-allowed;

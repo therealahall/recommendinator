@@ -80,6 +80,37 @@ describe('SettingsPage', () => {
     expect(mockGet).toHaveBeenCalledTimes(2)
   })
 
+  it('takes server truth from the refresh that lands before the save call resumes', async () => {
+    const origins = (values: string[]) => ({
+      section: 'web',
+      settings: [
+        {
+          ...section('web').settings[0],
+          key: 'web.allowed_origins',
+          type: 'list',
+          widget: 'tags',
+          value: values,
+        },
+      ],
+    })
+    mockGet.mockResolvedValue({ sections: [origins(['http://localhost:18473'])] })
+    const wrapper = mount(SettingsPage)
+    await flushPromises()
+    await wrapper.find('#setting-web\\.allowed_origins').setValue('http://box.lan:8080/')
+    await wrapper.find('.add-rule-form button').trigger('click')
+
+    // The store swaps `sections` for the PUT response, so the watcher reseeding
+    // the buffer runs before `saveSection` resolves. A claim placed after that
+    // await would arrive too late to be seen.
+    mockPut.mockResolvedValue({
+      sections: [origins(['http://localhost:18473', 'http://box.lan:8080'])],
+    })
+    await wrapper.find('[data-testid="save-web"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[aria-label="Remove http://box.lan:8080"]').exists()).toBe(true)
+  })
+
   it('opens the first section so the page never arrives with nothing showing', async () => {
     mockGet.mockResolvedValue({ sections: [section('web'), section('logging')] })
     const wrapper = mount(SettingsPage)

@@ -1,6 +1,7 @@
 import { computed, onBeforeUnmount } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 import { humanizeSection } from '@/utils/format'
+import type { SettingsBuffer } from '@/composables/useSettingsBuffer'
 import type { SettingViewValue } from '@/types/api'
 
 const SAVED_PILL_MS = 2500
@@ -8,7 +9,7 @@ const SAVED_PILL_MS = 2500
 export function useSectionSave(
   section: () => string,
   fields: () => SettingViewValue[],
-  changedUpdates: () => Record<string, unknown>,
+  edits: SettingsBuffer,
   announce: (text: string) => Promise<void>,
 ) {
   const store = useSettingsStore()
@@ -37,19 +38,16 @@ export function useSectionSave(
   /** Hands back the refused setting rather than reporting it: where focus and
    *  disclosure go is the caller's to decide. */
   async function save(): Promise<SettingViewValue | null> {
-    // Guard re-entry here so the button can stay focusable (aria-disabled does
-    // not block activation), which keeps focus where the user left it on the
-    // success path (WCAG 2.4.3).
-    if (saving.value) return null
     clearTimer()
-    const updates = changedUpdates()
+    const updates = edits.changedUpdates()
+    const written = Object.keys(updates)
     // Nothing edited: don't PUT an empty object and then claim "Saved ✓", which
     // tells the user a write happened that did not.
-    if (Object.keys(updates).length === 0) {
+    if (written.length === 0) {
       await announce('No changes to save.')
       return null
     }
-    if (await store.saveSection(section(), updates)) {
+    if (await edits.write(written, () => store.saveSection(section(), updates))) {
       // Focus stays on Save, whose label reverts to what it was: without this
       // the write lands in silence.
       await announce(`${humanizeSection(section())} saved.`)

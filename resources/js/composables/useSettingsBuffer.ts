@@ -1,4 +1,4 @@
-import { reactive, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import type { SettingViewValue } from '@/types/api'
 
 export type SettingBufferValue = string | number | boolean | string[]
@@ -21,23 +21,57 @@ function coerce(setting: SettingViewValue): SettingBufferValue {
   }
 }
 
+/** A save the server refused answers `false` instead of throwing. */
+function refused(result: unknown): boolean {
+  return result === false
+}
+
 /** Server truth lives in the store; the buffer is the editing copy, and
  *  `original` is what a key is measured against to decide it changed. */
 export function useSettingsBuffer(source: () => SettingViewValue[]) {
   const buffer = reactive<Record<string, SettingBufferValue>>({})
   const original = reactive<Record<string, SettingBufferValue>>({})
+  const claimed = new Set<string>()
+  const inFlight = ref(0)
 
+  // Seed a key on first sight, then leave it alone: a secret save refreshes the
+  // whole section, and rereading server truth there discarded every unsaved
+  // edit in it. Only the panel's own writes take a value back.
   watch(
     source,
     (settings) => {
       for (const setting of settings) {
+        if (setting.key in original && !claimed.has(setting.key)) continue
+        claimed.delete(setting.key)
         const coerced = coerce(setting)
         buffer[setting.key] = coerced
         original[setting.key] = coerced
       }
     },
-    { immediate: true, deep: true },
+    { immediate: true },
   )
+
+  function release(keys: string[]): void {
+    for (const key of keys) claimed.delete(key)
+  }
+
+  /** `keys` are claimed before the request because the view it answers with can
+   *  reach the buffer before this resumes; a write that landed nothing — it
+   *  threw, or answered `false` — hands them back. */
+  async function write<T>(keys: string[], request: () => Promise<T>): Promise<T> {
+    for (const key of keys) claimed.add(key)
+    inFlight.value += 1
+    try {
+      const result = await request()
+      if (refused(result)) release(keys)
+      return result
+    } catch (error) {
+      release(keys)
+      throw error
+    } finally {
+      inFlight.value -= 1
+    }
+  }
 
   function changedUpdates(): Record<string, unknown> {
     const updates: Record<string, unknown> = {}
@@ -50,5 +84,11 @@ export function useSettingsBuffer(source: () => SettingViewValue[]) {
     return updates
   }
 
-  return { buffer, changedUpdates }
+  // Every write goes through `write` to claim, so a lock read from here cannot
+  // be short a kind of write.
+  const writing = computed(() => inFlight.value > 0)
+
+  return { buffer, changedUpdates, write, writing }
 }
+
+export type SettingsBuffer = ReturnType<typeof useSettingsBuffer>
