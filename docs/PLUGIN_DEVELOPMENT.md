@@ -505,10 +505,8 @@ Providers use the same folder layout as source plugins, under
 discovers a source plugin, so shipping a provider edits no core file.
 
 A provider you do not want in the repo goes in `private/plugins/`: both
-registries scan it and each keeps the classes it recognises.
-
-`make check` runs Ruff, Black, MyPy and pytest over `private/` when the
-directory exists. On a clone without one the step does nothing.
+registries scan it and each keeps the classes it recognises. `make check` covers
+`private/` when it exists, and does nothing on a clone without one.
 
 `name`, `display_name`, `content_types`, `requires_api_key`,
 `get_config_schema` and `validate_config` work as they do on a source plugin. The
@@ -587,10 +585,9 @@ offered as candidates — an id you cannot look up is a pin every run ignores, a
 one spliced into a URL path is an operator-typed path segment.
 
 `fetch_series_ordinal` is optional and separate from the match: it is asked only
-while a stronger source has not positioned the item already, and a provider
-implementing it alone never settles an item's provider or quality. Implement one
-of the two or both — a provider implementing neither is refused when its class is
-created.
+while a stronger source has not positioned the item, and a provider implementing
+it alone never settles an item's provider or quality. Implement one or both — a
+provider implementing neither is refused when its class is created.
 
 Name the series your position counts within. The pass runs after the match loop,
 and the position is taken only where your name agrees with the one already
