@@ -22,6 +22,8 @@ _NON_WORD = re.compile(r"[\W_]+")
 # Back" where a provider holds only "The Empire Strikes Back".
 _FRANCHISE_PREFIX = re.compile(r"^.*(?::|\s-\s)")
 
+_SUBTITLE_BOUNDARY = re.compile(r":|\s-\s")
+
 
 def normalize_title(title: str) -> str:
     words = _NON_WORD.sub(" ", title.casefold()).split()
@@ -45,6 +47,12 @@ def title_similarity(left: str, right: str) -> float:
     if not left_normalized or not right_normalized:
         return 0.0
     return SequenceMatcher(None, left_normalized, right_normalized).ratio()
+
+
+def _is_subtitled_form_of(title: str, searched: str) -> bool:
+    parts = _SUBTITLE_BOUNDARY.split(title, maxsplit=1)
+    # Whole, never close: 'Ultima I' and 'Ultima II' score 0.94 against each other.
+    return len(parts) == 2 and normalize_title(parts[0]) == normalize_title(searched)
 
 
 def _year_rank(item_year: int | None, year: int | None) -> tuple[int, int]:
@@ -93,7 +101,7 @@ def best_match_index(
     # 'Herbie: Fully Loaded' stand in for 'Fully Loaded', the substitution the
     # similarity bar exists to refuse.
     searched_variants = {searched_title, _FRANCHISE_PREFIX.sub("", searched_title)}
-    best_rank: tuple[float, tuple[int, int]] | None = None
+    best_rank: tuple[bool, float, tuple[int, int]] | None = None
     best_index: int | None = None
 
     for index, (titles, year) in enumerate(candidates):
@@ -111,11 +119,14 @@ def best_match_index(
             ),
             default=0.0,
         )
-        if score < MINIMUM_TITLE_SIMILARITY:
+        outright = score >= MINIMUM_TITLE_SIMILARITY
+        if not outright and not any(
+            _is_subtitled_form_of(title, searched_title) for title in titles
+        ):
             continue
         # Lower is better, and only a strict improvement displaces the incumbent,
         # so candidates alike on both keep the provider's ranking.
-        rank = (-score, _year_rank(item_year, year))
+        rank = (not outright, -score, _year_rank(item_year, year))
         if best_rank is None or rank < best_rank:
             best_rank, best_index = rank, index
 
