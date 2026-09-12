@@ -1,6 +1,22 @@
 # CHANGELOG
 
 
+## v0.59.0 (2026-09-12)
+
+### Bug Fixes
+
+- **enrichment**: Take a game's series from a source that states one
+  ([`82e3c3c`](https://github.com/therealahall/recommendinator/commit/82e3c3c8043a20c11e1f89cd06720b69d4d71708))
+
+- **settings**: Keep a stepper arrow legible at its bound
+  ([`63e3743`](https://github.com/therealahall/recommendinator/commit/63e3743fbb4f2e9639fafdd97bcaf2a3126f7663))
+
+### Features
+
+- **enrichment**: State which provider wins instead of sorting by folder name
+  ([`43c0ee7`](https://github.com/therealahall/recommendinator/commit/43c0ee7cc5bd0b22268a3a230257982d86e538ff))
+
+
 ## v0.58.1 (2026-09-12)
 
 ### Bug Fixes
