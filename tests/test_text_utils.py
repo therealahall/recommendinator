@@ -8,6 +8,7 @@ import requests
 
 from src.utils.text import (
     LINE_BREAKS,
+    clean_game_title_for_search,
     exception_for_log,
     humanize_source_id,
     sanitize_for_log,
@@ -58,6 +59,38 @@ class TestHumanizeSourceIdAcronyms:
         self, source_id: str, expected: str
     ) -> None:
         assert humanize_source_id(source_id) == expected
+
+
+class TestCleanGameTitleForSearch:
+    @pytest.mark.parametrize(
+        ("stored", "searched"),
+        [
+            ("The Witcher 3: Wild Hunt - GOTY Edition", "The Witcher 3: Wild Hunt"),
+            ("Mass Effect (Legendary)", "Mass Effect"),
+            ("Skyrim (Special Edition)", "Skyrim"),
+            ("Cyberpunk 2077™", "Cyberpunk 2077"),
+            ("DOOM®", "DOOM"),
+            ("The Sims™ 4", "The Sims 4"),
+            ("Ultima™ VII: The Black Gate", "Ultima VII: The Black Gate"),
+            ("KINGDOM HEARTS III + Re Mind (DLC)", "KINGDOM HEARTS III"),
+        ],
+    )
+    def test_what_a_store_added_to_the_name_is_dropped(
+        self, stored: str, searched: str
+    ) -> None:
+        assert clean_game_title_for_search(stored) == searched
+
+    @pytest.mark.parametrize(
+        "title",
+        [
+            "The Witcher 3: Wild Hunt",
+            "Resident Evil 4: Separate Ways",
+            "STAR WARS Jedi Knight - Jedi Academy",
+        ],
+    )
+    def test_a_subtitle_is_not_an_edition_suffix(self, title: str) -> None:
+        """Both separators introduce a real subtitle as often as an edition."""
+        assert clean_game_title_for_search(title) == title
 
 
 class TestSanitizeRuleText:

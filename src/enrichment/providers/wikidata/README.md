@@ -37,6 +37,10 @@ uv run python -m src.cli settings set enrichment.providers.wikidata.enabled true
 - Takes a search hit only where `P31` matches the item's content type and, where
   the item carries a year, the entity's own is within three. A wrong entity's
   series replaces every weaker source's, so an ambiguous search writes nothing.
+- Searches for a game under the shared cleaned title (`clean_game_title_for_search`
+  in `src/utils/text.py`): a Wikidata label carries neither the trademark symbol
+  nor the edition suffix a store puts on the name. Other content types search
+  under the stored title.
 - Identifies itself by name and repository in the `User-Agent` of every request,
   and asks for one item a second: Wikidata is donated infrastructure.
 

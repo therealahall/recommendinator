@@ -255,6 +255,7 @@ class TestWikidataSeriesOrdinal:
     ) -> None:
         """Neverwinter Nights: Enhanced Edition searches up the 1991 AOL game,
         whose P179 would otherwise hand a 2018 re-release the Gold Box series.
+        Cleaning the edition off makes the title match, so the year is the gate.
         """
         with patch(_REQUESTS) as mock_get:
             mock_get.side_effect = [
@@ -266,7 +267,6 @@ class TestWikidataSeriesOrdinal:
             )
 
         assert ordinal is None
-        assert mock_get.call_count == 1
 
     def test_a_work_belonging_to_no_series_writes_nothing(
         self, provider: WikidataProvider
@@ -446,6 +446,29 @@ class TestWikidataSeriesOrdinal:
             )
 
         assert ordinal == SeriesOrdinal(position=None, series_name="Final Fantasy")
+
+    @pytest.mark.parametrize(
+        ("title", "content_type", "searched"),
+        [
+            ("Ultima™ VII", ContentType.VIDEO_GAME, "Ultima VII"),
+            ("Dune: Deluxe Edition", ContentType.BOOK, "Dune: Deluxe Edition"),
+        ],
+        ids=["a_game_is_cleaned", "another_type_is_not"],
+    )
+    def test_only_a_game_is_searched_under_the_cleaned_title(
+        self,
+        provider: WikidataProvider,
+        title: str,
+        content_type: ContentType,
+        searched: str,
+    ) -> None:
+        """Wikidata labels carry no trademark or edition, so a stored game title
+        went out unresolvable while the cleaner sat in RAWG."""
+        with patch(_REQUESTS) as mock_get:
+            mock_get.side_effect = [_response(_search())]
+            provider.fetch_series_ordinal(_item(title, content_type), {})
+
+        assert mock_get.call_args.kwargs["params"]["search"] == searched
 
     def test_every_request_names_the_client(self, provider: WikidataProvider) -> None:
         with patch(_REQUESTS) as mock_get:

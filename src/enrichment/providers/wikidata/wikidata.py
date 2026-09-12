@@ -23,6 +23,7 @@ from src.utils.matching import (
 )
 from src.utils.request_errors import scrub_request_error
 from src.utils.series import split_series_from_title, valid_series_position
+from src.utils.text import clean_game_title_for_search
 
 logger = logging.getLogger(__name__)
 
@@ -236,6 +237,10 @@ class WikidataProvider(EnrichmentProvider):
             else ContentType(item.content_type)
         )
         search_title, _marked_up_series = split_series_from_title(item.title)
+        if content_type is ContentType.VIDEO_GAME:
+            # Store shelves carry trademarks and edition suffixes Wikidata's
+            # labels never do; the other three types name no editions.
+            search_title = clean_game_title_for_search(search_title)
         log_search_title(logger, item.title, search_title)
 
         statements = self._matched_entity(item, search_title, content_type)
