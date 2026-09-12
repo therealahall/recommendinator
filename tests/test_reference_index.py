@@ -230,6 +230,46 @@ class TestSameTypeSlotsHoldWhatAFullScanWouldHold:
         assert {item.id for item in references} == {"liked-0", "liked-1", "liked-2"}
 
 
+class TestAShowIsNeverCitedForItsOwnSeasons:
+    """A provider files a show under the franchise it belongs to, so the show's
+    own title is all that ties it to a season of itself."""
+
+    def test_a_franchise_name_does_not_displace_the_shows_own_title(self) -> None:
+        show = make_item(
+            item_id="andor",
+            title="Andor",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            metadata={"genres": ["Science Fiction"], "series_name": "Star Wars"},
+        )
+        other = make_item(
+            item_id="bsg",
+            title="Battlestar Galactica",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            metadata={"genres": ["Science Fiction"]},
+        )
+        candidate = make_item(
+            item_id="andor-s2",
+            title="Andor (Season 2)",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            metadata={
+                "genres": ["Science Fiction"],
+                "series_name": "Andor",
+                "season": 2,
+            },
+        )
+
+        references = SignalIndex([show, other]).references_for(
+            candidate, random.Random(7)
+        )
+
+        assert {item.id for item in references} == {"bsg"}
+
+
 class TestCrossTypeReferencesReachedByCreator:
     """A shared creator is a way in that owes nothing to genres or clusters."""
 

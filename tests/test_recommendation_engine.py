@@ -31,7 +31,6 @@ from src.storage.manager import StorageManager
 from src.utils.series import (
     SeriesOrder,
     expand_tv_shows_to_seasons,
-    get_series_item_number,
     get_series_name,
 )
 from tests.factories import make_item, make_storage_mock
@@ -409,11 +408,12 @@ class TestTwinnedSeriesEntryRegression:
         recommendations = real_engine.generate_recommendations(
             content_type=ContentType.BOOK, count=100
         )
+        order = SeriesOrder(rec.item for rec in recommendations)
         assert [
-            get_series_item_number(rec.item)
+            order.locate(rec.item)
             for rec in recommendations
             if get_series_name(rec.item) == "The Murderbot Diaries"
-        ] == [1.0]
+        ] == [("The Murderbot Diaries", 1.0)]
 
 
 class TestIgnoredItems:
