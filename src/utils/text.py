@@ -40,6 +40,47 @@ _RULE_UNSAFE_RE = re.compile(rf'["{{}}{_CONTROL_RANGE}{_SURROGATE_RANGE}]')
 
 _LONE_SURROGATE_RE = re.compile(f"[{_SURROGATE_RANGE}]")
 
+# Edition suffixes: "Game - Deluxe Edition", "Game: GOTY Edition"
+EDITION_PATTERN = re.compile(
+    r"\s*[-:]\s*("
+    r"Deluxe Edition|"
+    r"GOTY Edition|"
+    r"Game of the Year Edition|"
+    r"Definitive Edition|"
+    r"Complete Edition|"
+    r"Enhanced Edition|"
+    r"Ultimate Edition|"
+    r"Special Edition|"
+    r"Collector's Edition|"
+    r"Anniversary Edition|"
+    r"Remastered|"
+    r"Remake"
+    r")\s*$",
+    re.IGNORECASE,
+)
+# Edition in parentheses: "(Deluxe Edition)", "(GOTY)", "(Legendary)"
+EDITION_PAREN_PATTERN = re.compile(
+    r"\s*\(("
+    r"Deluxe|"
+    r"GOTY|"
+    r"Game of the Year|"
+    r"Definitive|"
+    r"Complete|"
+    r"Enhanced|"
+    r"Ultimate|"
+    r"Special|"
+    r"Collector's|"
+    r"Anniversary|"
+    r"Legendary|"
+    r"Remastered|"
+    r"Remake"
+    r")(?:\s+Edition)?\)\s*$",
+    re.IGNORECASE,
+)
+# DLC suffixes: "Game + DLC Name (DLC)"
+DLC_SUFFIX_PATTERN = re.compile(r"\s*\+\s*.+?\s*\(DLC\)\s*$", re.IGNORECASE)
+TRADEMARK_PATTERN = re.compile(r"[™®©]")
+
 _UPPERCASE_WORDS: dict[str, str] = {
     "tv": "TV",
     "gog": "GOG",
@@ -55,6 +96,19 @@ _UPPERCASE_WORDS: dict[str, str] = {
 def humanize_source_id(source_id: str) -> str:
     words = re.split(r"[_-]", source_id)
     return " ".join(_UPPERCASE_WORDS.get(word, word.capitalize()) for word in words)
+
+
+def clean_game_title_for_search(title: str) -> str:
+    """A store's own name for a game, reduced to the one a catalogue lists it
+    under. Shared, so every provider searching for a game sends the same string.
+    """
+    cleaned = title
+    cleaned = TRADEMARK_PATTERN.sub("", cleaned).strip()
+    # Remove DLC suffix (must run before edition patterns to avoid partial matches)
+    cleaned = DLC_SUFFIX_PATTERN.sub("", cleaned).strip()
+    cleaned = EDITION_PATTERN.sub("", cleaned).strip()
+    cleaned = EDITION_PAREN_PATTERN.sub("", cleaned).strip()
+    return cleaned if cleaned else title
 
 
 def is_blank(value: str) -> bool:

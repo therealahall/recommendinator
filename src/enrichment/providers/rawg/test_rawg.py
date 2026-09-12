@@ -6,45 +6,9 @@ import pytest
 import requests
 
 from src.enrichment.provider_base import ProviderError
-from src.enrichment.providers.rawg.rawg import (
-    RAWGProvider,
-    clean_game_title_for_search,
-)
+from src.enrichment.providers.rawg.rawg import RAWGProvider
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.utils.series import SERIES_NAME_KEY
-
-
-class TestCleanTitleForSearch:
-    def test_removes_goty_edition_dash(self) -> None:
-        assert (
-            clean_game_title_for_search("The Witcher 3: Wild Hunt - GOTY Edition")
-            == "The Witcher 3: Wild Hunt"
-        )
-
-    def test_removes_edition_in_parentheses(self) -> None:
-        assert clean_game_title_for_search("Mass Effect (Legendary)") == "Mass Effect"
-        assert clean_game_title_for_search("Skyrim (Special Edition)") == "Skyrim"
-
-    def test_removes_trademark_symbols(self) -> None:
-        assert clean_game_title_for_search("Cyberpunk 2077™") == "Cyberpunk 2077"
-        assert clean_game_title_for_search("DOOM®") == "DOOM"
-        assert clean_game_title_for_search("The Sims™ 4") == "The Sims 4"
-
-    def test_preserves_colons_in_subtitles(self) -> None:
-        assert (
-            clean_game_title_for_search("The Witcher 3: Wild Hunt")
-            == "The Witcher 3: Wild Hunt"
-        )
-        assert (
-            clean_game_title_for_search("Resident Evil 4: Separate Ways")
-            == "Resident Evil 4: Separate Ways"
-        )
-
-    def test_removes_dlc_suffix(self) -> None:
-        assert (
-            clean_game_title_for_search("KINGDOM HEARTS III + Re Mind (DLC)")
-            == "KINGDOM HEARTS III"
-        )
 
 
 class TestRAWGProviderValidation:

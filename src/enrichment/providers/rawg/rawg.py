@@ -15,51 +15,11 @@ from src.enrichment.provider_base import (
 from src.models.content import ContentItem, ContentType, get_enum_value
 from src.utils.matching import Candidate, best_match, year_of
 from src.utils.request_errors import scrub_request_error
+from src.utils.text import clean_game_title_for_search
 
 logger = logging.getLogger(__name__)
 
 RAWG_API_BASE = "https://api.rawg.io/api"
-
-# Edition suffixes: "Game - Deluxe Edition", "Game: GOTY Edition"
-EDITION_PATTERN = re.compile(
-    r"\s*[-:]\s*("
-    r"Deluxe Edition|"
-    r"GOTY Edition|"
-    r"Game of the Year Edition|"
-    r"Definitive Edition|"
-    r"Complete Edition|"
-    r"Enhanced Edition|"
-    r"Ultimate Edition|"
-    r"Special Edition|"
-    r"Collector's Edition|"
-    r"Anniversary Edition|"
-    r"Remastered|"
-    r"Remake"
-    r")\s*$",
-    re.IGNORECASE,
-)
-# Edition in parentheses: "(Deluxe Edition)", "(GOTY)", "(Legendary)"
-EDITION_PAREN_PATTERN = re.compile(
-    r"\s*\(("
-    r"Deluxe|"
-    r"GOTY|"
-    r"Game of the Year|"
-    r"Definitive|"
-    r"Complete|"
-    r"Enhanced|"
-    r"Ultimate|"
-    r"Special|"
-    r"Collector's|"
-    r"Anniversary|"
-    r"Legendary|"
-    r"Remastered|"
-    r"Remake"
-    r")(?:\s+Edition)?\)\s*$",
-    re.IGNORECASE,
-)
-# DLC suffixes: "Game + DLC Name (DLC)"
-DLC_SUFFIX_PATTERN = re.compile(r"\s*\+\s*.+?\s*\(DLC\)\s*$", re.IGNORECASE)
-TRADEMARK_PATTERN = re.compile(r"[™®©]")
 
 
 def _https_cover(background_image: Any) -> str | None:
@@ -67,16 +27,6 @@ def _https_cover(background_image: Any) -> str | None:
     if isinstance(background_image, str) and background_image.startswith("https://"):
         return background_image
     return None
-
-
-def clean_game_title_for_search(title: str) -> str:
-    cleaned = title
-    cleaned = TRADEMARK_PATTERN.sub("", cleaned).strip()
-    # Remove DLC suffix (must run before edition patterns to avoid partial matches)
-    cleaned = DLC_SUFFIX_PATTERN.sub("", cleaned).strip()
-    cleaned = EDITION_PATTERN.sub("", cleaned).strip()
-    cleaned = EDITION_PAREN_PATTERN.sub("", cleaned).strip()
-    return cleaned if cleaned else title
 
 
 class RAWGProvider(EnrichmentProvider):
