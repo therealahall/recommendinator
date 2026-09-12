@@ -1,10 +1,14 @@
-"""Shape checks for the base URL a network-backed source plugin is pointed at."""
+"""Shape checks for the URL a network-backed plugin is pointed at, and the
+redirect walk every credentialed request to it makes."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from enum import Enum
-from typing import NamedTuple
-from urllib.parse import urlsplit
+from typing import Any, NamedTuple
+from urllib.parse import urljoin, urlsplit
+
+import requests
 
 from src.utils.text import sanitize_for_log
 
@@ -60,22 +64,75 @@ def same_origin(url: str, target: str) -> bool:
     return isinstance(origin, UrlOrigin) and url_origin(target) == origin
 
 
-def _url_without_the_secret_bearing_query(value: str) -> str:
+def _safe_host(netloc: str) -> str:
+    """Server text names the host, and a hop can put the api key in front of it.
+
+    ``.hostname``/``.port`` would be cleaner, but ``.port`` raises on a malformed
+    port a hostile Location can supply, turning a refusal into a traceback.
+    """
+    _userinfo, _, host = netloc.rpartition("@")
+    return host
+
+
+def _loggable(value: str) -> str:
+    """Server text, and a query string is itself a credential for some callers."""
     parts = urlsplit(value)
-    return f"{parts.scheme}://{parts.netloc}{parts.path}"
+    return sanitize_for_log(f"{parts.scheme}://{_safe_host(parts.netloc)}{parts.path}")
 
 
 def redirect_refusal(url: str, target: str, service: str) -> str:
+    """For a URL the operator configured, so there is a setting to point at it."""
     origin = urlsplit(url)
-    safe_url = sanitize_for_log(_url_without_the_secret_bearing_query(url))
-    safe_origin = sanitize_for_log(f"{origin.scheme}://{origin.netloc}")
-    safe_target = sanitize_for_log(_url_without_the_secret_bearing_query(target))
+    safe_origin = sanitize_for_log(f"{origin.scheme}://{_safe_host(origin.netloc)}")
+    safe_target = _loggable(target)
     return (
-        f"Refused a redirect from {safe_url} to {safe_target}. It leaves the "
+        f"Refused a redirect from {_loggable(url)} to {safe_target}. It leaves the "
         f"configured origin {safe_origin}, and the api key only goes where the "
         f"source url points. If {service} really is at {safe_target}, set the "
         "source url to it (and verify_ssl to false if its certificate is not "
         "publicly trusted)."
+    )
+
+
+def fixed_endpoint_refusal(url: str, target: str, service: str) -> str:
+    """For a service's own API URL, which no setting points elsewhere: naming one
+    would send an operator hunting a setting that does not exist."""
+    return (
+        f"Refused a redirect from {_loggable(url)} to {_loggable(target)}: it "
+        f"leaves the origin the {service} credentials are sent to."
+    )
+
+
+class RedirectRefused(Exception):
+    """Raised by the walk below, for the caller to restate as its own error."""
+
+
+def request_within_origin(
+    send: Callable[..., requests.Response],
+    url: str,
+    service: str,
+    refusal: Callable[[str, str, str], str],
+    **sent: Any,
+) -> requests.Response:
+    """What *url* answers, following only a redirect that stays on its origin:
+    ``requests`` replays an Authorization header — and an api key in the query
+    string — onto whatever host a ``Location`` names.
+    """
+    current = url
+    for _ in range(MAX_SAME_ORIGIN_REDIRECTS):
+        response = send(current, timeout=REQUEST_TIMEOUT, allow_redirects=False, **sent)
+        location = response.headers.get("Location")
+        if response.status_code not in REDIRECT_STATUSES or not location:
+            return response
+
+        target = urljoin(current, location)
+        if not same_origin(url, target):
+            raise RedirectRefused(refusal(current, target, service))
+        current = target
+
+    raise RedirectRefused(
+        f"{service} redirected {_loggable(url)} more than "
+        f"{MAX_SAME_ORIGIN_REDIRECTS} times."
     )
 
 
