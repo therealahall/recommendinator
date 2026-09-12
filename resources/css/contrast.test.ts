@@ -420,6 +420,7 @@ const CONTROL_EDGES: [string, string, string][] = [
 
 const LOCKED_FIELDS: [string, string, string, string][] = [
   ['a secret being typed', BASE, '.field', '.field[readonly]'],
+  ['a field a write in its section locked', BASE, '.field', '.field:disabled'],
 ]
 
 const BORDER_STYLES = new Set(['solid', 'dashed', 'dotted', 'double'])

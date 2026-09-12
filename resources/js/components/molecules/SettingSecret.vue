@@ -43,9 +43,13 @@ async function cancel(): Promise<void> {
   replaceButton.value?.focus()
 }
 
-function clear(): void {
+async function clear(): Promise<void> {
   if (locked()) return
   emit('clear')
+  // The lock this engages disables the value fields around it, and a browser
+  // that does not focus a button on click leaves the pointer's field focused.
+  await nextTick()
+  rescueFocus(replaceButton.value)
 }
 
 async function save(): Promise<void> {

@@ -237,7 +237,7 @@ function onFloatBlur(event: Event): void {
         @click="onReset"
       >{{ resetting ? 'Resetting…' : 'Reset to default' }}<span class="sr-only"> — {{ setting.label }}</span></button>
       <span v-if="disabled && !resetting" :id="resetLockId" class="sr-only"
-        >Unavailable while this section is saving.</span
+        >Unavailable while this section has a change in flight.</span
       >
     </div>
   </div>

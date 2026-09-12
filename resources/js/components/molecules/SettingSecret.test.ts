@@ -86,6 +86,21 @@ describe('SettingSecret', () => {
     wrapper.unmount()
   })
 
+  it('rescues focus to Replace when the lock Clear engages strands it on <body>', async () => {
+    const wrapper = mount(SettingSecret, {
+      props: { setting: secret({ has_secret: true }), busy: false },
+      attachTo: document.body,
+    })
+
+    await wrapper.find('[data-testid="secret-clear-enrichment.providers.tmdb.api_key"]').trigger('click')
+    await flushPromises()
+
+    expect(document.activeElement).toBe(
+      wrapper.find('[data-testid="secret-replace-enrichment.providers.tmdb.api_key"]').element,
+    )
+    wrapper.unmount()
+  })
+
   it('leaves focus where the operator tabbed to when a write finishes', async () => {
     const elsewhere = document.createElement('button')
     document.body.appendChild(elsewhere)
