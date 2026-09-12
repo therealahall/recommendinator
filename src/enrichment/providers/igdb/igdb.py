@@ -245,6 +245,8 @@ class IGDBProvider(EnrichmentProvider):
             searched,
             year_of((item.metadata or {}).get("release_year")),
             [(_titles(game), _release_year(game)) for game in games],
+            # A store sells 'Ultima I' where IGDB catalogues its fuller name.
+            allow_subtitled=True,
         )
         return None if index is None else games[index]
 

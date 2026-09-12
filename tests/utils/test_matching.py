@@ -56,32 +56,54 @@ class TestBestMatchIndex:
             == 0
         )
 
-    def test_a_store_title_matches_the_catalogues_subtitled_name_for_it(self) -> None:
+    def test_a_store_title_matches_the_catalogues_subtitled_name_only_when_allowed(
+        self,
+    ) -> None:
         catalogue = [(["Ultima I: The First Age of Darkness"], 1981)]
 
-        assert best_match_index("Ultima I™", None, catalogue) == 0
+        assert best_match_index("Ultima I™", None, catalogue, allow_subtitled=True) == 0
+        assert best_match_index("Ultima I™", None, catalogue) is None
 
     def test_a_subtitle_does_not_let_its_work_stand_in_for_the_searched_one(
         self,
     ) -> None:
         assert (
-            best_match_index("Fully Loaded", None, [(["Herbie: Fully Loaded"], 2005)])
+            best_match_index(
+                "Fully Loaded",
+                None,
+                [(["Herbie: Fully Loaded"], 2005)],
+                allow_subtitled=True,
+            )
             is None
         )
 
     def test_a_numbered_sibling_is_not_the_searched_title_subtitled(self) -> None:
         sequel = [(["Ultima II: The Revenge of the Enchantress"], 1982)]
 
-        assert best_match_index("Ultima I", None, sequel) is None
+        assert best_match_index("Ultima I", None, sequel, allow_subtitled=True) is None
+
+    def test_a_candidate_leading_with_nothing_is_not_a_title_that_normalizes_away(
+        self,
+    ) -> None:
+        stray_boundary = [([": Tides of Numenera"], 2017)]
+
+        assert (
+            best_match_index("...", None, stray_boundary, allow_subtitled=True) is None
+        )
 
     def test_a_title_matching_outright_beats_a_higher_ranked_subtitled_one(
         self,
     ) -> None:
         candidates = [(["Fallout: New Vegas"], 2010), (["Fallout"], 1997)]
 
-        assert best_match_index("Fallout", None, candidates) == 1
+        assert best_match_index("Fallout", None, candidates, allow_subtitled=True) == 1
 
     def test_a_shared_subtitle_word_does_not_join_two_franchises(self) -> None:
         other_work = [(["Torment: Tides of Numenera"], 2017)]
 
-        assert best_match_index("Planescape: Torment", None, other_work) is None
+        assert (
+            best_match_index(
+                "Planescape: Torment", None, other_work, allow_subtitled=True
+            )
+            is None
+        )

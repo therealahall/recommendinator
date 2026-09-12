@@ -243,6 +243,40 @@ class TestTMDBProviderMovieEnrichment:
         assert result is not None
         assert result.match_quality == expected
 
+    def test_a_subtitled_hit_does_not_stand_in_for_what_the_yearless_retry_holds(
+        self, provider: TMDBProvider, config: dict[str, Any]
+    ) -> None:
+        item = ContentItem(
+            id="movie456",
+            title="Herbie",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"release_year": 1968},
+        )
+        # Dateless, so the year gate cannot refuse it either.
+        sequel = {"id": 9067, "title": "Herbie: Fully Loaded", "release_date": ""}
+        herbie = {"id": 11806, "title": "Herbie", "release_date": "1968-03-13"}
+
+        def tmdb(url: str, *, params: dict[str, str], timeout: int) -> MagicMock:
+            payload: dict[str, Any] = (
+                {"results": [sequel] if "year" in params else [sequel, herbie]}
+                if "/search/" in url
+                else {"id": 11806, "title": "Herbie", "genres": []}
+            )
+            return MagicMock(
+                spec=requests.Response, status_code=200, json=lambda: payload
+            )
+
+        with patch("src.enrichment.providers.tmdb.tmdb.requests.get") as mock_get:
+            mock_get.side_effect = tmdb
+
+            result = provider.enrich(item, {**config, "include_keywords": False})
+
+        assert result is not None and result.match_quality != "not_found"
+        assert [
+            call for call in mock_get.call_args_list if "/movie/11806" in call.args[0]
+        ]
+
     def test_the_picker_searches_unfiltered_by_the_year_it_exists_to_correct(
         self, provider: TMDBProvider, movie_item: ContentItem, config: dict[str, Any]
     ) -> None:
