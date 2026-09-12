@@ -504,6 +504,48 @@ class TestErrorsKeepTheApiKeyOut:
 
         assert _API_KEY not in str(raised.value)
 
+    def test_a_key_echoed_into_a_followed_hop_stays_out_of_the_next_refusal(
+        self, plugin: TautulliPlugin
+    ) -> None:
+        """The refusal names the hop it was refused from, not the configured URL."""
+        echoed = Mock(spec=requests.Response)
+        echoed.status_code = 301
+        echoed.headers = {
+            "Location": f"http://localhost:8181/api/v2/?apikey={_API_KEY}"
+        }
+        left = Mock(spec=requests.Response)
+        left.status_code = 301
+        left.headers = {"Location": "https://elsewhere.example/api/v2"}
+
+        with patch(
+            "src.ingestion.sources.tautulli.tautulli.requests.get",
+            side_effect=[echoed, left],
+        ):
+            with pytest.raises(SourceError, match="Refused a redirect") as raised:
+                list(plugin.fetch(dict(_CONFIG)))
+
+        assert _API_KEY not in str(raised.value)
+
+    def test_a_key_hidden_in_a_hops_userinfo_stays_out_of_the_next_refusal(
+        self, plugin: TautulliPlugin
+    ) -> None:
+        """Stripping the query is not enough: userinfo carries a key past it."""
+        echoed = Mock(spec=requests.Response)
+        echoed.status_code = 301
+        echoed.headers = {"Location": f"http://{_API_KEY}@localhost:8181/api/v2"}
+        left = Mock(spec=requests.Response)
+        left.status_code = 301
+        left.headers = {"Location": "https://elsewhere.example/api/v2"}
+
+        with patch(
+            "src.ingestion.sources.tautulli.tautulli.requests.get",
+            side_effect=[echoed, left],
+        ):
+            with pytest.raises(SourceError, match="Refused a redirect") as raised:
+                list(plugin.fetch(dict(_CONFIG)))
+
+        assert _API_KEY not in str(raised.value)
+
 
 class TestValidateConfig:
     def test_every_missing_field_is_reported_at_once(

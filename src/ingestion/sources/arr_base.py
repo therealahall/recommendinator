@@ -4,7 +4,6 @@ import logging
 from abc import abstractmethod
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urljoin
 
 import requests
 
@@ -15,11 +14,9 @@ from src.ingestion.plugin_base import (
     SourcePlugin,
 )
 from src.ingestion.urls import (
-    MAX_SAME_ORIGIN_REDIRECTS,
-    REDIRECT_STATUSES,
-    REQUEST_TIMEOUT,
+    RedirectRefused,
     redirect_refusal,
-    same_origin,
+    request_within_origin,
     source_url_error,
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
@@ -227,35 +224,14 @@ class ArrPlugin(SourcePlugin):
         return list(data)
 
     def _api_get(self, url: str, api_key: str, verify_ssl: bool) -> requests.Response:
-        """``requests`` replays ``X-Api-Key`` onto any host a redirect names,
-        and follows an http->https bounce silently, so a proxy reported an
-        unverifiable certificate for a scheme nobody configured.
-        """
-        current = url
-        for _ in range(MAX_SAME_ORIGIN_REDIRECTS):
-            response = requests.get(
-                current,
+        try:
+            return request_within_origin(
+                requests.get,
+                url,
+                self.display_name,
+                redirect_refusal,
                 headers={"X-Api-Key": api_key},
-                timeout=REQUEST_TIMEOUT,
                 verify=verify_ssl,
-                allow_redirects=False,
             )
-            if response.status_code not in REDIRECT_STATUSES:
-                return response
-            location = response.headers.get("Location")
-            if not location:
-                return response
-
-            target = urljoin(current, location)
-            if not same_origin(url, target):
-                raise SourceError(
-                    self.name,
-                    redirect_refusal(current, target, self.display_name),
-                )
-            current = target
-
-        raise SourceError(
-            self.name,
-            f"{self.display_name} redirected {url} more than "
-            f"{MAX_SAME_ORIGIN_REDIRECTS} times.",
-        )
+        except RedirectRefused as refused:
+            raise SourceError(self.name, str(refused)) from None
