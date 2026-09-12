@@ -127,8 +127,8 @@ access to your Steam library. Rotate it by re-running `source set-secret`.
 |---------|---------|------|
 | Steam, GOG, Epic Games | Game library sync | That source enabled |
 | Sonarr, Radarr | Media library sync | Configured |
-| TMDB, OpenLibrary, Hardcover, RAWG, Wikidata | Metadata enrichment | That provider enabled |
-| IGDB, and `id.twitch.tv` for the app token it takes the client secret for | Metadata enrichment | IGDB enabled |
+| TMDB, OpenLibrary, Hardcover, RAWG, Wikidata | Metadata enrichment | Enrichment and that provider enabled |
+| IGDB, plus `id.twitch.tv`, which the client secret is sent to for an app token | Metadata enrichment | Enrichment and IGDB enabled |
 
 **`web.allowed_origins` cannot authenticate a cross-origin client.** The session
 cookie is `SameSite=Strict`, so a browser never attaches it to a request from
