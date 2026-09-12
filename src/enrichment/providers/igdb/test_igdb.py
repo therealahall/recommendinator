@@ -12,6 +12,7 @@ from src.enrichment.providers.igdb.igdb import (
     IGDBProvider,
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.utils.matching import Candidate
 
 _CLIENT_ID = "igdb-client-id"
 _CLIENT_SECRET = "igdb-client-secret"
@@ -328,6 +329,95 @@ class TestIGDBEnrichment:
 
         assert original is not None and original.description == "The original."
         assert remake is not None and remake.description == "The remake."
+
+
+class TestIGDBCandidates:
+    def test_a_search_offers_each_game_under_the_id_a_pin_would_name(
+        self, provider: IGDBProvider
+    ) -> None:
+        transport = _served(
+            {
+                "id": 1234,
+                "name": "Planescape: Torment",
+                "collections": [{"name": "Planescape"}],
+                "cover": {"url": f"//{_COVER_PATH}"},
+                "first_release_date": _RELEASED_AT,
+            }
+        )
+
+        assert _run(transport, provider.search) == [
+            Candidate(
+                record_id="1234",
+                title="Planescape: Torment",
+                year=_RELEASE_YEAR,
+                cover_url=(
+                    "https://images.igdb.com/igdb/image/upload/t_cover_big/co1x2y.jpg"
+                ),
+            )
+        ]
+
+    def test_an_alternative_name_is_offered_beside_the_title_it_ranks_under(
+        self, provider: IGDBProvider
+    ) -> None:
+        transport = _served(_game(alternative_names=[{"name": "PST"}]))
+
+        candidates = _run(transport, provider.search)
+
+        assert candidates[0].also_titled == ("PST",)
+
+    @pytest.mark.parametrize(
+        ("record_id", "accepted"),
+        [("1234", True), ("planescape-torment", False), ("", False), ("٣", False)],
+    )
+    def test_only_the_numeric_id_igdb_catalogues_by_is_a_pin_it_can_read(
+        self, provider: IGDBProvider, record_id: str, accepted: bool
+    ) -> None:
+        assert provider.accepts_record_id(record_id) is accepted
+
+    def test_a_pinned_record_is_looked_up_in_place_of_the_title_search(
+        self, provider: IGDBProvider
+    ) -> None:
+        transport = _served(_game(id=1234))
+
+        result = _run(
+            transport,
+            provider.enrich,
+            _item("Planescape Torment EE", enrichment_ids={"igdb": "1234"}),
+        )
+
+        assert len(transport.game_requests) == 1
+        assert "where id = 1234;" in transport.game_requests[0]["data"]
+        assert result is not None and result.match_quality == "high"
+
+    def test_a_title_search_is_still_only_a_resemblance(
+        self, provider: IGDBProvider
+    ) -> None:
+        result = _run(_served(_game()), provider.enrich)
+
+        assert result is not None and result.match_quality == "medium"
+
+    def test_a_pin_igdb_no_longer_holds_states_nothing_rather_than_rematching(
+        self, provider: IGDBProvider
+    ) -> None:
+        transport = _served()
+
+        result = _run(
+            transport, provider.enrich, _item(enrichment_ids={"igdb": "1234"})
+        )
+
+        assert len(transport.game_requests) == 1
+        assert result is not None and result.match_quality == "not_found"
+
+    def test_a_pin_igdb_cannot_look_up_is_searched_by_title_rather_than_sent(
+        self, provider: IGDBProvider
+    ) -> None:
+        transport = _served(_game())
+
+        _run(
+            transport, provider.enrich, _item(enrichment_ids={"igdb": "1; fields id;"})
+        )
+
+        assert 'search "Planescape: Torment";' in transport.game_requests[0]["data"]
 
 
 class TestIGDBAppToken:
