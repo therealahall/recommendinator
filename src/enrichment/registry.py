@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from src.enrichment.provider_base import EnrichmentProvider
+from src.settings.metadata import PROVIDER_ORDER_KEY, default_of
 from src.utils.private_plugins import private_plugin_module_names
 from src.utils.text import exception_for_log, sanitize_for_log
 
@@ -158,6 +159,10 @@ class EnrichmentRegistry:
         return dict(self._providers)
 
     def get_enabled_providers(self, config: dict[str, Any]) -> list[EnrichmentProvider]:
+        """Sorted here and nowhere else, so the match loop, the ordinal pass and
+        the pin picker share one precedence. A provider the order does not name
+        sorts last under its own name, which a folder rename cannot change.
+        """
         self.discover_providers()
 
         enrichment_config = config.get("enrichment", {})
@@ -169,7 +174,14 @@ class EnrichmentRegistry:
             if provider_config.get("enabled", False):
                 enabled_providers.append(provider)
 
-        return enabled_providers
+        order = enrichment_config.get("provider_order") or default_of(
+            PROVIDER_ORDER_KEY
+        )
+        rank = {name: position for position, name in enumerate(order)}
+        return sorted(
+            enabled_providers,
+            key=lambda provider: (rank.get(provider.name, len(rank)), provider.name),
+        )
 
 
 def get_enrichment_registry() -> EnrichmentRegistry:

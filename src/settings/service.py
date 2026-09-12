@@ -4,7 +4,9 @@ import re
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, assert_never
 
+from src.enrichment.registry import get_enrichment_registry
 from src.settings.metadata import (
+    PROVIDER_ORDER_KEY,
     SettingMetadata,
     Validation,
     default_of,
@@ -175,8 +177,41 @@ def coerce_and_validate(entry: SettingMetadata, value: Any) -> Any:
             raise SettingsValidationError(entry.key, "expected a list of strings")
         if entry.key == _ALLOWED_ORIGINS_KEY:
             return _validated_cors_origins(entry, value)
+        if entry.key == PROVIDER_ORDER_KEY:
+            return _validated_provider_order(entry, value)
         return value
     assert_never(setting_type)
+
+
+def _validated_provider_order(entry: SettingMetadata, names: list[str]) -> list[str]:
+    """A permutation of the installed providers, because a name matching none of
+    them ranks nothing and a provider left out falls back to the accidental
+    precedence this setting exists to replace.
+    """
+    ordered = [name.strip() for name in names]
+    installed = set(get_enrichment_registry().get_all_providers())
+
+    unknown = [name for name in ordered if name not in installed]
+    if unknown:
+        raise SettingsValidationError(
+            entry.key,
+            f"{', '.join(repr(name) for name in unknown)} names no installed "
+            f"enrichment provider — the installed ones are "
+            f"{', '.join(sorted(installed))}",
+        )
+    repeated = sorted({name for name in ordered if ordered.count(name) > 1})
+    if repeated:
+        raise SettingsValidationError(
+            entry.key, f"ranks {', '.join(repeated)} more than once"
+        )
+    unranked = sorted(installed - set(ordered))
+    if unranked:
+        raise SettingsValidationError(
+            entry.key,
+            f"leaves {', '.join(unranked)} unranked — every installed "
+            "enrichment provider must be named",
+        )
+    return ordered
 
 
 def _validated_cors_origins(entry: SettingMetadata, origins: list[str]) -> list[str]:

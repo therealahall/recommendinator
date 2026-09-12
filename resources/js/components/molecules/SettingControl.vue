@@ -22,12 +22,12 @@ const emit = defineEmits<{
   reset: []
 }>()
 
-const KNOWN_WIDGETS = ['toggle', 'number', 'text', 'tags', 'select']
+const KNOWN_WIDGETS = ['toggle', 'number', 'text', 'tags', 'ordered-tags', 'select']
 
 // Resolve the widget to render. Known widgets map directly; an unknown widget
 // falls back on the setting's `type` so every leaf still gets a usable control.
 const control = computed<
-  'toggle' | 'number-int' | 'number-float' | 'text' | 'tags' | 'select'
+  'toggle' | 'number-int' | 'number-float' | 'text' | 'tags' | 'ordered-tags' | 'select'
 >(() => {
   const setting = props.setting
   let widget = setting.widget as string
@@ -39,7 +39,7 @@ const control = computed<
   }
   if (widget === 'number') return setting.type === 'float' ? 'number-float' : 'number-int'
   if (widget === 'select' && !setting.choices) return 'text'
-  return widget as 'toggle' | 'text' | 'tags' | 'select'
+  return widget as 'toggle' | 'text' | 'tags' | 'ordered-tags' | 'select'
 })
 
 const invalid = computed(() => Boolean(props.error))
@@ -152,11 +152,12 @@ function onFloatBlur(event: Event): void {
     </template>
 
     <!-- Tags: the atom renders its own <label for>. -->
-    <template v-else-if="control === 'tags'">
+    <template v-else-if="control === 'tags' || control === 'ordered-tags'">
       <TagInput
         :model-value="(modelValue as string[]) ?? []"
         :label="setting.label"
         :input-id="inputId"
+        :reorderable="control === 'ordered-tags'"
         :described-by="describedBy"
         :invalid="invalid"
         :disabled="disabled"

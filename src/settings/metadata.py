@@ -11,7 +11,11 @@ from typing import Any, Literal
 from src.storage.settings_migration import IN_SCOPE_SECTIONS
 
 SettingType = Literal["bool", "int", "float", "string", "list", "enum"]
-Widget = Literal["toggle", "number", "text", "tags", "select"]
+Widget = Literal["toggle", "number", "text", "tags", "select", "ordered-tags"]
+
+#: Precedence among enrichment providers, read by the registry and checked by the
+#: settings service, so neither re-spells it.
+PROVIDER_ORDER_KEY = "enrichment.provider_order"
 
 # Default frontend widget for each value type. A registry entry may override
 # this (e.g. an ``enum`` renders as ``select``) via the ``widget`` argument.
@@ -228,6 +232,22 @@ _REGISTRY: tuple[SettingMetadata, ...] = (
         validation=Validation(min=1),
     ),
     _entry(
+        PROVIDER_ORDER_KEY,
+        label="Provider precedence",
+        help=(
+            "Providers are tried in this order and the first one to match an "
+            "item enriches it. Every installed provider must be named exactly "
+            "once."
+        ),
+        type="list",
+        # A tuple for the reason web.allowed_origins is one. Books go to
+        # Hardcover first because it refuses an ambiguous title rather than
+        # guessing, and Wikidata is last because it only ever adds a series to
+        # whatever another provider matched.
+        default=("hardcover", "openlibrary", "rawg", "tmdb", "wikidata"),
+        widget="ordered-tags",
+    ),
+    _entry(
         "enrichment.providers.tmdb.api_key",
         label="TMDB API key",
         help="API key for The Movie Database enrichment provider.",
@@ -298,7 +318,7 @@ _REGISTRY: tuple[SettingMetadata, ...] = (
     _entry(
         "enrichment.providers.wikidata.enabled",
         label="Wikidata enabled",
-        help="Enable the Wikidata (series positions, all content types) enrichment provider.",
+        help="Enable the Wikidata (series names and positions, all types) enrichment provider.",
         type="bool",
         default=False,
     ),

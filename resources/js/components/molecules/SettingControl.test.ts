@@ -64,6 +64,16 @@ describe('SettingControl widget mapping', () => {
     expect(options.map((o) => o.text())).toContain('trace')
   })
 
+  it('lets an ordered list be reordered, and a plain tag list not', () => {
+    const setting = value({ key: 'x.order', type: 'list', widget: 'ordered-tags' })
+
+    const ordered = mountControl(setting, ['rawg', 'tmdb'])
+    expect(ordered.find('[aria-label="Move tmdb up"]').exists()).toBe(true)
+
+    const plain = mountControl(value({ type: 'list', widget: 'tags' }), ['rawg', 'tmdb'])
+    expect(plain.find('[aria-label="Move tmdb up"]').exists()).toBe(false)
+  })
+
   it('falls back on type when the widget is unknown', () => {
     const setting = value({ type: 'bool', widget: 'mystery' as never })
     const wrapper = mountControl(setting, false)

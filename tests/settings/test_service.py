@@ -2,11 +2,15 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
 import httpx
 import pytest
 
+from src.enrichment.provider_base import EnrichmentProvider
+from src.enrichment.registry import EnrichmentRegistry
 from src.settings.metadata import (
+    PROVIDER_ORDER_KEY,
     SettingMetadata,
     Validation,
     default_of,
@@ -28,6 +32,7 @@ from src.utils.urls import is_bare_origin
 _SECRET_KEY = "enrichment.providers.tmdb.api_key"
 _INT_KEY = "recommendations.default_count"
 _ORIGINS_KEY = "web.allowed_origins"
+_ORDER_KEY = PROVIDER_ORDER_KEY
 
 
 @pytest.fixture()
@@ -319,6 +324,61 @@ class TestCoerceAndValidate:
         ):
             with pytest.raises(SettingsValidationError):
                 coerce_and_validate(entry, bad)
+
+
+class TestProviderOrderIsAPermutationOfTheInstalledProviders:
+    @pytest.fixture(autouse=True)
+    def installed_providers(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        registry = EnrichmentRegistry()
+        registry._discovered = True
+        for name in ("alpha", "beta"):
+            provider = MagicMock(spec=EnrichmentProvider)
+            provider.name = name
+            registry.register(provider)
+        monkeypatch.setattr(EnrichmentRegistry, "_instance", registry)
+
+    @pytest.mark.parametrize(
+        ("order", "reason"),
+        [
+            pytest.param(
+                ["alpha", "bteta"],
+                "'bteta' names no installed enrichment provider — the installed "
+                "ones are alpha, beta",
+                id="misspelled",
+            ),
+            pytest.param(
+                ["alpha"],
+                "leaves beta unranked — every installed enrichment provider must "
+                "be named",
+                id="left-out",
+            ),
+            pytest.param(
+                ["alpha", "beta", "alpha"],
+                "ranks alpha more than once",
+                id="ranked-twice",
+            ),
+        ],
+    )
+    def test_an_order_that_is_not_a_permutation_is_refused(
+        self, order: list[str], reason: str
+    ) -> None:
+        with pytest.raises(SettingsValidationError) as exc_info:
+            coerce_and_validate(_entry(_ORDER_KEY), order)
+
+        assert exc_info.value.key == _ORDER_KEY
+        assert exc_info.value.reason == reason
+
+    def test_a_saved_order_reaches_the_registry_that_ranks_by_it(
+        self, storage: StorageManager, config: dict[str, Any]
+    ) -> None:
+        config["enrichment"] = {
+            "providers": {"alpha": {"enabled": True}, "beta": {"enabled": True}}
+        }
+
+        apply_settings(config, storage, {_ORDER_KEY: ["beta", "alpha"]})
+        enabled = EnrichmentRegistry.get_instance().get_enabled_providers(config)
+
+        assert [provider.name for provider in enabled] == ["beta", "alpha"]
 
 
 class TestApplySettings:
