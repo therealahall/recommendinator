@@ -1959,12 +1959,13 @@ class TestEnrichmentWritesTheRowItWasHandedRegression:
 
 
 class OrdinalOnlyProvider(EnrichmentProvider):
-    def __init__(self) -> None:
+    def __init__(self, name: str = "ordinal") -> None:
+        self._name = name
         self.ordinal_calls: list[ContentItem] = []
 
     @property
     def name(self) -> str:
-        return "ordinal"
+        return self._name
 
     @property
     def display_name(self) -> str:
@@ -2244,6 +2245,98 @@ class TestASeriesStatedWithoutAPosition:
         assert "series_position_authority" not in item.metadata
 
 
+class StatedOrdinalProvider(OrdinalOnlyProvider):
+    def __init__(self, name: str, ordinal: SeriesOrdinal) -> None:
+        super().__init__(name)
+        self._ordinal = ordinal
+
+    def fetch_series_ordinal(
+        self, item: ContentItem, config: dict[str, Any]
+    ) -> SeriesOrdinal | None:
+        self.ordinal_calls.append(item)
+        return self._ordinal
+
+
+class TestASeriesOneProviderNamesAndAnotherCounts:
+    _NAMED = SeriesOrdinal(position=None, series_name="The Matrix")
+    _COUNTED = SeriesOrdinal(position=3.0, series_name="The Matrix")
+
+    @staticmethod
+    def _run(storage_manager: StorageManager, *providers: EnrichmentProvider) -> None:
+        order = [provider.name for provider in providers]
+        manager = manager_over(storage_manager, *providers, order=order)
+        manager.start_enrichment(content_type=ContentType.MOVIE)
+        assert manager._wait_for_completion()
+
+    def test_a_name_only_provider_ranked_first_costs_the_position_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        db_id = save_movie(storage_manager)
+
+        self._run(
+            storage_manager,
+            StatedOrdinalProvider("naming", self._NAMED),
+            StatedOrdinalProvider("counting", self._COUNTED),
+        )
+
+        item = storage_manager.get_content_item(db_id)
+        assert item.metadata["series_name"] == "The Matrix"
+        assert item.metadata["series_position"] == 3.0
+        assert item.metadata["series_position_authority"] == "authored"
+
+    def test_a_position_already_stored_spends_no_further_providers_quota(
+        self, tmp_path: Path
+    ) -> None:
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        db_id = save_movie(storage_manager)
+        naming = StatedOrdinalProvider("naming", self._NAMED)
+
+        self._run(
+            storage_manager, StatedOrdinalProvider("counting", self._COUNTED), naming
+        )
+
+        assert naming.ordinal_calls == []
+        item = storage_manager.get_content_item(db_id)
+        assert item.metadata["series_name"] == "The Matrix"
+        assert item.metadata["series_position"] == 3.0
+
+    def test_an_answer_that_settles_nothing_leaves_the_walk_going(
+        self, tmp_path: Path
+    ) -> None:
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        db_id = save_movie(storage_manager, metadata={"series_name": "The Matrix"})
+        elsewhere = SeriesOrdinal(position=1.0, series_name="Star Wars")
+
+        self._run(
+            storage_manager,
+            StatedOrdinalProvider("disagreeing", elsewhere),
+            StatedOrdinalProvider("counting", self._COUNTED),
+        )
+
+        item = storage_manager.get_content_item(db_id)
+        assert item.metadata["series_name"] == "The Matrix"
+        assert item.metadata["series_position"] == 3.0
+
+    def test_the_next_provider_is_judged_against_the_name_the_last_one_wrote(
+        self, tmp_path: Path
+    ) -> None:
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        db_id = save_movie(storage_manager, "A New Hope")
+        collection = SeriesOrdinal(position=None, series_name="Star Wars Collection")
+        trilogy = SeriesOrdinal(position=1.0, series_name="Star Wars: Original Trilogy")
+
+        self._run(
+            storage_manager,
+            StatedOrdinalProvider("naming", collection),
+            StatedOrdinalProvider("counting", trilogy),
+        )
+
+        item = storage_manager.get_content_item(db_id)
+        assert item.metadata["series_name"] == "Star Wars Collection"
+        assert "series_position" not in item.metadata
+
+
 class UnreliableOrdinalProvider(OrdinalOnlyProvider):
     """404s on every other item, as a merged or redirected entity id does."""
 
@@ -2292,8 +2385,8 @@ class TestAnOrdinalProviderBesideAnAbandonedMatcher:
 
 
 class FailingOrdinalProvider(OrdinalOnlyProvider):
-    def __init__(self, error: Exception) -> None:
-        super().__init__()
+    def __init__(self, error: Exception, name: str = "ordinal") -> None:
+        super().__init__(name)
         self._error = error
 
     def fetch_series_ordinal(
@@ -2320,6 +2413,28 @@ class TestAnUnansweredOrdinalPass:
         assert status is not None
         assert status["enrichment_provider"] == "mock"
         assert status["enrichment_quality"] == "high"
+
+    def test_every_retryable_failure_is_named_in_the_reason_the_item_requeues(
+        self, tmp_path: Path
+    ) -> None:
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        db_id = save_movie(storage_manager)
+        manager = manager_over(
+            storage_manager,
+            FailingOrdinalProvider(requests.Timeout("timed out"), name="alpha"),
+            FailingOrdinalProvider(
+                requests.ConnectionError("unreachable"), name="zulu"
+            ),
+            order=["alpha", "zulu"],
+        )
+
+        manager.start_enrichment(content_type=ContentType.MOVIE)
+        assert manager._wait_for_completion()
+
+        status = storage_manager.enrichment.status(db_id)
+        assert status is not None
+        assert status["enrichment_error"] == "alpha: Timeout; zulu: ConnectionError"
+        assert queued_ids(storage_manager) == {db_id}
 
     @pytest.mark.parametrize(
         ("error", "queues"),
