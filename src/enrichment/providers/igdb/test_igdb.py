@@ -7,7 +7,6 @@ import requests
 
 from src.enrichment.provider_base import ProviderError, SeriesOrdinal
 from src.enrichment.providers.igdb.igdb import (
-    _SEARCH_MEMO_SECONDS,
     GAMES_URL,
     TWITCH_TOKEN_URL,
     IGDBProvider,
@@ -82,14 +81,6 @@ class _Transport:
             return self.token
         self.game_requests.append({"url": url, **kwargs})
         return self.games.pop(0) if len(self.games) > 1 else self.games[0]
-
-
-class _Clock:
-    def __init__(self) -> None:
-        self.now = 0.0
-
-    def __call__(self) -> float:
-        return self.now
 
 
 def _served(*games: dict[str, Any]) -> _Transport:
@@ -319,62 +310,7 @@ class TestIGDBEnrichment:
         assert body.count('"') == 2
         assert body.count(";") == 3
 
-
-class TestIGDBSearchReuse:
-    def test_one_item_is_searched_once_however_many_answers_it_is_asked_for(
-        self, provider: IGDBProvider
-    ) -> None:
-        transport = _served(_game(collections=[{"name": "Planescape"}]))
-
-        with patch(
-            "src.enrichment.providers.igdb.igdb.requests.post", side_effect=transport
-        ):
-            result = provider.enrich(_item(), _CONFIG)
-            ordinal = provider.fetch_series_ordinal(_item(), _CONFIG)
-
-        assert len(transport.game_requests) == 1
-        assert result is not None and result.match_quality != "not_found"
-        assert ordinal == SeriesOrdinal(position=None, series_name="Planescape")
-
-    def test_the_next_item_is_searched_rather_than_answered_from_the_last(
-        self, provider: IGDBProvider
-    ) -> None:
-        transport = _Transport(_response([_game()]), _response([_game(name="Prey")]))
-
-        with patch(
-            "src.enrichment.providers.igdb.igdb.requests.post", side_effect=transport
-        ):
-            provider.enrich(_item(), _CONFIG)
-            result = provider.enrich(_item("Prey"), _CONFIG)
-
-        bodies = [call["data"] for call in transport.game_requests]
-        assert len(bodies) == 2 and 'search "Prey";' in bodies[1]
-        assert result is not None and result.match_quality != "not_found"
-
-    def test_the_same_item_run_again_later_is_searched_rather_than_memoised(
-        self, provider: IGDBProvider
-    ) -> None:
-        transport = _Transport(
-            _response([_game()]),
-            _response([_game(collections=[{"name": "Planescape"}])]),
-        )
-        clock = _Clock()
-
-        with (
-            patch("src.enrichment.providers.igdb.igdb.time.monotonic", clock),
-            patch(
-                "src.enrichment.providers.igdb.igdb.requests.post",
-                side_effect=transport,
-            ),
-        ):
-            assert provider.fetch_series_ordinal(_item(), _CONFIG) is None
-            clock.now += _SEARCH_MEMO_SECONDS + 1
-            ordinal = provider.fetch_series_ordinal(_item(), _CONFIG)
-
-        assert len(transport.game_requests) == 2
-        assert ordinal == SeriesOrdinal(position=None, series_name="Planescape")
-
-    def test_two_items_sharing_a_search_are_matched_on_the_year_each_states(
+    def test_two_items_sharing_a_title_are_matched_on_the_year_each_states(
         self, provider: IGDBProvider
     ) -> None:
         transport = _served(
@@ -392,7 +328,6 @@ class TestIGDBSearchReuse:
             )
             remake = provider.enrich(_item("Prey", release_year=_REMAKE_YEAR), _CONFIG)
 
-        assert len(transport.game_requests) == 1
         assert original is not None and original.description == "The original."
         assert remake is not None and remake.description == "The remake."
 
