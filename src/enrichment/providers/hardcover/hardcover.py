@@ -1,7 +1,6 @@
 import logging
 import re
 from typing import Any
-from urllib.parse import urljoin
 
 import requests
 
@@ -15,10 +14,9 @@ from src.enrichment.provider_base import (
     pinned_record,
 )
 from src.ingestion.urls import (
-    MAX_SAME_ORIGIN_REDIRECTS,
-    REDIRECT_STATUSES,
-    REQUEST_TIMEOUT,
-    same_origin,
+    RedirectRefused,
+    fixed_endpoint_refusal,
+    request_within_origin,
 )
 from src.models.content import ContentItem, ContentType, get_enum_value
 from src.utils.matching import (
@@ -337,32 +335,14 @@ class HardcoverProvider(EnrichmentProvider):
         return books if isinstance(books, list) else []
 
     def _post(self, payload: dict[str, Any], api_key: str) -> requests.Response:
-        """``requests`` replays the Authorization header onto a redirect's host."""
-        current = HARDCOVER_API_URL
-        for _ in range(MAX_SAME_ORIGIN_REDIRECTS):
-            response = requests.post(
-                current,
+        try:
+            return request_within_origin(
+                requests.post,
+                HARDCOVER_API_URL,
+                self.display_name,
+                fixed_endpoint_refusal,
                 json=payload,
                 headers={"Authorization": f"Bearer {api_key}"},
-                timeout=REQUEST_TIMEOUT,
-                allow_redirects=False,
             )
-            if response.status_code not in REDIRECT_STATUSES:
-                return response
-
-            location = response.headers.get("Location")
-            if not location:
-                return response
-            target = urljoin(current, location)
-            if not same_origin(HARDCOVER_API_URL, target):
-                raise ProviderError(
-                    self.name,
-                    f"Refused a redirect to {sanitize_for_log(target)}: it leaves "
-                    "the Hardcover origin the token is sent to.",
-                )
-            current = target
-
-        raise ProviderError(
-            self.name,
-            f"Hardcover redirected more than {MAX_SAME_ORIGIN_REDIRECTS} times.",
-        )
+        except RedirectRefused as refused:
+            raise ProviderError(self.name, str(refused)) from None

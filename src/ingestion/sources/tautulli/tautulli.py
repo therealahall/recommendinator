@@ -10,7 +10,6 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urljoin
 
 import requests
 
@@ -21,11 +20,9 @@ from src.ingestion.plugin_base import (
     SourcePlugin,
 )
 from src.ingestion.urls import (
-    MAX_SAME_ORIGIN_REDIRECTS,
-    REDIRECT_STATUSES,
-    REQUEST_TIMEOUT,
+    RedirectRefused,
     redirect_refusal,
-    same_origin,
+    request_within_origin,
     source_url_error,
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
@@ -441,36 +438,21 @@ class TautulliPlugin(SourcePlugin):
         query = {"apikey": api_key, "cmd": command, **params}
         endpoint = f"{base_url}/api/v2"
 
-        current = endpoint
-        for _ in range(MAX_SAME_ORIGIN_REDIRECTS):
-            try:
-                response = requests.get(
-                    current,
-                    params=query,
-                    timeout=REQUEST_TIMEOUT,
-                    verify=verify_ssl,
-                    allow_redirects=False,
-                )
-                location = response.headers.get("Location")
-                if response.status_code not in REDIRECT_STATUSES or not location:
-                    response.raise_for_status()
-                    return _result_data(self.name, response.json(), command)
-            except requests.RequestException as error:
-                raise SourceError(
-                    self.name,
-                    f"Tautulli request '{command}' failed: "
-                    f"{scrub_request_error(error)}",
-                ) from None
-
-            target = urljoin(current, location)
-            if not same_origin(endpoint, target):
-                raise SourceError(
-                    self.name, redirect_refusal(endpoint, target, self.display_name)
-                )
-            current = target
-
-        raise SourceError(
-            self.name,
-            f"Tautulli redirected {endpoint} more than "
-            f"{MAX_SAME_ORIGIN_REDIRECTS} times.",
-        )
+        try:
+            response = request_within_origin(
+                requests.get,
+                endpoint,
+                self.display_name,
+                redirect_refusal,
+                params=query,
+                verify=verify_ssl,
+            )
+            response.raise_for_status()
+            return _result_data(self.name, response.json(), command)
+        except requests.RequestException as error:
+            raise SourceError(
+                self.name,
+                f"Tautulli request '{command}' failed: {scrub_request_error(error)}",
+            ) from None
+        except RedirectRefused as refused:
+            raise SourceError(self.name, str(refused)) from None
