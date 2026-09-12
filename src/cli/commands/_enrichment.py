@@ -37,6 +37,21 @@ def _echo_errors(errors: list[str], *, err: bool = False) -> None:
         click.echo(f"    - {error}", err=err)
 
 
+def _installed_provider_or_abort(named: str) -> str | None:
+    """The names are the discovered providers, and a ``click.Choice`` listing
+    them ran the discovery scan on every CLI invocation, ``--help`` included.
+    "all" is the absence of a filter rather than a provider name.
+    """
+    provider = named.strip().lower()
+    if provider == "all":
+        return None
+
+    installed = sorted(get_enrichment_registry().get_all_providers())
+    if provider not in installed:
+        abort_with(f"Unknown provider '{named}'. Installed: {', '.join(installed)}.")
+    return provider
+
+
 def _finished_state(status: EnrichmentJobStatus) -> str:
     if status.cancelled:
         return "cancelled"
@@ -417,12 +432,6 @@ def enrichment_pin(
 @enrichment.command("reset")
 @click.option(
     "--provider",
-    # Discovered, never listed: a written-out list went stale twice as providers
-    # shipped. "all" is the absence of a filter rather than a provider name.
-    type=click.Choice(
-        [*sorted(get_enrichment_registry().get_all_providers()), "all"],
-        case_sensitive=False,
-    ),
     default="all",
     help="Reset items enriched by specific provider (default: all)",
 )
@@ -470,7 +479,7 @@ def enrichment_reset(
         ContentType.from_string(content_type_str) if content_type_str else None
     )
 
-    provider_filter = None if provider == "all" else provider
+    provider_filter = _installed_provider_or_abort(provider)
 
     if item_id is not None:
         if provider_filter or content_type_str:
