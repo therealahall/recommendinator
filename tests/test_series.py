@@ -11,13 +11,10 @@ from src.models.content import (
 from src.utils.series import (
     MAX_SEASONS,
     SeriesOrder,
-    _extract_series_from_title,
-    _roman_to_int,
     build_series_tracking,
     expand_tv_shows_to_seasons,
     extract_series_info,
     find_earliest_recommendable,
-    get_series_item_number,
     get_series_name,
     inject_seasons_watched_tracking,
     is_active_series_continuation,
@@ -116,13 +113,6 @@ def test_get_series_name():
         metadata={"series_name": "Breaking Bad", "season": 1},
     )
     assert get_series_name(item=item_with_metadata) == "Breaking Bad"
-
-
-def test_get_series_item_number():
-    assert get_series_item_number(title="Book (The Witcher, #4)") == 4
-    assert get_series_item_number(title="Standalone Book") is None
-    novella_number = get_series_item_number(title="Gods of Risk (The Expanse, #2.5)")
-    assert novella_number == 2.5
 
 
 def test_build_series_tracking():
@@ -507,58 +497,6 @@ class TestInjectSeasonsWatchedTracking:
         assert "The Book" not in result
 
 
-class TestRomanToInt:
-    def test_compound_values(self) -> None:
-        assert _roman_to_int("IV") == 4
-        assert _roman_to_int("IX") == 9
-        assert _roman_to_int("XII") == 12
-        assert _roman_to_int("XIV") == 14
-
-    def test_invalid_input(self) -> None:
-        assert _roman_to_int("") is None
-        assert _roman_to_int("ABC") is None
-        assert _roman_to_int("123") is None
-
-
-class TestTitleEmbeddedSeriesDetection:
-    """Bug reported: "Dungeon Siege 3" and "Final Fantasy XII" were not detected as
-    series entries because game sources don't populate series metadata and the
-    titles don't use parenthetical format."""
-
-    def test_arabic_numeral_dungeon_siege_3_regression(self) -> None:
-        result = extract_series_info(
-            "Dungeon Siege 3", content_type=ContentType.VIDEO_GAME
-        )
-        assert result is not None
-        assert result[0] == "Dungeon Siege"
-        assert result[1] == 3
-
-    def test_roman_numeral_final_fantasy_xii_regression(self) -> None:
-        result = extract_series_info(
-            "Final Fantasy XII", content_type=ContentType.VIDEO_GAME
-        )
-        assert result is not None
-        assert result[0] == "Final Fantasy"
-        assert result[1] == 12
-
-    def test_not_applied_to_books(self) -> None:
-        result = extract_series_info("Catch 22", content_type=ContentType.BOOK)
-        assert result is None
-
-    def test_parenthetical_takes_precedence(self) -> None:
-        result = extract_series_info(
-            "Mass Effect 3 (Mass Effect, #3)",
-            content_type=ContentType.VIDEO_GAME,
-        )
-        assert result is not None
-        assert result[0] == "Mass Effect"
-        assert result[1] == 3
-
-    def test_number_only_title_not_matched(self) -> None:
-        result = _extract_series_from_title("1942")
-        assert result is None
-
-
 class TestSeriesPositionMetadataRegression:
     def test_series_position_takes_priority_over_other_keys(self) -> None:
         metadata = {
@@ -588,11 +526,19 @@ class TestSeriesPositionMetadataRegression:
 
 
 class TestASeriesNameNoPositionAccompanies:
+    """A provider names a game's series far more often than it numbers one, and
+    IGDB can never number one at all.
+    """
+
     @staticmethod
-    def _game(title: str, position: float | None = None) -> ContentItem:
-        metadata: dict[str, object] = {"series_name": "Halo"}
-        if position is not None:
-            metadata["series_position"] = position
+    def _game(
+        title: str, year: int | None = None, series: str | None = "Left 4 Dead"
+    ) -> ContentItem:
+        metadata: dict[str, object] = {}
+        if series is not None:
+            metadata["series_name"] = series
+        if year is not None:
+            metadata["release_year"] = year
         return ContentItem(
             id=title,
             title=title,
@@ -601,21 +547,75 @@ class TestASeriesNameNoPositionAccompanies:
             metadata=metadata,
         )
 
-    def test_a_named_series_still_takes_the_position_its_title_states(self) -> None:
-        game = self._game("Halo 3")
-        assert SeriesOrder([game]).locate(game) == ("Halo", 3.0)
-
     def test_a_title_stating_no_number_keeps_the_series_it_names(self) -> None:
-        game = self._game("Halo Wars")
+        game = self._game("Halo Wars", series="Halo")
         assert SeriesOrder([game]).series_of(game) == "Halo"
 
-    def test_two_games_one_source_names_alike_are_one_series(self) -> None:
-        first = self._game("Halo", position=1)
-        second = self._game("Halo 2")
-        library = [second, first]
+    def test_the_name_helper_reads_a_name_no_position_accompanies(self) -> None:
+        assert get_series_name(self._game("Left 4 Dead 2")) == "Left 4 Dead"
 
+    def test_a_second_number_in_the_title_neither_renames_nor_places(self) -> None:
+        game = self._game("Left 4 Dead 2")
+        order = SeriesOrder([game])
+        assert order.series_of(game) == "Left 4 Dead"
+        assert order.locate(game) is None
+
+    def test_a_pair_nothing_numbers_is_placed_by_release_year(self) -> None:
+        first = self._game("Left 4 Dead", year=2008)
+        second = self._game("Left 4 Dead 2", year=2009)
+        library = [second, first]
+        order = SeriesOrder(library)
+
+        assert order.locate(first) == ("Left 4 Dead", 1.0)
+        assert order.locate(second) == ("Left 4 Dead", 2.0)
         assert should_recommend_item(first, {}, library) is True
         assert should_recommend_item(second, {}, library) is False
+
+    def test_a_numbered_title_no_source_names_has_no_series(self) -> None:
+        game = self._game("Mass Effect 2", series=None)
+        assert SeriesOrder([game]).series_of(game) is None
+
+
+class TestAMarkerNamingAnotherSeries:
+    """TMDB states a collection and never a position, so a split film's title was
+    the only thing numbering it — under a series called "Part"."""
+
+    @staticmethod
+    def _film(title: str, collection: str) -> ContentItem:
+        return ContentItem(
+            id=title,
+            title=title,
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"series_name": collection},
+        )
+
+    def test_a_collection_keeps_its_name_against_a_part_marker(self) -> None:
+        film = self._film("Deathly Hallows (Part 1)", "Harry Potter")
+        assert SeriesOrder([film]).series_of(film) == "Harry Potter"
+
+    def test_one_franchises_part_2_is_not_withheld_for_anothers_part_1(self) -> None:
+        hallows = self._film("Deathly Hallows (Part 2)", "Harry Potter")
+        mockingjay = self._film("Mockingjay (Part 1)", "The Hunger Games")
+
+        assert should_recommend_item(hallows, {}, [hallows, mockingjay]) is True
+
+
+class TestAMarkerNamingNoSeriesAtAll:
+    """The same pooling, for a source that states no collection: the word before
+    a marker's number is not a series name, so a film only "(Part 1)" numbers
+    belongs to no series rather than to one called "Part"."""
+
+    def test_a_part_marker_alone_names_no_series(self) -> None:
+        title = "Harry Potter and the Deathly Hallows (Part 1)"
+        assert extract_series_info(title) is None
+        assert get_series_name(title=title) is None
+
+    def test_a_marker_stating_the_series_still_places_the_book(self) -> None:
+        assert extract_series_info("Leviathan Wakes (The Expanse, #2)") == (
+            "The Expanse",
+            2,
+        )
 
 
 class TestFindEarliestRecommendable:
@@ -662,43 +662,6 @@ class TestFindEarliestRecommendable:
         ]
         result = find_earliest_recommendable("Final Fantasy", {}, unconsumed)
         assert result is None
-
-
-class TestTitleRegexPatternsRegression:
-    def test_ff_xii_zodiac_age_regression(self) -> None:
-        result = extract_series_info(
-            "FINAL FANTASY XII THE ZODIAC AGE",
-            content_type=ContentType.VIDEO_GAME,
-        )
-        assert result is not None
-        assert result[0] == "FINAL FANTASY"
-        assert result[1] == 12
-
-    def test_kingdom_hearts_iii_dlc_regression(self) -> None:
-        result = extract_series_info(
-            "KINGDOM HEARTS III + Re Mind (DLC)",
-            content_type=ContentType.VIDEO_GAME,
-        )
-        assert result is not None
-        assert result[0] == "KINGDOM HEARTS"
-        assert result[1] == 3
-
-    def test_ff_x_standalone_roman_numeral_regression(self) -> None:
-        result = extract_series_info(
-            "FINAL FANTASY X", content_type=ContentType.VIDEO_GAME
-        )
-        assert result is not None
-        assert result[0] == "FINAL FANTASY"
-        assert result[1] == 10
-
-    def test_lightning_returns_title_fallback_regression(self) -> None:
-        result = extract_series_info(
-            "LIGHTNING RETURNS: FINAL FANTASY XIII",
-            content_type=ContentType.VIDEO_GAME,
-        )
-        assert result is not None
-        assert result[0] == "LIGHTNING RETURNS: FINAL FANTASY"
-        assert result[1] == 13
 
 
 class TestSplitSeriesFromTitle:
