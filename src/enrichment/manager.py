@@ -794,13 +794,15 @@ class EnrichmentManager:
         series name to agree with, and only while an authored one would replace
         what is stored. Returns why it ended unanswered, or None when answered.
         """
-        if not SeriesAuthority.AUTHORED.replaces(
-            stored_series_authority(item.metadata)
-        ):
-            return None
-
+        settled: dict[str, Any] = {}
         unanswered: list[str] = []
         for provider in providers:
+            # Each round, not once: a name-only answer used to end the walk here
+            # and lose the position the next provider states.
+            if not SeriesAuthority.AUTHORED.replaces(
+                stored_series_authority(item.metadata)
+            ):
+                break
             if not states_a_series_ordinal(provider):
                 continue
             if provider.name in self._abandoned_providers:
@@ -828,16 +830,16 @@ class EnrichmentManager:
 
             if ordinal is None:
                 continue
-            settled = reconcile_series(item.metadata, ordinal.as_metadata())
-            if not settled:
+            fields = reconcile_series(item.metadata, ordinal.as_metadata())
+            if not fields:
                 continue
-            positioned = item.model_copy(
-                update={"metadata": {**item.metadata, **settled}}
-            )
-            self.storage_manager.save_enrichment_metadata(db_id, positioned)
-            return None
+            settled.update(fields)
+            item = item.model_copy(update={"metadata": {**item.metadata, **fields}})
 
-        return "; ".join(unanswered) or None
+        if not settled:
+            return "; ".join(unanswered) or None
+        self.storage_manager.save_enrichment_metadata(db_id, item)
+        return None
 
     def _settle_storage_failure(
         self, db_id: int, safe_title: str, error: Exception, *, committed: bool
