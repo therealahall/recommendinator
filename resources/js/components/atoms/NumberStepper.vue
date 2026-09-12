@@ -145,11 +145,15 @@ function onInput(event: Event) {
   color: var(--text-primary);
 }
 
-/* Both forms look the same: aria-disabled marks "at the bound" (still
-   focusable), native disabled marks "save in flight". */
-.stepper-btn:disabled,
+.stepper-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Its own fill, never a fade (base.css:853): aria-disabled marks "at the bound"
+   and stays focusable, so the glyph has to stay readable. */
 .stepper-btn[aria-disabled='true'] {
-  opacity: 0.3;
+  color: var(--text-muted);
   cursor: not-allowed;
 }
 
