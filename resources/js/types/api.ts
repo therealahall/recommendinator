@@ -434,7 +434,7 @@ export interface EnrichmentStartRequest {
 }
 
 export type SettingType = 'bool' | 'int' | 'float' | 'string' | 'list' | 'enum'
-export type SettingWidget = 'toggle' | 'number' | 'text' | 'tags' | 'select'
+export type SettingWidget = 'toggle' | 'number' | 'text' | 'tags' | 'ordered-tags' | 'select'
 
 export interface SettingValidation {
   min: number | null

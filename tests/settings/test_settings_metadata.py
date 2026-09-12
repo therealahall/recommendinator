@@ -3,6 +3,7 @@ import pytest
 from src.enrichment.provider_base import EnrichmentProvider
 from src.enrichment.registry import EnrichmentRegistry
 from src.settings.metadata import (
+    PROVIDER_ORDER_KEY,
     SettingMetadata,
     all_entries,
     default_config,
@@ -81,6 +82,20 @@ class TestEveryDiscoveredProviderIsConfigurable:
         # plaintext instead of the encrypted credentials store.
         entries = [get_entry(key) for key in secrets]
         assert [e.key for e in entries if e is not None and not e.sensitive] == []
+
+    def test_the_default_order_ranks_every_builtin_provider(self) -> None:
+        assert set(default_of(PROVIDER_ORDER_KEY)) == set(_builtin_providers())
+
+    def test_no_provider_calls_a_third_party_until_the_operator_enables_it(
+        self,
+    ) -> None:
+        enabled_out_of_the_box = [
+            name
+            for name in _builtin_providers()
+            if default_of(f"enrichment.providers.{name}.enabled") is not False
+        ]
+
+        assert enabled_out_of_the_box == []
 
 
 class TestOutOfScope:

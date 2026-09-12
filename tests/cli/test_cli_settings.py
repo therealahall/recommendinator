@@ -7,13 +7,15 @@ import pytest
 from click.testing import CliRunner
 
 from src.cli.commands._settings import RESTART_ADVISORY
-from src.settings.metadata import default_of
+from src.enrichment.registry import get_enrichment_registry
+from src.settings.metadata import PROVIDER_ORDER_KEY, default_of
 from src.storage.manager import StorageManager
 from tests.cli.conftest import _invoke_with_mocks
 
 _INT_KEY = "recommendations.default_count"
 _BOOL_KEY = "enrichment.enabled"
 _LIST_KEY = "web.allowed_origins"
+_ORDER_KEY = PROVIDER_ORDER_KEY
 _ADVANCED_KEY = "logging.file"
 _SECRET_KEY = "enrichment.providers.tmdb.api_key"
 
@@ -275,6 +277,30 @@ class TestSettingsSet:
 
         assert result.exit_code != 0
         assert "Error" in result.output
+
+
+class TestTheProviderOrderNeedsNoCommandOfItsOwn:
+    def test_the_generic_set_get_and_reset_drive_it(
+        self, cli_runner: CliRunner, storage: StorageManager
+    ) -> None:
+        reordered = sorted(get_enrichment_registry().get_all_providers(), reverse=True)
+
+        set_result = _invoke_with_mocks(
+            cli_runner, ["settings", "set", _ORDER_KEY, ", ".join(reordered)], storage
+        )
+        assert set_result.exit_code == 0
+        assert storage.settings.get(_ORDER_KEY) == reordered
+
+        get_result = _invoke_with_mocks(
+            cli_runner, ["settings", "get", _ORDER_KEY, "--format", "json"], storage
+        )
+        assert json.loads(get_result.output)["value"] == reordered
+
+        reset_result = _invoke_with_mocks(
+            cli_runner, ["settings", "reset", _ORDER_KEY], storage
+        )
+        assert reset_result.exit_code == 0
+        assert storage.settings.get(_ORDER_KEY) is None
 
 
 class TestSettingsReset:

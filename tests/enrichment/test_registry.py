@@ -30,6 +30,10 @@ _BLOCKED_GRACE_SECONDS = 0.5
 _BUILTIN_PROVIDER_NAMES = {"tmdb", "openlibrary", "rawg", "wikidata", "hardcover"}
 
 
+def _enabled_config(*names: str) -> dict[str, Any]:
+    return {"enrichment": {"providers": {n: {"enabled": True} for n in names}}}
+
+
 def _private_module_names() -> list[str]:
     return [
         name
@@ -126,6 +130,20 @@ class TestEnrichmentRegistry:
 
         assert len(enabled) == 1
         assert enabled[0].name == "mock_movie"
+
+    def test_an_unranked_provider_sorts_by_name_not_by_where_it_registered(
+        self,
+    ) -> None:
+        registry = EnrichmentRegistry.get_instance()
+        registry._discovered = True
+        registry.register(MockMovieProvider())
+        registry.register(MockBookProvider())
+
+        enabled = registry.get_enabled_providers(
+            _enabled_config("mock_movie", "mock_book")
+        )
+
+        assert [provider.name for provider in enabled] == ["mock_book", "mock_movie"]
 
 
 class TestConcurrentDiscoveryRegression:
