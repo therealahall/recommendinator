@@ -1,6 +1,27 @@
 # CHANGELOG
 
 
+## v0.61.0 (2026-09-12)
+
+### Bug Fixes
+
+- **series**: Take the series name a source stated, not one parsed from a title
+  ([`fe8623d`](https://github.com/therealahall/recommendinator/commit/fe8623d72bd929395a3b4074d8f68d2d1460ca52))
+
+### Features
+
+- **enrichment**: Let a wrong IGDB match be corrected
+  ([`e2791a6`](https://github.com/therealahall/recommendinator/commit/e2791a67c4db4652cd51e89610fa5f585d5218c4))
+
+### Refactoring
+
+- **ingestion,enrichment**: Walk redirects through the shared guard
+  ([`9b3defd`](https://github.com/therealahall/recommendinator/commit/9b3defd183aff83f05b4a762e4be60ead0a7de60))
+
+- **urls**: Keep one same-origin redirect walk instead of four
+  ([`456fc46`](https://github.com/therealahall/recommendinator/commit/456fc460a2225dcf6e8e1df66b9cdd4c527b0f44))
+
+
 ## v0.60.0 (2026-09-12)
 
 ### Bug Fixes
