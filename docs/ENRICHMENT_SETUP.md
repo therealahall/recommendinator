@@ -28,6 +28,7 @@ Enable them all for full coverage.
 | RAWG | Video games | Free | 5 requests/second |
 | Wikidata | All four types, series positions only | None | 1 item/second |
 | Hardcover | Books | Free, personal access token | 1 request/second |
+| IGDB | Video games | Free, Twitch application | 4 requests/second |
 
 **OpenLibrary** matches by ISBN when your source supplies one, otherwise by
 title and author search. It fills genres, description, page count, publisher and
@@ -62,12 +63,14 @@ series disagrees with the name already stored.
 
 **Hardcover** fills genres, description, cover, publish year and where in its series a book sits. It matches on an ISBN where your source supplies one, otherwise on title and author, and refuses a title that matches two books rather than guess. Books it refuses fall through to OpenLibrary, so enabling both is worthwhile. Create a free account at [hardcover.app](https://hardcover.app/) and copy the token from **Account > API**.
 
+**IGDB** fills genres, tags from its themes, the summary, a cover and the release year, and names the series a game belongs to — its collection where it has one, otherwise its franchise. It states no position, so a name is all it adds. It ships last, reaching the games RAWG missed. IGDB authenticates through Twitch: at [dev.twitch.tv/console/apps](https://dev.twitch.tv/console/apps) register an application with any name and OAuth redirect URL, then copy its client ID and generated secret.
+
 ### Which provider wins
 
 Providers are tried in the order `enrichment.provider_order` names, and the first one to match an item enriches it. Every installed provider must be named exactly once, so an order that misspells or omits one is refused.
 
 ```bash
-uv run python -m src.cli settings set enrichment.provider_order "openlibrary,hardcover,rawg,tmdb,wikidata"
+uv run python -m src.cli settings set enrichment.provider_order "openlibrary,hardcover,rawg,tmdb,wikidata,igdb"
 ```
 
 The Settings page offers the same list with a move up and move down button on each entry.
@@ -91,6 +94,10 @@ uv run python -m src.cli settings set enrichment.providers.wikidata.enabled true
 
 uv run python -m src.cli settings set enrichment.providers.hardcover.enabled true
 uv run python -m src.cli settings set-secret enrichment.providers.hardcover.api_key
+
+uv run python -m src.cli settings set enrichment.providers.igdb.enabled true
+uv run python -m src.cli settings set-secret enrichment.providers.igdb.client_id
+uv run python -m src.cli settings set-secret enrichment.providers.igdb.client_secret
 ```
 
 `set-secret` prompts with hidden input, or reads `RECOMMENDINATOR_SECRET_VALUE`,

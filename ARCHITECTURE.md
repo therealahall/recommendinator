@@ -320,6 +320,7 @@ it after a sync.
 | RAWG | Video games | none |
 | Wikidata | All four, no API key | `P179`, positioned by its `P1545` qualifier |
 | Hardcover | Books | `books.featured_book_series` |
+| IGDB | Video games | `collections`, else `franchise`, never a position |
 
 TMDB stores `series_name` in `extra_metadata`, and no position: its endpoint returns an unordered set, so any rank read off one is invented. RAWG stores neither — it states which games share a series without naming or ordering it, and a series nothing names cannot be shown, only grouped on, which merged any two series sharing a member.
 

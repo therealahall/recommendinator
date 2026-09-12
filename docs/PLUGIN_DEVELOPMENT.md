@@ -617,5 +617,6 @@ page or the `settings` CLI, with the api key going through `settings set-secret`
 Each lives at `src/ingestion/sources/<name>/<name>.py`. Enrichment providers:
 `tmdb` (movies and TV), `openlibrary` (books, no API key), `rawg` (video games),
 `wikidata` (every type, series only, no API key — the one provider
-implementing `fetch_series_ordinal` and no `enrich` at all) and `hardcover`
-(books) — under `src/enrichment/providers/<name>/<name>.py`.
+implementing `fetch_series_ordinal` and no `enrich` at all), `hardcover`
+(books) and `igdb` (video games, a Twitch app token minted per process) —
+under `src/enrichment/providers/<name>/<name>.py`.

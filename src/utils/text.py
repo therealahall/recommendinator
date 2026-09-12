@@ -40,7 +40,6 @@ _RULE_UNSAFE_RE = re.compile(rf'["{{}}{_CONTROL_RANGE}{_SURROGATE_RANGE}]')
 
 _LONE_SURROGATE_RE = re.compile(f"[{_SURROGATE_RANGE}]")
 
-# Edition suffixes: "Game - Deluxe Edition", "Game: GOTY Edition"
 EDITION_PATTERN = re.compile(
     r"\s*[-:]\s*("
     r"Deluxe Edition|"
@@ -58,7 +57,6 @@ EDITION_PATTERN = re.compile(
     r")\s*$",
     re.IGNORECASE,
 )
-# Edition in parentheses: "(Deluxe Edition)", "(GOTY)", "(Legendary)"
 EDITION_PAREN_PATTERN = re.compile(
     r"\s*\(("
     r"Deluxe|"
@@ -77,7 +75,6 @@ EDITION_PAREN_PATTERN = re.compile(
     r")(?:\s+Edition)?\)\s*$",
     re.IGNORECASE,
 )
-# DLC suffixes: "Game + DLC Name (DLC)"
 DLC_SUFFIX_PATTERN = re.compile(r"\s*\+\s*.+?\s*\(DLC\)\s*$", re.IGNORECASE)
 TRADEMARK_PATTERN = re.compile(r"[™®©]")
 
