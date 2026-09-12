@@ -102,6 +102,50 @@ class TestRAWGProviderEnrichment:
         assert "playtime_hours" not in result.extra_metadata
         assert SERIES_NAME_KEY not in result.extra_metadata
 
+    def test_a_store_title_matches_the_catalogues_subtitled_name_for_it(
+        self,
+        provider: RAWGProvider,
+        config: dict[str, Any],
+    ) -> None:
+        shelved = ContentItem(
+            id="game2",
+            title="Ultima™ VII",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"release_year": 1992},
+        )
+        mock_search = {
+            "results": [
+                {
+                    "id": 4242,
+                    "name": "Ultima VII: The Black Gate",
+                    "released": "1992-04-16",
+                }
+            ]
+        }
+        mock_game = {
+            "id": 4242,
+            "name": "Ultima VII: The Black Gate",
+            "genres": [{"name": "RPG"}],
+            "tags": [],
+        }
+
+        with patch("src.enrichment.providers.rawg.rawg.requests.get") as mock_get:
+            mock_get.side_effect = [
+                MagicMock(
+                    spec=requests.Response, status_code=200, json=lambda: mock_search
+                ),
+                MagicMock(
+                    spec=requests.Response, status_code=200, json=lambda: mock_game
+                ),
+            ]
+
+            result = provider.enrich(shelved, config)
+
+        assert result is not None
+        assert result.genres == ["RPG"]
+        assert result.match_quality != "not_found"
+
     def test_enrich_game_with_no_playtime_writes_no_average(
         self,
         provider: RAWGProvider,
