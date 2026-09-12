@@ -30,16 +30,15 @@ Enable them all for full coverage.
 | Hardcover | Books | Free, personal access token | 1 request/second |
 | IGDB | Video games | Free, Twitch application | 4 requests/second |
 
-**OpenLibrary** matches by ISBN when your source supplies one, otherwise by
-title and author search. It fills genres, description, page count, publisher and
+**OpenLibrary** matches by ISBN where your source supplies one, otherwise by
+title and author. It fills genres, description, page count, publisher and
 publish year. No account needed.
 
-**TMDB** fills genres, tags from keywords, the overview, runtime for movies or
-season and episode counts for TV, ratings, release dates, studio or network, up
-to three directors or creators, and the collection a film belongs to. Create
-a free account at [themoviedb.org](https://www.themoviedb.org/), go to
-**Settings > API**, request a Developer key, and copy the **API Key (v3 auth)**.
-Two optional fields:
+**TMDB** fills genres, tags from keywords, the overview, runtime or season and
+episode counts, ratings, release dates, studio or network, up to three directors
+or creators, and the collection a film belongs to. Create a free account at
+[themoviedb.org](https://www.themoviedb.org/), go to **Settings > API**, request
+a Developer key, and copy the **API Key (v3 auth)**. Two optional fields:
 
 ```bash
 # ISO 639-1, optionally with a region (default en-US)
@@ -50,20 +49,17 @@ uv run python -m src.cli settings set enrichment.providers.tmdb.include_keywords
 
 **RAWG** fills genres, up to 20 tags, description, developer and publisher,
 platforms, RAWG and Metacritic scores, ESRB rating and playtime estimates. It
-says nothing about series — Wikidata and Hardcover state those. It strips
-edition suffixes, trademark symbols and DLC indicators from a title before
-searching, so it copes with messy names.
-Get a key from [rawg.io/apidocs](https://rawg.io/apidocs).
+says nothing about series — Wikidata, Hardcover and IGDB state those. Get a key
+from [rawg.io/apidocs](https://rawg.io/apidocs).
 
 **Wikidata** fills nothing but the series a work belongs to, and its position
 where the statement carries one. It never matches an item, so the provider
 credited with a book or a game is still OpenLibrary or RAWG. A work it cannot
-identify beyond doubt, by type and release year, is left alone, as is one whose
-series disagrees with the name already stored.
+identify beyond doubt, by type and release year, is left alone.
 
 **Hardcover** fills genres, description, cover, publish year and where in its series a book sits. It matches on an ISBN where your source supplies one, otherwise on title and author, and refuses a title that matches two books rather than guess. Books it refuses fall through to OpenLibrary, so enabling both is worthwhile. Create a free account at [hardcover.app](https://hardcover.app/) and copy the token from **Account > API**.
 
-**IGDB** fills genres, tags from its themes, the summary, a cover and the release year, and names the series a game belongs to — its collection where it has one, otherwise its franchise. It states no position, so a name is all it adds. It ships last, reaching the games RAWG missed. IGDB authenticates through Twitch: at [dev.twitch.tv/console/apps](https://dev.twitch.tv/console/apps) register an application with any name and OAuth redirect URL, then copy its client ID and generated secret.
+**IGDB** fills genres, tags from its themes, the summary, a cover and the release year, and names a game's series — its collection, else its franchise, never a position. It ships last, reaching the games RAWG missed. Register an application at [dev.twitch.tv/console/apps](https://dev.twitch.tv/console/apps), then copy its client ID and secret.
 
 ### Which provider wins
 

@@ -135,33 +135,29 @@ and `logging`.
 There is no file layer. `load_config` copies exactly `storage.database_path`,
 `web.host`, `web.port`, `web.debug` and `security.allowed_source_roots` out of
 `config.yaml` onto the const defaults, so a global setting written in the file is
-dropped rather than layered — the file and the Settings page cannot disagree.
+dropped rather than layered — file and Settings page cannot disagree.
 
 `migrate_config_settings` assembles this on every boot and hot-reload, replacing
 `config[section]` in place. **Nothing is written to the database here**, so a
-fresh install runs on an empty `settings` table.
-
-`storage` is out of scope because it bootstraps the database itself.
+fresh install runs on an empty `settings` table. `storage` is out of scope: it
+bootstraps the database itself.
 
 **Secrets are never plaintext.** Every `sensitive` registry leaf lives in
 `credentials` under a reserved `settings:` `source_id`
-(`src/storage/global_secrets.py`), never in `config.yaml` and never in the
-`settings` table. Enrichment reads them back at runtime. The Settings page and
-`settings` CLI expose them write-only.
+(`src/storage/global_secrets.py`), never in `config.yaml` or the `settings`
+table. Enrichment reads them at runtime; the Settings page and `settings` CLI
+expose them write-only.
 
 **One-time migrations.** `create_schema` (`src/storage/schema.py`) runs on every
-database open. The settings and content steps are guarded by `PRAGMA
-user_version`: it reads the stored version once, runs each step the database is
-below, and stamps `_SCHEMA_VERSION` at the end, inside the same transaction. A
-database with no tables yet reports as already current.
+database open, guarded by `PRAGMA user_version`: it reads the stored version,
+runs each step the database is below, and stamps `_SCHEMA_VERSION`, all in one
+transaction. A database with no tables yet reports as already current.
 
 Versions 1, 2 and 6 prune the `settings` rows the app can no longer reach.
-
 Version 3 is `_repair_legacy_content_rows`: an approximate SQL
-`normalized_title` backfill and the stranded detail-shape repair.
-
-No step merges or unmerges rows: an upgraded library rewrites its keys and
-leaves the merge door to decide the rest.
+`normalized_title` backfill and the stranded detail-shape repair. No step merges
+or unmerges rows — an upgraded library rewrites its keys and leaves the rest to
+the merge door.
 
 `src/storage/schema.py` says which versions guard a step and which only record
 a shape.
@@ -307,11 +303,10 @@ records reads its result.
 
 ### 4. Enrichment (`src/enrichment/`)
 
-Providers subclass
-`EnrichmentProvider` and are discovered by name from `src/enrichment/providers/`
-and from `private/plugins/`, each with its own token-bucket rate limiter. A
-background worker runs them in configurable batches, and an optional hook fires
-it after a sync.
+Providers subclass `EnrichmentProvider` and are discovered by name from
+`src/enrichment/providers/` and `private/plugins/`, each with its own
+token-bucket rate limiter. A background worker runs them in batches, optionally
+fired after a sync.
 
 | Provider | Content | Series source |
 |----------|---------|---------------|
@@ -322,9 +317,9 @@ it after a sync.
 | Hardcover | Books | `books.featured_book_series` |
 | IGDB | Video games | `collections`, else `franchise`, never a position |
 
-TMDB stores `series_name` in `extra_metadata`, and no position: its endpoint returns an unordered set, so any rank read off one is invented. RAWG stores neither — it states which games share a series without naming or ordering it, and a series nothing names cannot be shown, only grouped on, which merged any two series sharing a member.
+TMDB stores `series_name` and no position: its endpoint returns an unordered set, so any rank read off one is invented. RAWG stores neither — it states which games share a series without naming it, and an unnamed series can only be grouped on, which merged any two sharing a member.
 
-Wikidata and Hardcover state a position instead, at `authored` authority. Wikidata implements `fetch_series_ordinal` alone, never settling an item as matched. Hardcover's ordinal rides its match.
+Wikidata and Hardcover state a position, at `authored` authority; IGDB a name alone. Wikidata implements `fetch_series_ordinal` alone, never settling a match. Hardcover's and IGDB's ordinals ride theirs.
 
 Rules:
 
