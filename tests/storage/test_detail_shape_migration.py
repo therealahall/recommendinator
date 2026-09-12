@@ -14,6 +14,7 @@ from src.storage.sqlite_db import SQLiteDB
 from src.utils.export import export_items_csv
 from src.utils.item_serialization import item_to_dict
 from src.utils.series import expand_tv_shows_to_seasons
+from src.utils.sorting import build_search_text
 
 _FLAGS_WINDOWS_AND_LINUX = json.dumps([{"windows": True, "mac": False, "linux": True}])
 _FLAGS_NOTHING_SUPPORTED = json.dumps(
@@ -23,6 +24,7 @@ _FLAGS_NOTHING_SUPPORTED = json.dumps(
 _STAMPED_BY_AN_EARLIER_BUILD = 15
 _BEFORE_THE_ORDINAL_LADDER = 21
 _BEFORE_THE_SERIES_ALIASES_FOLDED = 22
+_BEFORE_THE_RETIRED_KEYS_WENT = 24
 
 
 def _needs_enrichment(db: SQLiteDB, db_id: int) -> int:
@@ -626,7 +628,7 @@ class TestGuessedSeriesPositionsMigration:
                     title="The Witcher III",
                     content_type=ContentType.VIDEO_GAME,
                     status=ConsumptionStatus.UNREAD,
-                    metadata={"franchise": "The Witcher", "series_position": 3},
+                    metadata={"series_name": "The Witcher", "series_position": 3},
                 )
             ),
             "counted_movie": db.save_content_item(
@@ -725,6 +727,133 @@ class TestGuessedSeriesPositionsMigration:
         assert _needs_enrichment(db, seeded["standalone_movie"]) == 0
 
 
+class TestRetiredSeriesKeysLeaveAStoredBlob:
+    """A library enriched before RAWG stopped writing them read 1941/1942/1943
+    as a series called "194", and no merge could ever overwrite it.
+    """
+
+    def _upgraded(self, tmp_path: Path) -> tuple[SQLiteDB, dict[str, int]]:
+        db_path = tmp_path / "test.db"
+        db = SQLiteDB(db_path)
+        seeded = {
+            "named": db.save_content_item(
+                ContentItem(
+                    id="rawg:41",
+                    title="1942",
+                    content_type=ContentType.VIDEO_GAME,
+                    status=ConsumptionStatus.UNREAD,
+                    metadata={"franchise": "194", "series_group": "rawg:40"},
+                )
+            ),
+            "grouped": db.save_content_item(
+                ContentItem(
+                    id="rawg:42",
+                    title="1943",
+                    content_type=ContentType.VIDEO_GAME,
+                    status=ConsumptionStatus.UNREAD,
+                    metadata={"series_group": "rawg:40"},
+                )
+            ),
+            "pinned": db.save_content_item(
+                ContentItem(
+                    id="rawg:43",
+                    title="1944",
+                    content_type=ContentType.VIDEO_GAME,
+                    status=ConsumptionStatus.UNREAD,
+                    metadata={
+                        "franchise": "194",
+                        "enrichment_ids": {"rawg": "43"},
+                        "average_playtime_hours": 4,
+                    },
+                )
+            ),
+            "still_named": db.save_content_item(
+                ContentItem(
+                    id="rawg:44",
+                    title="Counter-Strike",
+                    content_type=ContentType.VIDEO_GAME,
+                    status=ConsumptionStatus.UNREAD,
+                    metadata={
+                        "franchise": "Half-Life",
+                        "series_name": "Counter-Strike",
+                    },
+                )
+            ),
+        }
+        with db.connection() as conn:
+            for db_id in seeded.values():
+                conn.execute(
+                    "INSERT INTO enrichment_status"
+                    " (content_item_id, enrichment_provider, enrichment_quality,"
+                    " needs_enrichment) VALUES (?, 'rawg', 'high', 0)",
+                    (db_id,),
+                )
+            # The search text the retired key's own build derived and stored.
+            conn.execute(
+                "UPDATE content_items SET search_text = ? WHERE id = ?",
+                (
+                    build_search_text("Counter-Strike", None, "Half-Life"),
+                    seeded["still_named"],
+                ),
+            )
+            conn.execute(f"PRAGMA user_version = {_BEFORE_THE_RETIRED_KEYS_WENT}")
+            conn.commit()
+        return SQLiteDB(db_path), seeded
+
+    def test_a_truncated_name_stops_naming_a_series_and_is_queued_for_a_re_fetch(
+        self, tmp_path: Path
+    ) -> None:
+        db, seeded = self._upgraded(tmp_path)
+
+        named = db.get_content_item(seeded["named"])
+        assert named is not None
+        assert "franchise" not in named.metadata
+        assert item_to_dict(named)["series"] is None
+        assert _needs_enrichment(db, seeded["named"]) == 1
+
+    def test_the_group_key_leaves_without_queueing_a_re_fetch(
+        self, tmp_path: Path
+    ) -> None:
+        db, seeded = self._upgraded(tmp_path)
+
+        grouped = db.get_content_item(seeded["grouped"])
+        assert grouped is not None
+        assert "series_group" not in grouped.metadata
+        assert _needs_enrichment(db, seeded["grouped"]) == 0
+
+    def test_an_item_keeping_a_stated_name_is_not_queued_for_a_re_fetch(
+        self, tmp_path: Path
+    ) -> None:
+        db, seeded = self._upgraded(tmp_path)
+
+        still_named = db.get_content_item(seeded["still_named"])
+        assert still_named is not None
+        assert "franchise" not in still_named.metadata
+        assert still_named.metadata["series_name"] == "Counter-Strike"
+        assert _needs_enrichment(db, seeded["still_named"]) == 0
+
+    def test_a_retired_name_stops_answering_a_search_for_it(
+        self, tmp_path: Path
+    ) -> None:
+        db, _seeded = self._upgraded(tmp_path)
+
+        assert db.get_content_items(search="Half-Life") == []
+        assert [
+            item.title for item in db.get_content_items(search="Counter-Strike")
+        ] == ["Counter-Strike"]
+
+    def test_a_pin_beside_a_retired_key_survives_the_rewrite(
+        self, tmp_path: Path
+    ) -> None:
+        db, seeded = self._upgraded(tmp_path)
+
+        pinned = db.get_content_item(seeded["pinned"])
+        assert pinned is not None
+        assert "franchise" not in pinned.metadata
+        assert pinned.metadata["enrichment_ids"] == {"rawg": "43"}
+        assert pinned.metadata["average_playtime_hours"] == 4
+
+
 class TestSeriesAliasesFoldIntoOnePair:
     """A refused ordinal could be read back off the alias key beside it."""
 
@@ -794,14 +923,9 @@ class TestSeriesAliasesFoldIntoOnePair:
         }
 
     def test_a_provider_owned_name_is_left_where_it_was(self, tmp_path: Path) -> None:
-        folded = self._upgraded(
-            tmp_path, {"franchise": "The Witcher", "series_title": "The Witcher Saga"}
-        )
+        folded = self._upgraded(tmp_path, {"series_title": "The Witcher Saga"})
 
-        assert folded == {
-            "franchise": "The Witcher",
-            "series_title": "The Witcher Saga",
-        }
+        assert folded == {"series_title": "The Witcher Saga"}
 
 
 class TestOnlyTheDeclaredShapesAreRepaired:

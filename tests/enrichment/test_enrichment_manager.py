@@ -243,7 +243,9 @@ def queued_ids(storage_manager: StorageManager) -> set[int]:
 
 
 def manager_over(
-    storage_manager: StorageManager, *providers: EnrichmentProvider
+    storage_manager: StorageManager,
+    *providers: EnrichmentProvider,
+    order: list[str] | None = None,
 ) -> EnrichmentManager:
     registry = EnrichmentRegistry()
     registry._discovered = True
@@ -251,11 +253,10 @@ def manager_over(
     for provider in providers:
         registry.register(provider)
         enabled[provider.name] = {"enabled": True}
-    return EnrichmentManager(
-        storage_manager,
-        {"enrichment": {"enabled": True, "providers": enabled}},
-        registry,
-    )
+    enrichment: dict[str, Any] = {"enabled": True, "providers": enabled}
+    if order is not None:
+        enrichment["provider_order"] = order
+    return EnrichmentManager(storage_manager, {"enrichment": enrichment}, registry)
 
 
 def enrichment_buckets(storage_manager: StorageManager) -> dict[str, int]:
@@ -308,13 +309,6 @@ class TestMergeEnrichment:
         setattr(result, field, ["Science Fiction"])
 
         assert merge_enrichment({field: stored}, result)[field] == expected
-
-    def test_re_enriching_replaces_a_franchise_stored_from_a_worse_guess(self) -> None:
-        better = EnrichmentResult(extra_metadata={"franchise": "Donkey Kong"})
-
-        assert merge_enrichment({"franchise": "Donkey"}, better) == {
-            "franchise": "Donkey Kong"
-        }
 
     def test_a_series_key_ingestion_also_writes_is_never_replaced(self) -> None:
         stored = {"series_name": "Alien", "series_position": 1}
@@ -1018,6 +1012,7 @@ class TestTransientProviderFailureIsRetryable:
         config: dict[str, Any],
     ) -> None:
         db_id = save_movie(storage_manager)
+        config["enrichment"]["provider_order"] = ["raw_request", "mock"]
         registry.register(
             RawRequestErrorProvider(requests.ConnectionError("network is unreachable"))
         )
@@ -1656,6 +1651,11 @@ class TestManualEditEnrichmentProtectionRegression:
         assert auto.enriched is True
 
 
+class SearchingProvider(MockProvider):
+    def search(self, item: ContentItem, config: dict[str, Any]) -> list[Candidate]:
+        return [Candidate(record_id="1", title=self.name)]
+
+
 class TestPinnedProviderRecord:
     @pytest.fixture
     def storage_manager(self, tmp_path: Path) -> StorageManager:
@@ -1846,6 +1846,22 @@ class TestPinnedProviderRecord:
 
         assert found == [("other", offered[0])]
 
+    @pytest.mark.parametrize("first", ["alpha", "zulu"])
+    def test_the_picker_offers_each_provider_in_the_ranked_order(
+        self, storage_manager: StorageManager, first: str
+    ) -> None:
+        second = "zulu" if first == "alpha" else "alpha"
+        manager = manager_over(
+            storage_manager,
+            SearchingProvider(name="zulu"),
+            SearchingProvider(name="alpha"),
+            order=[first, second],
+        )
+
+        offered = manager.candidates(self._movie())
+
+        assert [name for name, _candidate in offered] == [first, second]
+
     @pytest.mark.parametrize(
         ("provider_name", "record_id"),
         [("themoviedb", "603"), ("tmdb", "tt0468569")],
@@ -1977,6 +1993,29 @@ class OrdinalOnlyProvider(EnrichmentProvider):
     ) -> SeriesOrdinal | None:
         self.ordinal_calls.append(item)
         return SeriesOrdinal(position=3.0, series_name="The Matrix")
+
+
+class TestTwoProvidersThatBothMatch:
+    @pytest.mark.parametrize("first", ["alpha", "zulu"])
+    def test_the_one_ranked_first_enriches_the_item(
+        self, tmp_path: Path, first: str
+    ) -> None:
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        db_id = save_movie(storage_manager)
+        second = "zulu" if first == "alpha" else "alpha"
+        manager = manager_over(
+            storage_manager,
+            MockProvider(name="zulu"),
+            MockProvider(name="alpha"),
+            order=[first, second],
+        )
+
+        manager.start_enrichment(content_type=ContentType.MOVIE)
+        assert manager._wait_for_completion()
+
+        status = storage_manager.enrichment.status(db_id)
+        assert status is not None
+        assert status["enrichment_provider"] == first
 
 
 class TestTheOrdinalPass:
@@ -2176,6 +2215,33 @@ class TestAnOrdinalIsRefusedWhereNoReaderCouldReadItBack:
     def test_a_position_naming_no_series_cannot_be_constructed(self) -> None:
         with pytest.raises(ValueError, match="must name the series"):
             SeriesOrdinal(position=3.0, series_name="  ")
+
+
+class UnpositionedSeriesProvider(OrdinalOnlyProvider):
+    """Wikidata states the series a work is part of and counts no ordinal."""
+
+    def fetch_series_ordinal(
+        self, item: ContentItem, config: dict[str, Any]
+    ) -> SeriesOrdinal | None:
+        self.ordinal_calls.append(item)
+        return SeriesOrdinal(position=None, series_name="The Matrix")
+
+
+class TestASeriesStatedWithoutAPosition:
+    def test_the_series_name_lands_and_no_position_is_invented(
+        self, tmp_path: Path
+    ) -> None:
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        db_id = save_movie(storage_manager)
+        manager = manager_over(storage_manager, UnpositionedSeriesProvider())
+
+        manager.start_enrichment(content_type=ContentType.MOVIE)
+        assert manager._wait_for_completion()
+
+        item = storage_manager.get_content_item(db_id)
+        assert item.metadata["series_name"] == "The Matrix"
+        assert "series_position" not in item.metadata
+        assert "series_position_authority" not in item.metadata
 
 
 class UnreliableOrdinalProvider(OrdinalOnlyProvider):

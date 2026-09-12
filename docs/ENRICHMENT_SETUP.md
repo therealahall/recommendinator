@@ -48,19 +48,29 @@ uv run python -m src.cli settings set enrichment.providers.tmdb.include_keywords
 ```
 
 **RAWG** fills genres, up to 20 tags, description, developer and publisher,
-platforms, RAWG and Metacritic scores, ESRB rating, playtime estimates, and
-the franchise a game belongs to. It strips edition suffixes, trademark symbols
-and DLC indicators from a title before searching, so it copes with messy names.
+platforms, RAWG and Metacritic scores, ESRB rating and playtime estimates. It
+says nothing about series — Wikidata and Hardcover state those. It strips
+edition suffixes, trademark symbols and DLC indicators from a title before
+searching, so it copes with messy names.
 Get a key from [rawg.io/apidocs](https://rawg.io/apidocs).
 
-**Wikidata** fills nothing but the series position, from the ordinal a work's
-own series statement carries. It never matches an item, so the provider
-credited with a book or a game is still OpenLibrary or RAWG. A work Wikidata
-cannot identify beyond doubt, by type and release year, is left unpositioned. So
-is one whose series Wikidata names differently from the series already stored —
-a film numbered within a trilogy is not numbered within the wider franchise.
+**Wikidata** fills nothing but the series a work belongs to, and its position
+where the statement carries one. It never matches an item, so the provider
+credited with a book or a game is still OpenLibrary or RAWG. A work it cannot
+identify beyond doubt, by type and release year, is left alone, as is one whose
+series disagrees with the name already stored.
 
 **Hardcover** fills genres, description, cover, publish year and where in its series a book sits. It matches on an ISBN where your source supplies one, otherwise on title and author, and refuses a title that matches two books rather than guess. Books it refuses fall through to OpenLibrary, so enabling both is worthwhile. Create a free account at [hardcover.app](https://hardcover.app/) and copy the token from **Account > API**.
+
+### Which provider wins
+
+Providers are tried in the order `enrichment.provider_order` names, and the first one to match an item enriches it. Every installed provider must be named exactly once, so an order that misspells or omits one is refused.
+
+```bash
+uv run python -m src.cli settings set enrichment.provider_order "openlibrary,hardcover,rawg,tmdb,wikidata"
+```
+
+The Settings page offers the same list with a move up and move down button on each entry.
 
 ## Full setup
 

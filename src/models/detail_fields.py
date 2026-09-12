@@ -452,11 +452,6 @@ RELEASE_YEAR_FIELDS: dict[str, DetailField] = {
 #: permanent, which is what a pin exists to correct.
 PIN_KEY = "enrichment_ids"
 
-#: A provider replaces these rather than filling them. Only a key with a single
-#: writer qualifies; the series fields have several, so ``reconcile_series``
-#: decides those by authority instead.
-PROVIDER_OWNED_METADATA_KEYS = frozenset({"franchise"})
-
 
 def _assert_select_aliases_are_unique() -> None:
     """The joined read hands every detail column to one ``sqlite3.Row``, which

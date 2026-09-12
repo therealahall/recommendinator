@@ -18,8 +18,6 @@ _REQUESTS = "src.enrichment.providers.wikidata.wikidata.requests.get"
 
 _FINAL_FANTASY = "Q99416119"
 _DUNE_NOVELS = "Q1493024"
-_STAR_WARS = "Q462"
-_ORIGINAL_TRILOGY = "Q1361932"
 
 _VIDEO_GAME = "Q7889"
 _VIDEO_GAME_REMAKE = "Q4393107"
@@ -39,15 +37,14 @@ def _claim(
     return claim
 
 
+def _ordinal_qualifier(value: dict[str, Any]) -> dict[str, Any]:
+    return {"property": {"id": "P1545", "data_type": "string"}, "value": value}
+
+
 def _series_claim(series: str, ordinal: str | None = None) -> dict[str, Any]:
     qualifiers: list[dict[str, Any]] = []
     if ordinal is not None:
-        qualifiers.append(
-            {
-                "property": {"id": "P1545", "data_type": "string"},
-                "value": {"type": "value", "content": ordinal},
-            }
-        )
+        qualifiers.append(_ordinal_qualifier({"type": "value", "content": ordinal}))
     return _claim(series, qualifiers)
 
 
@@ -169,41 +166,107 @@ class TestWikidataSeriesOrdinal:
 
         assert ordinal is None
 
-    def test_a_series_stating_no_ordinal_leaves_the_position_unwritten(
+    def test_a_series_stating_no_ordinal_still_names_the_series(
         self, provider: WikidataProvider
     ) -> None:
         with patch(_REQUESTS) as mock_get:
             mock_get.side_effect = [
+                _response(_search({"id": "Q279744", "label": "Half-Life"})),
+                _response(_statements(_VIDEO_GAME, year=1998, series="Q1")),
+                _response("Half-Life"),
+            ]
+            ordinal = provider.fetch_series_ordinal(_item("Half-Life", year=1998), {})
+
+        assert ordinal == SeriesOrdinal(position=None, series_name="Half-Life")
+
+    @pytest.mark.parametrize(
+        ("title", "content_type", "year", "instance_of", "series", "narrowest"),
+        [
+            (
+                "Mega Man X2",
+                ContentType.VIDEO_GAME,
+                1994,
+                _VIDEO_GAME,
+                [("Mega Man", None), ("Mega Man X", "2")],
+                "Mega Man X",
+            ),
+            (
+                "The Empire Strikes Back",
+                ContentType.MOVIE,
+                1980,
+                _FILM,
+                [("Star Wars", "5"), ("Star Wars: Original Trilogy", "2")],
+                "Star Wars: Original Trilogy",
+            ),
+        ],
+        ids=["named_by_the_title", "named_as_a_sub_series"],
+    )
+    def test_a_work_in_two_series_takes_the_narrower_one_and_its_position(
+        self,
+        provider: WikidataProvider,
+        title: str,
+        content_type: ContentType,
+        year: int,
+        instance_of: str,
+        series: list[tuple[str, str | None]],
+        narrowest: str,
+    ) -> None:
+        statements = _statements(instance_of, year=year)
+        statements["P179"] = [
+            _series_claim(f"Q{index}", ordinal)
+            for index, (_name, ordinal) in enumerate(series, start=1)
+        ]
+
+        with patch(_REQUESTS) as mock_get:
+            mock_get.side_effect = [
+                _response(_search({"id": "Q9", "label": title})),
+                _response(statements),
+                *(_response(name) for name, _ordinal in series),
+            ]
+            ordinal = provider.fetch_series_ordinal(
+                _item(title, content_type, year=year), {}
+            )
+
+        assert ordinal == SeriesOrdinal(position=2.0, series_name=narrowest)
+
+    def test_one_series_stating_two_ordinals_keeps_the_name_and_neither_number(
+        self, provider: WikidataProvider
+    ) -> None:
+        statements = _statements(_VIDEO_GAME, year=1999)
+        statements["P179"] = [
+            _series_claim(_FINAL_FANTASY, "2"),
+            _series_claim(_FINAL_FANTASY, "5"),
+        ]
+
+        with patch(_REQUESTS) as mock_get:
+            mock_get.side_effect = [
                 _response(_search({"id": "Q245006", "label": "Final Fantasy VIII"})),
-                _response(_statements(_VIDEO_GAME, year=1999, series=_FINAL_FANTASY)),
+                _response(statements),
+                _response("Final Fantasy"),
             ]
             ordinal = provider.fetch_series_ordinal(
                 _item("Final Fantasy VIII", year=1999), {}
             )
 
-        assert ordinal is None
+        assert ordinal == SeriesOrdinal(position=None, series_name="Final Fantasy")
 
-    @pytest.mark.parametrize("franchise_ordinal", ["2", "5"])
-    def test_a_work_positioned_in_two_series_states_neither_position(
-        self, provider: WikidataProvider, franchise_ordinal: str
+    def test_an_entity_the_match_gate_rejects_names_no_series(
+        self, provider: WikidataProvider
     ) -> None:
-        statements = _statements(
-            _FILM, year=1980, series=_ORIGINAL_TRILOGY, ordinal="2"
-        )
-        statements["P179"].append(_series_claim(_STAR_WARS, franchise_ordinal))
-
+        """Neverwinter Nights: Enhanced Edition searches up the 1991 AOL game,
+        whose P179 would otherwise hand a 2018 re-release the Gold Box series.
+        """
         with patch(_REQUESTS) as mock_get:
             mock_get.side_effect = [
-                _response(
-                    _search({"id": "Q17738", "label": "The Empire Strikes Back"})
-                ),
-                _response(statements),
+                _response(_search({"id": "Q2", "label": "Neverwinter Nights"})),
+                _response(_statements(_VIDEO_GAME, year=1991, series="Q3")),
             ]
             ordinal = provider.fetch_series_ordinal(
-                _item("The Empire Strikes Back", ContentType.MOVIE, year=1980), {}
+                _item("Neverwinter Nights: Enhanced Edition", year=2018), {}
             )
 
         assert ordinal is None
+        assert mock_get.call_count == 1
 
     def test_a_work_belonging_to_no_series_writes_nothing(
         self, provider: WikidataProvider
@@ -356,24 +419,33 @@ class TestWikidataSeriesOrdinal:
         assert ordinal is not None
         assert ordinal.position == 0.0
 
-    @pytest.mark.parametrize("stated", ["1001", "inf"])
-    def test_a_position_no_reader_could_read_back_is_never_stated(
-        self, provider: WikidataProvider, stated: str
+    @pytest.mark.parametrize(
+        "stated",
+        [
+            {"type": "value", "content": "1001"},
+            {"type": "value", "content": "inf"},
+            {"type": "somevalue"},
+        ],
+        ids=["out_of_range", "infinite", "blank_node"],
+    )
+    def test_a_position_no_reader_could_read_back_leaves_the_series_unpositioned(
+        self, provider: WikidataProvider, stated: dict[str, Any]
     ) -> None:
+        """The blank node is Punch-Out!!'s, which states P1545 as ``somevalue``."""
+        statements = _statements(_VIDEO_GAME, year=1999, series=_FINAL_FANTASY)
+        statements["P179"] = [_claim(_FINAL_FANTASY, [_ordinal_qualifier(stated)])]
+
         with patch(_REQUESTS) as mock_get:
             mock_get.side_effect = [
                 _response(_search({"id": "Q245006", "label": "Final Fantasy VIII"})),
-                _response(
-                    _statements(
-                        _VIDEO_GAME, year=1999, series=_FINAL_FANTASY, ordinal=stated
-                    )
-                ),
+                _response(statements),
+                _response("Final Fantasy"),
             ]
             ordinal = provider.fetch_series_ordinal(
                 _item("Final Fantasy VIII", year=1999), {}
             )
 
-        assert ordinal is None
+        assert ordinal == SeriesOrdinal(position=None, series_name="Final Fantasy")
 
     def test_every_request_names_the_client(self, provider: WikidataProvider) -> None:
         with patch(_REQUESTS) as mock_get:

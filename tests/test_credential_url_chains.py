@@ -23,7 +23,6 @@ _FUNCTION_NODES = (ast.FunctionDef, ast.AsyncFunctionDef)
 _CREDENTIAL_URL_FUNCTIONS = (
     ("src/auth/gog.py", "exchange_code_for_tokens"),
     ("src/enrichment/providers/rawg/rawg.py", "_fetch_game_details"),
-    ("src/enrichment/providers/rawg/rawg.py", "_fetch_game_series"),
     ("src/enrichment/providers/rawg/rawg.py", "_search_game"),
     ("src/enrichment/providers/tmdb/tmdb.py", "_fetch_keywords"),
     ("src/enrichment/providers/tmdb/tmdb.py", "_fetch_movie_details"),

@@ -17,6 +17,7 @@ from src.models.content import ContentItem, ContentType
 from src.utils.matching import (
     MINIMUM_TITLE_SIMILARITY,
     best_match_index,
+    normalize_title,
     title_similarity,
     year_of,
 )
@@ -148,19 +149,34 @@ def _claim_ordinals(claim: Mapping[str, Any]) -> list[float]:
     ]
 
 
-def _stated_ordinal(statements: Mapping[str, Any]) -> tuple[str, float] | None:
-    # A series stating no ordinal yields none. Counting the P155/P156
-    # preceded-by chain would invent the rank the qualifier exists to state,
-    # and it would be written at the authority of one Wikidata does state.
-    stated = {
-        (series_id, position)
-        for claim in _undeprecated_claims(statements, PART_OF_THE_SERIES)
-        if isinstance(series_id := _stated_value(claim), str) and QID.match(series_id)
-        for position in _claim_ordinals(claim)
-    }
-    # Star Wars numbers a film in the trilogy and again in the franchise, and
-    # only one of those is the series whose name is stored.
-    return stated.pop() if len(stated) == 1 else None
+def _stated_series(statements: Mapping[str, Any]) -> list[tuple[str, float | None]]:
+    """Every series a work states it is part of, each with the one ordinal it is
+    counted at there — None where the statements hold no ordinal, or disagree.
+    """
+    # Counting the P155/P156 preceded-by chain instead would invent the rank the
+    # qualifier exists to state, at the authority of one Wikidata does state.
+    ordinals: dict[str, set[float]] = {}
+    for claim in _undeprecated_claims(statements, PART_OF_THE_SERIES):
+        series_id = _stated_value(claim)
+        if isinstance(series_id, str) and QID.match(series_id):
+            ordinals.setdefault(series_id, set()).update(_claim_ordinals(claim))
+    return [
+        (series_id, next(iter(stated)) if len(stated) == 1 else None)
+        for series_id, stated in ordinals.items()
+    ]
+
+
+def _narrowest(
+    search_title: str, series: Sequence[tuple[str, float | None]]
+) -> tuple[str, float | None]:
+    """Donkey Kong states Donkey Kong and Mario, Mega Man X2 states Mega Man and
+    Mega Man X. A series the title itself names is the work's own, and past that
+    a sub-series is its parent's name plus a qualifier.
+    """
+    title = normalize_title(search_title)
+    return max(
+        series, key=lambda named: (normalize_title(named[0]) in title, len(named[0]))
+    )
 
 
 def _item_year(item: ContentItem) -> int | None:
@@ -181,7 +197,7 @@ class WikidataProvider(EnrichmentProvider):
 
     @property
     def description(self) -> str:
-        return "Take the series position Wikidata states for a work"
+        return "Take the series Wikidata states a work belongs to"
 
     @property
     def content_types(self) -> list[ContentType]:
@@ -193,8 +209,8 @@ class WikidataProvider(EnrichmentProvider):
 
     @property
     def rate_limit_requests_per_second(self) -> float:
-        # One item is a search, up to three statement reads and a label, and
-        # Wikidata is donated infrastructure rather than a bought quota.
+        # One item is a search, up to three statement reads and a label for each
+        # series it states, and Wikidata is donated infrastructure.
         return 1.0
 
     def get_config_schema(self) -> list[ConfigField]:
@@ -204,7 +220,7 @@ class WikidataProvider(EnrichmentProvider):
                 field_type=bool,
                 required=False,
                 default=False,
-                description="Enable Wikidata series-position enrichment",
+                description="Enable Wikidata series enrichment",
             ),
         ]
 
@@ -226,17 +242,16 @@ class WikidataProvider(EnrichmentProvider):
         if statements is None:
             return None
 
-        stated = _stated_ordinal(statements)
-        if stated is None:
+        named = [
+            (series_name, position)
+            for series_id, position in _stated_series(statements)
+            if (series_name := self._label(series_id)) is not None
+        ]
+        if not named:
             return None
 
-        series_id, position = stated
-        series_name = self._label(series_id)
-        return (
-            None
-            if series_name is None
-            else SeriesOrdinal(position=position, series_name=series_name)
-        )
+        series_name, position = _narrowest(search_title, named)
+        return SeriesOrdinal(position=position, series_name=series_name)
 
     def _matched_entity(
         self, item: ContentItem, search_title: str, content_type: ContentType

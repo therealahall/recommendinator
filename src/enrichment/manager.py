@@ -24,7 +24,7 @@ from src.enrichment.provider_base import (
 from src.enrichment.rate_limiter import RateLimiter
 from src.enrichment.registry import EnrichmentRegistry, get_enrichment_registry
 from src.models.content import ContentItem, ContentType, get_enum_value
-from src.models.detail_fields import PIN_KEY, PROVIDER_OWNED_METADATA_KEYS
+from src.models.detail_fields import PIN_KEY
 from src.storage.enrichment_jobs import EnrichmentJobRecord
 from src.storage.global_secrets import read_secret
 from src.utils.matching import Candidate
@@ -985,12 +985,7 @@ def merge_enrichment(
     for key, value in result.extra_metadata.items():
         if key in SERIES_RECONCILED_KEYS:
             continue
-        if (
-            key in PROVIDER_OWNED_METADATA_KEYS
-            or key not in merged
-            or merged[key] is None
-            or merged[key] == ""
-        ):
+        if key not in merged or merged[key] is None or merged[key] == "":
             merged[key] = value
 
     merged.update(reconcile_series(merged, result.extra_metadata))

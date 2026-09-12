@@ -1296,7 +1296,7 @@ def variety_crossover_library(mock_storage):
         rating=5,
         date_completed=date(2026, 1, 1),
         metadata={
-            "franchise": "Dragonlance",
+            "series_name": "Dragonlance",
             "series_position": 1,
             "genres": ["Fantasy"],
         },
@@ -1307,7 +1307,7 @@ def variety_crossover_library(mock_storage):
         content_type=ContentType.BOOK,
         status=ConsumptionStatus.UNREAD,
         metadata={
-            "franchise": "Dragonlance",
+            "series_name": "Dragonlance",
             "series_position": 2,
             "genres": ["Fantasy"],
         },
@@ -1448,7 +1448,7 @@ class TestEngineSeriesSubstitutionRegression:
             content_type=ContentType.VIDEO_GAME,
             status=ConsumptionStatus.UNREAD,
             metadata={
-                "franchise": "Final Fantasy",
+                "series_name": "Final Fantasy",
                 "series_position": 10,
                 "genres": ["RPG"],
             },
@@ -1459,7 +1459,7 @@ class TestEngineSeriesSubstitutionRegression:
             content_type=ContentType.VIDEO_GAME,
             status=ConsumptionStatus.UNREAD,
             metadata={
-                "franchise": "Final Fantasy",
+                "series_name": "Final Fantasy",
                 "series_position": 12,
                 "genres": ["RPG"],
             },
@@ -1506,7 +1506,7 @@ class TestEngineSeriesSubstitutionRegression:
             content_type=ContentType.VIDEO_GAME,
             status=ConsumptionStatus.UNREAD,
             metadata={
-                "franchise": "Final Fantasy",
+                "series_name": "Final Fantasy",
                 "series_position": 12,
                 "genres": ["RPG"],
             },
@@ -1547,7 +1547,7 @@ class TestEngineSeriesSubstitutionRegression:
             content_type=ContentType.VIDEO_GAME,
             status=ConsumptionStatus.UNREAD,
             metadata={
-                "franchise": "Final Fantasy",
+                "series_name": "Final Fantasy",
                 "series_position": 10,
                 "genres": ["RPG"],
             },
@@ -1558,7 +1558,7 @@ class TestEngineSeriesSubstitutionRegression:
             content_type=ContentType.VIDEO_GAME,
             status=ConsumptionStatus.UNREAD,
             metadata={
-                "franchise": "Final Fantasy",
+                "series_name": "Final Fantasy",
                 "series_position": 12,
                 "genres": ["RPG"],
             },
@@ -1569,7 +1569,7 @@ class TestEngineSeriesSubstitutionRegression:
             content_type=ContentType.VIDEO_GAME,
             status=ConsumptionStatus.UNREAD,
             metadata={
-                "franchise": "Final Fantasy",
+                "series_name": "Final Fantasy",
                 "series_position": 15,
                 "genres": ["RPG"],
             },
@@ -1611,7 +1611,7 @@ class TestPositionlessSeriesOfferedInReleaseOrder:
             status=status,
             rating=rating,
             metadata={
-                "franchise": "The Legend of Zelda",
+                "series_name": "The Legend of Zelda",
                 "release_year": year,
                 "genres": ["RPG"],
             },

@@ -25,7 +25,6 @@ from src.utils.series import (
     is_next_after_consumed,
     latest_season_watched_date,
     reconcile_series,
-    series_entry,
     series_names_agree,
     should_recommend_item,
     split_series_from_title,
@@ -577,13 +576,6 @@ class TestSeriesPositionMetadataRegression:
         )
         assert result == ("The Godfather Collection", 2)
 
-    def test_game_with_series_position_and_franchise_regression(self) -> None:
-        metadata = {"franchise": "Dragon Age", "series_position": 3}
-        result = extract_series_info(
-            "Dragon Age Inquisition", metadata, ContentType.VIDEO_GAME
-        )
-        assert result == ("Dragon Age", 3)
-
     def test_a_zero_position_reads_back_as_the_prequel_it_states_regression(
         self,
     ) -> None:
@@ -595,22 +587,35 @@ class TestSeriesPositionMetadataRegression:
         )
 
 
-class TestAFranchiseWithNoStatedPosition:
+class TestASeriesNameNoPositionAccompanies:
     @staticmethod
-    def _game(title: str) -> ContentItem:
+    def _game(title: str, position: float | None = None) -> ContentItem:
+        metadata: dict[str, object] = {"series_name": "Halo"}
+        if position is not None:
+            metadata["series_position"] = position
         return ContentItem(
             id=title,
             title=title,
             content_type=ContentType.VIDEO_GAME,
             status=ConsumptionStatus.UNREAD,
-            metadata={"franchise": "Halo"},
+            metadata=metadata,
         )
 
-    def test_a_rawg_franchise_still_takes_the_position_its_title_states(self) -> None:
-        assert series_entry(self._game("Halo 3")) == ("Halo", 3.0)
+    def test_a_named_series_still_takes_the_position_its_title_states(self) -> None:
+        game = self._game("Halo 3")
+        assert SeriesOrder([game]).locate(game) == ("Halo", 3.0)
 
-    def test_a_title_stating_no_number_keeps_the_franchise_it_names(self) -> None:
-        assert series_entry(self._game("Halo Wars")) == ("Halo", None)
+    def test_a_title_stating_no_number_keeps_the_series_it_names(self) -> None:
+        game = self._game("Halo Wars")
+        assert SeriesOrder([game]).series_of(game) == "Halo"
+
+    def test_two_games_one_source_names_alike_are_one_series(self) -> None:
+        first = self._game("Halo", position=1)
+        second = self._game("Halo 2")
+        library = [second, first]
+
+        assert should_recommend_item(first, {}, library) is True
+        assert should_recommend_item(second, {}, library) is False
 
 
 class TestFindEarliestRecommendable:
@@ -621,21 +626,21 @@ class TestFindEarliestRecommendable:
                 title="Final Fantasy XII",
                 content_type=ContentType.VIDEO_GAME,
                 status=ConsumptionStatus.UNREAD,
-                metadata={"franchise": "Final Fantasy", "series_position": 12},
+                metadata={"series_name": "Final Fantasy", "series_position": 12},
             ),
             ContentItem(
                 id="ff10",
                 title="Final Fantasy X",
                 content_type=ContentType.VIDEO_GAME,
                 status=ConsumptionStatus.UNREAD,
-                metadata={"franchise": "Final Fantasy", "series_position": 10},
+                metadata={"series_name": "Final Fantasy", "series_position": 10},
             ),
             ContentItem(
                 id="ff7",
                 title="Final Fantasy VII",
                 content_type=ContentType.VIDEO_GAME,
                 status=ConsumptionStatus.UNREAD,
-                metadata={"franchise": "Final Fantasy", "series_position": 7},
+                metadata={"series_name": "Final Fantasy", "series_position": 7},
             ),
         ]
         series_tracking: dict[str, set[float]] = {}
@@ -687,7 +692,6 @@ class TestTitleRegexPatternsRegression:
         assert result[1] == 10
 
     def test_lightning_returns_title_fallback_regression(self) -> None:
-        """In practice RAWG franchise metadata is preferred for this title."""
         result = extract_series_info(
             "LIGHTNING RETURNS: FINAL FANTASY XIII",
             content_type=ContentType.VIDEO_GAME,
@@ -761,13 +765,21 @@ class TestPositionlessSeriesOrdersByReleaseDate:
         )
 
     @staticmethod
-    def _book(title: str, edition_year: int) -> ContentItem:
+    def _book(
+        title: str, edition_year: int, position: float | None = None
+    ) -> ContentItem:
+        metadata: dict[str, object] = {
+            "series_name": "Dune",
+            "year_published": edition_year,
+        }
+        if position is not None:
+            metadata["series_position"] = position
         return ContentItem(
             id=title,
             title=title,
             content_type=ContentType.BOOK,
             status=ConsumptionStatus.UNREAD,
-            metadata={"series_name": "Dune", "year_published": edition_year},
+            metadata=metadata,
         )
 
     def test_one_entry_without_an_ordinal_dates_the_whole_series(self) -> None:
@@ -808,16 +820,33 @@ class TestPositionlessSeriesOrdersByReleaseDate:
         assert order.locate(original) == ("Alien Collection", 1.0)
         assert order.locate(remake) == ("Alien Collection", 2.0)
 
-    def test_a_reprints_year_does_not_order_a_book_series_regression(self) -> None:
-        """A mass-market Dune reprinted in 2011 must not follow a 1969 first
-        print of its sequel: an edition's year is not the work's, so a book
-        series orders by title.
+    def test_a_book_series_nothing_dates_is_not_ordered_at_all_regression(self) -> None:
+        """Wikidata names Dune's sequels without stating a position and an
+        edition's year is not the work's, so ranking the set on title alone
+        told the operator to read Children of Dune first.
         """
-        reprinted_first = self._book("Dune", edition_year=2011)
-        first_printed_sequel = self._book("Dune Messiah", edition_year=1969)
-        unconsumed = [first_printed_sequel, reprinted_first]
+        books = [
+            self._book(title, edition_year=2011)
+            for title in ("Children of Dune", "Dune", "Dune Messiah")
+        ]
 
-        assert find_earliest_recommendable("Dune", {}, unconsumed) is reprinted_first
+        assert find_earliest_recommendable("Dune", {}, books) is None
+        assert all(should_recommend_item(book, {}, books) for book in books)
+        assert SeriesOrder(books).series_of(books[0]) == "Dune"
+
+    def test_a_lone_stated_position_orders_nothing_in_an_undatable_series(
+        self,
+    ) -> None:
+        """Hardcover numbers Children of Dune and Wikidata names Dune Messiah
+        without one, so book 3 was offered as the next to read while book 2 sat
+        unread and unplaceable.
+        """
+        messiah = self._book("Dune Messiah", edition_year=2011)
+        children = self._book("Children of Dune", edition_year=2011, position=3.0)
+        books = [messiah, children]
+
+        assert find_earliest_recommendable("Dune", {}, books) is None
+        assert all(should_recommend_item(book, {}, books) for book in books)
 
     def test_expanded_seasons_keep_ordering_by_season_number(self) -> None:
         show = ContentItem(
@@ -847,9 +876,14 @@ class TestPositionlessSeriesOrdersByReleaseDate:
             },
         )
 
-        assert [
-            series_entry(season) for season in expand_tv_shows_to_seasons([show])
-        ] == [("The Show", 1.0), ("The Show", 2.0), ("The Show", 3.0)]
+        seasons = expand_tv_shows_to_seasons([show])
+        order = SeriesOrder(seasons)
+
+        assert [order.locate(season) for season in seasons] == [
+            ("The Show", 1.0),
+            ("The Show", 2.0),
+            ("The Show", 3.0),
+        ]
 
 
 class TestSeriesNamesAgree:

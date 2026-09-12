@@ -440,7 +440,7 @@ class TestSeriesOrderScorerOnAPositionlessSeries:
             content_type=ContentType.VIDEO_GAME,
             status=status,
             rating=rating,
-            metadata={"franchise": "Final Fantasy", "release_year": year},
+            metadata={"series_name": "Final Fantasy", "release_year": year},
         )
 
     def test_the_next_released_entry_outscores_the_one_behind_it(self) -> None:

@@ -317,21 +317,17 @@ it after a sync.
 |----------|---------|---------------|
 | TMDB | Movies, TV | `belongs_to_collection` |
 | OpenLibrary | Books, no API key | none |
-| RAWG | Video games | `GET /games/{id}/game-series` |
+| RAWG | Video games | none |
 | Wikidata | All four, no API key | `P179`, positioned by its `P1545` qualifier |
 | Hardcover | Books | `books.featured_book_series` |
 
-RAWG stores `franchise` and TMDB `series_name` in `extra_metadata`. Neither
-stores a position: both endpoints return an unordered related-titles set, so any
-rank read off one is invented.
+TMDB stores `series_name` in `extra_metadata`, and no position: its endpoint returns an unordered set, so any rank read off one is invented. RAWG stores neither — it states which games share a series without naming or ordering it, and a series nothing names cannot be shown, only grouped on, which merged any two series sharing a member.
 
 Wikidata and Hardcover state a position instead, at `authored` authority. Wikidata implements `fetch_series_ordinal` alone, never settling an item as matched. Hardcover's ordinal rides its match.
 
 Rules:
 
-- The merge is gap-filling, bar
-  `franchise`: RAWG is its only writer, so re-running enrichment corrects a name
-  an earlier run derived badly. An edited field is the other exception: it
+- The merge is gap-filling. An edited field is the exception: it
   overwrites the detail table and is recorded in `content_item_manual_fields`,
   which keeps a later sync or enrichment run off that column until
   `library clear-manual` releases it.
