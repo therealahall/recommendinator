@@ -240,11 +240,11 @@ _REGISTRY: tuple[SettingMetadata, ...] = (
             "once."
         ),
         type="list",
-        # A tuple for the reason web.allowed_origins is one. Books go to
-        # Hardcover first because it refuses an ambiguous title rather than
-        # guessing, and Wikidata is last because it only ever adds a series to
-        # whatever another provider matched.
-        default=("hardcover", "openlibrary", "rawg", "tmdb", "wikidata"),
+        # A tuple for the reason web.allowed_origins is one. Hardcover leads on
+        # books, refusing an ambiguous title rather than guessing; Wikidata only
+        # adds a series to another provider's match; IGDB trails RAWG, which
+        # keeps owning game metadata.
+        default=("hardcover", "openlibrary", "rawg", "tmdb", "wikidata", "igdb"),
         widget="ordered-tags",
     ),
     _entry(
@@ -312,6 +312,29 @@ _REGISTRY: tuple[SettingMetadata, ...] = (
         "enrichment.providers.hardcover.enabled",
         label="Hardcover enabled",
         help="Enable the Hardcover (books) enrichment provider.",
+        type="bool",
+        default=False,
+    ),
+    _entry(
+        "enrichment.providers.igdb.client_id",
+        label="IGDB client ID",
+        help="Twitch application client ID for the IGDB enrichment provider.",
+        type="string",
+        default="",
+        sensitive=True,
+    ),
+    _entry(
+        "enrichment.providers.igdb.client_secret",
+        label="IGDB client secret",
+        help="Twitch application client secret for the IGDB enrichment provider.",
+        type="string",
+        default="",
+        sensitive=True,
+    ),
+    _entry(
+        "enrichment.providers.igdb.enabled",
+        label="IGDB enabled",
+        help="Enable the IGDB (video games) enrichment provider.",
         type="bool",
         default=False,
     ),

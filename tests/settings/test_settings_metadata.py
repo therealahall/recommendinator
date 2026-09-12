@@ -83,8 +83,8 @@ class TestEveryDiscoveredProviderIsConfigurable:
         entries = [get_entry(key) for key in secrets]
         assert [e.key for e in entries if e is not None and not e.sensitive] == []
 
-    def test_the_default_order_ranks_every_builtin_provider(self) -> None:
-        assert set(default_of(PROVIDER_ORDER_KEY)) == set(_builtin_providers())
+    def test_the_default_order_ranks_every_builtin_provider_exactly_once(self) -> None:
+        assert sorted(default_of(PROVIDER_ORDER_KEY)) == sorted(_builtin_providers())
 
     def test_no_provider_calls_a_third_party_until_the_operator_enables_it(
         self,
