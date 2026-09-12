@@ -1,6 +1,30 @@
 # CHANGELOG
 
 
+## v0.58.1 (2026-09-12)
+
+### Bug Fixes
+
+- **config**: Hold the dropped-key warning until the log file exists
+  ([`91b9bc1`](https://github.com/therealahall/recommendinator/commit/91b9bc1f6e86ba13e06f1bcd463fdcddd3919a81))
+
+- **config**: Name the settings the file no longer feeds
+  ([`583e676`](https://github.com/therealahall/recommendinator/commit/583e6768959db0fc280c7feb84e2cacc8f304bd5))
+
+### Documentation
+
+- **architecture**: Config.yaml no longer bootstraps a secret
+  ([`3f6ea49`](https://github.com/therealahall/recommendinator/commit/3f6ea49cfd2fe556b3863663e592c1d97182f0bf))
+
+### Refactoring
+
+- **config**: Keep only what stands the app up in config.yaml
+  ([`58c4246`](https://github.com/therealahall/recommendinator/commit/58c42460784e1d6c2095cdc1b63a958f055ae052))
+
+- **sources**: Let the database own sources outright
+  ([`28f521c`](https://github.com/therealahall/recommendinator/commit/28f521cb6ba925e5d46f4ffb360421a7bc2a5c81))
+
+
 ## v0.58.0 (2026-09-12)
 
 ### Bug Fixes
