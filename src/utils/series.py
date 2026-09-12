@@ -20,6 +20,9 @@ class _SeriesPattern(NamedTuple):
     max_number: int
 
 
+#: Every marker separates name from number with a token a source wrote. A bare
+#: "(Word N)" has none, so the word is merely adjacent: "(Part 1)" filed every
+#: franchise's split finale under a series called "Part".
 _SERIES_PATTERNS: list[_SeriesPattern] = [
     # (Series Name, #N) or (Series Name #N) — N may be fractional (e.g. #2.5
     # for half-numbered novellas like "Gods of Risk (The Expanse, #2.5)").
@@ -34,77 +37,7 @@ _SERIES_PATTERNS: list[_SeriesPattern] = [
     _SeriesPattern(re.compile(r"\(([^,]+?),\s*Part\s+(\d+)\)", re.IGNORECASE), 100),
     # (Series Name, Episode N)
     _SeriesPattern(re.compile(r"\(([^,]+?),\s*Episode\s+(\d+)\)", re.IGNORECASE), 100),
-    # (Series Name N) — generic fallback (N may be fractional)
-    _SeriesPattern(re.compile(r"\(([^,]+?)\s+(\d+(?:\.\d+)?)\)"), 100),
 ]
-
-
-def _roman_to_int(roman: str) -> int | None:
-    roman_values: dict[str, int] = {
-        "I": 1,
-        "V": 5,
-        "X": 10,
-        "L": 50,
-        "C": 100,
-        "D": 500,
-        "M": 1000,
-    }
-    upper = roman.upper().strip()
-    if not upper or not all(char in roman_values for char in upper):
-        return None
-
-    total = 0
-    previous = 0
-    for char in reversed(upper):
-        value = roman_values[char]
-        if value < previous:
-            total -= value
-        else:
-            total += value
-        previous = value
-
-    return total if total > 0 else None
-
-
-# The series name must start with a letter to avoid matching titles like
-# "1942" or "2048".  The series-name capture uses ``.*?`` (lazy) so it
-# can include colons/dashes (e.g., "Batman: Arkham Knight 2").
-_TITLE_ARABIC_PATTERN: re.Pattern[str] = re.compile(
-    r"^([A-Za-z].*?)\s+(\d+)(?:[\s:—\-+/].+)?$"
-)
-
-# Uses ``[IVXLCDM]+`` instead of a strict structural regex so that
-# standalone V (5), X (10), L (50), C (100) are accepted.  Validation
-# happens downstream via ``_roman_to_int()`` + range check (1-100).
-_TITLE_ROMAN_PATTERN: re.Pattern[str] = re.compile(
-    r"^([A-Za-z].*?)\s+([IVXLCDM]+)(?:[\s:—\-+/].+)?$"
-)
-
-
-def _extract_series_from_title(title: str) -> tuple[str, float] | None:
-    # Try Arabic numerals first (more common). Title-embedded game numbers are
-    # whole numbers, but return a float to match the series-number type used
-    # everywhere else (fractional novella positions like #2.5).
-    match = _TITLE_ARABIC_PATTERN.match(title.strip())
-    if match:
-        series_name = match.group(1).strip()
-        number = int(match.group(2))
-        if 1 <= number <= 100 and len(series_name) >= 2:
-            return (series_name, float(number))
-
-    match = _TITLE_ROMAN_PATTERN.match(title.strip())
-    if match:
-        series_name = match.group(1).strip()
-        roman_str = match.group(2)
-        roman_number = _roman_to_int(roman_str)
-        if (
-            roman_number is not None
-            and 1 <= roman_number <= 100
-            and len(series_name) >= 2
-        ):
-            return (series_name, float(roman_number))
-
-    return None
 
 
 def extract_series_info(
@@ -124,13 +57,6 @@ def extract_series_info(
             item_num = float(match.group(2))
             if 1 <= item_num <= pattern.max_number:
                 return (series_name, item_num)
-
-    # For video games, try title-embedded numbers (e.g., "Dungeon Siege 3",
-    # "Final Fantasy XII").  Only video games get this treatment — other
-    # types too often have non-series numbers in titles ("2001: A Space
-    # Odyssey", "1984").
-    if content_type == ContentType.VIDEO_GAME:
-        return _extract_series_from_title(title)
 
     return None
 
@@ -214,7 +140,7 @@ class SeriesAuthority(str, Enum):
     the operator's own catalogue restating it, which is a correction.
     """
 
-    #: A marker in the title, or a number parsed out of a game's title.
+    #: A marker in the title.
     STATED = "stated"
     #: An external provider stating the ordinal as a fact about the work.
     AUTHORED = "authored"
@@ -346,42 +272,46 @@ def get_series_position_from_metadata(
     return position if valid_series_position(position) else None
 
 
-def _get_series_info(
-    item: ContentItem | None = None, *, title: str | None = None
-) -> tuple[str, float] | None:
-    if item is not None:
+def _position_stated_in_title(title: str, series: str) -> float | None:
+    """A marker naming another series is no ordinal for this one: "Gods of Risk
+    (The Expanse Novellas, #1)" is no book 1 of The Expanse.
+    """
+    marked = extract_series_info(title)
+    if marked is None:
+        return None
+    return marked[1] if series_names_agree(marked[0], series) else None
+
+
+def _named_series_entry(item: ContentItem) -> tuple[str, float | None] | None:
+    """A stated name stands without an ordinal, and outranks the one a title
+    marker states: reading both off the title filed "Left 4 Dead 2" as entry 4 of
+    a series called "Left".
+    """
+    name = get_series_name_from_metadata(item.metadata)
+    if name is None:
         return extract_series_info(item.title, item.metadata, item.content_type)
-    if title is not None:
-        return extract_series_info(title)
-    return None
+    position = _stated_series_position(item.metadata, item.content_type)
+    if position is None:
+        position = _position_stated_in_title(item.title, name)
+    return name, position
+
+
+def _series_entry(
+    item: ContentItem | None = None, *, title: str | None = None
+) -> tuple[str, float | None] | None:
+    if item is not None:
+        return _named_series_entry(item)
+    return extract_series_info(title) if title is not None else None
 
 
 def get_series_name(
     item: ContentItem | None = None, *, title: str | None = None
 ) -> str | None:
-    info = _get_series_info(item, title=title)
-    return info[0] if info else None
-
-
-def get_series_item_number(
-    item: ContentItem | None = None, *, title: str | None = None
-) -> float | None:
-    info = _get_series_info(item, title=title)
-    return info[1] if info else None
-
-
-def _named_series_entry(item: ContentItem) -> tuple[str, float | None] | None:
-    """A name with no position falls through to the title: 'Halo 3' states its
-    own number.
+    """A name is its own claim: most providers state one and never a position,
+    so reading it off a positioned entry alone loses the series entirely.
     """
-    name = get_series_name_from_metadata(item.metadata)
-    position = _stated_series_position(item.metadata, item.content_type)
-    if name is not None and position is not None:
-        return name, position
-    parsed = extract_series_info(item.title, item.metadata, item.content_type)
-    if parsed is not None:
-        return parsed
-    return None if name is None else (name, None)
+    entry = _series_entry(item, title=title)
+    return None if entry is None else entry[0]
 
 
 #: No ``year_published``: an edition's year is not the work's (detail_fields.py).
@@ -720,8 +650,8 @@ def build_series_tracking(
 def is_first_item_in_series(
     item: ContentItem | None = None, *, title: str | None = None
 ) -> bool:
-    info = _get_series_info(item, title=title)
-    return info is not None and info[1] == 1
+    entry = _series_entry(item, title=title)
+    return entry is not None and entry[1] == 1
 
 
 def is_next_after_consumed(
@@ -782,8 +712,8 @@ def find_earliest_recommendable(
     unconsumed_items: list[ContentItem],
     series_order: SeriesOrder | None = None,
 ) -> ContentItem | None:
-    """Used by the engine to substitute a later series entry (e.g., FF XII) with
-    the earliest playable entry (e.g., FF X) when ``series_in_order`` is enabled.
+    """Used by the engine to substitute a later series entry with the earliest
+    one still recommendable when ``series_in_order`` is enabled.
     """
     order = _order_over(series_order, unconsumed_items)
     series_candidates: list[tuple[float, ContentItem]] = []
