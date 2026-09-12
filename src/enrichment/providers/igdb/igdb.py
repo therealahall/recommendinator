@@ -3,7 +3,6 @@ import re
 import time
 from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import urljoin
 
 import requests
 
@@ -14,17 +13,17 @@ from src.enrichment.provider_base import (
     ProviderError,
     SeriesOrdinal,
     log_search_title,
+    pinned_record,
 )
 from src.ingestion.urls import (
-    MAX_SAME_ORIGIN_REDIRECTS,
-    REDIRECT_STATUSES,
-    REQUEST_TIMEOUT,
-    same_origin,
+    RedirectRefused,
+    fixed_endpoint_refusal,
+    request_within_origin,
 )
 from src.models.content import ContentItem, ContentType, get_enum_value
-from src.utils.matching import best_match_index, year_of
+from src.utils.matching import Candidate, best_match_index, year_of
 from src.utils.request_errors import scrub_request_error
-from src.utils.text import clean_game_title_for_search, sanitize_for_log
+from src.utils.text import clean_game_title_for_search
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +31,7 @@ GAMES_URL = "https://api.igdb.com/v4/games"
 TWITCH_TOKEN_URL = "https://id.twitch.tv/oauth2/token"
 
 _GAME_FIELDS = (
-    "name,alternative_names.name,collections.name,franchise.name,franchises.name,"
+    "id,name,alternative_names.name,collections.name,franchise.name,franchises.name,"
     "genres.name,themes.name,summary,cover.url,first_release_date"
 )
 
@@ -93,7 +92,7 @@ def _series_name(game: dict[str, Any]) -> str | None:
     return named[0] if named else None
 
 
-def _result(game: dict[str, Any]) -> EnrichmentResult:
+def _result(game: dict[str, Any], quality: str) -> EnrichmentResult:
     extra: dict[str, Any] = {}
     year = _release_year(game)
     if year is not None:
@@ -107,7 +106,18 @@ def _result(game: dict[str, Any]) -> EnrichmentResult:
         description=str(game.get("summary") or "").strip() or None,
         cover_url=_https_cover(game.get("cover")),
         extra_metadata=extra,
-        match_quality="medium",
+        match_quality=quality,
+    )
+
+
+def _candidate(game: dict[str, Any]) -> Candidate:
+    title, *alternates = _titles(game)
+    return Candidate(
+        record_id=str(game.get("id") or ""),
+        title=title,
+        year=_release_year(game),
+        cover_url=_https_cover(game.get("cover")),
+        also_titled=tuple(alternates),
     )
 
 
@@ -116,6 +126,10 @@ def _search_body(title: str) -> str:
         f'search "{_UNQUOTABLE.sub("", title)}"; '
         f"fields {_GAME_FIELDS}; limit {_CANDIDATE_LIMIT};"
     )
+
+
+def _record_body(record_id: str) -> str:
+    return f"where id = {record_id}; fields {_GAME_FIELDS}; limit 1;"
 
 
 def _credentials(config: dict[str, Any]) -> tuple[str, str] | None:
@@ -201,10 +215,10 @@ class IGDBProvider(EnrichmentProvider):
         credentials = self._credentials_for(item, config)
         if credentials is None:
             return None
-        game = self._matched_game(item, credentials)
-        if game is None:
+        matched = self._matched_game(item, credentials)
+        if matched is None:
             return EnrichmentResult(match_quality="not_found")
-        return _result(game)
+        return _result(*matched)
 
     def fetch_series_ordinal(
         self, item: ContentItem, config: dict[str, Any]
@@ -212,15 +226,31 @@ class IGDBProvider(EnrichmentProvider):
         credentials = self._credentials_for(item, config)
         if credentials is None:
             return None
-        game = self._matched_game(item, credentials)
-        if game is None:
+        matched = self._matched_game(item, credentials)
+        if matched is None:
             return None
-        name = _series_name(game)
+        name = _series_name(matched[0])
         if name is None:
             return None
         # No collection, franchise or membership at IGDB holds an ordinal, so it
         # names a series and never counts within one.
         return SeriesOrdinal(position=None, series_name=name)
+
+    def search(self, item: ContentItem, config: dict[str, Any]) -> list[Candidate]:
+        credentials = self._credentials_for(item, config)
+        if credentials is None:
+            return []
+        searched = clean_game_title_for_search(item.title)
+        log_search_title(logger, item.title, searched)
+        return [
+            _candidate(game)
+            for game in self._games(_search_body(searched), credentials)
+        ]
+
+    def accepts_record_id(self, record_id: str) -> bool:
+        # isdigit() alone admits '٣' and '²', which IGDB answers with a 400 the
+        # operator reads as a failed item rather than as a refused pin.
+        return record_id.isascii() and record_id.isdigit()
 
     def _credentials_for(
         self, item: ContentItem, config: dict[str, Any]
@@ -234,9 +264,24 @@ class IGDBProvider(EnrichmentProvider):
             )
         return credentials
 
+    def _pinned_id(self, item: ContentItem) -> str | None:
+        """Re-checked at the sink: Apicalypse binds no parameters, so a stored pin
+        is interpolated into the query rather than sent beside it.
+        """
+        pinned = pinned_record(item, self.name)
+        return pinned if pinned is not None and self.accepts_record_id(pinned) else None
+
     def _matched_game(
         self, item: ContentItem, credentials: tuple[str, str]
-    ) -> dict[str, Any] | None:
+    ) -> tuple[dict[str, Any], str] | None:
+        """The game and its quality: a pinned id identifies a record, a title
+        search only resembles one.
+        """
+        pinned = self._pinned_id(item)
+        if pinned is not None:
+            games = self._games(_record_body(pinned), credentials)
+            return (games[0], "high") if games else None
+
         searched = clean_game_title_for_search(item.title)
         log_search_title(logger, item.title, searched)
 
@@ -248,7 +293,7 @@ class IGDBProvider(EnrichmentProvider):
             # A store sells 'Ultima I' where IGDB catalogues its fuller name.
             allow_subtitled=True,
         )
-        return None if index is None else games[index]
+        return None if index is None else (games[index], "medium")
 
     def _games(self, body: str, credentials: tuple[str, str]) -> list[dict[str, Any]]:
         response = self._query(body, credentials, fresh_token=False)
@@ -319,40 +364,24 @@ class IGDBProvider(EnrichmentProvider):
             ) from error
 
     def _post(
-        self, url: str, data: Any, headers: dict[str, str], service: str
+        self,
+        url: str,
+        data: str | dict[str, str],
+        headers: dict[str, str],
+        service: str,
     ) -> requests.Response:
-        """``requests`` replays the Authorization header onto a redirect's host."""
-        current = url
-        for _ in range(MAX_SAME_ORIGIN_REDIRECTS):
-            try:
-                response = requests.post(
-                    current,
-                    data=data,
-                    headers=headers,
-                    timeout=REQUEST_TIMEOUT,
-                    allow_redirects=False,
-                )
-            except requests.RequestException as error:
-                raise ProviderError(
-                    self.name, f"{service} request failed: {scrub_request_error(error)}"
-                ) from error
-
-            if response.status_code not in REDIRECT_STATUSES:
-                return response
-
-            location = response.headers.get("Location")
-            if not location:
-                return response
-            target = urljoin(current, location)
-            if not same_origin(url, target):
-                raise ProviderError(
-                    self.name,
-                    f"Refused a redirect to {sanitize_for_log(target)}: it leaves "
-                    f"the origin the {service} credentials are sent to.",
-                )
-            current = target
-
-        raise ProviderError(
-            self.name,
-            f"{service} redirected more than {MAX_SAME_ORIGIN_REDIRECTS} times.",
-        )
+        try:
+            return request_within_origin(
+                requests.post,
+                url,
+                service,
+                fixed_endpoint_refusal,
+                data=data,
+                headers=headers,
+            )
+        except requests.RequestException as error:
+            raise ProviderError(
+                self.name, f"{service} request failed: {scrub_request_error(error)}"
+            ) from error
+        except RedirectRefused as refused:
+            raise ProviderError(self.name, str(refused)) from None
