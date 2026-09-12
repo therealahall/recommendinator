@@ -328,6 +328,11 @@ export interface EnrichmentJobStatusResponse {
   progress_percent: number
 }
 
+export interface EnrichmentProvider {
+  name: string
+  display_name: string
+}
+
 export interface EnrichmentStatsResponse {
   enabled: boolean
   total: number
@@ -339,6 +344,8 @@ export interface EnrichmentStatsResponse {
   failed: number
   by_provider: Record<string, number>
   by_quality: Record<string, number>
+  /** Every installed provider, whether or not it has enriched anything. */
+  providers: EnrichmentProvider[]
 }
 
 export interface ThemeResponse {

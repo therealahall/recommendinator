@@ -165,6 +165,7 @@ const onReset = (provider: string) =>
         <div class="toolbar-right">
           <EnrichmentReset
             :type-label="typeLabel"
+            :providers="stats?.providers ?? []"
             :resettable="resettable"
             :busy="busy || running"
             @reset="onReset"

@@ -15,6 +15,7 @@ from src.enrichment.manager import (
     job_status,
 )
 from src.enrichment.provider_base import pins_of
+from src.enrichment.registry import get_enrichment_registry
 from src.models.content import ContentItem, ContentType
 from src.storage.manager import StorageManager
 from src.utils.item_serialization import (
@@ -22,6 +23,7 @@ from src.utils.item_serialization import (
     ENRICHMENT_UNAVAILABLE,
     enrichment_candidates_to_dict,
     enrichment_pin_to_dict,
+    enrichment_providers_to_list,
     enrichment_reset_to_dict,
 )
 from src.utils.sorting import MAX_SEARCH_LENGTH
@@ -272,7 +274,11 @@ def enrichment_status(ctx: click.Context, user_id: int, output_format: str) -> N
     raw_stats = storage.enrichment.stats(user_id=user_id)
     enrichment_enabled = config.get("enrichment", {}).get("enabled", False)
     # Shape matches web API EnrichmentStatsResponse
-    stats = {"enabled": enrichment_enabled, **raw_stats}
+    stats = {
+        "enabled": enrichment_enabled,
+        **raw_stats,
+        "providers": enrichment_providers_to_list(),
+    }
 
     if output_format == "json":
         click.echo(json.dumps(stats, indent=2))
@@ -411,7 +417,12 @@ def enrichment_pin(
 @enrichment.command("reset")
 @click.option(
     "--provider",
-    type=click.Choice(["tmdb", "openlibrary", "rawg", "all"], case_sensitive=False),
+    # Discovered, never listed: a written-out list went stale twice as providers
+    # shipped. "all" is the absence of a filter rather than a provider name.
+    type=click.Choice(
+        [*sorted(get_enrichment_registry().get_all_providers()), "all"],
+        case_sensitive=False,
+    ),
     default="all",
     help="Reset items enriched by specific provider (default: all)",
 )

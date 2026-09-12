@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from src.enrichment.manager import EnrichmentManager, EnrichmentStart, PinRefused
 from src.enrichment.providers.hardcover.hardcover import HardcoverProvider
-from src.enrichment.registry import EnrichmentRegistry
+from src.enrichment.registry import EnrichmentRegistry, get_enrichment_registry
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.manager import StorageManager
 from src.utils.matching import Candidate
@@ -192,7 +192,7 @@ class TestEnrichmentStatus:
 
 
 class TestEnrichmentStats:
-    def test_get_stats(self) -> None:
+    def test_stats_count_the_library_and_name_every_installed_provider(self) -> None:
         storage = make_storage_mock()
         stats = {
             "total": 100,
@@ -210,7 +210,18 @@ class TestEnrichmentStats:
             response = client.get("/api/enrichment/stats")
 
         assert response.status_code == 200
-        assert response.json() == {"enabled": False, **stats}
+        # The reset control narrows to these, so a list written out here rather
+        # than discovered is one that goes stale as providers ship.
+        assert response.json() == {
+            "enabled": False,
+            **stats,
+            "providers": [
+                {"name": name, "display_name": provider.display_name}
+                for name, provider in sorted(
+                    get_enrichment_registry().get_all_providers().items()
+                )
+            ],
+        }
 
 
 class TestEnrichmentPinning:

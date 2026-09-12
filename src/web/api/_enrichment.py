@@ -17,6 +17,7 @@ from src.utils.item_serialization import (
     ENRICHMENT_UNAVAILABLE,
     enrichment_candidates_to_dict,
     enrichment_pin_to_dict,
+    enrichment_providers_to_list,
     enrichment_reset_to_dict,
 )
 from src.utils.sorting import MAX_SEARCH_LENGTH
@@ -45,7 +46,7 @@ class EnrichmentStartRequest(BaseModel):
 class EnrichmentResetRequest(BaseModel):
     provider: str | None = Field(
         None,
-        description="Reset items enriched by this provider (tmdb, openlibrary, rawg)",
+        description="Reset items enriched by this provider, named as /enrichment/stats reports it",
     )
     content_type: str | None = Field(
         None, description="Reset items of this content type"
@@ -103,6 +104,11 @@ class EnrichmentJobStatusResponse(BaseModel):
     progress_percent: float = 0.0
 
 
+class EnrichmentProviderView(BaseModel):
+    name: str
+    display_name: str
+
+
 class EnrichmentStatsResponse(BaseModel):
     enabled: bool = False
     total: int = 0
@@ -113,6 +119,7 @@ class EnrichmentStatsResponse(BaseModel):
     failed: int = 0
     by_provider: dict[str, int] = Field(default_factory=dict)
     by_quality: dict[str, int] = Field(default_factory=dict)
+    providers: list[EnrichmentProviderView] = Field(default_factory=list)
 
 
 @router.post("/enrichment/start")
@@ -203,6 +210,10 @@ def get_enrichment_stats(
         failed=cast(int, stats.get("failed", 0)),
         by_provider=cast(dict[str, int], stats.get("by_provider", {})),
         by_quality=cast(dict[str, int], stats.get("by_quality", {})),
+        providers=[
+            EnrichmentProviderView(**payload)
+            for payload in enrichment_providers_to_list()
+        ],
     )
 
 
