@@ -7,6 +7,7 @@ from typing import TypedDict
 from src.covers import cover_payload_url
 from src.enrichment.manager import EnrichmentStart
 from src.enrichment.provider_base import pins_of
+from src.enrichment.registry import get_enrichment_registry
 from src.models.content import ContentItem, get_enum_value
 from src.models.detail_fields import to_int
 from src.utils.matching import Candidate
@@ -87,6 +88,25 @@ def item_to_dict(item: ContentItem) -> dict[str, object]:
         "tags": metadata.get("tags") or [],
         "description": metadata.get("description"),
     }
+
+
+class EnrichmentProviderPayload(TypedDict):
+    """An installed provider, as both interfaces name one to the operator."""
+
+    name: str
+    display_name: str
+
+
+def enrichment_providers_to_list() -> list[EnrichmentProviderPayload]:
+    """Discovered rather than listed, so installing a provider is the whole of
+    offering it a reset.
+    """
+    return [
+        {"name": name, "display_name": provider.display_name}
+        for name, provider in sorted(
+            get_enrichment_registry().get_all_providers().items()
+        )
+    ]
 
 
 def enrichment_candidates_to_dict(

@@ -13,6 +13,7 @@ from src.enrichment.manager import (
     PinRefused,
 )
 from src.enrichment.providers.hardcover.hardcover import HardcoverProvider
+from src.enrichment.registry import get_enrichment_registry
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.manager import StorageManager
 from src.utils.matching import Candidate
@@ -384,7 +385,17 @@ class TestEnrichmentStatus:
         )
 
         assert result.exit_code == 0
-        assert json.loads(result.output) == {"enabled": False, **stats}
+        # Key for key with GET /api/enrichment/stats, installed providers and all.
+        assert json.loads(result.output) == {
+            "enabled": False,
+            **stats,
+            "providers": [
+                {"name": name, "display_name": provider.display_name}
+                for name, provider in sorted(
+                    get_enrichment_registry().get_all_providers().items()
+                )
+            ],
+        }
 
 
 class TestEnrichmentPinning:
@@ -632,6 +643,38 @@ class TestEnrichmentReset:
         mock_storage.enrichment.reset.assert_called_once_with(
             provider=None, content_type=None, user_id=1, content_item_id=None
         )
+
+        # Typed out, "all" is the same absence of a filter as leaving it off.
+        spelled_out_storage = make_storage_mock()
+        spelled_out = _invoke_with_mocks(
+            cli_runner,
+            ["enrichment", "reset", "--provider", "all", "--yes"],
+            spelled_out_storage,
+        )
+
+        assert spelled_out.exit_code == 0, spelled_out.output
+        assert spelled_out_storage.enrichment.reset.call_args.kwargs["provider"] is None
+
+    def test_reset_accepts_every_provider_the_registry_discovered(
+        self, cli_runner: CliRunner
+    ) -> None:
+        discovered = get_enrichment_registry().get_all_providers()
+        # The two a written-out choice list never grew to include, so a loop
+        # over an empty registry would have proved nothing.
+        assert {"hardcover", "wikidata"} <= discovered.keys()
+
+        for name in discovered:
+            mock_storage = make_storage_mock()
+            mock_storage.enrichment.reset.return_value = 3
+
+            result = _invoke_with_mocks(
+                cli_runner,
+                ["enrichment", "reset", "--provider", name, "--yes"],
+                mock_storage,
+            )
+
+            assert result.exit_code == 0, result.output
+            assert mock_storage.enrichment.reset.call_args.kwargs["provider"] == name
 
     def test_enrichment_reset_re_queues_the_one_item_named_and_enriches_it(
         self, cli_runner: CliRunner

@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, ref, useId } from 'vue'
 import ConfirmPanel from '@/components/molecules/ConfirmPanel.vue'
-import { ENRICHMENT_PROVIDERS, PROVIDER_LABELS } from '@/constants/enrichment'
+import type { EnrichmentProvider } from '@/types/api'
 
 const props = defineProps<{
   /** Human-readable content-type scope, '' for every type. */
   typeLabel: string
+  /** The installed providers a reset can be narrowed to, as the API reports them. */
+  providers: EnrichmentProvider[]
   /** Items a reset re-queues, keyed by provider filter; null under a type filter. */
   resettable: Record<string, number> | null
   busy: boolean
@@ -15,13 +17,20 @@ const emit = defineEmits<{
   reset: [provider: string]
 }>()
 
-const provider = ref('all')
+// Offered beside the installed providers, and deliberately not one of them:
+// 'all' is the absence of a filter.
+const EVERY_PROVIDER: EnrichmentProvider = { name: 'all', display_name: 'All providers' }
+
+const provider = ref(EVERY_PROVIDER.name)
 const confirming = ref(false)
 const selectId = useId()
 
+const choices = computed(() => [EVERY_PROVIDER, ...props.providers])
+
 const scope = computed(() => {
   const parts = [props.typeLabel || 'every content type']
-  if (provider.value !== 'all') parts.push(PROVIDER_LABELS[provider.value])
+  const chosen = props.providers.find((one) => one.name === provider.value)
+  if (chosen) parts.push(chosen.display_name)
   return parts.join(', ')
 })
 
@@ -40,9 +49,9 @@ const question = computed(
 
 function answer(reset: boolean): void {
   confirming.value = false
-  // 'all' is the absence of a filter, not a provider name: sent through, the
-  // storage layer matches it against `enrichment_provider` and finds nothing.
-  if (reset) emit('reset', provider.value === 'all' ? '' : provider.value)
+  // Sent through, the storage layer would match 'all' against
+  // `enrichment_provider` and find nothing.
+  if (reset) emit('reset', provider.value === EVERY_PROVIDER.name ? '' : provider.value)
 }
 </script>
 
@@ -50,8 +59,8 @@ function answer(reset: boolean): void {
   <div class="enrichment-reset">
     <label :for="selectId" class="sr-only">Reset which provider's matches</label>
     <select :id="selectId" v-model="provider" class="field toolbar-select" data-testid="reset-provider">
-      <option v-for="key in ENRICHMENT_PROVIDERS" :key="key" :value="key">
-        {{ PROVIDER_LABELS[key] }}
+      <option v-for="one in choices" :key="one.name" :value="one.name">
+        {{ one.display_name }}
       </option>
     </select>
     <button

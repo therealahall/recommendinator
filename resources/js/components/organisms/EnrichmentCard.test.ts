@@ -26,6 +26,10 @@ function makeStats(overrides: Partial<EnrichmentStatsResponse> = {}): Enrichment
     failed: 0,
     by_provider: {},
     by_quality: {},
+    providers: [
+      { name: 'rawg', display_name: 'RAWG' },
+      { name: 'wikidata', display_name: 'Wikidata' },
+    ],
     ...overrides,
   }
 }
@@ -307,18 +311,26 @@ describe('EnrichmentCard', () => {
       expect(document.activeElement).toBe(button.element)
     })
 
+    it('narrows to the providers the stats report, by their display names', async () => {
+      const wrapper = mountWithEnrichment()
+
+      const options = wrapper.findAll('[data-testid="reset-provider"] option')
+
+      expect(options.map((one) => one.text())).toEqual(['All providers', 'RAWG', 'Wikidata'])
+    })
+
     it('sends the provider filter the CLI offers', async () => {
       const wrapper = mountWithEnrichment()
       const data = useDataStore()
       data.resetEnrichment = vi.fn().mockResolvedValue('Reset 12 item(s).')
 
       await wrapper.findAll('[role="radio"]').find((p) => p.text() === 'Movie')!.trigger('click')
-      await wrapper.find('[data-testid="reset-provider"]').setValue('rawg')
+      await wrapper.find('[data-testid="reset-provider"]').setValue('wikidata')
       await wrapper.find('[data-testid="reset-btn"]').trigger('click')
       await wrapper.find('[data-testid="confirm-panel-confirm"]').trigger('click')
       await flushPromises()
 
-      expect(data.resetEnrichment).toHaveBeenCalledWith('movie', 'rawg')
+      expect(data.resetEnrichment).toHaveBeenCalledWith('movie', 'wikidata')
     })
 
     it('keeps the keyboard on the button it disables while the request runs', async () => {
