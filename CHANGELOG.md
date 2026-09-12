@@ -1,6 +1,38 @@
 # CHANGELOG
 
 
+## v0.58.0 (2026-09-12)
+
+### Bug Fixes
+
+- **profile**: Name the section for what it actually lists
+  ([`6c89ace`](https://github.com/therealahall/recommendinator/commit/6c89ace667657a11b7bc9583c278178ea7f33f7b))
+
+- **profile**: Say which genres are not your style instead of tinting them
+  ([`0306827`](https://github.com/therealahall/recommendinator/commit/030682777355e91fb3b189ff4653868b2f0aa843))
+
+- **recommendations**: Keep a liked genre out of the anti-preferences
+  ([`67d0ba6`](https://github.com/therealahall/recommendinator/commit/67d0ba652628a5ee816be96608345866be888daf))
+
+### Documentation
+
+- **profile**: Say tags and authors where the copy said genres
+  ([`86cd533`](https://github.com/therealahall/recommendinator/commit/86cd533048f0991e091581a81b3e1c1166f7fcfd))
+
+### Features
+
+- **profile**: Show authors, bound the panel, and stop listing a genre twice
+  ([`8b738dc`](https://github.com/therealahall/recommendinator/commit/8b738dc0f42ca06c787dcf15d5976d647fe84d90))
+
+- **recommendations**: Profile on the vocabulary the scorers already use
+  ([`16b145c`](https://github.com/therealahall/recommendinator/commit/16b145cbe4f1c6700170510586177bfe390b7682))
+
+### Refactoring
+
+- **profile**: Drop the genre buckets nothing reads
+  ([`ecb8fb6`](https://github.com/therealahall/recommendinator/commit/ecb8fb6bd78d894d729518d456643f9e26ad6cce))
+
+
 ## v0.57.0 (2026-09-11)
 
 ### Bug Fixes
