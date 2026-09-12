@@ -1,6 +1,53 @@
 # CHANGELOG
 
 
+## v0.60.0 (2026-09-12)
+
+### Bug Fixes
+
+- **enrichment**: Expire IGDB's search memo so a re-enrichment asks again
+  ([`4a707ef`](https://github.com/therealahall/recommendinator/commit/4a707ef2ae0dac75c48558e66092b5e8413380d4))
+
+- **enrichment**: Keep asking for a position after a provider names the series
+  ([`3dbff2d`](https://github.com/therealahall/recommendinator/commit/3dbff2d15a1195017497a6e7cd55534aa3874427))
+
+- **enrichment**: Let RAWG match a store title against its subtitled name
+  ([`cb5f4fe`](https://github.com/therealahall/recommendinator/commit/cb5f4fe8e651cb80fb33e98cd2d96fe4b1e23393))
+
+- **enrichment**: Offer every installed provider for a reset, not a written list
+  ([`b5ada32`](https://github.com/therealahall/recommendinator/commit/b5ada32b44ff874524260774c17565014854b336))
+
+- **enrichment**: Say which service IGDB could not reach
+  ([`17975bb`](https://github.com/therealahall/recommendinator/commit/17975bb15166a7da5dade25704a03b5c69cc80aa))
+
+- **enrichment**: Search Wikidata for a game under its cleaned title
+  ([`9b5bdcc`](https://github.com/therealahall/recommendinator/commit/9b5bdccf7a27186299f145049c01ff053d25e701))
+
+- **matching**: Ask for the subtitled form rather than allowing it everywhere
+  ([`5735b67`](https://github.com/therealahall/recommendinator/commit/5735b6752ebe5ef48a985c177855822162d2fbbf))
+
+- **matching**: Match a store title against the catalogue's subtitled name
+  ([`3311d73`](https://github.com/therealahall/recommendinator/commit/3311d73a7a12411b62091c0cadcd1b76ab00a814))
+
+### Documentation
+
+- Bring four oversized sections back under the prose budget
+  ([`27110ab`](https://github.com/therealahall/recommendinator/commit/27110ab0b765892707cc0c72fa7dd0dde6fea8e7))
+
+- **security**: Name the global enrichment gate alongside the per-provider one
+  ([`d0f2143`](https://github.com/therealahall/recommendinator/commit/d0f214375bfbd09eb221a6de5be514c73e442d25))
+
+### Features
+
+- **enrichment**: Name a game's series from IGDB where Wikidata cannot
+  ([`046e2df`](https://github.com/therealahall/recommendinator/commit/046e2dfb756ef7a127494bda68f3a5b11755f70f))
+
+### Performance Improvements
+
+- **enrichment**: Search IGDB once per game, and keep discovery off the CLI's import
+  ([`5e062d4`](https://github.com/therealahall/recommendinator/commit/5e062d425f058dc03f79d3b4b25777d98de4f425))
+
+
 ## v0.59.0 (2026-09-12)
 
 ### Bug Fixes
