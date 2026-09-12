@@ -1,4 +1,6 @@
 import json
+import subprocess
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -20,6 +22,13 @@ from src.utils.matching import Candidate
 from tests.factories import make_storage_mock
 
 from .conftest import _invoke_with_mocks
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
+_PROVIDER_MODULES_LOADED = (
+    "import sys, src.cli.main\n"
+    "print(sorted(n for n in sys.modules if n.startswith('src.enrichment.providers.')))"
+)
 
 
 def _invoke_with_enrichment_manager(
@@ -603,6 +612,22 @@ class TestEnrichmentPinning:
         assert "pin one of rawg, tmdb." in result.output
 
 
+class TestEnrichmentCommandImport:
+    def test_loading_the_cli_imports_no_provider_module(self) -> None:
+        """A ``click.Choice`` of the discovered providers made every invocation,
+        ``--help`` included, import all six and scan ``private/plugins/``.
+        """
+        loaded = subprocess.run(
+            [sys.executable, "-c", _PROVIDER_MODULES_LOADED],
+            cwd=_REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+        assert loaded.stdout.strip() == "[]"
+
+
 class TestEnrichmentReset:
     def test_reset_prompt_states_the_count_each_filter_leaves(
         self, cli_runner: CliRunner
@@ -655,7 +680,7 @@ class TestEnrichmentReset:
         assert spelled_out.exit_code == 0, spelled_out.output
         assert spelled_out_storage.enrichment.reset.call_args.kwargs["provider"] is None
 
-    def test_reset_accepts_every_provider_the_registry_discovered(
+    def test_reset_accepts_every_provider_the_registry_discovered_in_any_case(
         self, cli_runner: CliRunner
     ) -> None:
         discovered = get_enrichment_registry().get_all_providers()
@@ -664,17 +689,38 @@ class TestEnrichmentReset:
         assert {"hardcover", "wikidata"} <= discovered.keys()
 
         for name in discovered:
-            mock_storage = make_storage_mock()
-            mock_storage.enrichment.reset.return_value = 3
+            # The web names a provider by its display name, so the spelling an
+            # operator copies into the terminal is the shouted one.
+            for spelled in (name, name.upper()):
+                mock_storage = make_storage_mock()
+                mock_storage.enrichment.reset.return_value = 3
 
-            result = _invoke_with_mocks(
-                cli_runner,
-                ["enrichment", "reset", "--provider", name, "--yes"],
-                mock_storage,
-            )
+                result = _invoke_with_mocks(
+                    cli_runner,
+                    ["enrichment", "reset", "--provider", spelled, "--yes"],
+                    mock_storage,
+                )
 
-            assert result.exit_code == 0, result.output
-            assert mock_storage.enrichment.reset.call_args.kwargs["provider"] == name
+                assert result.exit_code == 0, result.output
+                reset_kwargs = mock_storage.enrichment.reset.call_args.kwargs
+                assert reset_kwargs["provider"] == name
+
+    def test_reset_refuses_a_provider_nothing_installed_and_names_what_is(
+        self, cli_runner: CliRunner
+    ) -> None:
+        mock_storage = make_storage_mock()
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["enrichment", "reset", "--provider", "nosuchprovider", "--yes"],
+            mock_storage,
+        )
+
+        assert result.exit_code != 0
+        assert "Unknown provider 'nosuchprovider'" in result.output
+        for name in get_enrichment_registry().get_all_providers():
+            assert name in result.output
+        mock_storage.enrichment.reset.assert_not_called()
 
     def test_enrichment_reset_re_queues_the_one_item_named_and_enriches_it(
         self, cli_runner: CliRunner

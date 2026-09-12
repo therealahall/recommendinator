@@ -135,6 +135,7 @@ class IGDBProvider(EnrichmentProvider):
     def __init__(self) -> None:
         self._token: str | None = None
         self._token_expires_at = 0.0
+        self._last_search: tuple[str, list[dict[str, Any]]] | None = None
 
     @property
     def name(self) -> str:
@@ -238,15 +239,29 @@ class IGDBProvider(EnrichmentProvider):
         self, item: ContentItem, credentials: tuple[str, str]
     ) -> dict[str, Any] | None:
         searched = clean_game_title_for_search(item.title)
-        log_search_title(logger, item.title, searched)
-
-        games = self._games(_search_body(searched), credentials)
+        games = self._searched_games(item.title, searched, credentials)
         index = best_match_index(
             searched,
             year_of((item.metadata or {}).get("release_year")),
             [(_titles(game), _release_year(game)) for game in games],
         )
         return None if index is None else games[index]
+
+    def _searched_games(
+        self, title: str, searched: str, credentials: tuple[str, str]
+    ) -> list[dict[str, Any]]:
+        """``enrich`` and ``fetch_series_ordinal`` run back to back for one item,
+        so the last response is held to spare a byte-identical second POST. The
+        candidates, not the match: the year the item states picks between them.
+        """
+        body = _search_body(searched)
+        if self._last_search is not None and self._last_search[0] == body:
+            return self._last_search[1]
+
+        log_search_title(logger, title, searched)
+        games = self._games(body, credentials)
+        self._last_search = (body, games)
+        return games
 
     def _games(self, body: str, credentials: tuple[str, str]) -> list[dict[str, Any]]:
         response = self._query(body, credentials, fresh_token=False)

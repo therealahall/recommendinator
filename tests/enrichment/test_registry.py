@@ -27,7 +27,14 @@ _STALL_TIMEOUT_SECONDS = 5.0
 
 _BLOCKED_GRACE_SECONDS = 0.5
 
-_BUILTIN_PROVIDER_NAMES = {"tmdb", "openlibrary", "rawg", "wikidata", "hardcover"}
+_BUILTIN_PROVIDER_NAMES = {
+    "tmdb",
+    "openlibrary",
+    "rawg",
+    "wikidata",
+    "hardcover",
+    "igdb",
+}
 
 
 def _enabled_config(*names: str) -> dict[str, Any]:

@@ -26,6 +26,9 @@ _COVER_PATH = "images.igdb.com/igdb/image/upload/t_thumb/co1x2y.jpg"
 _RELEASED_AT = 946684800
 _RELEASE_YEAR = 2000
 
+_REMADE_AT = 1041379200
+_REMAKE_YEAR = 2003
+
 
 def _response(
     payload: Any,
@@ -308,6 +311,60 @@ class TestIGDBEnrichment:
         assert body.count(";") == 3
 
 
+class TestIGDBSearchReuse:
+    def test_one_item_is_searched_once_however_many_answers_it_is_asked_for(
+        self, provider: IGDBProvider
+    ) -> None:
+        transport = _served(_game(collections=[{"name": "Planescape"}]))
+
+        with patch(
+            "src.enrichment.providers.igdb.igdb.requests.post", side_effect=transport
+        ):
+            result = provider.enrich(_item(), _CONFIG)
+            ordinal = provider.fetch_series_ordinal(_item(), _CONFIG)
+
+        assert len(transport.game_requests) == 1
+        assert result is not None and result.match_quality != "not_found"
+        assert ordinal == SeriesOrdinal(position=None, series_name="Planescape")
+
+    def test_the_next_item_is_searched_rather_than_answered_from_the_last(
+        self, provider: IGDBProvider
+    ) -> None:
+        transport = _Transport(_response([_game()]), _response([_game(name="Prey")]))
+
+        with patch(
+            "src.enrichment.providers.igdb.igdb.requests.post", side_effect=transport
+        ):
+            provider.enrich(_item(), _CONFIG)
+            result = provider.enrich(_item("Prey"), _CONFIG)
+
+        bodies = [call["data"] for call in transport.game_requests]
+        assert len(bodies) == 2 and 'search "Prey";' in bodies[1]
+        assert result is not None and result.match_quality != "not_found"
+
+    def test_two_items_sharing_a_search_are_matched_on_the_year_each_states(
+        self, provider: IGDBProvider
+    ) -> None:
+        transport = _served(
+            _game(
+                name="Prey", first_release_date=_RELEASED_AT, summary="The original."
+            ),
+            _game(name="Prey", first_release_date=_REMADE_AT, summary="The remake."),
+        )
+
+        with patch(
+            "src.enrichment.providers.igdb.igdb.requests.post", side_effect=transport
+        ):
+            original = provider.enrich(
+                _item("Prey", release_year=_RELEASE_YEAR), _CONFIG
+            )
+            remake = provider.enrich(_item("Prey", release_year=_REMAKE_YEAR), _CONFIG)
+
+        assert len(transport.game_requests) == 1
+        assert original is not None and original.description == "The original."
+        assert remake is not None and remake.description == "The remake."
+
+
 class TestIGDBAppToken:
     def test_the_token_is_minted_once_and_reused_across_items(
         self, provider: IGDBProvider
@@ -317,8 +374,8 @@ class TestIGDBAppToken:
         with patch(
             "src.enrichment.providers.igdb.igdb.requests.post", side_effect=transport
         ):
-            for _ in range(3):
-                provider.enrich(_item(), _CONFIG)
+            for title in ("Planescape: Torment", "Prey", "Styx"):
+                provider.enrich(_item(title), _CONFIG)
 
         assert transport.token_requests == 1
         assert len(transport.game_requests) == 3
@@ -342,7 +399,7 @@ class TestIGDBAppToken:
             "src.enrichment.providers.igdb.igdb.requests.post", side_effect=transport
         ):
             provider.enrich(_item(), _CONFIG)
-            provider.enrich(_item(), _CONFIG)
+            provider.enrich(_item("Prey"), _CONFIG)
 
         assert transport.token_requests == 2
         assert len(transport.game_requests) == 3
@@ -368,7 +425,7 @@ class TestIGDBAppToken:
             "src.enrichment.providers.igdb.igdb.requests.post", side_effect=transport
         ):
             provider.enrich(_item(), _CONFIG)
-            provider.enrich(_item(), _CONFIG)
+            provider.enrich(_item("Prey"), _CONFIG)
 
         assert transport.token_requests == 2
 
