@@ -7,6 +7,7 @@ import requests
 
 from src.enrichment.provider_base import ProviderError, SeriesOrdinal
 from src.enrichment.providers.igdb.igdb import (
+    _SEARCH_MEMO_SECONDS,
     GAMES_URL,
     TWITCH_TOKEN_URL,
     IGDBProvider,
@@ -81,6 +82,14 @@ class _Transport:
             return self.token
         self.game_requests.append({"url": url, **kwargs})
         return self.games.pop(0) if len(self.games) > 1 else self.games[0]
+
+
+class _Clock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
 
 
 def _served(*games: dict[str, Any]) -> _Transport:
@@ -341,6 +350,29 @@ class TestIGDBSearchReuse:
         bodies = [call["data"] for call in transport.game_requests]
         assert len(bodies) == 2 and 'search "Prey";' in bodies[1]
         assert result is not None and result.match_quality != "not_found"
+
+    def test_the_same_item_run_again_later_is_searched_rather_than_memoised(
+        self, provider: IGDBProvider
+    ) -> None:
+        transport = _Transport(
+            _response([_game()]),
+            _response([_game(collections=[{"name": "Planescape"}])]),
+        )
+        clock = _Clock()
+
+        with (
+            patch("src.enrichment.providers.igdb.igdb.time.monotonic", clock),
+            patch(
+                "src.enrichment.providers.igdb.igdb.requests.post",
+                side_effect=transport,
+            ),
+        ):
+            assert provider.fetch_series_ordinal(_item(), _CONFIG) is None
+            clock.now += _SEARCH_MEMO_SECONDS + 1
+            ordinal = provider.fetch_series_ordinal(_item(), _CONFIG)
+
+        assert len(transport.game_requests) == 2
+        assert ordinal == SeriesOrdinal(position=None, series_name="Planescape")
 
     def test_two_items_sharing_a_search_are_matched_on_the_year_each_states(
         self, provider: IGDBProvider

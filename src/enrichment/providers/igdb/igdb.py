@@ -42,6 +42,10 @@ _CANDIDATE_LIMIT = 10
 # title carries. Dropped, not escaped: the hits are scored on similarity after.
 _UNQUOTABLE = re.compile(r'["\\;\n\r]')
 
+# Spans one item's enrich and fetch_series_ordinal, a rate-limiter acquire apart.
+# Longer would answer a re-enrichment from the run before it.
+_SEARCH_MEMO_SECONDS = 5.0
+
 _THUMBNAIL_IN_PATH = "t_thumb"
 _FULL_SIZE_IN_PATH = "t_cover_big"
 
@@ -136,6 +140,7 @@ class IGDBProvider(EnrichmentProvider):
         self._token: str | None = None
         self._token_expires_at = 0.0
         self._last_search: tuple[str, list[dict[str, Any]]] | None = None
+        self._last_search_expires_at = 0.0
 
     @property
     def name(self) -> str:
@@ -250,17 +255,19 @@ class IGDBProvider(EnrichmentProvider):
     def _searched_games(
         self, title: str, searched: str, credentials: tuple[str, str]
     ) -> list[dict[str, Any]]:
-        """``enrich`` and ``fetch_series_ordinal`` run back to back for one item,
-        so the last response is held to spare a byte-identical second POST. The
-        candidates, not the match: the year the item states picks between them.
-        """
+        """The year an item states picks the match, so candidates are held."""
         body = _search_body(searched)
-        if self._last_search is not None and self._last_search[0] == body:
+        if (
+            self._last_search is not None
+            and self._last_search[0] == body
+            and time.monotonic() < self._last_search_expires_at
+        ):
             return self._last_search[1]
 
         log_search_title(logger, title, searched)
         games = self._games(body, credentials)
         self._last_search = (body, games)
+        self._last_search_expires_at = time.monotonic() + _SEARCH_MEMO_SECONDS
         return games
 
     def _games(self, body: str, credentials: tuple[str, str]) -> list[dict[str, Any]]:
