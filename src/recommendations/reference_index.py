@@ -17,7 +17,7 @@ from src.recommendations.genre_clusters import (
     get_clusters_for_terms,
 )
 from src.recommendations.scorers import extract_creator, extract_genres
-from src.utils.series import get_series_name, get_series_name_from_metadata
+from src.utils.series import get_series_name
 from src.utils.sorting import get_sort_title, titles_similar
 
 #: References cited per content type: the candidate's own type, and each other.
@@ -115,16 +115,12 @@ class _TypeBucket:
 def _record_for(item: ContentItem, ordinal: int) -> _SignalRecord:
     genres = extract_genres(item)
 
+    # A show-level entry carries no season marker, so its own title is what ties
+    # it to a candidate season of it, whatever series a provider files it under.
+    series_keys = {item.title.strip().lower()}
     series_name = get_series_name(item)
     if series_name is not None:
-        series_keys = {series_name.lower()}
-    else:
-        # A show-level entry carries no season marker, so its own title and its
-        # metadata series name are what tie it to a candidate's series.
-        series_keys = {item.title.strip().lower()}
-        metadata_series = get_series_name_from_metadata(item.metadata)
-        if metadata_series is not None:
-            series_keys.add(metadata_series.lower())
+        series_keys.add(series_name.lower())
 
     return _SignalRecord(
         item=item,

@@ -62,10 +62,15 @@ weight nothing.
 ## Series filtering
 
 With **"Recommend series in order"** on, the default, a book 3 you cannot yet
-read is replaced by the earliest available entry in its series. A position comes
-from series metadata, or from the title — a number, a Roman numeral, a season
-indicator — where the metadata states none. Half-numbered entries such as
-`(The Expanse, #2.5)` order as fractions, so the novella waits for book `#2`.
+read is replaced by the earliest available entry in its series.
+
+Both the series and the position come from what a source states: series
+metadata, or a marker still naming the series in the title, such as
+`(The Expanse, #2)`. An item nothing names belongs to no series. A bare number
+says nothing on its own, as "Left 4 Dead 2" shows.
+
+Half-numbered entries such as `(The Expanse, #2.5)` order as fractions, so the
+novella waits for book `#2`.
 
 Where any entry of a series states no position, the whole series orders by
 release year instead: one entry's date is never ranked against another's number.

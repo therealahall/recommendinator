@@ -738,6 +738,26 @@ class TestSeriesAffinityScorer:
         scorer = SeriesAffinityScorer()
         assert scorer.score(candidate, context) == 1.0
 
+    def test_a_rating_pools_under_the_stated_name_not_a_title_fragment(self) -> None:
+        consumed = [
+            make_item(
+                title="Left 4 Dead",
+                content_type=ContentType.VIDEO_GAME,
+                metadata={"series_name": "Left 4 Dead"},
+                rating=5,
+            ),
+        ]
+        candidate = make_item(
+            title="Left 4 Dead 2",
+            content_type=ContentType.VIDEO_GAME,
+            metadata={"series_name": "Left 4 Dead"},
+            status=ConsumptionStatus.UNREAD,
+        )
+        context = _build_context(consumed=consumed)
+
+        assert context.series_ratings == {"Left 4 Dead": [5]}
+        assert SeriesAffinityScorer().score(candidate, context) == 1.0
+
     def test_unrated_consumed_entries_excluded_from_average(self) -> None:
         consumed = [
             make_item(

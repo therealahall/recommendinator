@@ -16,7 +16,7 @@ from src.storage.schema import (
     reset_enrichment_status,
 )
 from src.storage.sqlite_db import SQLiteDB
-from src.utils.series import get_series_item_number, get_series_name
+from src.utils.series import get_series_name, get_series_position_from_metadata
 
 PINNED_UPDATE = "2020-01-01 00:00:00"
 DEAD = "https://art/gone.jpg"
@@ -631,7 +631,7 @@ def test_a_survivor_gains_the_series_the_absorbed_row_states(db: SQLiteDB) -> No
 
     survivor = db.get_content_item(survivor_id)
     assert get_series_name(survivor) == "The Murderbot Diaries"
-    assert get_series_item_number(survivor) == 1.0
+    assert get_series_position_from_metadata(survivor.metadata) == 1.0
 
 
 def test_a_survivor_keeps_the_better_founded_of_two_ordinals(db: SQLiteDB) -> None:
@@ -664,6 +664,6 @@ def test_a_survivor_keeps_the_better_founded_of_two_ordinals(db: SQLiteDB) -> No
     db.merge_content_items(survivor_id, absorbed_id, MergeEvidence.MANUAL)
 
     survivor = db.get_content_item(survivor_id)
-    assert get_series_item_number(survivor) == 5.0
+    assert get_series_position_from_metadata(survivor.metadata) == 5.0
     assert survivor.metadata["series_position_authority"] == "library"
     assert 7 not in survivor.metadata.values()
