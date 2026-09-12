@@ -82,6 +82,8 @@ def best_match(
     searched_title: str,
     item_year: int | None,
     candidates: Sequence[Candidate],
+    *,
+    allow_subtitled: bool = False,
 ) -> Candidate | None:
     index = best_match_index(
         searched_title,
@@ -90,6 +92,7 @@ def best_match(
             ([candidate.title, *candidate.also_titled], candidate.year)
             for candidate in candidates
         ],
+        allow_subtitled=allow_subtitled,
     )
     return None if index is None else candidates[index]
 

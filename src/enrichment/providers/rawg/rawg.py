@@ -111,6 +111,7 @@ class RAWGProvider(EnrichmentProvider):
             clean_game_title_for_search(item.title),
             year_of(metadata.get("release_year")),
             self._search_game(item, api_key),
+            allow_subtitled=True,
         )
         return None if matched is None else int(matched.record_id)
 
