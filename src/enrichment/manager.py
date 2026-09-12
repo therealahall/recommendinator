@@ -794,7 +794,7 @@ class EnrichmentManager:
         series name to agree with, and only while an authored one would replace
         what is stored. Returns why it ended unanswered, or None when answered.
         """
-        settled: dict[str, Any] = {}
+        settled = False
         unanswered: list[str] = []
         for provider in providers:
             # Each round, not once: a name-only answer used to end the walk here
@@ -833,7 +833,7 @@ class EnrichmentManager:
             fields = reconcile_series(item.metadata, ordinal.as_metadata())
             if not fields:
                 continue
-            settled.update(fields)
+            settled = True
             item = item.model_copy(update={"metadata": {**item.metadata, **fields}})
 
         if not settled:

@@ -51,8 +51,11 @@ def title_similarity(left: str, right: str) -> float:
 
 def _is_subtitled_form_of(title: str, searched: str) -> bool:
     parts = _SUBTITLE_BOUNDARY.split(title, maxsplit=1)
+    if len(parts) != 2:
+        return False
     # Whole, never close: 'Ultima I' and 'Ultima II' score 0.94 against each other.
-    return len(parts) == 2 and normalize_title(parts[0]) == normalize_title(searched)
+    leading = normalize_title(parts[0])
+    return bool(leading) and leading == normalize_title(searched)
 
 
 def _year_rank(item_year: int | None, year: int | None) -> tuple[int, int]:
@@ -95,6 +98,8 @@ def best_match_index(
     searched_title: str,
     item_year: int | None,
     candidates: Sequence[tuple[list[str], int | None]],
+    *,
+    allow_subtitled: bool = False,
 ) -> int | None:
     """Index of the closest (titles, year) candidate worth trusting, if any."""
     # Only the item's title is stripped. Stripping a candidate's would let
@@ -120,9 +125,11 @@ def best_match_index(
             default=0.0,
         )
         outright = score >= MINIMUM_TITLE_SIMILARITY
-        if not outright and not any(
+        # Opt-in: a caller retrying on a miss needs a sibling to stay one.
+        subtitled = allow_subtitled and any(
             _is_subtitled_form_of(title, searched_title) for title in titles
-        ):
+        )
+        if not outright and not subtitled:
             continue
         # Lower is better, and only a strict improvement displaces the incumbent,
         # so candidates alike on both keep the provider's ranking.

@@ -202,18 +202,37 @@ class TestHardcoverMatching:
         assert "editions" not in where
         assert result is not None and result.match_quality != "not_found"
 
+    @pytest.mark.parametrize(
+        "title",
+        ["The Leviathan Wakes Companion", "Leviathan Wakes: The Expanse Origins"],
+        ids=["surrounded", "subtitled"],
+    )
     def test_a_title_that_only_contains_the_searched_one_is_refused(
-        self, provider: HardcoverProvider
+        self, provider: HardcoverProvider, title: str
     ) -> None:
         with patch(
             "src.enrichment.providers.hardcover.hardcover.requests.post"
         ) as mock_post:
-            mock_post.return_value = _response(
-                _books(_hardcover_book(title="The Leviathan Wakes Companion"))
-            )
+            mock_post.return_value = _response(_books(_hardcover_book(title=title)))
             result = provider.enrich(_book(), _CONFIG)
 
         assert result is not None and result.match_quality == "not_found"
+
+    def test_a_subtitled_sibling_does_not_make_the_exact_record_ambiguous(
+        self, provider: HardcoverProvider
+    ) -> None:
+        origins = _hardcover_book(title="Leviathan Wakes: The Expanse Origins")
+        origins["description"] = "The graphic novel prequel."
+
+        with patch(
+            "src.enrichment.providers.hardcover.hardcover.requests.post"
+        ) as mock_post:
+            mock_post.return_value = _response(_books(_hardcover_book(), origins))
+            result = provider.enrich(_book(), _CONFIG)
+
+        assert result is not None
+        assert result.description == "Humanity has colonized the solar system."
+        assert result.genres == ["Science Fiction"]
 
 
 class TestHardcoverEnrichment:
