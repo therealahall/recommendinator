@@ -154,11 +154,9 @@ class TestIGDBSeriesName:
             {"name": "Ultima VII: The Black Gate", "franchise": {"name": "Ultima"}}
         )
 
-        ordinal = _run(
-            transport,
-            provider.fetch_series_ordinal,
-            _item("Ultima™ VII: The Black Gate"),
-        )
+        # A store sells the bare name, so this only matches while IGDB asks the
+        # matcher for the subtitled form.
+        ordinal = _run(transport, provider.fetch_series_ordinal, _item("Ultima™ VII"))
 
         assert ordinal == SeriesOrdinal(position=None, series_name="Ultima")
 

@@ -274,6 +274,7 @@ class IGDBProvider(EnrichmentProvider):
                 "Authorization": f"Bearer {token}",
                 "Accept": "application/json",
             },
+            "IGDB",
         )
 
     def _access_token(self, credentials: tuple[str, str], fresh_token: bool) -> str:
@@ -293,6 +294,7 @@ class IGDBProvider(EnrichmentProvider):
                 "grant_type": "client_credentials",
             },
             {"Accept": "application/json"},
+            "Twitch",
         )
         self._checked(response, "Twitch refused the client credentials")
 
@@ -316,7 +318,9 @@ class IGDBProvider(EnrichmentProvider):
                 self.name, f"{failure}: {scrub_request_error(error)}"
             ) from error
 
-    def _post(self, url: str, data: Any, headers: dict[str, str]) -> requests.Response:
+    def _post(
+        self, url: str, data: Any, headers: dict[str, str], service: str
+    ) -> requests.Response:
         """``requests`` replays the Authorization header onto a redirect's host."""
         current = url
         for _ in range(MAX_SAME_ORIGIN_REDIRECTS):
@@ -330,7 +334,7 @@ class IGDBProvider(EnrichmentProvider):
                 )
             except requests.RequestException as error:
                 raise ProviderError(
-                    self.name, f"IGDB request failed: {scrub_request_error(error)}"
+                    self.name, f"{service} request failed: {scrub_request_error(error)}"
                 ) from error
 
             if response.status_code not in REDIRECT_STATUSES:
@@ -344,10 +348,11 @@ class IGDBProvider(EnrichmentProvider):
                 raise ProviderError(
                     self.name,
                     f"Refused a redirect to {sanitize_for_log(target)}: it leaves "
-                    "the origin the IGDB credentials are sent to.",
+                    f"the origin the {service} credentials are sent to.",
                 )
             current = target
 
         raise ProviderError(
-            self.name, f"IGDB redirected more than {MAX_SAME_ORIGIN_REDIRECTS} times."
+            self.name,
+            f"{service} redirected more than {MAX_SAME_ORIGIN_REDIRECTS} times.",
         )
