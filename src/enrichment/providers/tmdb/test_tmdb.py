@@ -223,7 +223,7 @@ class TestTMDBProviderMovieEnrichment:
     ) -> None:
         hit = {"id": 603, "title": "The Matrix", "release_date": release_date}
 
-        def tmdb(url: str, *, params: dict[str, str], timeout: int) -> MagicMock:
+        def tmdb(url: str, *, params: dict[str, str], **sent: Any) -> MagicMock:
             # Stands in for TMDB's exact year filter, which is what puts the
             # drifted release out of reach of the first search.
             payload: dict[str, Any] = (
@@ -257,7 +257,7 @@ class TestTMDBProviderMovieEnrichment:
         sequel = {"id": 9067, "title": "Herbie: Fully Loaded", "release_date": ""}
         herbie = {"id": 11806, "title": "Herbie", "release_date": "1968-03-13"}
 
-        def tmdb(url: str, *, params: dict[str, str], timeout: int) -> MagicMock:
+        def tmdb(url: str, *, params: dict[str, str], **sent: Any) -> MagicMock:
             payload: dict[str, Any] = (
                 {"results": [sequel] if "year" in params else [sequel, herbie]}
                 if "/search/" in url
@@ -780,6 +780,28 @@ class TestTMDBProviderKeywords:
         assert mock_get.call_count == 1
         assert result is not None
         assert result.tags is None
+
+
+class TestTMDBPinnedRecord:
+    def test_a_pin_of_foreign_digits_searches_rather_than_fetching_what_int_reads(
+        self,
+    ) -> None:
+        item = ContentItem(
+            id="movie123",
+            title="The Matrix",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"enrichment_ids": {"tmdb": "٦٠٣"}},
+        )
+
+        with patch("src.enrichment.providers.tmdb.tmdb.requests.get") as mock_get:
+            mock_get.return_value = MagicMock(
+                spec=requests.Response, status_code=200, json=lambda: {"results": []}
+            )
+
+            TMDBProvider().enrich(item, {"api_key": "k"})
+
+        assert mock_get.call_args_list[0].args[0].endswith("/search/movie")
 
 
 class TestTMDBProviderUnsupportedTypes:

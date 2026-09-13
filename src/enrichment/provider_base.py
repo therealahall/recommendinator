@@ -49,6 +49,11 @@ def pinned_record(item: ContentItem, provider_name: str) -> str | None:
     return pins_of(item.metadata or {}).get(provider_name)
 
 
+def is_numeric_record_id(record_id: str) -> bool:
+    """``isdigit()`` alone admits '٣', which ``int()`` then reads as 3."""
+    return record_id.isascii() and record_id.isdigit()
+
+
 def with_pin(
     metadata: dict[str, Any], provider_name: str, record_id: str | None
 ) -> dict[str, str]:

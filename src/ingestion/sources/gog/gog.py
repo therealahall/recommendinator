@@ -14,6 +14,11 @@ from src.ingestion.plugin_base import (
     SourceError,
     SourcePlugin,
 )
+from src.ingestion.urls import (
+    RedirectRefused,
+    fixed_endpoint_refusal,
+    request_within_origin,
+)
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.detail_fields import text_names
 from src.utils.progress import log_progress
@@ -40,6 +45,15 @@ class GogAPIError(Exception):
     pass
 
 
+def _gog_get(url: str, **sent: Any) -> requests.Response:
+    try:
+        return request_within_origin(
+            requests.get, url, "GOG", fixed_endpoint_refusal, **sent
+        )
+    except RedirectRefused as refused:
+        raise GogAPIError(str(refused)) from None
+
+
 def refresh_access_token(refresh_token: str) -> dict[str, str]:
     params = {
         "client_id": GOG_CLIENT_ID,
@@ -48,7 +62,7 @@ def refresh_access_token(refresh_token: str) -> dict[str, str]:
         "refresh_token": refresh_token,
     }
     try:
-        response = requests.get(GOG_AUTH_URL, params=params, timeout=10)
+        response = _gog_get(GOG_AUTH_URL, params=params)
         response.raise_for_status()
         data = response.json()
         access_token = data.get("access_token")
@@ -82,7 +96,7 @@ def get_owned_games(
         params: dict[str, Any] = {"mediaType": 1, "page": page}
 
         try:
-            response = requests.get(url, params=params, headers=headers, timeout=30)
+            response = _gog_get(url, params=params, headers=headers)
             response.raise_for_status()
             data = response.json()
 
@@ -122,7 +136,7 @@ def get_wishlist_product_ids(access_token: str) -> list[int]:
     headers = {"Authorization": f"Bearer {access_token}"}
 
     try:
-        response = requests.get(url, headers=headers, timeout=10)
+        response = _gog_get(url, headers=headers)
         response.raise_for_status()
         data = response.json()
         wishlist = data.get("wishlist", {})
@@ -140,7 +154,7 @@ def get_product_details(product_id: int) -> dict[str, Any] | None:
     params = {"expand": "description"}
 
     try:
-        response = requests.get(url, params=params, timeout=10)
+        response = _gog_get(url, params=params)
         if response.status_code == 404:
             logger.warning("GOG product %d not found (404)", product_id)
             return None

@@ -12,6 +12,11 @@ from src.ingestion.plugin_base import (
     SourceError,
     SourcePlugin,
 )
+from src.ingestion.urls import (
+    RedirectRefused,
+    fixed_endpoint_refusal,
+    request_within_origin,
+)
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.utils.request_errors import scrub_request_error
 from src.utils.text import exception_for_log, sanitize_for_log
@@ -35,11 +40,20 @@ class SteamAPIError(Exception):
     pass
 
 
+def _steam_get(url: str, **sent: Any) -> requests.Response:
+    try:
+        return request_within_origin(
+            requests.get, url, "Steam", fixed_endpoint_refusal, **sent
+        )
+    except RedirectRefused as refused:
+        raise SteamAPIError(str(refused)) from None
+
+
 def get_steam_id_from_vanity_url(api_key: str, vanity_url: str) -> str | None:
     url = f"{STEAM_API_BASE}/ISteamUser/ResolveVanityURL/v0001/"
     params = {"key": api_key, "vanityurl": vanity_url}
     try:
-        response = requests.get(url, params=params, timeout=10)
+        response = _steam_get(url, params=params)
         response.raise_for_status()
         data = response.json()
         result = data.get("response", {})
@@ -68,7 +82,7 @@ def get_owned_games(
         "format": "json",
     }
     try:
-        response = requests.get(url, params=params, timeout=30)
+        response = _steam_get(url, params=params)
         response.raise_for_status()
         data = response.json()
         games = data.get("response", {}).get("games", [])

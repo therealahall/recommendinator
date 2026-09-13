@@ -9,8 +9,14 @@ from src.enrichment.provider_base import (
     EnrichmentProvider,
     EnrichmentResult,
     ProviderError,
+    is_numeric_record_id,
     log_search_title,
     pinned_record,
+)
+from src.ingestion.urls import (
+    RedirectRefused,
+    fixed_endpoint_refusal,
+    request_within_origin,
 )
 from src.models.content import ContentItem, ContentType, get_enum_value
 from src.utils.matching import Candidate, best_match, year_of
@@ -96,15 +102,24 @@ class RAWGProvider(EnrichmentProvider):
         return self._search_game(item, config.get("api_key", ""))
 
     def accepts_record_id(self, record_id: str) -> bool:
-        return record_id.isdigit()
+        return is_numeric_record_id(record_id)
+
+    def _get(self, url: str, params: dict[str, Any]) -> requests.Response:
+        try:
+            return request_within_origin(
+                requests.get,
+                url,
+                self.display_name,
+                fixed_endpoint_refusal,
+                params=params,
+            )
+        except RedirectRefused as refused:
+            raise ProviderError(self.name, str(refused)) from None
 
     def _matched_id(self, item: ContentItem, api_key: str) -> int | None:
         pinned = pinned_record(item, self.name)
-        if pinned is not None:
-            try:
-                return int(pinned)
-            except ValueError:
-                pass
+        if pinned is not None and self.accepts_record_id(pinned):
+            return int(pinned)
 
         metadata = item.metadata or {}
         matched = best_match(
@@ -126,11 +141,7 @@ class RAWGProvider(EnrichmentProvider):
         }
 
         try:
-            response = requests.get(
-                f"{RAWG_API_BASE}/games",
-                params=params,
-                timeout=10,
-            )
+            response = self._get(f"{RAWG_API_BASE}/games", params=params)
             response.raise_for_status()
 
             return [
@@ -152,10 +163,8 @@ class RAWGProvider(EnrichmentProvider):
 
     def _fetch_game_details(self, game_id: int, api_key: str) -> EnrichmentResult:
         try:
-            response = requests.get(
-                f"{RAWG_API_BASE}/games/{game_id}",
-                params={"key": api_key},
-                timeout=10,
+            response = self._get(
+                f"{RAWG_API_BASE}/games/{game_id}", params={"key": api_key}
             )
             response.raise_for_status()
             game = response.json()

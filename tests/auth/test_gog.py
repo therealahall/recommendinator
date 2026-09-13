@@ -48,7 +48,7 @@ class TestExtractCodeFromInput:
 class TestExchangeCodeForTokens:
     @patch("src.auth.gog.requests.get")
     def test_successful_exchange(self, mock_get: MagicMock) -> None:
-        mock_response = MagicMock(spec=requests.Response)
+        mock_response = MagicMock(spec=requests.Response, status_code=200)
         mock_response.ok = True
         mock_response.json.return_value = {
             "access_token": "access123",

@@ -8,21 +8,22 @@ import ipaddress
 import socket
 import time
 from dataclasses import dataclass
-from urllib.parse import urljoin
 
 import requests
 
 from src.covers.cache import image_media_type
-from src.ingestion.urls import UrlOrigin, url_origin
+from src.ingestion.urls import (
+    RedirectRefused,
+    UrlOrigin,
+    request_within_origin,
+    url_origin,
+)
 
 MAX_BYTES = 5 * 1024 * 1024
 
-_TIMEOUT = 10
-#: The timeout above bounds one socket read, which a trickling host never breaches.
+#: The request timeout bounds one socket read, which a trickling host never breaches.
 _DEADLINE_SECONDS = 30
-_MAX_HOPS = 3
 _ALLOWED_SCHEMES = frozenset({"http", "https"})
-_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 
 #: A 5xx, a timeout and a refused hop are the server having a bad day.
 _PERMANENT_STATUSES = frozenset({403, 404, 410})
@@ -38,6 +39,12 @@ class CoverUnavailable:
 _TOOK_TOO_LONG = CoverUnavailable("the cover took too long to arrive", permanent=False)
 
 
+def _off_origin_refusal(_url: str, _target: str, _service: str) -> str:
+    """Neither URL, unlike the refusals in `urls.py`: a cover URL is whatever a
+    metadata provider handed over, so there is no setting to repoint it at."""
+    return "the cover redirected to another origin"
+
+
 def fetch_cover(
     url: str,
     *,
@@ -49,39 +56,33 @@ def fetch_cover(
     origin = url_origin(url)
     if not isinstance(origin, UrlOrigin) or origin.scheme not in _ALLOWED_SCHEMES:
         return CoverUnavailable("the cover URL names no http host", permanent=True)
+    # Once, rather than per hop: the walk below never leaves this origin.
     if not private_allowed and _is_private(origin.host):
         return CoverUnavailable(
             "the cover URL points at a private address", permanent=False
         )
 
     deadline = time.monotonic() + _DEADLINE_SECONDS
-    for _ in range(_MAX_HOPS):
-        if time.monotonic() > deadline:
-            return _TOOK_TOO_LONG
-        try:
-            with requests.get(
-                url,
-                auth=auth,
-                verify=verify,
-                timeout=_TIMEOUT,
-                stream=True,
-                allow_redirects=False,
-            ) as response:
-                location = response.headers.get("Location")
-                if response.status_code in _REDIRECT_STATUSES and location:
-                    target = urljoin(url, location)
-                    if url_origin(target) != origin:
-                        return CoverUnavailable(
-                            "the cover redirected to another origin", permanent=False
-                        )
-                    url = target
-                    continue
-                return _read_image(response, deadline)
-        except requests.RequestException:
-            # Not the exception's words: they quote the URL and the headers.
-            return CoverUnavailable("the cover host could not be reached", False)
-
-    return CoverUnavailable("the cover redirected too many times", permanent=False)
+    try:
+        with request_within_origin(
+            requests.get,
+            url,
+            "the cover host",
+            _off_origin_refusal,
+            deadline=deadline,
+            auth=auth,
+            verify=verify,
+            stream=True,
+        ) as response:
+            return _read_image(response, deadline)
+    except RedirectRefused as refused:
+        # The walk refuses a hop off the origin, a chain past the hop cap and one
+        # that outlives the deadline, and the backfill lists this reason: one
+        # wording for the three names the wrong cause for two of them.
+        return CoverUnavailable(str(refused), permanent=False)
+    except requests.RequestException:
+        # Not the exception's words: they quote the URL and the headers.
+        return CoverUnavailable("the cover host could not be reached", False)
 
 
 def _read_image(

@@ -9,8 +9,14 @@ from src.enrichment.provider_base import (
     EnrichmentProvider,
     EnrichmentResult,
     ProviderError,
+    is_numeric_record_id,
     log_search_title,
     pinned_record,
+)
+from src.ingestion.urls import (
+    RedirectRefused,
+    fixed_endpoint_refusal,
+    request_within_origin,
 )
 from src.models.content import ContentItem, ContentType, get_enum_value
 from src.utils.matching import Candidate, best_match, year_of
@@ -206,17 +212,26 @@ class TMDBProvider(EnrichmentProvider):
         )
 
     def accepts_record_id(self, record_id: str) -> bool:
-        return record_id.isdigit()
+        return is_numeric_record_id(record_id)
+
+    def _get(self, url: str, params: dict[str, Any]) -> requests.Response:
+        try:
+            return request_within_origin(
+                requests.get,
+                url,
+                self.display_name,
+                fixed_endpoint_refusal,
+                params=params,
+            )
+        except RedirectRefused as refused:
+            raise ProviderError(self.name, str(refused)) from None
 
     def _get_tmdb_id(self, item: ContentItem, media_type: str) -> int | None:
         metadata = item.metadata or {}
 
         pinned = pinned_record(item, self.name)
-        if pinned is not None:
-            try:
-                return int(pinned)
-            except ValueError:
-                pass
+        if pinned is not None and self.accepts_record_id(pinned):
+            return int(pinned)
 
         if "tmdb_id" in metadata:
             try:
@@ -259,10 +274,9 @@ class TMDBProvider(EnrichmentProvider):
         self, endpoint: str, api_key: str, params: dict[str, str]
     ) -> list[Candidate]:
         try:
-            response = requests.get(
+            response = self._get(
                 f"{TMDB_API_BASE}/{endpoint}",
                 params={"api_key": api_key, **params},
-                timeout=10,
             )
             response.raise_for_status()
         except requests.RequestException as error:
@@ -297,14 +311,13 @@ class TMDBProvider(EnrichmentProvider):
         include_keywords: bool,
     ) -> EnrichmentResult:
         try:
-            response = requests.get(
+            response = self._get(
                 f"{TMDB_API_BASE}/movie/{tmdb_id}",
                 params={
                     "api_key": api_key,
                     "language": language,
                     "append_to_response": "credits",
                 },
-                timeout=10,
             )
             response.raise_for_status()
             movie = response.json()
@@ -374,10 +387,9 @@ class TMDBProvider(EnrichmentProvider):
         include_keywords: bool,
     ) -> EnrichmentResult:
         try:
-            response = requests.get(
+            response = self._get(
                 f"{TMDB_API_BASE}/tv/{tmdb_id}",
                 params={"api_key": api_key, "language": language},
-                timeout=10,
             )
             response.raise_for_status()
             show = response.json()
@@ -450,10 +462,9 @@ class TMDBProvider(EnrichmentProvider):
         result_key: str = "keywords",
     ) -> list[str] | None:
         try:
-            response = requests.get(
+            response = self._get(
                 f"{TMDB_API_BASE}/{media_type}/{tmdb_id}/keywords",
                 params={"api_key": api_key},
-                timeout=10,
             )
             response.raise_for_status()
             data = response.json()
@@ -461,7 +472,7 @@ class TMDBProvider(EnrichmentProvider):
             keywords = [keyword["name"] for keyword in data.get(result_key, [])[:20]]
             return keywords if keywords else None
 
-        except requests.RequestException:
+        except (ProviderError, requests.RequestException):
             logger.warning("Failed to fetch keywords for %s %s", media_type, tmdb_id)
             return None
 

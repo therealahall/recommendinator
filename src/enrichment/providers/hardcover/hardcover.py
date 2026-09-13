@@ -10,6 +10,7 @@ from src.enrichment.provider_base import (
     EnrichmentResult,
     ProviderError,
     SeriesOrdinal,
+    is_numeric_record_id,
     log_search_title,
     pinned_record,
 )
@@ -281,7 +282,7 @@ class HardcoverProvider(EnrichmentProvider):
         ]
 
     def accepts_record_id(self, record_id: str) -> bool:
-        return record_id.isdigit()
+        return is_numeric_record_id(record_id)
 
     def _match(
         self, item: ContentItem, api_key: str
@@ -290,7 +291,7 @@ class HardcoverProvider(EnrichmentProvider):
         `%ilike%` title gated on author similarity only resembles one.
         """
         pinned = pinned_record(item, self.name)
-        if pinned is not None:
+        if pinned is not None and self.accepts_record_id(pinned):
             books = self._books({"id": {"_eq": pinned}}, api_key)
             return (books[0], "high") if books else None
 

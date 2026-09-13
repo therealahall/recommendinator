@@ -26,7 +26,7 @@ class TestRefreshAccessToken:
     def test_refresh_preserves_old_refresh_token_when_not_returned(
         self, mock_get: Mock
     ) -> None:
-        mock_response = Mock(spec=requests.Response)
+        mock_response = Mock(spec=requests.Response, status_code=200)
         mock_response.json.return_value = {
             "access_token": "new_access",
         }
@@ -41,13 +41,13 @@ class TestRefreshAccessToken:
 class TestGetOwnedGames:
     @patch("src.ingestion.sources.gog.gog.requests.get")
     def test_multiple_pages(self, mock_get: Mock) -> None:
-        page1_response = Mock(spec=requests.Response)
+        page1_response = Mock(spec=requests.Response, status_code=200)
         page1_response.json.return_value = {
             "totalPages": 2,
             "products": [{"id": 1, "title": "Game 1"}],
         }
 
-        page2_response = Mock(spec=requests.Response)
+        page2_response = Mock(spec=requests.Response, status_code=200)
         page2_response.json.return_value = {
             "totalPages": 2,
             "products": [{"id": 2, "title": "Game 2"}],
@@ -66,7 +66,7 @@ class TestGetOwnedGames:
 class TestGetWishlistProductIds:
     @patch("src.ingestion.sources.gog.gog.requests.get")
     def test_success(self, mock_get: Mock) -> None:
-        mock_response = Mock(spec=requests.Response)
+        mock_response = Mock(spec=requests.Response, status_code=200)
         mock_response.json.return_value = {
             "wishlist": {"12345": True, "67890": True, "11111": True}
         }

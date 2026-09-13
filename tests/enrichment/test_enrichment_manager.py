@@ -1864,8 +1864,12 @@ class TestPinnedProviderRecord:
 
     @pytest.mark.parametrize(
         ("provider_name", "record_id"),
-        [("themoviedb", "603"), ("tmdb", "tt0468569")],
-        ids=["a-name-no-provider-answers-to", "an-id-the-provider-cannot-look-up"],
+        [("themoviedb", "603"), ("tmdb", "tt0468569"), ("tmdb", "٦٠٣")],
+        ids=[
+            "a-name-no-provider-answers-to",
+            "an-id-the-provider-cannot-look-up",
+            "an-id-int-would-read-as-another-record",
+        ],
     )
     def test_a_pin_no_run_could_read_back_is_refused_rather_than_stored(
         self,
@@ -1882,6 +1886,21 @@ class TestPinnedProviderRecord:
             manager.pin(db_id, item, provider_name, record_id, user_id=1)
 
         assert "enrichment_ids" not in storage_manager.get_content_item(db_id).metadata
+
+    def test_no_provider_reads_a_pin_whose_digits_int_would_map_onto_a_record(
+        self,
+    ) -> None:
+        registry = EnrichmentRegistry()
+        registry.discover_providers()
+        providers = registry.get_all_providers()
+
+        # Discovery logs an import failure and carries on, so without this the
+        # sweep below passes over whichever provider stopped importing.
+        assert {"hardcover", "igdb", "openlibrary", "rawg", "tmdb"} <= providers.keys()
+
+        for provider in providers.values():
+            assert not provider.accepts_record_id("٦٠٣")
+            assert not provider.accepts_record_id("OL٦٠٣W")
 
     def test_a_provider_that_never_reads_a_pin_is_refused_and_left_unlisted(
         self, storage_manager: StorageManager

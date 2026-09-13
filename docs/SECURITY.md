@@ -16,20 +16,20 @@ your machine except calls to the external APIs you configure.
 
 ## Credential encryption
 
-OAuth tokens and API keys are encrypted with Fernet and stored in the
-`credentials` table. **Nothing else is encrypted.** Titles, ratings, reviews and
-completion history sit in the database as plaintext.
+OAuth tokens and API keys are encrypted with Fernet in the `credentials` table.
+**Nothing else is.** Titles, ratings, reviews and completion history sit in the
+database as plaintext.
 
 - The key lives at `data/.credential_key`, or wherever
-  `RECOMMENDINATOR_KEY_PATH` points. It is created `0600` inside a `0700`
-  directory, and loading a group or world readable key file raises
-  `PermissionError` rather than decrypting anything.
-- **`config.yaml` holds no secret at all.** Every credential is entered through
-  the UI or `source set-secret` / `settings set-secret` and goes straight into
-  the encrypted table.
+  `RECOMMENDINATOR_KEY_PATH` points, created `0600` inside a `0700` directory. A
+  group or world readable key file raises `PermissionError` rather than
+  decrypting anything.
+- **`config.yaml` holds no secret.** Every credential is entered through the UI
+  or `source set-secret` / `settings set-secret` and lands in the encrypted
+  table.
 - A status read's `connected` reports the stored credential row, not the
-  resolved config, so it never offers a control that answers 404.
-- A connect route refuses an id whose plugin is not its own. The id is the
+  resolved config, so no control it offers answers 404.
+- A connect route refuses an id whose plugin is not its own: the id is the
   credential key, so an unchecked one files a GOG token where Trakt reads its
   own.
 - An upgrade does not move tokens an earlier release stored under the plugin's
@@ -39,12 +39,17 @@ completion history sit in the database as plaintext.
 
 **Pointing a `credential_bound` field at a different host is refused** — `url`
 on Sonarr, Radarr and Calibre-Web. Host and port decide, so the same endpoint
-switching between `http` and `https` goes through untouched in either
-direction: a downgrade to `http` is not refused either, and the credential then
-crosses the network in cleartext.
+switching between `http` and `https` goes through untouched, a downgrade
+included: the credential then crosses the network in cleartext.
 
 To move a source, clear its secret (`source clear-secret` or the **Data** tab),
-save the new URL, then enter the credential the new host expects.
+save the new URL, then enter the new host's credential.
+
+The same binding holds at every hop, not just the first request: a redirect is
+followed only while `Location` stays on the origin the request started from, a
+configured `url` or a service's own API host. Every credentialed request walks
+it: enrichment providers, OAuth token exchanges, the cover fetch carrying a
+library's basic auth.
 
 ## What a refusal says
 

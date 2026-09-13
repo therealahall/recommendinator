@@ -12,6 +12,7 @@ from src.enrichment.provider_base import (
     EnrichmentResult,
     ProviderError,
     SeriesOrdinal,
+    is_numeric_record_id,
     log_search_title,
     pinned_record,
 )
@@ -248,9 +249,7 @@ class IGDBProvider(EnrichmentProvider):
         ]
 
     def accepts_record_id(self, record_id: str) -> bool:
-        # isdigit() alone admits '٣' and '²', which IGDB answers with a 400 the
-        # operator reads as a failed item rather than as a refused pin.
-        return record_id.isascii() and record_id.isdigit()
+        return is_numeric_record_id(record_id)
 
     def _credentials_for(
         self, item: ContentItem, config: dict[str, Any]
