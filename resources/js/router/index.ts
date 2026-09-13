@@ -61,7 +61,8 @@ const router = createRouter({
 })
 
 // Focusing a <main> taller than the viewport scrolls its top edge up to meet it.
-router.afterEach(() => {
+router.afterEach((_to, _from, failure) => {
+  if (failure) return
   nextTick(() => {
     document.getElementById('main-content')?.focus({ preventScroll: true })
   })
