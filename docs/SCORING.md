@@ -74,9 +74,12 @@ novella waits for book `#2`.
 
 Where any entry of a series states no position, the whole series orders by
 release year instead: one entry's date is never ranked against another's number.
-Entries with no year recorded rank after the dated ones, by title — which is how
-a whole book series orders, since a book's stored year is its edition's rather
-than the work's.
+An entry with no year recorded ranks after the dated ones, by title.
+
+Where no entry records a year, the series is left unordered instead: ranking on
+title alone would invent a reading order. A book's stored year is its edition's
+rather than the work's, so a whole book series is the common case — series
+filtering leaves those entries alone and offers them like any other candidate.
 
 ## Content length preferences
 
