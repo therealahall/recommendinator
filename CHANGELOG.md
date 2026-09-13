@@ -1,6 +1,22 @@
 # CHANGELOG
 
 
+## v0.61.1 (2026-09-13)
+
+### Bug Fixes
+
+- **security**: Walk every credentialed redirect through one guard
+  ([`1566f8d`](https://github.com/therealahall/recommendinator/commit/1566f8dc71ed789b3f43eca206edccd3152db492))
+
+- **settings**: Keep an unsaved edit when a secret saves in the same section
+  ([`86cbd7f`](https://github.com/therealahall/recommendinator/commit/86cbd7fd26522718603d255f46fb6f4503e81eba))
+
+### Refactoring
+
+- **series**: Drop the metadata read the series scan cannot reach
+  ([`415503d`](https://github.com/therealahall/recommendinator/commit/415503dd1760b494cd78a9b803d58955e864e2c3))
+
+
 ## v0.61.0 (2026-09-12)
 
 ### Bug Fixes
