@@ -462,6 +462,22 @@ describe('SettingsSection', () => {
     expect(mockPut).toHaveBeenCalledWith('/settings/secret', { key: 'enrichment.providers.tmdb.api_key', value: 'sk-999' })
   })
 
+  it('marks the section unsaved while a pasted secret is still a draft, and lets go on Cancel', async () => {
+    const key = 'enrichment.providers.tmdb.api_key'
+    const wrapper = await mountSection(enrichment(secretSetting(key, false)))
+    await wrapper.find(`[data-testid="secret-replace-${key}"]`).trigger('click')
+
+    await wrapper.find(`#secret-input-${key.replace(/\./g, '\\.')}`).setValue('sk-999')
+
+    expect(wrapper.emitted('update:dirty')).toEqual([[true]])
+    expect(wrapper.find('[data-testid="dirty-enrichment"]').exists()).toBe(true)
+
+    await wrapper.find(`[data-testid="secret-cancel-${key}"]`).trigger('click')
+
+    expect(wrapper.emitted('update:dirty')).toEqual([[true], [false]])
+    expect(wrapper.find('[data-testid="dirty-enrichment"]').exists()).toBe(false)
+  })
+
   describe('grouping', () => {
     const ZZZTEST: SettingsSectionType = {
       section: 'enrichment',
