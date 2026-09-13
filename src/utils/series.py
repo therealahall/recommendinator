@@ -40,16 +40,7 @@ _SERIES_PATTERNS: list[_SeriesPattern] = [
 ]
 
 
-def extract_series_info(
-    title: str,
-    metadata: dict[str, Any] | None = None,
-    content_type: ContentType | None = None,
-) -> tuple[str, float] | None:
-    if metadata:
-        series_info = _extract_from_metadata(metadata, content_type)
-        if series_info:
-            return series_info
-
+def _series_marker_in_title(title: str) -> tuple[str, float] | None:
     for pattern in _SERIES_PATTERNS:
         match = pattern.regex.search(title)
         if match:
@@ -122,16 +113,6 @@ def _stated_series_position(
             continue
         return position if valid_series_position(position) else None
     return None
-
-
-def _extract_from_metadata(
-    metadata: dict[str, Any], content_type: ContentType | None = None
-) -> tuple[str, float] | None:
-    series_name = get_series_name_from_metadata(metadata)
-    if not series_name:
-        return None
-    position = _stated_series_position(metadata, content_type)
-    return (series_name, position) if position is not None else None
 
 
 class SeriesAuthority(str, Enum):
@@ -276,7 +257,7 @@ def _position_stated_in_title(title: str, series: str) -> float | None:
     """A marker naming another series is no ordinal for this one: "Gods of Risk
     (The Expanse Novellas, #1)" is no book 1 of The Expanse.
     """
-    marked = extract_series_info(title)
+    marked = _series_marker_in_title(title)
     if marked is None:
         return None
     return marked[1] if series_names_agree(marked[0], series) else None
@@ -289,28 +270,18 @@ def _named_series_entry(item: ContentItem) -> tuple[str, float | None] | None:
     """
     name = get_series_name_from_metadata(item.metadata)
     if name is None:
-        return extract_series_info(item.title, item.metadata, item.content_type)
+        return _series_marker_in_title(item.title)
     position = _stated_series_position(item.metadata, item.content_type)
     if position is None:
         position = _position_stated_in_title(item.title, name)
     return name, position
 
 
-def _series_entry(
-    item: ContentItem | None = None, *, title: str | None = None
-) -> tuple[str, float | None] | None:
-    if item is not None:
-        return _named_series_entry(item)
-    return extract_series_info(title) if title is not None else None
-
-
-def get_series_name(
-    item: ContentItem | None = None, *, title: str | None = None
-) -> str | None:
+def get_series_name(item: ContentItem) -> str | None:
     """A name is its own claim: most providers state one and never a position,
     so reading it off a positioned entry alone loses the series entirely.
     """
-    entry = _series_entry(item, title=title)
+    entry = _named_series_entry(item)
     return None if entry is None else entry[0]
 
 
@@ -647,10 +618,8 @@ def build_series_tracking(
     return dict(series_tracking)
 
 
-def is_first_item_in_series(
-    item: ContentItem | None = None, *, title: str | None = None
-) -> bool:
-    entry = _series_entry(item, title=title)
+def is_first_item_in_series(item: ContentItem) -> bool:
+    entry = _named_series_entry(item)
     return entry is not None and entry[1] == 1
 
 
@@ -696,9 +665,9 @@ def should_recommend_item(
             return False
         return not any(num < item_num for num in unconsumed_item_nums)
 
-    # ``max_consumed`` is bounded — series positions are capped at 1000
-    # in ``extract_series_info`` and injected TV seasons at ``MAX_SEASONS`` in
-    # ``inject_seasons_watched_tracking`` — so the slot set never grows without bound.
+    # Every ordinal reaching here is bounded — by ``MAX_SERIES_POSITION``, a
+    # marker pattern's ``max_number``, ``MAX_SEASONS``, or the size of the series
+    # for a year-derived rank — so the slot set never grows without bound.
     max_consumed = max(consumed_numbers)
     virtual_slots = {float(slot) for slot in range(1, int(max_consumed) + 2)}
     positions = consumed_numbers | unconsumed_item_nums | {item_num} | virtual_slots

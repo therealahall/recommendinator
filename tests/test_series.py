@@ -11,9 +11,9 @@ from src.models.content import (
 from src.utils.series import (
     MAX_SEASONS,
     SeriesOrder,
+    _series_marker_in_title,
     build_series_tracking,
     expand_tv_shows_to_seasons,
-    extract_series_info,
     find_earliest_recommendable,
     get_series_name,
     inject_seasons_watched_tracking,
@@ -28,40 +28,52 @@ from src.utils.series import (
 )
 
 
-def test_extract_series_info():
-    assert extract_series_info("Book Title (The Witcher, #4)") == ("The Witcher", 4)
+def _titled(
+    title: str,
+    content_type: ContentType = ContentType.BOOK,
+    metadata: dict[str, object] | None = None,
+) -> ContentItem:
+    return ContentItem(
+        id=title,
+        title=title,
+        content_type=content_type,
+        status=ConsumptionStatus.UNREAD,
+        metadata=metadata or {},
+    )
 
-    assert extract_series_info("Book (Series #2)") == ("Series", 2)
 
-    assert extract_series_info("Book (Series, Book 3)") == ("Series", 3)
+def test_series_marker_in_title():
+    assert _series_marker_in_title("Book Title (The Witcher, #4)") == ("The Witcher", 4)
 
-    assert extract_series_info("Show (The Expanse, Season 1)") == ("The Expanse", 1)
+    assert _series_marker_in_title("Book (Series #2)") == ("Series", 2)
 
-    assert extract_series_info("Show (The Expanse, S1)") == ("The Expanse", 1)
+    assert _series_marker_in_title("Book (Series, Book 3)") == ("Series", 3)
 
-    assert extract_series_info("Movie (Lord of the Rings, Part 1)") == (
+    assert _series_marker_in_title("Show (The Expanse, Season 1)") == ("The Expanse", 1)
+
+    assert _series_marker_in_title("Show (The Expanse, S1)") == ("The Expanse", 1)
+
+    assert _series_marker_in_title("Movie (Lord of the Rings, Part 1)") == (
         "Lord of the Rings",
         1,
     )
 
-    assert extract_series_info("Movie (Star Wars, Episode 4)") == ("Star Wars", 4)
+    assert _series_marker_in_title("Movie (Star Wars, Episode 4)") == ("Star Wars", 4)
 
-    assert extract_series_info("Standalone Book") is None
-    assert extract_series_info("Book (Not a Series)") is None
+    assert _series_marker_in_title("Standalone Book") is None
+    assert _series_marker_in_title("Book (Not a Series)") is None
 
 
-def test_extract_series_info_from_metadata():
-    metadata_tv = {"series_name": "The Expanse", "season": 2}
-    assert extract_series_info("The Expanse", metadata_tv, ContentType.TV_SHOW) == (
-        "The Expanse",
-        2,
+def test_a_position_key_other_than_series_position_still_places_an_item():
+    show = _titled(
+        "The Expanse", ContentType.TV_SHOW, {"series_name": "The Expanse", "season": 2}
     )
+    assert SeriesOrder([show]).locate(show) == ("The Expanse", 2)
 
-    metadata_game = {"series_title": "Mass Effect", "part_number": 2}
-    assert extract_series_info("ME2", metadata_game, ContentType.VIDEO_GAME) == (
-        "Mass Effect",
-        2,
+    game = _titled(
+        "ME2", ContentType.VIDEO_GAME, {"series_title": "Mass Effect", "part_number": 2}
     )
+    assert SeriesOrder([game]).locate(game) == ("Mass Effect", 2)
 
 
 def test_expand_tv_shows_to_seasons():
@@ -102,8 +114,8 @@ def test_expand_tv_shows_to_seasons():
 
 
 def test_get_series_name():
-    assert get_series_name(title="Book (The Witcher, #4)") == "The Witcher"
-    assert get_series_name(title="Standalone Book") is None
+    assert get_series_name(_titled("Book (The Witcher, #4)")) == "The Witcher"
+    assert get_series_name(_titled("Standalone Book")) is None
 
     item_with_metadata = ContentItem(
         id="2",
@@ -112,7 +124,7 @@ def test_get_series_name():
         status=ConsumptionStatus.UNREAD,
         metadata={"series_name": "Breaking Bad", "season": 1},
     )
-    assert get_series_name(item=item_with_metadata) == "Breaking Bad"
+    assert get_series_name(item_with_metadata) == "Breaking Bad"
 
 
 def test_build_series_tracking():
@@ -169,17 +181,11 @@ def test_build_series_tracking_preserves_decimal_positions():
 
 
 def test_is_first_item_in_series():
-    assert is_first_item_in_series(title="Book (Series, #1)") is True
-    assert is_first_item_in_series(title="Show (Series, Season 1)") is True
-    assert is_first_item_in_series(title="Book (Series, #2)") is False
+    assert is_first_item_in_series(_titled("Book (Series, #1)")) is True
+    assert is_first_item_in_series(_titled("Book (Series, #2)")) is False
 
-    item_first = ContentItem(
-        id="1",
-        title="The Expanse (The Expanse, Season 1)",
-        content_type=ContentType.TV_SHOW,
-        status=ConsumptionStatus.UNREAD,
-    )
-    assert is_first_item_in_series(item=item_first) is True
+    season_one = _titled("The Expanse (The Expanse, Season 1)", ContentType.TV_SHOW)
+    assert is_first_item_in_series(season_one) is True
 
     item_with_metadata = ContentItem(
         id="3",
@@ -188,7 +194,7 @@ def test_is_first_item_in_series():
         status=ConsumptionStatus.UNREAD,
         metadata={"series_name": "Star Wars", "episode": 1},
     )
-    assert is_first_item_in_series(item=item_with_metadata) is True
+    assert is_first_item_in_series(item_with_metadata) is True
 
 
 class TestIsNextAfterConsumed:
@@ -499,30 +505,29 @@ class TestInjectSeasonsWatchedTracking:
 
 class TestSeriesPositionMetadataRegression:
     def test_series_position_takes_priority_over_other_keys(self) -> None:
-        metadata = {
-            "series_name": "Mass Effect",
-            "series_position": 2,
-            "part_number": 99,
-        }
-        result = extract_series_info("ME2", metadata, ContentType.VIDEO_GAME)
-        assert result == ("Mass Effect", 2)
+        item = _titled(
+            "ME2",
+            ContentType.VIDEO_GAME,
+            {"series_name": "Mass Effect", "series_position": 2, "part_number": 99},
+        )
+        assert SeriesOrder([item]).locate(item) == ("Mass Effect", 2)
 
     def test_movie_with_series_position_from_tmdb_regression(self) -> None:
-        metadata = {"series_name": "The Godfather Collection", "series_position": 2}
-        result = extract_series_info(
-            "The Godfather Part II", metadata, ContentType.MOVIE
+        item = _titled(
+            "The Godfather Part II",
+            ContentType.MOVIE,
+            {"series_name": "The Godfather Collection", "series_position": 2},
         )
-        assert result == ("The Godfather Collection", 2)
+        assert SeriesOrder([item]).locate(item) == ("The Godfather Collection", 2)
 
     def test_a_zero_position_reads_back_as_the_prequel_it_states_regression(
         self,
     ) -> None:
         """P1545 states 0 for a prequel, and a falsy read skipped it silently."""
-        metadata = {"series_name": "Dune", "series_position": 0}
-        assert extract_series_info("Dune Prequel", metadata, ContentType.BOOK) == (
-            "Dune",
-            0,
+        item = _titled(
+            "Dune Prequel", metadata={"series_name": "Dune", "series_position": 0}
         )
+        assert SeriesOrder([item]).locate(item) == ("Dune", 0)
 
 
 class TestASeriesNameNoPositionAccompanies:
@@ -608,11 +613,11 @@ class TestAMarkerNamingNoSeriesAtAll:
 
     def test_a_part_marker_alone_names_no_series(self) -> None:
         title = "Harry Potter and the Deathly Hallows (Part 1)"
-        assert extract_series_info(title) is None
-        assert get_series_name(title=title) is None
+        assert _series_marker_in_title(title) is None
+        assert get_series_name(_titled(title, ContentType.MOVIE)) is None
 
     def test_a_marker_stating_the_series_still_places_the_book(self) -> None:
-        assert extract_series_info("Leviathan Wakes (The Expanse, #2)") == (
+        assert _series_marker_in_title("Leviathan Wakes (The Expanse, #2)") == (
             "The Expanse",
             2,
         )
@@ -984,23 +989,30 @@ class TestDecimalSeriesOrderingRegression:
         """Bug reported: a 200-book run recommended Expanse novellas
         "Drive (The Expanse, #2.7)", "Gods of Risk (The Expanse, #2.5)", and
         "The Vital Abyss (The Expanse, #5.5)" out of series order."""
-        assert extract_series_info("Drive (The Expanse, #2.7)") == ("The Expanse", 2.7)
-        whole = extract_series_info("Caliban's War (The Expanse, #2)")
-        assert whole == ("The Expanse", 2)
-        assert whole is not None and isinstance(whole[1], float)
-        metadata_str = {"series_name": "The Expanse", "series_position": "2.7"}
-        assert extract_series_info("Drive", metadata_str, ContentType.BOOK) == (
+        assert _series_marker_in_title("Drive (The Expanse, #2.7)") == (
             "The Expanse",
             2.7,
         )
+        whole = _series_marker_in_title("Caliban's War (The Expanse, #2)")
+        assert whole == ("The Expanse", 2)
+        assert whole is not None and isinstance(whole[1], float)
+        stated = _titled(
+            "Drive", metadata={"series_name": "The Expanse", "series_position": "2.7"}
+        )
+        assert SeriesOrder([stated]).locate(stated) == ("The Expanse", 2.7)
 
     def test_non_finite_metadata_position_rejected_regression(self) -> None:
         """Unlike ``int()``, ``float()`` accepts "inf"/"nan", which would
         enter series tracking and corrupt ordering comparisons (``nan`` compares
         False against everything; ``inf`` breaks the virtual slot ``range()``)."""
         for bad_value in ("inf", "-inf", "nan", float("inf"), float("nan")):
-            metadata = {"series_name": "The Expanse", "series_position": bad_value}
-            assert extract_series_info("Drive", metadata, ContentType.BOOK) is None
+            item = _titled(
+                "Drive",
+                metadata={"series_name": "The Expanse", "series_position": bad_value},
+            )
+            order = SeriesOrder([item])
+            assert order.series_of(item) == "The Expanse"
+            assert order.locate(item) is None
 
     def test_novella_blocked_before_next_book_regression(self) -> None:
         """Bug reported: with only Expanse book #1 read, novellas #2.5 and #2.7 were
