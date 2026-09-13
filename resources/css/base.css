@@ -868,8 +868,8 @@ button.btn[aria-disabled='true'] {
   flex-wrap: wrap;
 }
 
-/* Every tone re-colours this edge, and each is measured to 3:1 on all four
-   surfaces a badge lands on (WCAG 1.4.11). */
+/* Every tone re-colours this edge, measured to 3:1 on every surface a badge
+   lands on; the tinted fills below stay opaque so the label's 4.5:1 does too. */
 .badge {
   display: inline-flex;
   align-items: center;
@@ -889,25 +889,25 @@ button.btn[aria-disabled='true'] {
 /* A tint this thin composites to near-grey over a dark surface, and thickening
    it costs the label 4.5:1, so the edge is what carries the hue (WCAG 1.4.3). */
 .badge[data-tone='accent'] {
-  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  background: color-mix(in srgb, var(--accent) 15%, var(--bg-elevated));
   border-color: color-mix(in srgb, var(--accent) 65%, var(--text-primary));
   color: var(--text-primary);
 }
 
 .badge[data-tone='success'] {
-  background: color-mix(in srgb, var(--color-success) 20%, transparent);
+  background: color-mix(in srgb, var(--color-success) 20%, var(--bg-elevated));
   border-color: color-mix(in srgb, var(--color-success) 65%, var(--text-primary));
   color: var(--text-primary);
 }
 
 .badge[data-tone='warning'] {
-  background: color-mix(in srgb, var(--color-warning) 20%, transparent);
+  background: color-mix(in srgb, var(--color-warning) 20%, var(--bg-elevated));
   border-color: color-mix(in srgb, var(--color-warning) 65%, var(--text-primary));
   color: var(--text-primary);
 }
 
 .badge[data-tone='error'] {
-  background: color-mix(in srgb, var(--color-error) 20%, transparent);
+  background: color-mix(in srgb, var(--color-error) 20%, var(--bg-elevated));
   border-color: color-mix(in srgb, var(--color-error) 65%, var(--text-primary));
   color: var(--text-primary);
 }
