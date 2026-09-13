@@ -62,6 +62,8 @@ const router = createRouter({
 
 // Focusing a <main> taller than the viewport scrolls its top edge up to meet it.
 router.afterEach((_to, _from, failure) => {
+  // An aborted navigation settles here too, so declining the leave prompt would
+  // otherwise move focus off the page the operator chose to stay on.
   if (failure) return
   nextTick(() => {
     document.getElementById('main-content')?.focus({ preventScroll: true })
