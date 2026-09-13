@@ -37,7 +37,7 @@ const BADGE_TONES = ['.badge', ...TONED_BADGES]
 
 const TONE_CHROMA = 0.1
 
-const BADGE_SURFACES = ['--bg-card', '--bg-elevated', '--bg-primary', '--chrome']
+const BADGE_SURFACES = ['--bg-card', '--bg-elevated', '--bg-primary', '--chrome', '--bg-hover']
 
 interface Rgba {
   r: number

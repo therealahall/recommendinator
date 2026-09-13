@@ -47,6 +47,27 @@ describe('router', () => {
     expect(focus).toHaveBeenCalledWith({ preventScroll: true })
   })
 
+  it('leaves focus on the control in use when a guard refuses to leave the page', async () => {
+    await navigate({ name: 'settings' })
+    document.body.innerHTML = '<main id="main-content" tabindex="-1"></main>'
+    const editing = document.createElement('button')
+    document.body.append(editing)
+    editing.focus()
+    const settledWith: unknown[] = []
+    const unhook = router.afterEach((_to, _from, failure) => settledWith.push(failure))
+    const release = router.beforeEach((to) => to.name !== 'library')
+
+    try {
+      await navigate({ name: 'library' })
+    } finally {
+      release()
+      unhook()
+    }
+
+    expect(settledWith).toEqual([expect.anything()])
+    expect(document.activeElement).toBe(editing)
+  })
+
   it('opens a page at its top, and back at the offset it was left', () => {
     const { scrollBehavior } = router.options
     if (typeof scrollBehavior !== 'function') throw new Error('the router decides no scroll')
