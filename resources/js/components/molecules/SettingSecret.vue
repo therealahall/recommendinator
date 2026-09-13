@@ -16,6 +16,7 @@ const props = withDefaults(
 const emit = defineEmits<{
   set: [value: string]
   clear: []
+  'update:hasDraft': [hasDraft: boolean]
 }>()
 
 const editing = ref(false)
@@ -61,6 +62,11 @@ async function save(): Promise<void> {
   await nextTick()
   replaceButton.value?.focus()
 }
+
+watch(
+  () => draft.value !== '',
+  (hasDraft) => emit('update:hasDraft', hasDraft),
+)
 
 // Clear unmounts its own button, stranding focus; a Tab away keeps its place.
 watch(

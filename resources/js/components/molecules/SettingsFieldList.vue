@@ -22,6 +22,7 @@ const emit = defineEmits<{
   reset: [key: string]
   'set-secret': [key: string, value: string]
   'clear-secret': [key: string]
+  'secret-draft': [key: string, hasDraft: boolean]
 }>()
 
 const controls = computed(() =>
@@ -56,6 +57,7 @@ const secrets = computed(() =>
         :busy="secretBusy[setting.key] ?? false"
         @set="emit('set-secret', setting.key, $event)"
         @clear="emit('clear-secret', setting.key)"
+        @update:has-draft="emit('secret-draft', setting.key, $event)"
       />
     </fieldset>
   </div>

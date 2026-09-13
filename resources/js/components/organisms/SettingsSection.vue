@@ -55,7 +55,10 @@ const expandedGroups = reactive<Record<string, boolean>>({})
 const edits = useSettingsBuffer(() => valueSettings.value)
 const { buffer, dirty } = edits
 
-watch(dirty, (value) => emit('update:dirty', value))
+const secretDrafts = reactive<Record<string, boolean>>({})
+const unsaved = computed(() => dirty.value || Object.values(secretDrafts).some(Boolean))
+
+watch(unsaved, (value) => emit('update:dirty', value))
 const { message: actionMessage, announce, report } = useAnnouncer()
 
 const { saving, saveStatus, saveErrorText, save } = useSectionSave(
@@ -144,6 +147,10 @@ function onClearSecret(key: string): Promise<void> {
 function onUpdate(key: string, value: SettingBufferValue): void {
   buffer[key] = value
 }
+
+function onSecretDraft(key: string, hasDraft: boolean): void {
+  secretDrafts[key] = hasDraft
+}
 </script>
 
 <template>
@@ -161,7 +168,7 @@ function onUpdate(key: string, value: SettingBufferValue): void {
             {{ section.settings.length }} setting{{ section.settings.length === 1 ? '' : 's' }}
           </span>
           <span
-            v-if="dirty"
+            v-if="unsaved"
             class="badge"
             data-tone="warning"
             :data-testid="`dirty-${sectionKey}`"
@@ -185,6 +192,7 @@ function onUpdate(key: string, value: SettingBufferValue): void {
         @reset="onReset"
         @set-secret="onSetSecret"
         @clear-secret="onClearSecret"
+        @secret-draft="onSecretDraft"
       />
 
       <Accordion
@@ -210,6 +218,7 @@ function onUpdate(key: string, value: SettingBufferValue): void {
           @reset="onReset"
           @set-secret="onSetSecret"
           @clear-secret="onClearSecret"
+          @secret-draft="onSecretDraft"
         />
       </Accordion>
 
