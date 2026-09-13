@@ -1,8 +1,10 @@
 """Shape checks for the URL a network-backed plugin is pointed at, and the
-redirect walk every credentialed request to it makes."""
+redirect walk every credentialed request makes — source plugin, enrichment
+provider or OAuth token exchange alike."""
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from enum import Enum
 from typing import Any, NamedTuple
@@ -14,6 +16,9 @@ from src.utils.text import sanitize_for_log
 
 _ALLOWED_SCHEMES = frozenset({"http", "https"})
 
+#: One timeout for every outbound request, sized for the slowest API here, not
+#: the fastest: a blackholed host costs a background run 30s a request, which
+#: beats giving up on a slow answer.
 REQUEST_TIMEOUT = 30
 
 REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
@@ -112,6 +117,8 @@ def request_within_origin(
     url: str,
     service: str,
     refusal: Callable[[str, str, str], str],
+    *,
+    deadline: float | None = None,
     **sent: Any,
 ) -> requests.Response:
     """What *url* answers, following only a redirect that stays on its origin:
@@ -120,12 +127,29 @@ def request_within_origin(
     """
     current = url
     for _ in range(MAX_SAME_ORIGIN_REDIRECTS):
+        # A monotonic reading, since the hop cap alone leaves a caller holding
+        # five times REQUEST_TIMEOUT.
+        if deadline is not None and time.monotonic() > deadline:
+            raise RedirectRefused(
+                f"{service} was still redirecting {_loggable(url)} when the "
+                "request ran out of time."
+            )
         response = send(current, timeout=REQUEST_TIMEOUT, allow_redirects=False, **sent)
+        if response.status_code not in REDIRECT_STATUSES:
+            return response
         location = response.headers.get("Location")
-        if response.status_code not in REDIRECT_STATUSES or not location:
+        if not location:
             return response
 
-        target = urljoin(current, location)
+        try:
+            target = urljoin(current, location)
+        except ValueError:
+            # urlsplit raises on an unbalanced bracket, and no caller catches it.
+            raise RedirectRefused(
+                f"{service} redirected {_loggable(current)} to a Location header "
+                "that is not a readable URL."
+            ) from None
+
         if not same_origin(url, target):
             raise RedirectRefused(refusal(current, target, service))
         current = target

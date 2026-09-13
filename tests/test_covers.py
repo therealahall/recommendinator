@@ -15,6 +15,7 @@ import requests
 from src.covers import cache
 from src.covers.fetch import MAX_BYTES, CoverUnavailable
 from src.covers.service import backfill_covers, fill_cover, start_backfill
+from src.ingestion.urls import MAX_SAME_ORIGIN_REDIRECTS
 from src.storage.cover_jobs import STALE_AFTER, CoverBackfillRecord
 from src.storage.manager import StorageManager
 from src.storage.schema import create_user
@@ -225,6 +226,45 @@ class TestFetcherSafety:
         assert isinstance(outcome, Path)
         assert outcome.read_bytes() == PNG
 
+    def test_a_chain_of_slow_redirects_is_given_up_on_before_the_hop_cap(
+        self, library: tuple[StorageManager, dict[str, Any]]
+    ) -> None:
+        """Five hops at the request timeout hold a worker for minutes, so the
+        deadline has to bound the chain and not just the body read."""
+        storage, config = library
+        db_id = save(storage, REMOTE)
+        crawling = FakeResponse(302, headers={"Location": "/moved/cover.jpg"})
+
+        with (
+            patch("src.covers.fetch.requests.get", return_value=crawling) as mock_get,
+            patch(
+                "src.covers.fetch.time.monotonic", side_effect=itertools.count(0, 10)
+            ),
+        ):
+            outcome = fill_cover(storage, config, storage.get_content_item(db_id))
+
+        assert isinstance(outcome, CoverUnavailable) and not outcome.permanent
+        assert mock_get.call_count < MAX_SAME_ORIGIN_REDIRECTS
+        assert stored_cover(storage, db_id) == REMOTE
+        # The backfill lists this reason, and a refusal sends the operator
+        # hunting a redirect that was followed right up to the clock.
+        assert "ran out of time" in outcome.reason
+
+    def test_a_location_no_parser_can_read_ends_one_cover_not_the_backfill(
+        self, library: tuple[StorageManager, dict[str, Any]]
+    ) -> None:
+        """An unbalanced bracket raises out of `urljoin`, and `start_backfill`
+        answers any exception by abandoning the whole walk."""
+        storage, config = library
+        db_id = save(storage, REMOTE)
+        unreadable = FakeResponse(302, headers={"Location": "http://[::1"})
+
+        with patch("src.covers.fetch.requests.get", return_value=unreadable):
+            outcome = fill_cover(storage, config, storage.get_content_item(db_id))
+
+        assert isinstance(outcome, CoverUnavailable) and not outcome.permanent
+        assert stored_cover(storage, db_id) == REMOTE
+
     def test_a_private_address_no_source_owns_is_refused(
         self, library: tuple[StorageManager, dict[str, Any]]
     ) -> None:
@@ -254,9 +294,11 @@ class TestFetcherSafety:
     ) -> None:
         storage, config = library
         db_id = save(storage, REMOTE)
+        #: Several chunks, so the clock advances between them as a trickle does.
+        trickled = FakeResponse(body=PNG + b"0" * 200 * 1024)
 
         with (
-            patch("src.covers.fetch.requests.get", return_value=FakeResponse()),
+            patch("src.covers.fetch.requests.get", return_value=trickled),
             patch(
                 "src.covers.fetch.time.monotonic", side_effect=itertools.count(0, 20)
             ),

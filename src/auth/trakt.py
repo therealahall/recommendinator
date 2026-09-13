@@ -14,6 +14,11 @@ from urllib.parse import urlparse
 import requests
 
 from src.auth.oauth_sources import OAuthSourceBinding
+from src.ingestion.urls import (
+    RedirectRefused,
+    fixed_endpoint_refusal,
+    request_within_origin,
+)
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
@@ -38,6 +43,15 @@ class TraktAuthError(Exception):
 _TRAKT = OAuthSourceBinding(TRAKT_PLUGIN, "Trakt", TraktAuthError)
 
 
+def _trakt_post(url: str, payload: dict[str, str]) -> requests.Response:
+    try:
+        return request_within_origin(
+            requests.post, url, "Trakt", fixed_endpoint_refusal, json=payload
+        )
+    except RedirectRefused as refused:
+        raise TraktAuthError(str(refused)) from None
+
+
 class DevicePollStatus(str, Enum):
     SUCCESS = "success"
     PENDING = "pending"
@@ -56,11 +70,7 @@ class DevicePollResult:
 
 def start_device_auth_flow(client_id: str) -> dict[str, Any]:
     try:
-        response = requests.post(
-            TRAKT_DEVICE_CODE_URL,
-            json={"client_id": client_id},
-            timeout=10,
-        )
+        response = _trakt_post(TRAKT_DEVICE_CODE_URL, {"client_id": client_id})
         response.raise_for_status()
         data: dict[str, Any] = response.json()
     except requests.RequestException as error:
@@ -87,14 +97,13 @@ def poll_device_token(
     device_code: str, client_id: str, client_secret: str
 ) -> DevicePollResult:
     try:
-        response = requests.post(
+        response = _trakt_post(
             TRAKT_DEVICE_TOKEN_URL,
-            json={
+            {
                 "code": device_code,
                 "client_id": client_id,
                 "client_secret": client_secret,
             },
-            timeout=10,
         )
     except requests.RequestException as error:
         logger.error("Trakt device-token poll failed: %s", type(error).__name__)

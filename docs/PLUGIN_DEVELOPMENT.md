@@ -122,7 +122,10 @@ except PathNotAllowed as error:
 **A field naming the host the stored credentials are sent to** — a base `url` —
 takes `credential_bound=True`. Validate the URL's shape with
 `src.ingestion.urls.source_url_error` in both `validate_config` and `fetch`: the
-scheduler dispatches a due source without ever calling `validate_config`.
+scheduler dispatches a due source without ever calling `validate_config`. Send
+every credentialed request through `src.ingestion.urls.request_within_origin`,
+which refuses a redirect off that origin instead of replaying the credential
+onto whatever host a `Location` names.
 
 ## ContentItem
 
@@ -254,9 +257,14 @@ cover every case.
 
 The properties follow the interface above, with `requires_api_key` and
 `requires_network` returning `False`, and `validate_config` checking that the
-configured `path` exists.
+configured `path` exists. Both examples below add their imports to the
+boilerplate's.
 
 ```python
+import csv
+from pathlib import Path
+
+
 def fetch(
     self,
     config: dict[str, Any],
@@ -283,19 +291,34 @@ def fetch(
 ## Example: API-based plugin
 
 ```python
+import requests
+
+from src.ingestion.plugin_base import SourceError
+from src.ingestion.urls import (
+    RedirectRefused,
+    fixed_endpoint_refusal,
+    request_within_origin,
+)
+from src.utils.request_errors import scrub_request_error
+
+
 def fetch(
     self,
     config: dict[str, Any],
     progress_callback: ProgressCallback | None = None,
 ) -> Iterator[ContentItem]:
     try:
-        response = requests.get(
+        response = request_within_origin(
+            requests.get,
             f"{self.API_BASE}/users/{config['username']}/movies",
+            self.display_name,
+            fixed_endpoint_refusal,
             headers={"Authorization": f"Bearer {config['api_key']}"},
-            timeout=30,
         )
         response.raise_for_status()
         data = response.json()
+    except RedirectRefused as refused:
+        raise SourceError("movie_api", str(refused)) from None
     except requests.RequestException as error:
         raise SourceError(
             "movie_api", f"API request failed: {scrub_request_error(error)}"
@@ -317,8 +340,9 @@ def fetch(
         )
 ```
 
-`SourceError` and `scrub_request_error` come from `src.ingestion.plugin_base` and
-`src.utils.request_errors`.
+`fixed_endpoint_refusal` names a service's own API host. A URL built from a
+configured `url` field takes `redirect_refusal` instead, which tells the operator
+to repoint that setting.
 
 That example sends its key in a header, so `from error` is right here. A key in
 the query string wants `from None` — see [best practices](#best-practices).
@@ -497,29 +521,34 @@ Worked examples: `src/ingestion/sources/gog/gog.py` and
 
 ## Enrichment providers
 
-Providers use the same folder layout as source plugins, under
-`src/enrichment/providers/<name>/`, and subclass `EnrichmentProvider` from
-`src/enrichment/provider_base.py`.
-
-`EnrichmentRegistry` discovers the folder the same way `PluginRegistry`
-discovers a source plugin, so shipping a provider edits no core file.
+Providers use the folder layout source plugins use, under
+`src/enrichment/providers/<name>/`, where `EnrichmentRegistry` discovers one, so
+shipping a provider edits no core file.
 
 A provider you do not want in the repo goes in `private/plugins/`: both
-registries scan it and each keeps the classes it recognises. `make check` covers
-`private/` when it exists, and does nothing on a clone without one.
+registries scan it and each keeps the classes it recognises.
 
-`name`, `display_name`, `content_types`, `requires_api_key`,
-`get_config_schema` and `validate_config` work as they do on a source plugin. The
-rest is what differs:
+Everything above `rate_limit_requests_per_second` works as it does on a source
+plugin; the rest differs:
 
 ```python
 from typing import Any
+
+import requests
 
 from src.enrichment.provider_base import (
     ConfigField,
     EnrichmentProvider,
     EnrichmentResult,
+    ProviderError,
     SeriesOrdinal,
+    is_numeric_record_id,
+    pinned_record,
+)
+from src.ingestion.urls import (
+    RedirectRefused,
+    fixed_endpoint_refusal,
+    request_within_origin,
 )
 from src.models.content import ContentItem, ContentType
 from src.utils.matching import Candidate
@@ -555,6 +584,9 @@ class MyEnrichmentProvider(EnrichmentProvider):
     def enrich(
         self, item: ContentItem, config: dict[str, Any]
     ) -> EnrichmentResult | None:
+        pinned = pinned_record(item, self.name)
+        if pinned is not None and self.accepts_record_id(pinned):
+            return self._fetch(pinned, config)
         # Return None when the item cannot be found.
         return EnrichmentResult(
             genres=["Action", "Adventure"],
@@ -563,6 +595,20 @@ class MyEnrichmentProvider(EnrichmentProvider):
             extra_metadata={"runtime": 120, "release_year": 2024},
             match_quality="high",  # "high", "medium", or "not_found"
         )
+
+    def _fetch(self, record_id: str, config: dict[str, Any]) -> EnrichmentResult:
+        try:
+            response = request_within_origin(
+                requests.get,
+                f"https://api.example.com/records/{record_id}",
+                self.display_name,
+                fixed_endpoint_refusal,
+                params={"api_key": config["api_key"]},
+            )
+        except RedirectRefused as refused:
+            raise ProviderError(self.name, str(refused)) from None
+        response.raise_for_status()
+        return EnrichmentResult(genres=response.json()["genres"], match_quality="high")
 
     def fetch_series_ordinal(
         self, item: ContentItem, config: dict[str, Any]
@@ -576,27 +622,31 @@ class MyEnrichmentProvider(EnrichmentProvider):
 
     def accepts_record_id(self, record_id: str) -> bool:
         # Refusing every id by default. Override it to be pinnable at all.
-        return record_id.isdigit()
+        return is_numeric_record_id(record_id)
 ```
 
-A pin is read back with `pinned_record(item, self.name)` at the top of `enrich`:
-return that record's metadata instead of searching. Accept only the ids you
-offered as candidates — an id you cannot look up is a pin every run ignores, and
-one spliced into a URL path is an operator-typed path segment.
+The re-check in `enrich` is the half that repairs an install: tightening
+`accepts_record_id` leaves a bad pin stored, and only the read drops it. Accept
+only ids you offered as candidates: one you cannot look up is a pin every run
+ignores, and one spliced into a URL path is an operator-typed path segment.
+
+Every request carrying the api key goes through `request_within_origin`, since
+`requests` replays the key onto whatever host a `Location` names.
+`tests/test_credential_url_chains.py` fails a provider calling `requests`
+directly.
 
 `fetch_series_ordinal` is optional and separate from the match: it is asked only
-while a stronger source has not positioned the item, and a provider implementing
-it alone never settles an item's provider or quality. Implement one or both — a
-provider implementing neither is refused when its class is created.
+while a stronger source has not positioned the item, and implementing it alone
+never settles an item's provider or quality. Implement it or `enrich`; a
+provider with neither is refused when its class is created.
 
-Name the series your position counts within. The pass runs after the match loop,
-and the position is taken only where your name agrees with the one already
-stored — a sub-series' number is refused rather than filed under its parent. Your
-name is written only where nothing has named the series yet.
+Name the series your position counts within: the position is taken only where
+your name agrees with the one already stored, so a sub-series' number is refused
+rather than filed under its parent. Your name is written only where nothing has
+named the series yet.
 
-You return one `EnrichmentResult` instead of yielding `ContentItem`s, the manager
-throttles you from `rate_limit_requests_per_second`, the merge is gap-filling bar
-the series fields, and config lives under
+The manager throttles you from `rate_limit_requests_per_second`, the merge is
+gap-filling bar the series fields, and config lives under
 `enrichment.providers.<name>` in the settings registry — set from the Settings
 page or the `settings` CLI, with the api key going through `settings set-secret`.
 

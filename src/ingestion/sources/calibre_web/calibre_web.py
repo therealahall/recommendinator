@@ -14,7 +14,12 @@ from src.ingestion.plugin_base import (
     SourceError,
     SourcePlugin,
 )
-from src.ingestion.urls import source_url_error
+from src.ingestion.urls import (
+    RedirectRefused,
+    redirect_refusal,
+    request_within_origin,
+    source_url_error,
+)
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.utils.series import (
     SERIES_AUTHORITY_KEY,
@@ -36,8 +41,6 @@ logger = logging.getLogger(__name__)
 _BOOKS_FEED_PATH = "/opds/new"
 # /opds/readbooks is the acquisition feed of books on the "Read Books" shelf.
 _READ_BOOKS_FEED_PATH = "/opds/readbooks"
-
-_REQUEST_TIMEOUT = 30
 
 # Calibre-Web emits series metadata using the schema.org vocabulary
 # (``schema:Series`` / ``schema:position``).
@@ -250,13 +253,20 @@ class CalibreWebPlugin(SourcePlugin):
         verify_ssl: bool,
     ) -> ElementTree.Element:
         try:
-            response = requests.get(
-                url, auth=auth, timeout=_REQUEST_TIMEOUT, verify=verify_ssl
+            response = request_within_origin(
+                requests.get,
+                url,
+                self.display_name,
+                redirect_refusal,
+                auth=auth,
+                verify=verify_ssl,
             )
         except requests.RequestException as error:
             raise SourceError(
                 self.name, f"Failed to connect to Calibre-Web at {url}: {error}"
             ) from error
+        except RedirectRefused as refused:
+            raise SourceError(self.name, str(refused)) from None
 
         if response.status_code == 401:
             raise SourceError(

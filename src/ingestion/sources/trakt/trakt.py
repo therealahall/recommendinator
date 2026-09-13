@@ -5,7 +5,7 @@ but is whatever the operator named it.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -17,6 +17,11 @@ from src.ingestion.plugin_base import (
     ProgressCallback,
     SourceError,
     SourcePlugin,
+)
+from src.ingestion.urls import (
+    RedirectRefused,
+    fixed_endpoint_refusal,
+    request_within_origin,
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.utils.dates import local_date_from_iso_timestamp, parse_iso_timestamp
@@ -39,6 +44,15 @@ class TraktAPIError(Exception):
     pass
 
 
+def _trakt_request(
+    send: Callable[..., requests.Response], url: str, **sent: Any
+) -> requests.Response:
+    try:
+        return request_within_origin(send, url, "Trakt", fixed_endpoint_refusal, **sent)
+    except RedirectRefused as refused:
+        raise TraktAPIError(str(refused)) from None
+
+
 def refresh_access_token(
     refresh_token: str, client_id: str, client_secret: str
 ) -> dict[str, str]:
@@ -53,7 +67,7 @@ def refresh_access_token(
         "grant_type": "refresh_token",
     }
     try:
-        response = requests.post(TRAKT_TOKEN_URL, json=payload, timeout=10)
+        response = _trakt_request(requests.post, TRAKT_TOKEN_URL, json=payload)
         response.raise_for_status()
         data = response.json()
         access_token = data.get("access_token")
@@ -98,11 +112,11 @@ def fetch_list(
         params = dict(base_params)
         params["page"] = page
         try:
-            response = requests.get(
+            response = _trakt_request(
+                requests.get,
                 f"{TRAKT_API_URL}{endpoint}",
                 params=params,
                 headers=headers,
-                timeout=30,
             )
             response.raise_for_status()
             results.extend(response.json())
@@ -134,11 +148,11 @@ def fetch_show_season_totals(
     headers = _trakt_headers(access_token, client_id)
     endpoint = f"/shows/{trakt_id}/seasons"
     try:
-        response = requests.get(
+        response = _trakt_request(
+            requests.get,
             f"{TRAKT_API_URL}{endpoint}",
             params={"extended": "full"},
             headers=headers,
-            timeout=30,
         )
         response.raise_for_status()
         seasons = response.json()

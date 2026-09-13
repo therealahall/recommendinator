@@ -278,6 +278,24 @@ class TestHardcoverEnrichment:
         assert "title" not in where
         assert result is not None and result.match_quality == "high"
 
+    def test_a_stored_pin_the_gate_would_refuse_is_searched_past(
+        self, provider: HardcoverProvider
+    ) -> None:
+        """The gate tightened after pins were stored, so a pin the database still
+        holds reaches `_match` — and Hardcover refuses a non-numeric id outright,
+        failing every run for that book rather than falling back to the title."""
+        with patch(
+            "src.enrichment.providers.hardcover.hardcover.requests.post"
+        ) as mock_post:
+            mock_post.return_value = _response(_books(_hardcover_book()))
+            result = provider.enrich(
+                _book(enrichment_ids={"hardcover": "٤٦٠٧٠٨"}), _CONFIG
+            )
+
+        where = mock_post.call_args.kwargs["json"]["variables"]["where"]
+        assert "id" not in where
+        assert result is not None and result.match_quality == "medium"
+
     def test_a_book_hardcover_cannot_match_is_not_found_rather_than_partial(
         self, provider: HardcoverProvider
     ) -> None:

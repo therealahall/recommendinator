@@ -8,6 +8,11 @@ import requests
 
 from src.auth.oauth_sources import OAuthSourceBinding
 from src.ingestion.sources.gog import GOG_CLIENT_ID, GOG_CLIENT_SECRET
+from src.ingestion.urls import (
+    RedirectRefused,
+    fixed_endpoint_refusal,
+    request_within_origin,
+)
 from src.utils.text import exception_for_log
 
 if TYPE_CHECKING:
@@ -76,7 +81,9 @@ def exchange_code_for_tokens(code: str) -> dict[str, Any]:
     }
 
     try:
-        response = requests.get(GOG_TOKEN_URL, params=params, timeout=30)
+        response = request_within_origin(
+            requests.get, GOG_TOKEN_URL, "GOG", fixed_endpoint_refusal, params=params
+        )
 
         if not response.ok:
             logger.error(
@@ -99,6 +106,8 @@ def exchange_code_for_tokens(code: str) -> dict[str, Any]:
         # the ``__cause__`` chain the CLI renders with ``exc_info=True``.
         logger.error("GOG token exchange request failed: %s", exception_for_log(error))
         raise GogAuthError("Failed to connect to GOG servers") from None
+    except RedirectRefused as refused:
+        raise GogAuthError(str(refused)) from None
 
 
 def save_gog_token(

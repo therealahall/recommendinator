@@ -82,8 +82,9 @@ src/
 ├── ingestion/        # Data ingestion. paths.py holds the process-global
 │   │                 # security.allowed_source_roots allowlist; urls.py the
 │   │                 # source-URL shape check and the same-origin redirect
-│   │                 # guard every network plugin applies; schedule.py the
-│   │                 # cadence presets,
+│   │                 # guard every credentialed request walks — source plugins,
+│   │                 # enrichment providers, the OAuth token exchanges and the
+│   │                 # cover fetch alike; schedule.py the cadence presets,
 │   │                 # failure backoff and due computation
 │   ├── importers/    # One-off file formats, reached only by import
 │   └── sources/      # Source plugins (folder-per-plugin: <name>/<name>.py + README.md + test_<name>.py).

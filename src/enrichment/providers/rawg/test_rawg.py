@@ -288,6 +288,26 @@ class TestRAWGPinnedRecord:
         assert result is not None
         assert "/games/3328" in mock_get.call_args_list[0].args[0]
 
+    def test_a_pin_of_foreign_digits_searches_rather_than_fetching_what_int_reads(
+        self,
+    ) -> None:
+        item = ContentItem(
+            id="game1",
+            title="Prey",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"enrichment_ids": {"rawg": "٣٣٢٨"}},
+        )
+
+        with patch("src.enrichment.providers.rawg.rawg.requests.get") as mock_get:
+            mock_get.return_value = MagicMock(
+                spec=requests.Response, status_code=200, json=lambda: {"results": []}
+            )
+
+            RAWGProvider().enrich(item, {"api_key": "k"})
+
+        assert mock_get.call_args_list[0].args[0].endswith("/games")
+
 
 class TestRAWGProviderDescriptionCleaning:
     def test_clean_description_removes_html(self) -> None:

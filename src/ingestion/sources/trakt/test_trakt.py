@@ -42,7 +42,7 @@ def _show(
 class TestRefreshAccessToken:
     @patch("src.ingestion.sources.trakt.trakt.requests.post")
     def test_refresh_preserves_old_token_when_omitted(self, mock_post: Mock) -> None:
-        mock_response = Mock(spec=requests.Response)
+        mock_response = Mock(spec=requests.Response, status_code=200)
         mock_response.json.return_value = {"access_token": "new_access"}
         mock_post.return_value = mock_response
 
@@ -55,10 +55,10 @@ class TestRefreshAccessToken:
 class TestFetchList:
     @patch("src.ingestion.sources.trakt.trakt.requests.get")
     def test_pagination(self, mock_get: Mock) -> None:
-        page1 = Mock(spec=requests.Response)
+        page1 = Mock(spec=requests.Response, status_code=200)
         page1.headers = {"X-Pagination-Page-Count": "2"}
         page1.json.return_value = [{"a": 1}]
-        page2 = Mock(spec=requests.Response)
+        page2 = Mock(spec=requests.Response, status_code=200)
         page2.headers = {"X-Pagination-Page-Count": "2"}
         page2.json.return_value = [{"a": 2}]
         mock_get.side_effect = [page1, page2]
@@ -683,7 +683,7 @@ class TestTraktPartialSeasonRegression:
 class TestFetchShowSeasonTotals:
     @patch("src.ingestion.sources.trakt.trakt.requests.get")
     def test_maps_episode_counts_excluding_specials(self, mock_get: Mock) -> None:
-        mock_response = Mock(spec=requests.Response)
+        mock_response = Mock(spec=requests.Response, status_code=200)
         mock_response.json.return_value = [
             {"number": 0, "episode_count": 5},
             {"number": 1, "episode_count": 10},

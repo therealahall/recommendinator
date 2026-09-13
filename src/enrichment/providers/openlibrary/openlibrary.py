@@ -30,9 +30,22 @@ _MAX_SHORT_SUBJECT_LENGTH = 25
 
 _COVER_URL = "https://covers.openlibrary.org/b/id/{cover_id}-L.jpg"
 
-#: An Open Library work key. Matched whole because a pin is spliced into the
-#: ``/works/<key>`` path, where a typed "../" would address another endpoint.
-_WORK_KEY = re.compile(r"OL\d+W")
+#: An Open Library work key. Matched whole because the key is spliced into the
+#: ``/works/<key>`` path, where "../" would address another endpoint and
+#: "@evil.example/x" another host. ``re.ASCII`` refuses "OL٦٠٣W", which no
+#: lookup could ever resolve.
+_WORK_KEY = re.compile(r"OL\d+W", re.ASCII)
+
+#: An imported `isbn` column holds whatever the operator's catalogue exported,
+#: and it is spliced into the ``/isbn/<value>`` path the same way.
+_ISBN = re.compile(r"[0-9X]+", re.ASCII | re.IGNORECASE)
+
+
+def _work_id(key: Any) -> str | None:
+    """Open Library names the work in its own responses, and that name is spliced
+    into the request path — so only the last segment, and only a work key."""
+    record_id = str(key or "").rsplit("/", 1)[-1]
+    return record_id if _WORK_KEY.fullmatch(record_id) else None
 
 
 def clean_title_for_search(title: str) -> str:
@@ -114,8 +127,8 @@ class OpenLibraryProvider(EnrichmentProvider):
             return None
 
         pinned = pinned_record(item, self.name)
-        if pinned is not None:
-            return self._fetch_work_details(f"/works/{pinned}")
+        if pinned is not None and self.accepts_record_id(pinned):
+            return self._fetch_work_details(pinned)
 
         metadata = item.metadata or {}
         isbn = metadata.get("isbn13") or metadata.get("isbn")
@@ -129,6 +142,8 @@ class OpenLibraryProvider(EnrichmentProvider):
 
     def _lookup_by_isbn(self, isbn: str) -> EnrichmentResult | None:
         clean_isbn = isbn.replace("-", "").strip()
+        if not _ISBN.fullmatch(clean_isbn):
+            return None
 
         try:
             response = requests.get(
@@ -144,9 +159,9 @@ class OpenLibraryProvider(EnrichmentProvider):
 
             works = edition.get("works", [])
             if works:
-                work_key = works[0].get("key")
-                if work_key:
-                    return self._fetch_work_details(work_key, edition)
+                work_id = _work_id(works[0].get("key"))
+                if work_id:
+                    return self._fetch_work_details(work_id, edition)
 
             return self._build_result_from_edition(edition)
 
@@ -174,10 +189,10 @@ class OpenLibraryProvider(EnrichmentProvider):
             return EnrichmentResult(match_quality="not_found")
 
         doc = docs[0]
-        work_key = doc.get("key")
+        work_id = _work_id(doc.get("key"))
 
-        if work_key:
-            return self._fetch_work_details(work_key)
+        if work_id:
+            return self._fetch_work_details(work_id)
 
         return self._build_result_from_search(doc)
 
@@ -217,12 +232,12 @@ class OpenLibraryProvider(EnrichmentProvider):
 
     def _fetch_work_details(
         self,
-        work_key: str,
+        work_id: str,
         edition: dict[str, Any] | None = None,
     ) -> EnrichmentResult:
         try:
             response = requests.get(
-                f"{OPENLIBRARY_API_BASE}{work_key}.json",
+                f"{OPENLIBRARY_API_BASE}/works/{work_id}.json",
                 timeout=10,
             )
             response.raise_for_status()

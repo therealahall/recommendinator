@@ -346,3 +346,103 @@ class TestAPinCannotLeaveTheWorksPath:
 
     def test_a_bare_work_key_is_accepted(self) -> None:
         assert OpenLibraryProvider().accepts_record_id("OL1234W") is True
+
+    def test_a_stored_pin_the_gate_would_refuse_is_searched_past(self) -> None:
+        """The gate tightened after pins were already stored, so it cannot reach
+        one the database already holds."""
+        item = ContentItem(
+            id="book1",
+            title="1984",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"enrichment_ids": {"openlibrary": "../../search"}},
+        )
+
+        with patch(
+            "src.enrichment.providers.openlibrary.openlibrary.requests.get"
+        ) as mock_get:
+            mock_get.return_value = MagicMock(
+                spec=requests.Response, status_code=200, json=lambda: {"docs": []}
+            )
+
+            OpenLibraryProvider().enrich(item, {})
+
+        requested = mock_get.call_args_list[0].args[0]
+        assert requested == "https://openlibrary.org/search.json"
+
+
+class TestAnImportedIsbnCannotLeaveTheIsbnPath:
+    def test_an_isbn_column_holding_a_path_is_searched_past_rather_than_dialled(
+        self,
+    ) -> None:
+        """An exported catalogue's `isbn` column carries whatever the user typed,
+        and it is spliced into `/isbn/<value>.json`: `../search` reads the search
+        endpoint, whose payload then fills pages and dates onto the book."""
+        item = ContentItem(
+            id="book1",
+            title="1984",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"isbn": "../search"},
+        )
+
+        with patch(
+            "src.enrichment.providers.openlibrary.openlibrary.requests.get"
+        ) as mock_get:
+            mock_get.return_value = MagicMock(
+                spec=requests.Response, status_code=200, json=lambda: {"docs": []}
+            )
+
+            OpenLibraryProvider().enrich(item, {})
+
+        requested = mock_get.call_args_list[0].args[0]
+        assert requested == "https://openlibrary.org/search.json"
+
+
+class TestAServerSuppliedWorkKeyCannotRedirectTheRequest:
+    _HOSTILE = "@evil.example/x"
+
+    def test_an_isbn_edition_naming_another_host_is_read_from_the_edition(self) -> None:
+        item = ContentItem(
+            id="book1",
+            title="1984",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"isbn13": "9780451524935"},
+        )
+        edition = {"works": [{"key": self._HOSTILE}], "number_of_pages": 328}
+
+        with patch(
+            "src.enrichment.providers.openlibrary.openlibrary.requests.get"
+        ) as mock_get:
+            mock_get.return_value = MagicMock(
+                spec=requests.Response, status_code=200, json=lambda: edition
+            )
+
+            result = OpenLibraryProvider().enrich(item, {})
+
+        assert mock_get.call_count == 1
+        assert result is not None
+        assert result.extra_metadata["pages"] == 328
+
+    def test_a_search_doc_naming_another_host_is_read_from_the_doc(self) -> None:
+        item = ContentItem(
+            id="book1",
+            title="1984",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        )
+        docs = {"docs": [{"key": self._HOSTILE, "first_publish_year": 1949}]}
+
+        with patch(
+            "src.enrichment.providers.openlibrary.openlibrary.requests.get"
+        ) as mock_get:
+            mock_get.return_value = MagicMock(
+                spec=requests.Response, status_code=200, json=lambda: docs
+            )
+
+            result = OpenLibraryProvider().enrich(item, {})
+
+        assert mock_get.call_count == 1
+        assert result is not None
+        assert result.extra_metadata["year_published"] == 1949

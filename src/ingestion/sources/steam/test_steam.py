@@ -18,7 +18,7 @@ from src.models.content import ConsumptionStatus, ContentType
 class TestGetSteamIdFromVanityUrl:
     @patch("src.ingestion.sources.steam.steam.requests.get")
     def test_resolve_vanity_url_not_found(self, mock_get):
-        mock_response = Mock(spec=requests.Response)
+        mock_response = Mock(spec=requests.Response, status_code=200)
         mock_response.json.return_value = {"response": {"success": 42}}
         mock_response.raise_for_status = Mock()
         mock_get.return_value = mock_response
@@ -57,7 +57,7 @@ class TestParseSteamGames:
     def test_cover_art_is_derived_from_the_app_id_and_costs_no_request(
         self, mock_get: Mock
     ) -> None:
-        mock_response = Mock(spec=requests.Response)
+        mock_response = Mock(spec=requests.Response, status_code=200)
         mock_response.json.return_value = {
             "response": {
                 "games": [{"appid": 620, "name": "Portal 2", "playtime_forever": 60}]
@@ -243,7 +243,7 @@ class TestSteamTwoPassRegression:
 
     @patch("src.ingestion.sources.steam.steam.requests.get")
     def test_fetch_calls_only_owned_games_endpoint(self, mock_get: Mock) -> None:
-        mock_response = Mock(spec=requests.Response)
+        mock_response = Mock(spec=requests.Response, status_code=200)
         mock_response.json.return_value = {
             "response": {
                 "games": [
@@ -365,7 +365,7 @@ class TestSteamLogInjectionRegression:
     def test_a_newline_in_the_steam_id_cannot_forge_a_log_entry(
         self, mock_get: Mock, caplog: pytest.LogCaptureFixture
     ) -> None:
-        response = Mock(spec=requests.Response)
+        response = Mock(spec=requests.Response, status_code=200)
         response.json.return_value = {"response": {"games": []}}
         response.raise_for_status = Mock()
         mock_get.return_value = response
