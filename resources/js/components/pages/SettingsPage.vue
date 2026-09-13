@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { computed, onMounted, reactive } from 'vue'
+import { onBeforeRouteLeave } from 'vue-router'
 import AppIcon from '@/components/atoms/AppIcon.vue'
 import AccountSection from '@/components/organisms/AccountSection.vue'
 import SettingsSection from '@/components/organisms/SettingsSection.vue'
@@ -15,9 +16,18 @@ const auth = useAuthStore()
 const profile = useSubmission()
 const password = useSubmission()
 
+const unsavedBySection = reactive<Record<string, boolean>>({})
+const hasUnsavedEdits = computed(() => Object.values(unsavedBySection).some(Boolean))
+
 onMounted(() => {
   store.load()
 })
+
+onBeforeRouteLeave(
+  () =>
+    !hasUnsavedEdits.value ||
+    window.confirm('Your settings changes have not been saved. Discard them?'),
+)
 
 function saveProfile(changes: UserUpdateRequest) {
   profile.submit(() => auth.updateProfile(changes))
@@ -71,6 +81,7 @@ function changePassword(change: PasswordChangeRequest) {
         :key="section.section"
         :section="section"
         :initially-expanded="index === 0"
+        @update:dirty="unsavedBySection[section.section] = $event"
       />
     </template>
 

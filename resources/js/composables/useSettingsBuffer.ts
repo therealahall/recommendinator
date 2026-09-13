@@ -73,22 +73,25 @@ export function useSettingsBuffer(source: () => SettingViewValue[]) {
     }
   }
 
+  function changed(key: string): boolean {
+    return JSON.stringify(buffer[key]) !== JSON.stringify(original[key])
+  }
+
   function changedUpdates(): Record<string, unknown> {
     const updates: Record<string, unknown> = {}
     for (const setting of source()) {
-      const key = setting.key
-      if (JSON.stringify(buffer[key]) !== JSON.stringify(original[key])) {
-        updates[key] = buffer[key]
-      }
+      if (changed(setting.key)) updates[setting.key] = buffer[setting.key]
     }
     return updates
   }
+
+  const dirty = computed(() => source().some((setting) => changed(setting.key)))
 
   // Every write goes through `write` to claim, so a lock read from here cannot
   // be short a kind of write.
   const writing = computed(() => inFlight.value > 0)
 
-  return { buffer, changedUpdates, write, writing }
+  return { buffer, changedUpdates, dirty, write, writing }
 }
 
 export type SettingsBuffer = ReturnType<typeof useSettingsBuffer>

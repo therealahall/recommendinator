@@ -9,7 +9,7 @@ const CAUTION_BY_SECTION: Record<string, string> = {
 </script>
 
 <script setup lang="ts">
-import { computed, nextTick, reactive, ref } from 'vue'
+import { computed, nextTick, reactive, ref, watch } from 'vue'
 import Accordion from '@/components/atoms/Accordion.vue'
 import SettingsFieldList from '@/components/molecules/SettingsFieldList.vue'
 import { useAnnouncer } from '@/composables/useAnnouncer'
@@ -28,6 +28,8 @@ const props = withDefaults(
   }>(),
   { initiallyExpanded: false },
 )
+
+const emit = defineEmits<{ 'update:dirty': [dirty: boolean] }>()
 
 const store = useSettingsStore()
 
@@ -51,7 +53,9 @@ const expanded = ref(props.initiallyExpanded)
 const expandedGroups = reactive<Record<string, boolean>>({})
 
 const edits = useSettingsBuffer(() => valueSettings.value)
-const { buffer } = edits
+const { buffer, dirty } = edits
+
+watch(dirty, (value) => emit('update:dirty', value))
 const { message: actionMessage, announce, report } = useAnnouncer()
 
 const { saving, saveStatus, saveErrorText, save } = useSectionSave(
@@ -156,6 +160,12 @@ function onUpdate(key: string, value: SettingBufferValue): void {
           <span class="settings-section-count">
             {{ section.settings.length }} setting{{ section.settings.length === 1 ? '' : 's' }}
           </span>
+          <span
+            v-if="dirty"
+            class="badge"
+            data-tone="warning"
+            :data-testid="`dirty-${sectionKey}`"
+          >Unsaved changes</span>
         </span>
       </template>
 

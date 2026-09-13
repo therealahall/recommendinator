@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
+import { createMemoryHistory, createRouter } from 'vue-router'
 import SettingsPage from './SettingsPage.vue'
 import { PASSWORD_MIN_LENGTH } from '@/constants/auth'
 import { useAuthStore } from '@/stores/auth'
@@ -57,12 +58,31 @@ function section(name: string) {
   }
 }
 
+async function mountRouted() {
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: '/settings', component: SettingsPage },
+      { path: '/library', component: { template: '<div>Library</div>' } },
+    ],
+  })
+  await router.push('/settings')
+  await router.isReady()
+  const wrapper = mount({ template: '<router-view />' }, { global: { plugins: [router] } })
+  await flushPromises()
+  return { wrapper, router }
+}
+
 describe('SettingsPage', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     mockGet.mockReset()
     mockPut.mockReset()
     mockDelete.mockReset()
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
   })
 
   it('shows an error state with a Retry button when the load fails', async () => {
@@ -122,6 +142,30 @@ describe('SettingsPage', () => {
       'false',
     ])
     expect(wrapper.find('[data-testid="setting-web.host"]').element.closest('[hidden]')).toBeNull()
+  })
+
+  it('asks before a nav link discards an unsaved section edit, and not when there is nothing to lose', async () => {
+    mockGet.mockResolvedValue({ sections: [section('web')] })
+    const { wrapper, router } = await mountRouted()
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+
+    await router.push('/library')
+
+    expect(confirm).not.toHaveBeenCalled()
+    expect(router.currentRoute.value.path).toBe('/library')
+
+    await router.push('/settings')
+    await flushPromises()
+    await wrapper.find('#setting-web\\.host').setValue('y')
+    await router.push('/library')
+
+    expect(confirm).toHaveBeenCalled()
+    expect(router.currentRoute.value.path).toBe('/settings')
+
+    confirm.mockReturnValue(true)
+    await router.push('/library')
+
+    expect(router.currentRoute.value.path).toBe('/library')
   })
 })
 
