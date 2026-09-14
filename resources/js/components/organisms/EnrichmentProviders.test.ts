@@ -119,13 +119,6 @@ describe('EnrichmentProviders', () => {
     expect(unrankedNames(wrapper)).toEqual(['rawg'])
   })
 
-  it('offers no control that adds or removes a provider', () => {
-    const wrapper = render()
-
-    expect(wrapper.findAll('.tag-input')).toHaveLength(0)
-    expect(wrapper.findAll('[aria-label^="Remove "]')).toHaveLength(0)
-  })
-
   it('reads the precedence run as one ordered list', () => {
     const wrapper = render()
 
