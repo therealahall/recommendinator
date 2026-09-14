@@ -1,6 +1,25 @@
 # CHANGELOG
 
 
+## v0.61.2 (2026-09-14)
+
+### Bug Fixes
+
+- **settings**: Keep a secret draft from vanishing, and stay put when asked
+  ([`5282937`](https://github.com/therealahall/recommendinator/commit/5282937d5c0080da3dc33abc9b737864727a71b5))
+
+- **settings**: Say an edit is unsaved, and ask before navigating off it
+  ([`163c828`](https://github.com/therealahall/recommendinator/commit/163c828979d08282f15cc910a939c1d2877f3215))
+
+- **ui**: Make a toned badge readable wherever it sits
+  ([`310799d`](https://github.com/therealahall/recommendinator/commit/310799d4baded371610447146a762cfd04a21c92))
+
+### Testing
+
+- **settings**: Pin the secret draft the leave guard has to see
+  ([`22f0e0f`](https://github.com/therealahall/recommendinator/commit/22f0e0f8512d6ab6c6f059713d41e0bcd8c295e5))
+
+
 ## v0.61.1 (2026-09-13)
 
 ### Bug Fixes
