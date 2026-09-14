@@ -102,8 +102,7 @@ const onReset = (provider: string) =>
   <div class="card">
     <h3 class="section-title">Metadata enrichment</h3>
     <p class="help-text">
-      Enrichment adds genres, tags and descriptions from external APIs (TMDB,
-      OpenLibrary, RAWG).
+      Enrichment adds genres, tags and descriptions from external APIs.
     </p>
 
     <template v-if="!data.enrichmentEnabled">

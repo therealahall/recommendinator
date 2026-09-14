@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import ToggleSwitch from '@/components/atoms/ToggleSwitch.vue'
 import NumberStepper from '@/components/atoms/NumberStepper.vue'
 import TagInput from '@/components/atoms/TagInput.vue'
+import SettingMetaRow from '@/components/molecules/SettingMetaRow.vue'
 import type { SettingViewValue } from '@/types/api'
 
 const props = withDefaults(
@@ -22,12 +23,12 @@ const emit = defineEmits<{
   reset: []
 }>()
 
-const KNOWN_WIDGETS = ['toggle', 'number', 'text', 'tags', 'ordered-tags', 'select']
+const KNOWN_WIDGETS = ['toggle', 'number', 'text', 'tags', 'select']
 
 // Resolve the widget to render. Known widgets map directly; an unknown widget
 // falls back on the setting's `type` so every leaf still gets a usable control.
 const control = computed<
-  'toggle' | 'number-int' | 'number-float' | 'text' | 'tags' | 'ordered-tags' | 'select'
+  'toggle' | 'number-int' | 'number-float' | 'text' | 'tags' | 'select'
 >(() => {
   const setting = props.setting
   let widget = setting.widget as string
@@ -39,12 +40,11 @@ const control = computed<
   }
   if (widget === 'number') return setting.type === 'float' ? 'number-float' : 'number-int'
   if (widget === 'select' && !setting.choices) return 'text'
-  return widget as 'toggle' | 'text' | 'tags' | 'ordered-tags' | 'select'
+  return widget as 'toggle' | 'text' | 'tags' | 'select'
 })
 
 const invalid = computed(() => Boolean(props.error))
 const inputId = computed(() => `setting-${props.setting.key}`)
-const resetLockId = computed(() => `reset-locked-${props.setting.key}`)
 const helpId = computed(() => (props.setting.help ? `help-${props.setting.key}` : ''))
 const errId = computed(() => `err-${props.setting.key}`)
 const describedBy = computed(() => {
@@ -69,14 +69,6 @@ const selectChoices = computed(() => {
 })
 
 const validation = computed(() => props.setting.validation)
-
-// aria-disabled, not disabled: the lock closes on the button the user has just
-// activated, and a disabled button is blurred and unreachable by Tab, so the
-// reason it refuses is never read out (WCAG 2.4.3).
-function onReset(): void {
-  if (props.disabled || props.resetting) return
-  emit('reset')
-}
 
 function onFloatInput(event: Event): void {
   const parsedNumber = parseFloat((event.target as HTMLInputElement).value)
@@ -152,12 +144,11 @@ function onFloatBlur(event: Event): void {
     </template>
 
     <!-- Tags: the atom renders its own <label for>. -->
-    <template v-else-if="control === 'tags' || control === 'ordered-tags'">
+    <template v-else-if="control === 'tags'">
       <TagInput
         :model-value="(modelValue as string[]) ?? []"
         :label="setting.label"
         :input-id="inputId"
-        :reorderable="control === 'ordered-tags'"
         :described-by="describedBy"
         :invalid="invalid"
         :disabled="disabled"
@@ -213,33 +204,12 @@ function onFloatBlur(event: Event): void {
       :data-testid="`setting-error-${setting.key}`"
     >{{ error }}</p>
 
-    <div class="setting-row-meta">
-      <span
-        v-if="setting.restart_required"
-        class="badge"
-        data-tone="warning"
-        title="This setting takes effect after a restart"
-        :data-testid="`restart-badge-${setting.key}`"
-      >Requires restart<span class="sr-only"> to take effect</span></span>
-      <span
-        v-if="setting.db_overridden"
-        class="badge"
-        data-tone="accent"
-        :data-testid="`overridden-badge-${setting.key}`"
-      >Overridden<span class="sr-only"> — differs from the built-in default</span></span>
-      <button
-        v-if="setting.has_stored_value"
-        type="button"
-        class="btn btn-secondary btn-small"
-        :aria-disabled="disabled || resetting || undefined"
-        :aria-describedby="disabled && !resetting ? resetLockId : undefined"
-        :data-testid="`reset-${setting.key}`"
-        @click="onReset"
-      >{{ resetting ? 'Resetting…' : 'Reset to default' }}<span class="sr-only"> — {{ setting.label }}</span></button>
-      <span v-if="disabled && !resetting" :id="resetLockId" class="sr-only"
-        >Unavailable while this section has a change in flight.</span
-      >
-    </div>
+    <SettingMetaRow
+      :setting="setting"
+      :disabled="disabled"
+      :resetting="resetting"
+      @reset="emit('reset')"
+    />
   </div>
 </template>
 
@@ -266,16 +236,5 @@ function onFloatBlur(event: Event): void {
   width: min(var(--field-num-w), 100%);
 }
 
-.setting-row-meta {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex-wrap: wrap;
-}
-
-.setting-row-meta:empty {
-  display: none;
-}
-
-/* .badge, .field and .state are shared primitives in base.css. */
+/* .field and .state are shared primitives in base.css. */
 </style>

@@ -96,19 +96,19 @@ class OpenLibraryProvider(EnrichmentProvider):
         return False
 
     @property
+    def precedence(self) -> int:
+        return 20
+
+    @property
+    def description(self) -> str:
+        return "Genres, description and cover for books"
+
+    @property
     def rate_limit_requests_per_second(self) -> float:
         return 1.0
 
     def get_config_schema(self) -> list[ConfigField]:
-        return [
-            ConfigField(
-                name="enabled",
-                field_type=bool,
-                required=False,
-                default=False,
-                description="Enable Open Library enrichment",
-            ),
-        ]
+        return []
 
     def validate_config(self, config: dict[str, Any]) -> list[str]:
         return []

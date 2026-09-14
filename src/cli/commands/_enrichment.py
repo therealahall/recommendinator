@@ -168,7 +168,7 @@ def enrichment_start(
     """Start background metadata enrichment.
 
     Enriches content items with genres, tags, and descriptions from
-    external APIs (TMDB, OpenLibrary, RAWG).
+    external APIs.
     """
     storage = ctx.obj["storage"]
     config = ctx.obj["config"]

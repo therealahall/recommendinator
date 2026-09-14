@@ -1,7 +1,9 @@
+import logging
+
 import pytest
 
-from src.enrichment.provider_base import EnrichmentProvider
-from src.enrichment.registry import EnrichmentRegistry
+from src.enrichment.provider_base import TRAILING_PRECEDENCE, EnrichmentProvider
+from src.enrichment.registry import get_enrichment_registry
 from src.settings.metadata import (
     PROVIDER_ORDER_KEY,
     SettingMetadata,
@@ -11,18 +13,15 @@ from src.settings.metadata import (
     flat_defaults,
     get_entry,
 )
+from tests.fakes.enrichment_providers import UNRENDERABLE_FIELD_NAME
 
-_BUILTIN_PROVIDER_PACKAGE = "src.enrichment.providers."
 
-
-def _builtin_providers() -> dict[str, EnrichmentProvider]:
-    registry = EnrichmentRegistry()
-    registry.discover_providers()
-    return {
-        name: provider
-        for name, provider in registry.get_all_providers().items()
-        if type(provider).__module__.startswith(_BUILTIN_PROVIDER_PACKAGE)
-    }
+def _installed_providers() -> dict[str, EnrichmentProvider]:
+    providers = get_enrichment_registry().get_all_providers()
+    # A failed provider import is swallowed by the registry, and an empty one
+    # would pass every sweep below without reading a provider.
+    assert providers
+    return providers
 
 
 class TestDefaultOfIsolation:
@@ -51,6 +50,13 @@ class TestEntryShape:
         else:
             assert entry.choices is None
 
+    def test_no_key_is_declared_twice(self) -> None:
+        """A provider declaring its own ``enabled`` field would otherwise get a
+        second row, and ``get_entry`` would answer with whichever came first."""
+        keys = [entry.key for entry in all_entries()]
+
+        assert sorted(keys) == sorted(set(keys))
+
     @pytest.mark.parametrize("entry", all_entries(), ids=lambda e: e.key)
     def test_numeric_validation_bounds_are_sane(self, entry: SettingMetadata) -> None:
         if entry.validation is None:
@@ -69,7 +75,7 @@ class TestEveryDiscoveredProviderIsConfigurable:
     ) -> None:
         toggles: list[str] = []
         secrets: list[str] = []
-        for name, provider in _builtin_providers().items():
+        for name, provider in _installed_providers().items():
             toggles.append(f"enrichment.providers.{name}.enabled")
             secrets += [
                 f"enrichment.providers.{name}.{field.name}"
@@ -83,19 +89,100 @@ class TestEveryDiscoveredProviderIsConfigurable:
         entries = [get_entry(key) for key in secrets]
         assert [e.key for e in entries if e is not None and not e.sensitive] == []
 
-    def test_the_default_order_ranks_every_builtin_provider_exactly_once(self) -> None:
-        assert sorted(default_of(PROVIDER_ORDER_KEY)) == sorted(_builtin_providers())
+    def test_the_default_order_ranks_every_installed_provider_exactly_once(
+        self,
+    ) -> None:
+        assert sorted(default_of(PROVIDER_ORDER_KEY)) == sorted(_installed_providers())
 
     def test_no_provider_calls_a_third_party_until_the_operator_enables_it(
         self,
     ) -> None:
         enabled_out_of_the_box = [
             name
-            for name in _builtin_providers()
+            for name in _installed_providers()
             if default_of(f"enrichment.providers.{name}.enabled") is not False
         ]
 
         assert enabled_out_of_the_box == []
+
+
+class TestAProviderNoListNames:
+    def test_its_own_fields_are_settings_and_its_secret_is_masked(
+        self, registry_with_a_private_provider: str
+    ) -> None:
+        prefix = f"enrichment.providers.{registry_with_a_private_provider}."
+        toggle = get_entry(f"{prefix}enabled")
+        option = get_entry(f"{prefix}include_wishlist")
+        secret = get_entry(f"{prefix}api_key")
+
+        assert toggle is not None and toggle.default is False
+        assert option is not None and option.type == "bool"
+        assert secret is not None and secret.sensitive
+
+    def test_the_default_order_ranks_it_behind_every_provider_stating_a_precedence(
+        self, registry_with_a_private_provider: str
+    ) -> None:
+        order = default_of(PROVIDER_ORDER_KEY)
+        stated = [
+            name
+            for name, provider in _installed_providers().items()
+            if provider.precedence < TRAILING_PRECEDENCE
+        ]
+
+        assert max(order.index(name) for name in stated) < order.index(
+            registry_with_a_private_provider
+        )
+
+
+class TestAFieldNoControlCanHold:
+    def test_the_log_names_the_provider_and_field_left_off_the_page(
+        self,
+        registry_with_an_unrenderable_field: str,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        key = (
+            f"enrichment.providers.{registry_with_an_unrenderable_field}."
+            f"{UNRENDERABLE_FIELD_NAME}"
+        )
+
+        with caplog.at_level(logging.WARNING):
+            entry = get_entry(key)
+
+        assert entry is None
+        assert registry_with_an_unrenderable_field in caplog.text
+        assert UNRENDERABLE_FIELD_NAME in caplog.text
+
+    def test_the_rebuild_behind_every_lookup_logs_it_once(
+        self,
+        registry_with_an_unrenderable_field: str,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A settings page rebuilds the provider entries once per leaf read, so
+        an undeduplicated warning lands dozens of times per load."""
+        key = f"enrichment.providers.{registry_with_an_unrenderable_field}.enabled"
+
+        with caplog.at_level(logging.WARNING):
+            for _ in range(3):
+                get_entry(key)
+
+        warnings = [
+            record
+            for record in caplog.records
+            if UNRENDERABLE_FIELD_NAME in record.getMessage()
+        ]
+        assert len(warnings) == 1
+
+
+class TestAProviderThatFlagsNoCredential:
+    def test_its_api_key_is_a_secret_rather_than_a_plaintext_settings_row(
+        self, registry_with_an_unflagged_api_key: str
+    ) -> None:
+        entry = get_entry(
+            f"enrichment.providers.{registry_with_an_unflagged_api_key}.api_key"
+        )
+
+        assert entry is not None
+        assert entry.sensitive
 
 
 class TestOutOfScope:

@@ -53,6 +53,15 @@ class RAWGProvider(EnrichmentProvider):
         return True
 
     @property
+    def precedence(self) -> int:
+        # Ahead of IGDB, which fills only what RAWG leaves on a game.
+        return 30
+
+    @property
+    def description(self) -> str:
+        return "Genres, tags, description and cover for video games"
+
+    @property
     def rate_limit_requests_per_second(self) -> float:
         # RAWG free tier: 5 requests per second
         return 5.0

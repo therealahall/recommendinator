@@ -239,6 +239,11 @@ class HardcoverProvider(EnrichmentProvider):
         return True
 
     @property
+    def precedence(self) -> int:
+        # First of all: it refuses an ambiguous title rather than guessing.
+        return 10
+
+    @property
     def rate_limit_requests_per_second(self) -> float:
         return 1.0
 

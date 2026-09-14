@@ -100,6 +100,14 @@ class TMDBProvider(EnrichmentProvider):
         return True
 
     @property
+    def precedence(self) -> int:
+        return 40
+
+    @property
+    def description(self) -> str:
+        return "Genres, keywords, description and poster for movies and TV shows"
+
+    @property
     def rate_limit_requests_per_second(self) -> float:
         # TMDB allows 40 requests per second
         return 40.0
@@ -118,14 +126,19 @@ class TMDBProvider(EnrichmentProvider):
                 field_type=str,
                 required=False,
                 default=_DEFAULT_LANGUAGE,
-                description="Language for results (e.g., 'en-US', 'de-DE')",
+                description=(
+                    "Language for results: a lowercase ISO 639-1 code, optionally "
+                    "with an uppercase region (en, en-US, pt-BR)"
+                ),
+                # The region is optional: TMDB accepts a bare ISO 639-1 code too.
+                pattern=r"[a-z]{2}(-[A-Z]{2})?",
             ),
             ConfigField(
                 name="include_keywords",
                 field_type=bool,
                 required=False,
                 default=_DEFAULT_INCLUDE_KEYWORDS,
-                description="Fetch keywords as tags (requires extra API call)",
+                description="Fetch keywords and store them as tags (an extra API call)",
             ),
         ]
 

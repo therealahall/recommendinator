@@ -21,6 +21,7 @@ from src.enrichment.provider_base import (
     pinned_record,
     states_a_match,
     states_a_series_ordinal,
+    stored_config_schema,
     with_pin,
 )
 from src.enrichment.rate_limiter import RateLimiter
@@ -932,7 +933,7 @@ class EnrichmentManager:
 
         provider = self.registry.get_provider(provider_name)
         if provider is not None:
-            for config_field in provider.get_config_schema():
+            for config_field in stored_config_schema(provider):
                 if not config_field.sensitive:
                     continue
                 secret = self._read_cached_secret(

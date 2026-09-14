@@ -5,17 +5,42 @@ describe the same leaves.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
+from src.enrichment.provider_base import flags_no_credential, stored_config_schema
 from src.storage.settings_migration import IN_SCOPE_SECTIONS
+from src.utils.text import humanize_source_id
+
+logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from src.enrichment.provider_base import ConfigField, EnrichmentProvider
 
 SettingType = Literal["bool", "int", "float", "string", "list", "enum"]
-Widget = Literal["toggle", "number", "text", "tags", "select", "ordered-tags"]
+Widget = Literal["toggle", "number", "text", "tags", "select", "provider-order"]
 
 #: Precedence among enrichment providers, read by the registry and checked by the
 #: settings service, so neither re-spells it.
 PROVIDER_ORDER_KEY = "enrichment.provider_order"
+
+_PROVIDER_PREFIX = "enrichment.providers."
+
+#: Added to every provider rather than read off its schema, so one shipping
+#: without it is still a provider the operator can turn off.
+_ENABLED_FIELD = "enabled"
+
+#: A ``ConfigField`` typed outside this map is left off the settings page rather
+#: than given a control that cannot hold it. The second half is what a field
+#: declaring no default falls back to.
+_FIELD_TYPES: dict[type, tuple[SettingType, Any]] = {
+    bool: ("bool", False),
+    int: ("int", 0),
+    float: ("float", 0.0),
+    str: ("string", ""),
+    list: ("list", ()),
+}
 
 # Default frontend widget for each value type. A registry entry may override
 # this (e.g. an ``enum`` renders as ``select``) via the ``widget`` argument.
@@ -231,120 +256,6 @@ _REGISTRY: tuple[SettingMetadata, ...] = (
         default=50,
         validation=Validation(min=1),
     ),
-    _entry(
-        PROVIDER_ORDER_KEY,
-        label="Provider precedence",
-        help=(
-            "Providers are tried in this order and the first one to match an "
-            "item enriches it. Every installed provider must be named exactly "
-            "once."
-        ),
-        type="list",
-        # A tuple for the reason web.allowed_origins is one. Hardcover leads on
-        # books, refusing an ambiguous title rather than guessing; Wikidata only
-        # adds a series to another provider's match; IGDB trails RAWG, which
-        # keeps owning game metadata.
-        default=("hardcover", "openlibrary", "rawg", "tmdb", "wikidata", "igdb"),
-        widget="ordered-tags",
-    ),
-    _entry(
-        "enrichment.providers.tmdb.api_key",
-        label="TMDB API key",
-        help="API key for The Movie Database enrichment provider.",
-        type="string",
-        default="",
-        sensitive=True,
-    ),
-    _entry(
-        "enrichment.providers.tmdb.enabled",
-        label="TMDB enabled",
-        help="Enable the TMDB (movies and TV) enrichment provider.",
-        type="bool",
-        default=False,
-    ),
-    _entry(
-        "enrichment.providers.tmdb.language",
-        label="TMDB language",
-        help="Language for TMDB results: a lowercase ISO 639-1 code, optionally with an uppercase region (en, en-US, pt-BR).",
-        type="string",
-        default="en-US",
-        # The region is optional: TMDB accepts a bare ISO 639-1 code too.
-        validation=Validation(pattern=r"[a-z]{2}(-[A-Z]{2})?"),
-    ),
-    _entry(
-        "enrichment.providers.tmdb.include_keywords",
-        label="TMDB keywords as tags",
-        help="Fetch TMDB keywords and store them as tags (costs an extra API call).",
-        type="bool",
-        default=True,
-    ),
-    _entry(
-        "enrichment.providers.openlibrary.enabled",
-        label="Open Library enabled",
-        help="Enable the Open Library (books) enrichment provider.",
-        type="bool",
-        default=False,
-    ),
-    _entry(
-        "enrichment.providers.rawg.api_key",
-        label="RAWG API key",
-        help="API key for the RAWG video-game database enrichment provider.",
-        type="string",
-        default="",
-        sensitive=True,
-    ),
-    _entry(
-        "enrichment.providers.rawg.enabled",
-        label="RAWG enabled",
-        help="Enable the RAWG (video games) enrichment provider.",
-        type="bool",
-        default=False,
-    ),
-    _entry(
-        "enrichment.providers.hardcover.api_key",
-        label="Hardcover API token",
-        help="Personal access token for the Hardcover enrichment provider.",
-        type="string",
-        default="",
-        sensitive=True,
-    ),
-    _entry(
-        "enrichment.providers.hardcover.enabled",
-        label="Hardcover enabled",
-        help="Enable the Hardcover (books) enrichment provider.",
-        type="bool",
-        default=False,
-    ),
-    _entry(
-        "enrichment.providers.igdb.client_id",
-        label="IGDB client ID",
-        help="Twitch application client ID for the IGDB enrichment provider.",
-        type="string",
-        default="",
-        sensitive=True,
-    ),
-    _entry(
-        "enrichment.providers.igdb.client_secret",
-        label="IGDB client secret",
-        help="Twitch application client secret for the IGDB enrichment provider.",
-        type="string",
-        default="",
-        sensitive=True,
-    ),
-    _entry(
-        "enrichment.providers.igdb.enabled",
-        label="IGDB enabled",
-        help="Enable the IGDB (video games) enrichment provider.",
-        type="bool",
-        default=False,
-    ),
-    _entry(
-        "enrichment.providers.wikidata.enabled",
-        label="Wikidata enabled",
-        help="Enable the Wikidata (series names and positions, all types) enrichment provider.",
-        type="bool",
-        default=False,
-    ),
     # NOTE: web.host / web.port / web.debug are deliberately absent. They are
     # read by the uvicorn launcher (src/web/main.py) before any database is
     # open, so a database-backed value could never be honoured — see
@@ -395,12 +306,126 @@ _REGISTRY: tuple[SettingMetadata, ...] = (
 _BY_KEY: dict[str, SettingMetadata] = {entry.key: entry for entry in _REGISTRY}
 
 
+def _installed_providers() -> list[EnrichmentProvider]:
+    """Imported here rather than at module level: the enrichment registry reads
+    this module for the order key, so naming it above would be a cycle.
+    """
+    from src.enrichment.registry import get_enrichment_registry
+
+    return sorted(
+        get_enrichment_registry().get_all_providers().values(),
+        key=lambda provider: (provider.precedence, provider.name),
+    )
+
+
+#: Keys already reported. Every ``get_entry`` and ``default_of`` for a provider
+#: rebuilds these entries, so one schema mistake is dozens of lines a page load.
+_warned_keys: set[str] = set()
+
+
+def _warn_once(key: str, message: str, *args: Any) -> None:
+    if key in _warned_keys:
+        return
+    _warned_keys.add(key)
+    logger.warning(message, *args)
+
+
+def _immutable(value: Any) -> Any:
+    """A list default becomes a tuple for the reason web.allowed_origins is one:
+    ``_public`` copies a tuple, and a list would be the provider's own object.
+    """
+    return tuple(value) if isinstance(value, list) else value
+
+
+def _provider_field_entry(
+    provider: EnrichmentProvider, field: ConfigField
+) -> SettingMetadata | None:
+    typed = _FIELD_TYPES.get(field.field_type)
+    if typed is None:
+        _warn_once(
+            f"{_PROVIDER_PREFIX}{provider.name}.{field.name}",
+            "Enrichment provider %s declares %s as %s, which no setting control "
+            "holds — leaving it off the settings page",
+            provider.name,
+            field.name,
+            field.field_type,
+        )
+        return None
+    setting_type, empty = typed
+    return _entry(
+        f"{_PROVIDER_PREFIX}{provider.name}.{field.name}",
+        label=f"{provider.display_name} {humanize_source_id(field.name)}",
+        help=field.description,
+        type=setting_type,
+        default=empty if field.default is None else _immutable(field.default),
+        validation=None if field.pattern is None else Validation(pattern=field.pattern),
+        sensitive=field.sensitive,
+    )
+
+
+def _provider_entries() -> tuple[SettingMetadata, ...]:
+    """Each provider declares what it needs, so installing one is the whole of
+    offering it a settings page.
+    """
+    installed = _installed_providers()
+    entries = [
+        _entry(
+            PROVIDER_ORDER_KEY,
+            label="Provider precedence",
+            help=(
+                "Providers are tried in this order and the first one to match an "
+                "item enriches it. Set from the CLI, it must name every installed "
+                "provider exactly once."
+            ),
+            type="list",
+            default=tuple(provider.name for provider in installed),
+            # Rendered by the provider list, where the order is read off the same
+            # rows that turn a provider on, rather than by a generic list control.
+            widget="provider-order",
+        )
+    ]
+    for provider in installed:
+        entries.append(
+            _entry(
+                f"{_PROVIDER_PREFIX}{provider.name}.{_ENABLED_FIELD}",
+                label=f"{provider.display_name} enabled",
+                help=provider.description,
+                type="bool",
+                default=False,
+            )
+        )
+        if flags_no_credential(provider):
+            _warn_once(
+                f"{_PROVIDER_PREFIX}{provider.name}",
+                "Enrichment provider %s needs an api key but flags no field "
+                "sensitive — its text fields are offered as secrets until one "
+                "declares sensitive=True",
+                provider.name,
+            )
+        for field in stored_config_schema(provider):
+            if field.name == _ENABLED_FIELD:
+                continue
+            entry = _provider_field_entry(provider, field)
+            if entry is not None:
+                entries.append(entry)
+    return tuple(entries)
+
+
 def all_entries() -> tuple[SettingMetadata, ...]:
-    return _REGISTRY
+    return _REGISTRY + _provider_entries()
 
 
 def get_entry(key: str) -> SettingMetadata | None:
-    return _BY_KEY.get(key)
+    entry = _BY_KEY.get(key)
+    if entry is not None:
+        return entry
+    # Only a provider's own key discovers providers, so wiring the log and
+    # loading the config never import one.
+    if key != PROVIDER_ORDER_KEY and not key.startswith(_PROVIDER_PREFIX):
+        return None
+    return next(
+        (derived for derived in _provider_entries() if derived.key == key), None
+    )
 
 
 def _public(value: Any) -> Any:
@@ -411,19 +436,27 @@ def default_of(key: str) -> Any:
     """The single source of truth for a leaf's fallback value, so callers never
     re-hardcode a default the registry already declares.
     """
-    return _public(_BY_KEY[key].default)
+    entry = get_entry(key)
+    if entry is None:
+        raise KeyError(key)
+    return _public(entry.default)
 
 
 def entries_by_section() -> dict[str, list[SettingMetadata]]:
+    entries = all_entries()
     grouped: dict[str, list[SettingMetadata]] = {}
     for section in IN_SCOPE_SECTIONS:
-        section_entries = [e for e in _REGISTRY if e.section == section]
+        section_entries = [e for e in entries if e.section == section]
         if section_entries:
             grouped[section] = section_entries
     return grouped
 
 
 def flat_defaults() -> dict[str, Any]:
+    """The app's own leaves only. A provider's are left out deliberately: the
+    running config is assembled before the CLI has wired logging, and every
+    provider already falls back to its schema's default for an absent key.
+    """
     return {entry.key: _public(entry.default) for entry in _REGISTRY}
 
 

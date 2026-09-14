@@ -65,6 +65,13 @@ class KeyedProvider(EnrichmentProvider):
         return EnrichmentResult(genres=["Action"], match_quality="high")
 
 
+class UnflaggedKeyProvider(KeyedProvider):
+    """The author's mistake: an api key its schema does not flag sensitive."""
+
+    def get_config_schema(self) -> list[ConfigField]:
+        return [ConfigField(name="api_key", field_type=str, required=True)]
+
+
 @pytest.fixture()
 def storage(tmp_path: Path) -> StorageManager:
     return StorageManager(sqlite_path=tmp_path / "test.db")
@@ -96,6 +103,22 @@ class TestProviderConfigInjection:
         }
 
         manager = EnrichmentManager(storage, config, registry)
+
+        assert manager._get_provider_config("keyed")["api_key"] == "stored_key"
+
+
+class TestAProviderThatFlagsNoCredential:
+    def test_its_api_key_is_read_back_out_of_the_secret_store(
+        self, storage: StorageManager
+    ) -> None:
+        """Masking the leaf is only safe while the provider still receives it:
+        the key it needs lives in the secret store and nowhere else."""
+        registry = EnrichmentRegistry()
+        registry._discovered = True
+        registry.register(UnflaggedKeyProvider())
+        storage.secrets.set(_SECRET_KEY, "stored_key")
+
+        manager = EnrichmentManager(storage, _config(), registry)
 
         assert manager._get_provider_config("keyed")["api_key"] == "stored_key"
 
