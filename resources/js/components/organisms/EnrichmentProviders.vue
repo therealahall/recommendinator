@@ -327,12 +327,13 @@ async function onUpdate(key: string, value: SettingBufferValue): Promise<void> {
   padding: 0;
 }
 
-/* Not --text-muted: the row fills with --bg-hover under a pointer and under
-   focus, where muted misses 4.5:1. The rule through the glyph carries the
-   refusal where a theme gives secondary and primary one value. */
+/* base.css's lock for a button that keeps focus (WCAG 2.4.3): its own fill, not
+   a mark on the glyph, which a rule through an arrow read as. --text-muted
+   returns with it: --bg-hover no longer reaches the glyph. */
 .provider-move[aria-disabled='true'] {
-  color: var(--text-secondary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-default);
+  color: var(--text-muted);
   cursor: not-allowed;
-  text-decoration: line-through;
 }
 </style>
