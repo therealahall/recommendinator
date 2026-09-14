@@ -652,12 +652,12 @@ class TestWhichTrailingParentheticalsAreDropped:
 
     @pytest.mark.parametrize(("one", "two"), [("3rd", "4th"), ("Second", "Third")])
     def test_a_counted_edition_stays_in_the_key(self, one: str, two: str) -> None:
-        """Books get no year veto, so stripping this hides one textbook."""
+        """Nothing vetoes on a year, so stripping this hides one textbook."""
         assert normalize_title_for_matching(
             f"Introduction to Algorithms ({one} Edition)"
         ) != normalize_title_for_matching(f"Introduction to Algorithms ({two} Edition)")
 
-    def test_a_year_leaves_the_key_for_the_veto_to_answer(self) -> None:
+    def test_a_trailing_year_leaves_the_key(self) -> None:
         """In the key it kept "Die Hard (1988)" off a "Die Hard" stating none."""
         assert normalize_title_for_matching("DOOM (2016)") == (
             normalize_title_for_matching("Doom")
@@ -701,7 +701,7 @@ class TestTheRegionVeto:
 
 
 class TestWhatTheSaveDoorMatchesOnTitle:
-    """Title, creator veto and year veto, over the door every sync comes through."""
+    """Title, creator veto and region veto, over the door every sync comes through."""
 
     @staticmethod
     def _book(
@@ -709,7 +709,6 @@ class TestWhatTheSaveDoorMatchesOnTitle:
         external_id: str,
         title: str,
         author: str | None = None,
-        year_published: int | None = None,
     ) -> ContentItem:
         return ContentItem(
             id=external_id,
@@ -718,7 +717,6 @@ class TestWhatTheSaveDoorMatchesOnTitle:
             status=ConsumptionStatus.UNREAD,
             source=source,
             author=author,
-            metadata={"year_published": year_published} if year_published else {},
         )
 
     @staticmethod
@@ -902,75 +900,29 @@ class TestWhatTheSaveDoorMatchesOnTitle:
 
         assert landed == shelf
 
-    def test_two_films_of_one_name_are_told_apart_by_the_years_they_state(
-        self, temp_db: SQLiteDB
+    @pytest.mark.parametrize(
+        ("content_type", "shelved", "incoming"),
+        [
+            (ContentType.MOVIE, ("Dune", 1984), ("Dune", 2021)),
+            (ContentType.VIDEO_GAME, ("Doom", None), ("DOOM (2016)", None)),
+        ],
+    )
+    def test_no_year_a_source_states_or_spells_keeps_one_title_apart(
+        self,
+        temp_db: SQLiteDB,
+        content_type: ContentType,
+        shelved: tuple[str, int | None],
+        incoming: tuple[str, int | None],
     ) -> None:
-        """Neither title spells a year, so only the stored column can refuse."""
-        watched = temp_db.save_content_item(
-            self._dated(ContentType.MOVIE, "csv_import", "csv-841", "Dune", 1984)
-        )
-
-        downloaded = temp_db.save_content_item(
-            self._dated(ContentType.MOVIE, "json_import", "json-438631", "Dune", 2021)
-        )
-
-        assert downloaded != watched
-
-    def test_a_year_only_one_source_states_does_not_stop_the_match(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """An import dates a film in a field, and Radarr, which dates none, agrees."""
-        dated = temp_db.save_content_item(
-            self._dated(ContentType.MOVIE, "csv_import", "csv-562", "Die Hard", 1988)
-        )
-
-        undated = temp_db.save_content_item(
-            self._dated(ContentType.MOVIE, "radarr", "tmdb:481", "Die Hard")
-        )
-
-        assert undated == dated
-
-    def test_a_remake_no_source_dates_stays_off_the_original(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """No game plugin fills release_year, so the title's year is all there is."""
-        original = temp_db.save_content_item(
-            self._dated(ContentType.VIDEO_GAME, "steam", "2280", "Doom")
-        )
-
-        remake = temp_db.save_content_item(
-            self._dated(ContentType.VIDEO_GAME, "epic_games", "379720", "DOOM (2016)")
-        )
-
-        assert remake != original
-
-    def test_two_editions_of_one_book_are_not_told_apart_by_their_years(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """``year_published`` is the edition's year, so a reprint is the book."""
         first = temp_db.save_content_item(
-            self._book("goodreads_rss", "234225", "Dune", "Frank Herbert", 1965)
+            self._dated(content_type, "csv_import", "csv-1", *shelved)
         )
 
-        reprint = temp_db.save_content_item(
-            self._book("calibre_web", "calibre:dune", "Dune", "Frank Herbert", 2011)
+        second = temp_db.save_content_item(
+            self._dated(content_type, "json_import", "json-2", *incoming)
         )
 
-        assert reprint == first
-
-    def test_a_year_in_a_books_title_is_not_a_year_the_book_states(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """A book states no release year, so a title year cannot split a reprint."""
-        first = temp_db.save_content_item(
-            self._book("goodreads_rss", "234225", "Dune (1965)", "Frank Herbert")
-        )
-
-        reprint = temp_db.save_content_item(
-            self._book("calibre_web", "calibre:dune", "Dune (2011)", "Frank Herbert")
-        )
-
-        assert reprint == first
+        assert second == first
 
     def test_a_survivor_is_reachable_by_the_title_it_is_spelled_with(
         self, temp_db: SQLiteDB
@@ -4455,16 +4407,6 @@ class TestCorrectingWhatAMatchIsVetoedOn:
             metadata={"release_year": release_year} if release_year else {},
         )
 
-    def test_a_source_stating_the_true_year_lands_on_the_corrected_row(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        released = temp_db.save_content_item(self._doom("gog", "1435828767", 2016))
-
-        assert temp_db.update_item_from_ui(db_id=released, release_year=1993) is True
-
-        stated = temp_db.save_content_item(self._doom("steam", "2280", 1993))
-        assert stated == released
-
     def test_a_corrected_creator_reads_back_as_the_author_and_is_searchable(
         self, temp_db: SQLiteDB
     ) -> None:
@@ -4504,18 +4446,6 @@ class TestCorrectingWhatAMatchIsVetoedOn:
         assert item is not None
         assert item.metadata["release_year"] == 1993
         assert item.author == "id Software"
-
-    def test_a_correction_outranks_the_year_the_title_spells_out(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        released = temp_db.save_content_item(
-            self._doom("epic_games", "379720", title="DOOM (2016)")
-        )
-
-        temp_db.update_item_from_ui(db_id=released, release_year=1993)
-
-        stated = temp_db.save_content_item(self._doom("steam", "2280", 1993))
-        assert stated == released
 
     def test_a_book_states_no_release_year_to_correct(self, temp_db: SQLiteDB) -> None:
         db_id = temp_db.save_content_item(

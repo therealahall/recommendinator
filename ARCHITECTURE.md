@@ -190,10 +190,7 @@ back to the normalized title, oldest row first. It skips a row whose merge
 group holds another id from that source: a source lists an item once, so two
 of its ids are two items.
 
-The key is deliberately lossy — a region qualifier, an edition and a trailing
-year all leave it — and three vetoes make it safe. A creator, a
-year or a region both rows state and disagree on refuses the match, as does a
-year one row spells into its title against a row stating none.
+The key is deliberately lossy — a region qualifier, an edition and a trailing year all leave it — and two vetoes make it safe: a creator or a region both rows state and disagree on refuses the match. A year never does, because an edition or a re-release is the same work to someone.
 
 External ids live in `content_item_external_ids`, one per source per item:
 Steam's app 440 and GOG's product 440 are different games.

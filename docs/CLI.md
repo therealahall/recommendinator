@@ -179,11 +179,7 @@ enrichment run leave it alone, and `library show` lists what is held. The one
 exception is a TV show whose source reports a season past the ones you ticked,
 which goes back to in-progress, still held.
 
-`--release-year` and `--creator` correct the two fields a title match is vetoed
-on, so a row with a wrong year takes the next source stating the true one
-instead of growing the library another row. A year runs
-1800-2200 and a creator 500 characters; a book takes no `--release-year`,
-because `year_published` dates the edition rather than the work.
+`--creator` corrects the field a title match is vetoed on, so a row with a wrong creator takes the next source stating the true one instead of growing the library another row. `--release-year` corrects the year shown. A year runs 1800-2200 and a creator 500 characters; a book takes no `--release-year`, because `year_published` dates the edition rather than the work.
 
 `--title` renames the item, up to 500 characters and never blank. The source
 that named the old title still syncs onto the same row rather than adding a

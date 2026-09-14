@@ -197,7 +197,7 @@ def _side(row: MatchRow, configured: dict[str, SourceConfigRow]) -> DuplicateSid
             else None
         ),
         creator=row.signals.creator,
-        release_year=row.signals.release_year.value,
+        release_year=row.release_year,
     )
 
 

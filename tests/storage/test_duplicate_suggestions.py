@@ -93,6 +93,24 @@ def test_one_source_listing_a_book_twice_leaves_a_pair_the_pass_offers(
     assert suggestion.content_type == "book"
 
 
+def test_one_title_dated_two_years_apart_is_offered_as_one_work(
+    manager: StorageManager,
+) -> None:
+    """An edition or a re-release is the same work to someone, so no year refuses."""
+    dated = {"content_type": ContentType.MOVIE}
+    first = _save(
+        manager, "radarr", "1", "Dune", metadata={"release_year": 1984}, **dated
+    )
+    second = _save(
+        manager, "radarr", "2", "Dune", metadata={"release_year": 2021}, **dated
+    )
+
+    (suggestion,) = _offered(manager)
+
+    assert [copy.db_id for copy in suggestion.copies] == [first, second]
+    assert [copy.release_year for copy in suggestion.copies] == [1984, 2021]
+
+
 def test_a_parenthetical_the_matching_key_keeps_still_offers_the_pair(
     manager: StorageManager,
 ) -> None:
@@ -118,13 +136,11 @@ def test_a_parenthetical_the_matching_key_keeps_still_offers_the_pair(
 def test_a_pair_the_save_door_would_refuse_is_never_offered(
     manager: StorageManager,
 ) -> None:
-    _save(manager, "gog", "1", "Doom", content_type=ContentType.VIDEO_GAME)
-    _save(manager, "steam", "2", "DOOM (2016)", content_type=ContentType.VIDEO_GAME)
     _save(manager, "calibre", "3", "Dune", author="Frank Herbert")
     _save(manager, "goodreads_csv", "4", "Dune", author="Alexander Freed")
     _save(manager, "trakt", "5", "Dune", content_type=ContentType.MOVIE)
 
-    assert manager.count_items() == 5
+    assert manager.count_items() == 3
     assert _offered(manager) == []
 
 

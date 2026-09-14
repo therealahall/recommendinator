@@ -6,6 +6,7 @@ import pytest
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.sources.service import is_valid_source_id
+from src.storage.manager import MergeEvidence, StorageManager
 from src.storage.merge import normalize_title_for_matching
 from src.storage.schema import _LEGACY_EXTERNAL_ID_SOURCE, _rebuild_content_items
 from src.storage.sqlite_db import SQLiteDB
@@ -232,3 +233,86 @@ def test_a_sync_after_the_upgrade_lands_on_the_row_holding_the_legacy_id(
         (db_id, _LEGACY_EXTERNAL_ID_SOURCE, "440"),
         (db_id, "gog", "1470669032"),
     ]
+
+
+def _tautulli_film(
+    external_id: str,
+    title: str = "The Drama",
+    source: str = "tautulli",
+    content_type: ContentType = ContentType.MOVIE,
+) -> ContentItem:
+    return ContentItem(
+        id=external_id,
+        title=title,
+        content_type=content_type,
+        status=ConsumptionStatus.COMPLETED,
+        source=source,
+    )
+
+
+def _stamp_version_25(db_path: Path) -> None:
+    conn = _connect(db_path)
+    try:
+        conn.execute("PRAGMA user_version = 25")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize(
+    ("older", "newer", "synced_index"),
+    [
+        ("tautulli:movie:the drama:2025", "tautulli:movie:the drama:2026", 0),
+        ("tautulli:movie:the drama:2026", "tautulli:movie:the drama", 1),
+        ("tautulli:movie:the drama", "tautulli:movie:the drama:2026", 0),
+    ],
+)
+def test_a_film_split_by_year_before_the_upgrade_is_offered_and_stays_merged(
+    tmp_path: Path, older: str, newer: str, synced_index: int
+) -> None:
+    db_path = tmp_path / "library.db"
+    library = SQLiteDB(db_path)
+    rows = [library.save_content_item(_tautulli_film(one)) for one in (older, newer)]
+    _stamp_version_25(db_path)
+    upgraded = StorageManager(db_path)
+
+    synced = upgraded.save_content_item(_tautulli_film("tautulli:movie:the drama"))
+    (offered,) = upgraded.list_duplicate_suggestions().suggestions
+    leftover = rows[1 - synced_index]
+    upgraded.merge_content_items(leftover, synced, MergeEvidence.MANUAL)
+    resynced = upgraded.save_content_item(_tautulli_film("tautulli:movie:the drama"))
+
+    assert synced == rows[synced_index]
+    assert [copy.db_id for copy in offered.copies] == rows
+    assert resynced == leftover
+    assert upgraded.count_items() == 1
+
+
+def test_the_upgrade_rewrites_only_dated_tautulli_film_ids_and_reruns_as_a_no_op(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "library.db"
+    library = SQLiteDB(db_path)
+    stored = [
+        ("Star Wars: Episode IV", "tautulli:movie:star wars: episode iv:1977"),
+        ("1917", "tautulli:movie:1917:2019"),
+        ("2046", "tautulli:movie:2046"),
+    ]
+    for title, external_id in stored:
+        library.save_content_item(_tautulli_film(external_id, title))
+    library.save_content_item(
+        _tautulli_film("tautulli:show:1923", "1923", content_type=ContentType.TV_SHOW)
+    )
+    library.save_content_item(_tautulli_film("trakt:1984", "Nineteen", "trakt"))
+    expected = {
+        "Star Wars: Episode IV": ("tautulli", "tautulli:movie:star wars: episode iv"),
+        "1917": ("tautulli", "tautulli:movie:1917"),
+        "2046": ("tautulli", "tautulli:movie:2046"),
+        "1923": ("tautulli", "tautulli:show:1923"),
+        "Nineteen": ("trakt", "trakt:1984"),
+    }
+
+    for _ in range(2):
+        _stamp_version_25(db_path)
+        SQLiteDB(db_path)
+        assert _ids_by_title(db_path) == expected
