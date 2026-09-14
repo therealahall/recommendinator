@@ -536,7 +536,7 @@ function declaredRanges(source: string): [number, number][] {
   })
 }
 
-function paintedText(path: string): string {
+function sourceWithoutComments(path: string): string {
   return readFileSync(`${process.cwd()}/${path}`, 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/<!--[\s\S]*?-->/g, '')
@@ -584,9 +584,9 @@ describe('the faces the app paints with', () => {
 
   it('paints no character they lack, so nothing on screen falls back to a system face', () => {
     const ranges = declaredRanges(readBase())
-    const scanned = [...styledFiles('resources', /\.(vue|css)$/), 'index.html']
+    const scanned = [...styledFiles('resources', /\.(vue|css|ts)$/), 'index.html']
     const stranded = scanned.flatMap((path) =>
-      [...paintedText(path)].flatMap((glyph) => {
+      [...sourceWithoutComments(path)].flatMap((glyph) => {
         const code = glyph.codePointAt(0)!
         return ranges.some(([from, to]) => code >= from && code <= to)
           ? []
