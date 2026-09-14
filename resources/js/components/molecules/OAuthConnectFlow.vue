@@ -6,7 +6,6 @@ const props = defineProps<{
   sourceId: string
   sourceName: string
   authUrl: string | null
-  expectedOrigin: string
   helpText: string
   serviceName: string
   // Why the button is dead is the parent's to say: a null auth URL means the
@@ -53,12 +52,10 @@ function openAuth() {
   } catch {
     return
   }
+  // No origin check: the URL and any origin to hold it to would both come from
+  // this app's own server, so the comparison could only agree with itself.
   if (parsed.protocol !== 'https:') {
     console.error(`Unexpected protocol in ${props.serviceName} auth URL:`, parsed.protocol)
-    return
-  }
-  if (parsed.origin !== props.expectedOrigin) {
-    console.error(`Unexpected ${props.serviceName} auth URL origin:`, parsed.origin)
     return
   }
   window.open(parsed.href, '_blank', 'noopener,noreferrer')

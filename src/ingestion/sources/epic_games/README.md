@@ -19,7 +19,7 @@ Epic uses OAuth via the [Legendary](https://github.com/derrod/legendary) launche
 3. Log in with your Epic account — you'll see a JSON response containing an `authorizationCode`.
 4. Copy the code (or the entire JSON), paste it into the web UI input, and click **Connect**. The token is encrypted and stored automatically.
 
-If Epic sync later fails with an authentication error, the refresh token has expired — reconnect via the web UI. You can also connect from the CLI with `uv run python -m src.cli auth connect --source epic`.
+If Epic sync later fails with an authentication error, the refresh token has expired — reconnect via the web UI. You can also connect from the CLI with `uv run python -m src.cli auth connect --source epic_games`.
 
 ## Configuration
 

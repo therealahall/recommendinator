@@ -10,14 +10,13 @@ from unittest.mock import Mock, patch
 import pytest
 import requests
 
-from src.auth.gog import GogAuthError, exchange_code_for_tokens
-from src.auth.trakt import TraktAuthError, poll_device_token, start_device_auth_flow
 from src.enrichment.provider_base import ProviderError
 from src.enrichment.providers.rawg.rawg import RAWGProvider
 from src.enrichment.providers.tmdb.tmdb import TMDBProvider
-from src.ingestion.plugin_base import SourceError
+from src.ingestion.plugin_base import OAuthError, SourceError
 from src.ingestion.sources.calibre_web.calibre_web import CalibreWebPlugin
 from src.ingestion.sources.gog.gog import GogAPIError, get_wishlist_product_ids
+from src.ingestion.sources.gog.gog import exchange_code_for_tokens as gog_exchange_code
 from src.ingestion.sources.gog.gog import get_owned_games as gog_owned_games
 from src.ingestion.sources.gog.gog import (
     refresh_access_token as gog_refresh_access_token,
@@ -31,6 +30,8 @@ from src.ingestion.sources.trakt.trakt import (
     TraktAPIError,
     fetch_list,
     fetch_show_season_totals,
+    poll_device_token,
+    start_device_auth_flow,
 )
 from src.ingestion.sources.trakt.trakt import (
     refresh_access_token as trakt_refresh_access_token,
@@ -51,13 +52,13 @@ _SCANNED_TREES = (Path("private/plugins"), Path("src"))
 _FUNCTION_NODES = (ast.FunctionDef, ast.AsyncFunctionDef)
 
 _CREDENTIAL_URL_FUNCTIONS = (
-    ("src/auth/gog.py", "exchange_code_for_tokens"),
     ("src/enrichment/providers/rawg/rawg.py", "_fetch_game_details"),
     ("src/enrichment/providers/rawg/rawg.py", "_search_game"),
     ("src/enrichment/providers/tmdb/tmdb.py", "_fetch_keywords"),
     ("src/enrichment/providers/tmdb/tmdb.py", "_fetch_movie_details"),
     ("src/enrichment/providers/tmdb/tmdb.py", "_fetch_tv_details"),
     ("src/enrichment/providers/tmdb/tmdb.py", "_request_candidates"),
+    ("src/ingestion/sources/gog/gog.py", "exchange_code_for_tokens"),
     ("src/ingestion/sources/gog/gog.py", "refresh_access_token"),
     ("src/ingestion/sources/steam/steam.py", "get_owned_games"),
     ("src/ingestion/sources/steam/steam.py", "get_steam_id_from_vanity_url"),
@@ -462,18 +463,18 @@ _CREDENTIALED_CALLERS = [
         id="rawg-search",
     ),
     pytest.param(
-        lambda: exchange_code_for_tokens(_CREDENTIAL),
-        GogAuthError,
+        lambda: gog_exchange_code(_CREDENTIAL),
+        OAuthError,
         id="gog-oauth-code-exchange",
     ),
     pytest.param(
         lambda: start_device_auth_flow(_CREDENTIAL),
-        TraktAuthError,
+        OAuthError,
         id="trakt-device-code",
     ),
     pytest.param(
         lambda: poll_device_token("device-code", "client-id", _CREDENTIAL),
-        TraktAuthError,
+        OAuthError,
         id="trakt-device-token",
     ),
 ]

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
-import TraktDeviceCodeFlow from './TraktDeviceCodeFlow.vue'
+import DeviceCodeFlow from './DeviceCodeFlow.vue'
 import { useDataStore } from '@/stores/data'
 
 const mockGet = vi.fn()
@@ -42,16 +42,18 @@ function makeTimer() {
   return { setTimer, clearTimer, fire, hasPending: () => pending !== null }
 }
 
-const SOURCE_ID = 'trakt_work'
-const SOURCE_NAME = 'Trakt (work)'
+const SOURCE_ID = 'fake_work'
+const SOURCE_NAME = 'Fake (work)'
 
 const HINT = 'The remedy the parent worked out.'
 
 function mountFlow(timer: ReturnType<typeof makeTimer>) {
-  return mount(TraktDeviceCodeFlow, {
+  return mount(DeviceCodeFlow, {
     props: {
       sourceId: SOURCE_ID,
       sourceName: SOURCE_NAME,
+      plugin: 'fake',
+      serviceName: 'Fake',
       connectHint: HINT,
       setTimer: timer.setTimer,
       clearTimer: timer.clearTimer,
@@ -60,7 +62,7 @@ function mountFlow(timer: ReturnType<typeof makeTimer>) {
   })
 }
 
-function setTraktEnabled(enabled: boolean): void {
+function setConnectEnabled(enabled: boolean): void {
   useDataStore().oauthStatus[SOURCE_ID] = {
     enabled,
     connected: false,
@@ -71,34 +73,34 @@ function setTraktEnabled(enabled: boolean): void {
 function codePanelVisible(
   wrapper: ReturnType<typeof mountFlow>,
 ): boolean {
-  const code = wrapper.find('[data-testid="trakt-user-code"]')
+  const code = wrapper.find('[data-testid="device-user-code"]')
   if (!code.exists()) return false
-  const panel = code.element.closest('.trakt-flow-panel') as HTMLElement
+  const panel = code.element.closest('.device-flow-panel') as HTMLElement
   return panel.style.display !== 'none'
 }
 
 const FLOW = {
   user_code: 'ABCD-1234',
-  verification_url: 'https://trakt.tv/activate',
+  verification_url: 'https://fake.example.com/activate',
   device_code: 'dev-code',
   expires_in: 600,
   interval: 5,
 }
 
-describe('TraktDeviceCodeFlow', () => {
+describe('DeviceCodeFlow', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     mockGet.mockReset()
     mockPost.mockReset()
     mockDelete.mockReset()
-    setTraktEnabled(true)
+    setConnectEnabled(true)
   })
 
   it('does not start the device flow while connect is disabled', async () => {
-    setTraktEnabled(false)
+    setConnectEnabled(false)
     const wrapper = mountFlow(makeTimer())
 
-    await wrapper.get('[data-testid="trakt-connect-btn"]').trigger('click')
+    await wrapper.get('[data-testid="device-connect-btn"]').trigger('click')
     await flushPromises()
 
     expect(mockPost).not.toHaveBeenCalled()
@@ -109,17 +111,17 @@ describe('TraktDeviceCodeFlow', () => {
     const timer = makeTimer()
     const wrapper = mountFlow(timer)
 
-    await wrapper.get('[data-testid="trakt-connect-btn"]').trigger('click')
+    await wrapper.get('[data-testid="device-connect-btn"]').trigger('click')
     await flushPromises()
 
-    expect(mockPost).toHaveBeenCalledWith('/trakt/start-device-flow', undefined, {
+    expect(mockPost).toHaveBeenCalledWith('/oauth/fake/start-device-flow', undefined, {
       source_id: SOURCE_ID,
     })
-    expect(wrapper.get('[data-testid="trakt-user-code"]').text()).toContain(
+    expect(wrapper.get('[data-testid="device-user-code"]').text()).toContain(
       'ABCD-1234',
     )
-    const link = wrapper.get('[data-testid="trakt-verification-link"]')
-    expect(link.attributes('href')).toBe('https://trakt.tv/activate')
+    const link = wrapper.get('[data-testid="device-verification-link"]')
+    expect(link.attributes('href')).toBe('https://fake.example.com/activate')
     expect(link.attributes('target')).toBe('_blank')
     expect(link.attributes('rel')).toBe('noopener noreferrer')
     expect(link.text()).toContain('opens in new tab')
@@ -130,19 +132,24 @@ describe('TraktDeviceCodeFlow', () => {
     mockPost
       .mockResolvedValueOnce(FLOW)
       .mockResolvedValueOnce({ connected: false, status: 'pending', message: 'wait' })
-      .mockResolvedValueOnce({ connected: true, message: 'Trakt connected!' })
+      .mockResolvedValueOnce({ connected: true, message: 'Fake connected!' })
     mockGet.mockResolvedValue({ enabled: true, connected: true })
     const timer = makeTimer()
     const wrapper = mountFlow(timer)
 
-    await wrapper.get('[data-testid="trakt-connect-btn"]').trigger('click')
+    await wrapper.get('[data-testid="device-connect-btn"]').trigger('click')
     await flushPromises()
 
     await timer.fire()
     expect(codePanelVisible(wrapper)).toBe(true)
 
     await timer.fire()
-    expect(useDataStore().oauthMessages[SOURCE_ID]).toBe('Trakt connected!')
+    expect(mockPost).toHaveBeenLastCalledWith(
+      '/oauth/fake/poll-device-approval',
+      { device_code: 'dev-code' },
+      { source_id: SOURCE_ID },
+    )
+    expect(useDataStore().oauthMessages[SOURCE_ID]).toBe('Fake connected!')
     expect(wrapper.text()).not.toContain('Waiting for you to approve')
     expect(codePanelVisible(wrapper)).toBe(false)
     expect(timer.hasPending()).toBe(false)
@@ -155,15 +162,15 @@ describe('TraktDeviceCodeFlow', () => {
     const timer = makeTimer()
     const wrapper = mountFlow(timer)
 
-    await wrapper.get('[data-testid="trakt-connect-btn"]').trigger('click')
+    await wrapper.get('[data-testid="device-connect-btn"]').trigger('click')
     await flushPromises()
     await timer.fire()
 
-    expect(wrapper.get('.trakt-flow-status--error').text()).toContain('expired')
-    expect(wrapper.find('[data-testid="trakt-retry-btn"]').exists()).toBe(true)
+    expect(wrapper.get('.device-flow-status--error').text()).toContain('expired')
+    expect(wrapper.find('[data-testid="device-retry-btn"]').exists()).toBe(true)
     expect(timer.hasPending()).toBe(false)
     expect(document.activeElement).toBe(
-      wrapper.get('[data-testid="trakt-result-panel"]').element,
+      wrapper.get('[data-testid="device-result-panel"]').element,
     )
     wrapper.unmount()
   })
@@ -176,7 +183,7 @@ describe('TraktDeviceCodeFlow', () => {
     answerPoll()
     const timer = makeTimer()
     const wrapper = mountFlow(timer)
-    await wrapper.get('[data-testid="trakt-connect-btn"]').trigger('click')
+    await wrapper.get('[data-testid="device-connect-btn"]').trigger('click')
     await flushPromises()
     const elsewhere = document.createElement('input')
     document.body.appendChild(elsewhere)
@@ -184,7 +191,7 @@ describe('TraktDeviceCodeFlow', () => {
 
     await timer.fire()
 
-    expect(wrapper.get('.trakt-flow-status--error').text()).not.toBe('')
+    expect(wrapper.get('.device-flow-status--error').text()).not.toBe('')
     expect(document.activeElement).toBe(elsewhere)
     elsewhere.remove()
     wrapper.unmount()
@@ -194,25 +201,25 @@ describe('TraktDeviceCodeFlow', () => {
     mockPost.mockRejectedValueOnce(new Error('bad creds'))
     const wrapper = mountFlow(makeTimer())
 
-    await wrapper.get('[data-testid="trakt-connect-btn"]').trigger('click')
+    await wrapper.get('[data-testid="device-connect-btn"]').trigger('click')
     await flushPromises()
 
-    expect(wrapper.get('.trakt-flow-status--error').text()).toContain(
-      'Could not start the Trakt connection',
+    expect(wrapper.get('.device-flow-status--error').text()).toContain(
+      'Could not start the Fake connection',
     )
-    expect(wrapper.find('[data-testid="trakt-retry-btn"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="device-retry-btn"]').exists()).toBe(true)
   })
 
   it('backs off by +5s on slow_down and keeps polling until connected', async () => {
     mockPost
       .mockResolvedValueOnce(FLOW)
       .mockResolvedValueOnce({ connected: false, status: 'slow_down', message: 'slow' })
-      .mockResolvedValueOnce({ connected: true, message: 'Trakt connected!' })
+      .mockResolvedValueOnce({ connected: true, message: 'Fake connected!' })
     mockGet.mockResolvedValue({ enabled: true, connected: true })
     const timer = makeTimer()
     const wrapper = mountFlow(timer)
 
-    await wrapper.get('[data-testid="trakt-connect-btn"]').trigger('click')
+    await wrapper.get('[data-testid="device-connect-btn"]').trigger('click')
     await flushPromises()
     expect(timer.setTimer).toHaveBeenLastCalledWith(expect.any(Function), 5000)
 
@@ -222,27 +229,27 @@ describe('TraktDeviceCodeFlow', () => {
     expect(timer.hasPending()).toBe(true)
 
     await timer.fire()
-    expect(useDataStore().oauthMessages[SOURCE_ID]).toBe('Trakt connected!')
+    expect(useDataStore().oauthMessages[SOURCE_ID]).toBe('Fake connected!')
     expect(timer.hasPending()).toBe(false)
   })
 
   it('says so when the connect succeeded but the status re-read did not', async () => {
     mockPost
       .mockResolvedValueOnce(FLOW)
-      .mockResolvedValueOnce({ connected: true, message: 'Trakt connected!' })
+      .mockResolvedValueOnce({ connected: true, message: 'Fake connected!' })
     mockGet.mockRejectedValue(new Error('status read failed'))
     vi.spyOn(console, 'error').mockImplementation(() => {})
     const timer = makeTimer()
     const wrapper = mountFlow(timer)
 
-    await wrapper.get('[data-testid="trakt-connect-btn"]').trigger('click')
+    await wrapper.get('[data-testid="device-connect-btn"]').trigger('click')
     await flushPromises()
 
     await timer.fire()
 
     expect(useDataStore().oauthStatusFor(SOURCE_ID).connected).toBe(false)
-    const result = wrapper.get('[data-testid="trakt-result-panel"]')
-    expect(result.get('[data-testid="trakt-result-text"]').text()).toContain(
+    const result = wrapper.get('[data-testid="device-result-panel"]')
+    expect(result.get('[data-testid="device-result-text"]').text()).toContain(
       'could not be re-read',
     )
     wrapper.unmount()
@@ -253,7 +260,7 @@ describe('TraktDeviceCodeFlow', () => {
     const timer = makeTimer()
     const wrapper = mountFlow(timer)
 
-    await wrapper.get('[data-testid="trakt-connect-btn"]').trigger('click')
+    await wrapper.get('[data-testid="device-connect-btn"]').trigger('click')
     await flushPromises()
     expect(timer.hasPending()).toBe(true)
 

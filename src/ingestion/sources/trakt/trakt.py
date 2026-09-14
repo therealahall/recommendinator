@@ -8,12 +8,18 @@ import logging
 from collections.abc import Callable, Iterator
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 import requests
 
 from src.ingestion.plugin_base import (
     ConfigField,
     CredentialUpdateCallback,
+    DeviceAuthorization,
+    DeviceCodeFlow,
+    DevicePollResult,
+    DevicePollStatus,
+    OAuthError,
     ProgressCallback,
     SourceError,
     SourcePlugin,
@@ -35,6 +41,8 @@ logger = logging.getLogger(__name__)
 
 TRAKT_API_URL = "https://api.trakt.tv"
 TRAKT_TOKEN_URL = f"{TRAKT_API_URL}/oauth/token"
+TRAKT_DEVICE_CODE_URL = f"{TRAKT_API_URL}/oauth/device/code"
+TRAKT_DEVICE_TOKEN_URL = f"{TRAKT_API_URL}/oauth/device/token"
 
 # Sensitive fields that must be present in config or the credential DB.
 _REQUIRED_SENSITIVE_FIELDS = ("client_secret", "refresh_token")
@@ -270,7 +278,109 @@ def _media_metadata(media: dict[str, Any]) -> dict[str, Any]:
     return metadata
 
 
+def _device_post(url: str, payload: dict[str, str]) -> requests.Response:
+    try:
+        return request_within_origin(
+            requests.post, url, "Trakt", fixed_endpoint_refusal, json=payload
+        )
+    except RedirectRefused as refused:
+        raise OAuthError(str(refused)) from None
+
+
+def start_device_auth_flow(client_id: str) -> DeviceAuthorization:
+    try:
+        response = _device_post(TRAKT_DEVICE_CODE_URL, {"client_id": client_id})
+        response.raise_for_status()
+        data: dict[str, Any] = response.json()
+    except requests.RequestException as error:
+        logger.error("Trakt device-code request failed: %s", type(error).__name__)
+        raise OAuthError("Failed to start Trakt device authorization") from error
+
+    for field in ("device_code", "user_code", "verification_url"):
+        if not data.get(field):
+            raise OAuthError("Trakt device-code response was incomplete")
+
+    if urlparse(data["verification_url"]).scheme not in ("http", "https"):
+        raise OAuthError("Trakt returned an invalid verification URL")
+
+    return DeviceAuthorization(
+        device_code=data["device_code"],
+        user_code=data["user_code"],
+        verification_url=data["verification_url"],
+        expires_in=int(data.get("expires_in", 600)),
+        interval=int(data.get("interval", 5)),
+    )
+
+
+def poll_device_token(
+    device_code: str, client_id: str, client_secret: str
+) -> DevicePollResult:
+    try:
+        response = _device_post(
+            TRAKT_DEVICE_TOKEN_URL,
+            {
+                "code": device_code,
+                "client_id": client_id,
+                "client_secret": client_secret,
+            },
+        )
+    except requests.RequestException as error:
+        logger.error("Trakt device-token poll failed: %s", type(error).__name__)
+        raise OAuthError("Failed to reach Trakt during authorization") from error
+
+    status = response.status_code
+    if status == 200:
+        data: dict[str, Any] = response.json()
+        refresh_token = data.get("refresh_token")
+        if not refresh_token:
+            raise OAuthError("Trakt token response missing refresh_token")
+        return DevicePollResult(DevicePollStatus.SUCCESS, refresh_token)
+    if status == 400:
+        return DevicePollResult(DevicePollStatus.PENDING)
+    if status == 429:
+        return DevicePollResult(DevicePollStatus.SLOW_DOWN)
+    if status == 410:
+        return DevicePollResult(DevicePollStatus.EXPIRED)
+    if status == 418:
+        return DevicePollResult(DevicePollStatus.DENIED)
+    if status == 404:
+        raise OAuthError("Trakt rejected the device code (invalid or unknown)")
+    if status == 409:
+        raise OAuthError("This Trakt device code has already been used")
+    raise OAuthError(f"Unexpected Trakt response while polling (status {status})")
+
+
+def _client_credentials(config: dict[str, Any]) -> tuple[str, str]:
+    return (
+        (config.get("client_id") or "").strip(),
+        (config.get("client_secret") or "").strip(),
+    )
+
+
+class TraktOAuth(DeviceCodeFlow):
+    """The user registers their own Trakt application, so its client ID and
+    secret must be saved to the source before the flow can run.
+    """
+
+    setup_hint = (
+        "Add the Trakt client ID and client secret in the settings below "
+        "before you can connect."
+    )
+
+    def is_ready(self, config: dict[str, Any]) -> bool:
+        return all(_client_credentials(config))
+
+    def start(self, config: dict[str, Any]) -> DeviceAuthorization:
+        client_id, _ = _client_credentials(config)
+        return start_device_auth_flow(client_id)
+
+    def poll(self, device_code: str, config: dict[str, Any]) -> DevicePollResult:
+        return poll_device_token(device_code, *_client_credentials(config))
+
+
 class TraktPlugin(SourcePlugin):
+    oauth = TraktOAuth()
+
     @property
     def name(self) -> str:
         return "trakt"

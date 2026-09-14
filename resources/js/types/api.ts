@@ -192,12 +192,20 @@ export interface SourceFieldSchema {
   sensitive: boolean
 }
 
+/** How a source connects its account, as its plugin declares it. */
+export interface OAuthConnectSchema {
+  flow: 'code_paste' | 'device_code'
+  code_help: string
+  setup_hint: string
+}
+
 export interface SourceSchemaResponse {
   source_id: string
   plugin: string
   plugin_display_name: string
   fields: SourceFieldSchema[]
   sync_intervals: SyncIntervalOption[]
+  oauth: OAuthConnectSchema | null
 }
 
 export interface SourceConfigResponse {
@@ -384,22 +392,14 @@ export interface ProfileResponse {
   generated_at: string | null
 }
 
-export interface GogExchangeRequest {
-  code_or_url: string
-}
-
-export interface EpicExchangeRequest {
-  code_or_json: string
-}
-
-/** GET /{gog,epic,trakt}/status. Only GOG and Epic carry an auth_url. */
+/** GET /oauth/<plugin>/status. Only a code_paste flow carries an auth_url. */
 export interface OAuthStatusResponse {
   enabled: boolean
   connected: boolean
   auth_url?: string | null
 }
 
-export interface TraktDeviceFlowResponse {
+export interface DeviceFlowResponse {
   user_code: string
   verification_url: string
   device_code: string
@@ -407,11 +407,11 @@ export interface TraktDeviceFlowResponse {
   interval: number
 }
 
-export type TraktPollStatus = 'pending' | 'slow_down' | 'expired' | 'denied'
+export type DevicePollStatus = 'pending' | 'slow_down' | 'expired' | 'denied'
 
-export interface TraktPollResponse {
+export interface DevicePollResponse {
   connected: boolean
-  status?: TraktPollStatus
+  status?: DevicePollStatus
   message: string
 }
 

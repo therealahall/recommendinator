@@ -519,6 +519,64 @@ if new_refresh_token and new_refresh_token != original_refresh_token:
 Worked examples: `src/ingestion/sources/gog/gog.py` and
 `src/ingestion/sources/epic_games/epic_games.py`.
 
+## Connecting an account
+
+A source that signs in to an account sets `oauth` to a flow it implements. Core
+stores, reports and revokes the token under the source's id, reached at
+`/api/oauth/<plugin name>/` and `auth --source <plugin name>`; the flow only
+talks to the service.
+
+```python
+from typing import Any
+
+import requests
+
+from src.ingestion.plugin_base import CodePasteFlow, OAuthError, SourcePlugin
+from src.ingestion.urls import (
+    RedirectRefused,
+    fixed_endpoint_refusal,
+    request_within_origin,
+)
+
+
+class MyOAuth(CodePasteFlow):
+    code_help = "Paste the code the service shows after you sign in:"
+
+    def auth_url(self, config: dict[str, Any]) -> str:
+        return f"https://my.service/authorize?client_id={config['client_id']}"
+
+    def exchange_code(self, pasted: str, config: dict[str, Any]) -> str:
+        try:
+            response = request_within_origin(
+                requests.post,
+                "https://my.service/token",
+                "My Service",
+                fixed_endpoint_refusal,
+                data={"code": pasted, "client_id": config["client_id"]},
+            )
+        except RedirectRefused as refused:
+            raise OAuthError(str(refused)) from None
+        if not response.ok:
+            raise OAuthError(f"Token exchange failed ({response.status_code})")
+        return str(response.json()["refresh_token"])
+
+
+class MyPlugin(SourcePlugin):
+    oauth = MyOAuth()
+```
+
+A `DeviceCodeFlow` implements `start(config)` and `poll(device_code, config)`
+instead; `poll` sets `refresh_token` only on `SUCCESS`.
+
+`config` is the source's assembled config, secrets included. Override
+`is_ready(config)` when the flow needs saved setup, and name it in `setup_hint`.
+
+Raise `OAuthError` for any refusal: both interfaces log it and answer with a
+fixed string, so never quote a credential in it. Raise `from None` where a code
+or secret rides in the query string.
+
+Worked examples: `GogOAuth`, `EpicOAuth` and `TraktOAuth`.
+
 ## Enrichment providers
 
 Providers use the source-plugin folder layout under

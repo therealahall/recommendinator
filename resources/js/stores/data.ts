@@ -22,19 +22,12 @@ import type {
   ImportTemplateResponse,
   ImportResponse,
   OAuthStatusResponse,
-  TraktDeviceFlowResponse,
-  TraktPollResponse,
+  DeviceFlowResponse,
+  DevicePollResponse,
   UpdateResponse,
 } from '@/types/api'
 
 const ALL_SOURCES_LABEL = 'All Sources'
-
-/** The status/connect/disconnect route prefix for each OAuth-backed plugin. */
-const OAUTH_ROUTE_BY_PLUGIN: Record<string, string> = {
-  gog: 'gog',
-  epic_games: 'epic',
-  trakt: 'trakt',
-}
 
 export interface OAuthStatus {
   enabled: boolean
@@ -375,11 +368,9 @@ export const useDataStore = defineStore('data', () => {
   // OAuth connect flows. Every call names the source being connected: the
   // token is stored under that id and read back from it at sync time.
   async function loadOAuthStatus(sourceId: string, plugin: string): Promise<void> {
-    const route = OAUTH_ROUTE_BY_PLUGIN[plugin]
-    if (!route) return
     const generation = (oauthStatusGeneration[sourceId] ?? 0) + 1
     oauthStatusGeneration[sourceId] = generation
-    const status = await api.get<OAuthStatusResponse>(`/${route}/status`, {
+    const status = await api.get<OAuthStatusResponse>(`/oauth/${plugin}/status`, {
       source_id: sourceId,
     })
     // Responses need not arrive in the order they were asked for. The older one
@@ -402,22 +393,21 @@ export const useDataStore = defineStore('data', () => {
 
   function apiErrorMessage(err: unknown, fallback: string): string {
     // ApiError.message is the server's own ``detail`` when it sent one, which
-    // is the only part of a refusal that tells the user what to do about it
-    // ("GOG is not enabled for that source.").
+    // is the only part of a refusal that tells the user what to do about it.
     return err instanceof ApiError ? `Error: ${err.message}` : fallback
   }
 
   async function submitOAuthCode(
     sourceId: string,
     plugin: string,
-    body: Record<string, string>,
+    code: string,
     pendingMessage: string,
   ): Promise<void> {
     setOAuthMessage(sourceId, pendingMessage)
     try {
       const data = await api.post<{ message: string }>(
-        `/${OAUTH_ROUTE_BY_PLUGIN[plugin]}/exchange`,
-        body,
+        `/oauth/${plugin}/exchange`,
+        { code },
         { source_id: sourceId },
       )
       setOAuthMessage(sourceId, data.message)
@@ -432,24 +422,6 @@ export const useDataStore = defineStore('data', () => {
     await loadOAuthStatus(sourceId, plugin)
   }
 
-  function submitGogCode(sourceId: string, codeOrUrl: string) {
-    return submitOAuthCode(
-      sourceId,
-      'gog',
-      { code_or_url: codeOrUrl },
-      'Connecting to GOG...',
-    )
-  }
-
-  function submitEpicCode(sourceId: string, codeOrJson: string) {
-    return submitOAuthCode(
-      sourceId,
-      'epic_games',
-      { code_or_json: codeOrJson },
-      'Connecting to Epic Games...',
-    )
-  }
-
   async function disconnectOAuth(
     sourceId: string,
     plugin: string,
@@ -459,7 +431,7 @@ export const useDataStore = defineStore('data', () => {
     try {
       // The DELETE runs the credential delete synchronously and only returns
       // 200 once the row is gone, so the status re-read below sees the result.
-      await api.delete(`/${OAUTH_ROUTE_BY_PLUGIN[plugin]}/token`, {
+      await api.delete(`/oauth/${plugin}/token`, {
         source_id: sourceId,
       })
       setOAuthMessage(sourceId, 'Disconnected. You can reconnect below.')
@@ -474,26 +446,22 @@ export const useDataStore = defineStore('data', () => {
     await loadOAuthStatus(sourceId, plugin)
   }
 
-  function disconnectGog(sourceId: string) {
-    return disconnectOAuth(sourceId, 'gog', 'Disconnecting GOG...')
-  }
-
-  function disconnectEpic(sourceId: string) {
-    return disconnectOAuth(sourceId, 'epic_games', 'Disconnecting Epic Games...')
-  }
-
-  async function startTraktFlow(sourceId: string): Promise<TraktDeviceFlowResponse> {
-    return api.post<TraktDeviceFlowResponse>('/trakt/start-device-flow', undefined, {
+  async function startDeviceFlow(
+    sourceId: string,
+    plugin: string,
+  ): Promise<DeviceFlowResponse> {
+    return api.post<DeviceFlowResponse>(`/oauth/${plugin}/start-device-flow`, undefined, {
       source_id: sourceId,
     })
   }
 
-  async function pollTraktApproval(
+  async function pollDeviceApproval(
     sourceId: string,
+    plugin: string,
     deviceCode: string,
-  ): Promise<TraktPollResponse> {
-    const result = await api.post<TraktPollResponse>(
-      '/trakt/poll-device-approval',
+  ): Promise<DevicePollResponse> {
+    const result = await api.post<DevicePollResponse>(
+      `/oauth/${plugin}/poll-device-approval`,
       { device_code: deviceCode },
       { source_id: sourceId },
     )
@@ -501,22 +469,18 @@ export const useDataStore = defineStore('data', () => {
       // The confirmation belongs to the panel, not to the device-code flow:
       // the status re-read below unmounts that flow, taking its live region
       // with it before anything could be announced from there.
-      setOAuthMessage(sourceId, result.message || 'Trakt account connected.')
+      setOAuthMessage(sourceId, result.message || 'Account connected.')
       try {
-        await loadOAuthStatus(sourceId, 'trakt')
+        await loadOAuthStatus(sourceId, plugin)
       } catch (err) {
         // Swallowed, unlike the connect and disconnect re-reads: this one is
         // awaited inside the poll loop, whose own catch reports the connect
         // itself as failed. The flow reads the flag back and says the status
         // could not be re-read.
-        console.error('Trakt status re-read failed:', err)
+        console.error('Device-code status re-read failed:', err)
       }
     }
     return result
-  }
-
-  function disconnectTrakt(sourceId: string) {
-    return disconnectOAuth(sourceId, 'trakt', 'Disconnecting Trakt...')
   }
 
   async function loadEnrichmentStats() {
@@ -821,13 +785,10 @@ export const useDataStore = defineStore('data', () => {
     checkSyncStatus,
     loadOAuthStatus,
     setOAuthMessage,
-    submitGogCode,
-    submitEpicCode,
-    disconnectGog,
-    disconnectEpic,
-    startTraktFlow,
-    pollTraktApproval,
-    disconnectTrakt,
+    submitOAuthCode,
+    disconnectOAuth,
+    startDeviceFlow,
+    pollDeviceApproval,
     loadEnrichmentStats,
     enableEnrichment,
     startEnrichment,

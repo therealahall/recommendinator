@@ -1,41 +1,25 @@
-from __future__ import annotations  # noqa: I001
+from __future__ import annotations
 
 import time
 import webbrowser
-from collections.abc import Callable
+from typing import NoReturn
 
 import click
 
-from src.auth.epic import (
-    EPIC_PLUGIN,
-    exchange_code_for_tokens as exchange_epic_code,
-    extract_code_from_input as extract_epic_code,
-    get_epic_auth_url,
-    has_epic_token,
-    is_epic_enabled,
-    save_epic_token,
-)
-from src.auth.gog import (
-    GOG_PLUGIN,
-    exchange_code_for_tokens as exchange_gog_code,
-    extract_code_from_input as extract_gog_code,
-    get_gog_auth_url,
-    has_gog_token,
-    is_gog_enabled,
-    save_gog_token,
-)
-from src.auth.oauth_sources import REFRESH_TOKEN_KEY, may_revoke
-from src.auth.trakt import (
-    TRAKT_PLUGIN,
-    DevicePollStatus,
-    TraktAuthError,
-    has_trakt_token,
-    poll_device_token,
-    resolve_trakt_client_credentials,
-    save_trakt_token,
-    start_device_auth_flow,
+from src.auth.service import (
+    NotConnectable,
+    OAuthPlugin,
+    connect_with_code,
+    connection_status,
+    disconnect,
+    oauth_plugins,
+    poll_device_flow,
+    refusal_message,
+    sign_in_url,
+    start_device_flow,
 )
 from src.cli._shared import abort_after_failure, abort_with, require_storage
+from src.ingestion.plugin_base import CodePasteFlow, DevicePollStatus, OAuthError
 from src.sources.service import (
     SOURCE_ID_RULE,
     configured_source_plugins,
@@ -43,17 +27,7 @@ from src.sources.service import (
 )
 from src.storage.manager import StorageManager
 
-#: What both Trakt device-flow endpoints answer with. The ``TraktAuthError``
-#: quotes the request it failed on, credentials in the URL and all.
-TRAKT_AUTH_FAILED = "Trakt authentication failed"
-
-#: What ``POST /api/{gog,epic}/exchange`` answers when the exchange fails.
-GOG_AUTH_FAILED = "GOG authentication failed"
-EPIC_AUTH_FAILED = "Epic Games authentication failed"
-
-# The plugin behind each ``--source`` choice. The CLI accepts "epic" for
-# brevity while the plugin, and so the default source id, is "epic_games".
-_AUTH_PLUGINS = {"gog": GOG_PLUGIN, "epic": EPIC_PLUGIN, "trakt": TRAKT_PLUGIN}
+_PLUGIN_HELP = "Plugin of the source to act on"
 
 _SOURCE_ID_HELP = (
     "Id of the source to act on, which owns the token. "
@@ -61,38 +35,36 @@ _SOURCE_ID_HELP = (
 )
 
 
-def _auth_source_id(source: str, source_id: str | None) -> str:
+def _declared(source: str) -> OAuthPlugin:
+    """Not a ``click.Choice``: which plugins declare a flow is known only once
+    the registry has loaded.
+    """
+    declared = oauth_plugins()
+    found = declared.get(source.lower())
+    if found is None:
+        abort_with(f"--source must be one of: {', '.join(sorted(declared))}")
+    return found
+
+
+def _refuse(ctx: click.Context, declared: OAuthPlugin, error: Exception) -> NoReturn:
+    """A source that may not connect is the operator's to fix, so it gets the
+    remedy the web panel shows rather than a logged fault.
+    """
+    message = refusal_message(declared, error)
+    if isinstance(error, NotConnectable):
+        abort_with(f"{message} {declared.flow.setup_hint}".rstrip())
+    abort_after_failure(ctx, message, error)
+
+
+def _auth_source_id(declared: OAuthPlugin, source_id: str | None) -> str:
     """The id is a credential key, so an unvalidated one files a token where no
     web route can ever reach it.
     """
     if source_id is None:
-        return _AUTH_PLUGINS[source]
+        return declared.plugin.name
     if not is_valid_source_id(source_id):
         abort_with(f"--source-id {SOURCE_ID_RULE}")
     return source_id
-
-
-def _is_trakt_enabled(
-    storage: StorageManager,
-    source_id: str,
-    user_id: int,
-) -> bool:
-    try:
-        resolve_trakt_client_credentials(storage, source_id, user_id)
-    except TraktAuthError:
-        return False
-    return True
-
-
-_StatusCheck = Callable[[StorageManager, str, int], bool]
-
-# What ``GET /api/{provider}/status`` answers for a source on each plugin, so
-# both interfaces call being enabled and holding a token the same thing.
-_OAUTH_STATUS: dict[str, tuple[_StatusCheck, _StatusCheck]] = {
-    GOG_PLUGIN: (is_gog_enabled, has_gog_token),
-    EPIC_PLUGIN: (is_epic_enabled, has_epic_token),
-    TRAKT_PLUGIN: (_is_trakt_enabled, has_trakt_token),
-}
 
 
 @click.group()
@@ -108,13 +80,14 @@ def auth_status(ctx: click.Context, user_id: int) -> None:
     # Every answer below is a credential-store read, so "storage is down" and
     # "nothing is connected" must not print the same thing.
     storage = require_storage(ctx)
+    declared = oauth_plugins()
 
     lines = [
-        _auth_status_line(storage, source_id, plugin_name, user_id)
+        _auth_status_line(storage, source_id, declared[plugin_name], user_id)
         for source_id, plugin_name in sorted(
             configured_source_plugins(storage, user_id).items()
         )
-        if plugin_name in _OAUTH_STATUS
+        if plugin_name in declared
     ]
 
     if not lines:
@@ -127,29 +100,17 @@ def auth_status(ctx: click.Context, user_id: int) -> None:
 def _auth_status_line(
     storage: StorageManager,
     source_id: str,
-    plugin_name: str,
+    declared: OAuthPlugin,
     user_id: int,
 ) -> str:
-    """A disabled source keeps its token, and only a line saying so tells the
-    operator there is still something to revoke.
-    """
-    is_enabled, has_token = _OAUTH_STATUS[plugin_name]
-    enabled_state = (
-        "enabled" if is_enabled(storage, source_id, user_id) else "not enabled"
-    )
-    token_state = (
-        "connected" if has_token(storage, source_id, user_id) else "not connected"
-    )
-    return f"  {source_id} ({plugin_name}): {enabled_state}, {token_state}"
+    status = connection_status(declared, source_id, storage, user_id)
+    enabled_state = "enabled" if status["enabled"] else "not enabled"
+    token_state = "connected" if status["connected"] else "not connected"
+    return f"  {source_id} ({declared.plugin.name}): {enabled_state}, {token_state}"
 
 
 @auth.command("connect")
-@click.option(
-    "--source",
-    type=click.Choice(["gog", "epic", "trakt"], case_sensitive=False),
-    required=True,
-    help="Source to authenticate",
-)
+@click.option("--source", required=True, help=_PLUGIN_HELP)
 @click.option("--source-id", default=None, help=_SOURCE_ID_HELP)
 @click.option("--no-browser", is_flag=True, help="Don't open browser automatically")
 @click.option("--user", "user_id", type=int, default=1, help="User ID")
@@ -163,31 +124,22 @@ def auth_connect(
 ) -> None:
     """Connect an OAuth source by authenticating in browser."""
     storage = require_storage(ctx)
-    connecting = _auth_source_id(source, source_id)
+    declared = _declared(source)
+    name = declared.display_name
+    connecting = _auth_source_id(declared, source_id)
 
-    if source == "trakt":
-        _connect_trakt(ctx, storage, connecting, user_id)
+    if not isinstance(declared.flow, CodePasteFlow):
+        _connect_device(ctx, storage, declared, connecting, user_id)
         return
 
-    if source == "gog":
-        auth_failed = GOG_AUTH_FAILED
-        is_enabled_fn, get_auth_url_fn = is_gog_enabled, get_gog_auth_url
-        extract_code_fn = extract_gog_code
-        exchange_fn, save_fn = exchange_gog_code, save_gog_token
-    else:
-        auth_failed = EPIC_AUTH_FAILED
-        is_enabled_fn, get_auth_url_fn = is_epic_enabled, get_epic_auth_url
-        extract_code_fn = extract_epic_code
-        exchange_fn, save_fn = exchange_epic_code, save_epic_token
+    try:
+        auth_url = sign_in_url(declared, connecting, storage, user_id)
+    except OAuthError as error:
+        _refuse(ctx, declared, error)
+    if auth_url is None:
+        abort_with(f"{name} did not return a sign-in link. Try again in a moment.")
 
-    if not is_enabled_fn(storage, connecting, user_id):
-        click.echo(
-            f"Error: '{connecting}' is not an enabled {source} source.", err=True
-        )
-        raise click.Abort()
-
-    auth_url = get_auth_url_fn()
-    click.echo(f"\nAuthorize {source} at:\n  {auth_url}\n")
+    click.echo(f"\nAuthorize {name} at:\n  {auth_url}\n")
 
     if not no_browser:
         # ``open`` answers False on a headless host rather than raising, and
@@ -198,66 +150,51 @@ def auth_connect(
             else "(Could not open browser — copy the URL above)"
         )
 
-    code = click.prompt("Paste the authorization code or redirect URL")
+    # Click appends its own colon to a prompt.
+    help_text = declared.flow.code_help.rstrip(": ")
+    code = click.prompt(help_text or "Paste the authorization code")
 
     try:
-        extracted_code = extract_code_fn(code.strip())
-        tokens = exchange_fn(extracted_code)
-        refresh_token = tokens.get("refresh_token")
-        if not (refresh_token and refresh_token.strip()):
-            click.echo("Error: No refresh token received.", err=True)
-            raise click.Abort()
-        save_fn(storage, refresh_token.strip(), source_id=connecting, user_id=user_id)
-        click.echo(f"\n{source} connected successfully.")
-    except click.Abort:
-        raise
+        connect_with_code(declared, connecting, code.strip(), storage, user_id)
     except Exception as error:
-        abort_after_failure(ctx, auth_failed, error)
+        _refuse(ctx, declared, error)
+    click.echo(f"\n{name} account connected successfully.")
 
 
-def _connect_trakt(
+def _connect_device(
     ctx: click.Context,
     storage: StorageManager,
+    declared: OAuthPlugin,
     source_id: str,
     user_id: int,
 ) -> None:
+    name = declared.display_name
     try:
-        client_id, client_secret = resolve_trakt_client_credentials(
-            storage, source_id, user_id
-        )
-        flow = start_device_auth_flow(client_id)
-    except TraktAuthError as error:
-        abort_after_failure(ctx, TRAKT_AUTH_FAILED, error)
+        authorization = start_device_flow(declared, source_id, storage, user_id)
+    except OAuthError as error:
+        _refuse(ctx, declared, error)
 
     click.echo(
-        f"\nGo to {flow['verification_url']} and enter code: {flow['user_code']}\n"
+        f"\nGo to {authorization.verification_url} and enter code: "
+        f"{authorization.user_code}\n"
     )
     click.echo("Waiting for approval... (press Ctrl-C to cancel)", err=True)
 
-    interval = max(1, int(flow["interval"]))
-    deadline = time.monotonic() + int(flow["expires_in"])
+    interval = max(1, authorization.interval)
+    deadline = time.monotonic() + authorization.expires_in
 
     try:
         while time.monotonic() < deadline:
             time.sleep(interval)
             try:
-                result = poll_device_token(
-                    flow["device_code"], client_id, client_secret
+                result = poll_device_flow(
+                    declared, source_id, authorization.device_code, storage, user_id
                 )
-            except TraktAuthError as error:
-                abort_after_failure(ctx, TRAKT_AUTH_FAILED, error)
+            except OAuthError as error:
+                _refuse(ctx, declared, error)
 
             if result.status is DevicePollStatus.SUCCESS:
-                if result.refresh_token is None:
-                    click.echo(
-                        "Error: Trakt approved but returned no refresh token.",
-                        err=True,
-                    )
-                    raise click.Abort()
-                save_trakt_token(
-                    storage, result.refresh_token, source_id=source_id, user_id=user_id
-                )
-                click.echo("\ntrakt connected successfully.")
+                click.echo(f"\n{name} account connected successfully.")
                 return
             if result.status is DevicePollStatus.SLOW_DOWN:
                 interval += 5
@@ -274,17 +211,12 @@ def _connect_trakt(
         click.echo("\nCancelled.")
         raise click.Abort() from None
 
-    click.echo("Error: Timed out waiting for Trakt approval.", err=True)
+    click.echo(f"Error: Timed out waiting for {name} approval.", err=True)
     raise click.Abort()
 
 
 @auth.command("disconnect")
-@click.option(
-    "--source",
-    type=click.Choice(["gog", "epic", "trakt"], case_sensitive=False),
-    required=True,
-    help="Source to disconnect",
-)
+@click.option("--source", required=True, help=_PLUGIN_HELP)
 @click.option("--source-id", default=None, help=_SOURCE_ID_HELP)
 @click.option("--yes", is_flag=True, help="Skip confirmation")
 @click.option("--user", "user_id", type=int, default=1, help="User ID")
@@ -298,21 +230,19 @@ def auth_disconnect(
 ) -> None:
     """Disconnect an OAuth source by removing stored credentials."""
     storage = require_storage(ctx)
-    plugin_name = _AUTH_PLUGINS[source]
-    disconnecting = _auth_source_id(source, source_id)
+    declared = _declared(source)
+    disconnecting = _auth_source_id(declared, source_id)
 
     if not yes:
         if not click.confirm(f"Disconnect '{disconnecting}' for user {user_id}?"):
             click.echo("Aborted.")
             return
 
-    if may_revoke(
-        plugin_name, disconnecting, storage, user_id
-    ) and storage.credentials.delete(user_id, disconnecting, REFRESH_TOKEN_KEY):
-        click.echo(f"{source} disconnected.")
+    if disconnect(declared, disconnecting, storage, user_id):
+        click.echo(f"{declared.display_name} disconnected.")
         return
 
-    # Mirror DELETE /api/{source}/token, which answers 404 both for an id this
-    # verb may not act on and for one holding no token.
-    click.echo(f"No active {source} connection found.", err=True)
+    # Mirror DELETE /api/oauth/{plugin_name}/token, which answers 404 both for an
+    # id this verb may not act on and for one holding no token.
+    click.echo(f"No active {declared.display_name} connection found.", err=True)
     raise click.Abort()

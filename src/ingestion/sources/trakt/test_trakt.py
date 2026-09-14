@@ -1,22 +1,159 @@
 from collections.abc import Callable
 from datetime import date
+from pathlib import Path
 from typing import Any
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 import requests
 
-from src.ingestion.plugin_base import ProgressCallback, SourceError
+from src.auth.service import connection_status, oauth_plugins, poll_device_flow
+from src.ingestion.plugin_base import (
+    DeviceAuthorization,
+    DevicePollStatus,
+    OAuthError,
+    ProgressCallback,
+    SourceError,
+)
 from src.ingestion.sources.trakt.trakt import (
     TraktAPIError,
+    TraktOAuth,
     TraktPlugin,
     fetch_list,
     fetch_show_season_totals,
+    poll_device_token,
     refresh_access_token,
+    start_device_auth_flow,
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.sources.service import resolve_inputs
+from src.storage.manager import StorageManager
 from src.utils.series import expand_tv_shows_to_seasons
 from tests.factories import make_storage_mock
+
+
+def _device_response(
+    status_code: int, json_body: dict[str, Any] | None = None
+) -> MagicMock:
+    response = MagicMock(spec=requests.Response)
+    response.status_code = status_code
+    response.json.return_value = json_body or {}
+    if status_code >= 400:
+        response.raise_for_status.side_effect = requests.HTTPError(
+            f"status {status_code}"
+        )
+    return response
+
+
+class TestStartDeviceAuthFlow:
+    @patch("src.ingestion.sources.trakt.trakt.requests.post")
+    def test_returns_device_and_user_code(self, mock_post: MagicMock) -> None:
+        mock_post.return_value = _device_response(
+            200,
+            {
+                "device_code": "dev123",
+                "user_code": "ABCD1234",
+                "verification_url": "https://trakt.tv/activate",
+                "expires_in": 600,
+                "interval": 5,
+            },
+        )
+
+        result = start_device_auth_flow("client_id_value")
+
+        assert result == DeviceAuthorization(
+            device_code="dev123",
+            user_code="ABCD1234",
+            verification_url="https://trakt.tv/activate",
+            expires_in=600,
+            interval=5,
+        )
+        assert mock_post.call_args.kwargs["json"] == {"client_id": "client_id_value"}
+
+    @patch("src.ingestion.sources.trakt.trakt.requests.post")
+    def test_non_http_verification_url_rejected(self, mock_post: MagicMock) -> None:
+        mock_post.return_value = _device_response(
+            200,
+            {
+                "device_code": "dev123",
+                "user_code": "ABCD1234",
+                "verification_url": "javascript:alert(1)",
+            },
+        )
+
+        with pytest.raises(OAuthError, match="invalid verification URL"):
+            start_device_auth_flow("client_id_value")
+
+
+class TestPollDeviceToken:
+    @patch("src.ingestion.sources.trakt.trakt.requests.post")
+    def test_success_returns_refresh_token(self, mock_post: MagicMock) -> None:
+        mock_post.return_value = _device_response(
+            200, {"access_token": "access", "refresh_token": "refresh-xyz"}
+        )
+
+        result = poll_device_token("dev123", "cid", "secret")
+
+        assert result.status is DevicePollStatus.SUCCESS
+        assert result.refresh_token == "refresh-xyz"
+        assert mock_post.call_args.kwargs["json"] == {
+            "code": "dev123",
+            "client_id": "cid",
+            "client_secret": "secret",
+        }
+
+    @pytest.mark.parametrize(
+        ("status_code", "status"),
+        [(400, DevicePollStatus.PENDING), (410, DevicePollStatus.EXPIRED)],
+    )
+    @patch("src.ingestion.sources.trakt.trakt.requests.post")
+    def test_an_unfinished_poll_carries_no_token(
+        self, mock_post: MagicMock, status_code: int, status: DevicePollStatus
+    ) -> None:
+        mock_post.return_value = _device_response(status_code)
+
+        result = poll_device_token("dev123", "cid", "secret")
+
+        assert result.status is status
+        assert result.refresh_token is None
+
+
+class TestTraktOAuthNeedsTheUsersOwnApplication:
+    @pytest.mark.parametrize(
+        ("config", "ready"),
+        [
+            ({"client_id": "cid", "client_secret": "secret"}, True),
+            ({"client_id": "cid", "client_secret": "  "}, False),
+            ({"client_secret": "secret"}, False),
+        ],
+    )
+    def test_connect_waits_for_both_client_credentials(
+        self, config: dict[str, Any], ready: bool
+    ) -> None:
+        assert TraktOAuth().is_ready(config) is ready
+
+
+class TestTraktConnectsThroughTheFlowItDeclaresRegression:
+    def test_a_saved_client_secret_readies_connect_and_the_token_reaches_sync(
+        self, tmp_path: Path
+    ) -> None:
+        storage = StorageManager(sqlite_path=tmp_path / "trakt.db")
+        storage.sources.upsert(
+            1, "trakt_work", "trakt", {"client_id": "cid"}, enabled=True
+        )
+        storage.credentials.save(1, "trakt_work", "client_secret", "secret")
+        trakt = oauth_plugins()["trakt"]
+
+        assert connection_status(trakt, "trakt_work", storage, 1)["enabled"] is True
+        with patch("src.ingestion.sources.trakt.trakt.requests.post") as mock_post:
+            mock_post.return_value = _device_response(
+                200, {"refresh_token": "refresh-xyz"}
+            )
+            poll_device_flow(trakt, "trakt_work", "device-code-1", storage, 1)
+
+        assert mock_post.call_args.kwargs["json"]["client_secret"] == "secret"
+        [resolved] = resolve_inputs(storage, 1)
+        assert resolved.config["refresh_token"] == "refresh-xyz"
 
 
 def _movie(trakt_id: int, title: str, year: int = 2020) -> dict[str, Any]:

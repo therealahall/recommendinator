@@ -78,7 +78,8 @@ src/
 ├── config/           # config.yaml loading + component factories
 ├── covers/           # Cover fetch guards, disk cache, the shared backfill walk
 ├── sources/          # service.py: configured-source CRUD
-├── auth/             # GOG/Epic/Trakt OAuth flows
+├── auth/             # service.py: the OAuth core both interfaces call; each
+│                     # source plugin supplies its own flow
 ├── ingestion/        # Data ingestion. paths.py holds the process-global
 │   │                 # security.allowed_source_roots allowlist; urls.py the
 │   │                 # source-URL shape check and the same-origin redirect

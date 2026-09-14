@@ -237,7 +237,7 @@ src/
 │   └── static/themes/  # UI themes (folder-per-theme, auto-discovered)
 ├── config/           # config.yaml loading + component factories
 ├── sources/          # service.py: configured-source CRUD
-├── auth/             # GOG/Epic/Trakt OAuth flows
+├── auth/             # Connect, status and disconnect for plugin-declared OAuth flows
 ├── ingestion/        # Data ingestion
 │   ├── importers/    # One-off file formats
 │   └── sources/      # Source plugins (<name>/<name>.py + README.md + test_<name>.py)

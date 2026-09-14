@@ -1,17 +1,149 @@
-from unittest.mock import Mock, patch
+import logging
+import traceback
+from pathlib import Path
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
+import requests
+from click.testing import CliRunner
 from legendary.api.egs import EPCAPI
+from legendary.models.exceptions import InvalidCredentialsError
 
-from src.ingestion.plugin_base import SourceError
+from src.ingestion.plugin_base import OAuthError, SourceError
 from src.ingestion.sources.epic_games.epic_games import (
     EpicGamesAPIError,
     EpicGamesPlugin,
     authenticate,
+    exchange_code_for_tokens,
+    extract_code_from_input,
     extract_metadata_fields,
     is_base_game,
 )
 from src.models.content import ConsumptionStatus, ContentType
+from src.storage.manager import StorageManager
+from tests.cli.conftest import _invoke_with_mocks
+
+EPIC_LOGGER = "src.ingestion.sources.epic_games.epic_games"
+
+
+class TestExtractCodeFromInput:
+    def test_extracts_code_from_json(self) -> None:
+        json_input = '{"authorizationCode": "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6"}'
+
+        result = extract_code_from_input(json_input)
+
+        assert result == "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6"
+
+    def test_raises_error_for_json_without_code(self) -> None:
+        with pytest.raises(OAuthError) as exc_info:
+            extract_code_from_input('{"someOtherField": "value"}')
+
+        assert "authorizationCode" in str(exc_info.value)
+
+    def test_raises_error_for_short_input(self) -> None:
+        with pytest.raises(OAuthError) as exc_info:
+            extract_code_from_input("short")
+
+        assert "too short" in str(exc_info.value)
+
+
+class TestExchangeCodeForTokens:
+    @patch("src.ingestion.sources.epic_games.epic_games.EPCAPI")
+    def test_successful_exchange(self, mock_epcapi_cls: MagicMock) -> None:
+        mock_api = MagicMock()
+        mock_api.start_session.return_value = {
+            "access_token": "access123",
+            "refresh_token": "refresh456",
+            "expires_in": 28800,
+        }
+        mock_epcapi_cls.return_value = mock_api
+
+        result = exchange_code_for_tokens("test_code")
+
+        assert result["refresh_token"] == "refresh456"
+        assert result["access_token"] == "access123"
+        mock_api.start_session.assert_called_once_with(authorization_code="test_code")
+
+
+class TestEpicAuthTracebackRegression:
+    @patch("src.ingestion.sources.epic_games.epic_games.EPCAPI")
+    def test_transport_failure_logs_the_class_not_a_traceback(
+        self, mock_epcapi_cls: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        mock_api = MagicMock()
+        mock_api.start_session.side_effect = ConnectionError("Connection refused")
+        mock_epcapi_cls.return_value = mock_api
+
+        with caplog.at_level(logging.ERROR, logger=EPIC_LOGGER):
+            with pytest.raises(OAuthError, match="Failed to connect"):
+                exchange_code_for_tokens("epic-auth-code-3f8a1c04d2")
+
+        records = [record for record in caplog.records if record.name == EPIC_LOGGER]
+        assert [record.getMessage() for record in records] == [
+            "Epic token exchange request failed: ConnectionError"
+        ]
+        assert not any(record.exc_info for record in records)
+
+    @patch("src.ingestion.sources.epic_games.epic_games.EPCAPI")
+    def test_invalid_credentials_logs_the_class_not_a_traceback(
+        self, mock_epcapi_cls: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        mock_api = MagicMock()
+        mock_api.start_session.side_effect = InvalidCredentialsError(
+            "errors.com.epicgames.account.oauth.authorization_code_not_found"
+        )
+        mock_epcapi_cls.return_value = mock_api
+
+        with caplog.at_level(logging.ERROR, logger=EPIC_LOGGER):
+            with pytest.raises(OAuthError, match="Token exchange failed"):
+                exchange_code_for_tokens("epic-auth-code-9b2e75f110")
+
+        records = [record for record in caplog.records if record.name == EPIC_LOGGER]
+        assert [record.getMessage() for record in records] == [
+            "Epic token exchange failed (InvalidCredentialsError)"
+        ]
+        assert not any(record.exc_info for record in records)
+
+    @patch("requests.sessions.Session.post")
+    def test_cli_connect_logs_no_code_with_its_traceback(
+        self,
+        mock_post: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+        tmp_path: Path,
+    ) -> None:
+        code = "epic-auth-code-4d70c9b8e1"
+        response = MagicMock(spec=requests.Response)
+        response.status_code = 400
+        response.json.return_value = {
+            "errorCode": "errors.com.epicgames.account.oauth.authorization_code_not_found",
+            "errorMessage": f"Sorry, the authorization code {code} was not found",
+        }
+        mock_post.return_value = response
+        storage = StorageManager(sqlite_path=tmp_path / "auth.db")
+        storage.sources.upsert(1, "epic_games", "epic_games", {}, enabled=True)
+
+        with caplog.at_level(logging.ERROR):
+            result = _invoke_with_mocks(
+                CliRunner(),
+                ["auth", "connect", "--source", "epic_games", "--no-browser"],
+                storage,
+                input_text=f"{code}\n",
+            )
+
+        assert mock_post.call_args.kwargs["data"]["code"] == code
+        assert code not in mock_post.call_args.args[0]
+        chained = [record for record in caplog.records if record.exc_info]
+        assert chained, "the CLI no longer logs a traceback, so this proves nothing"
+        rendered = "".join(
+            "".join(traceback.format_exception(*record.exc_info))
+            for record in chained
+            if record.exc_info
+        )
+        assert "InvalidCredentialsError" in rendered
+        assert "OAuthError: Token exchange failed" in rendered
+        assert code not in rendered
+        assert code not in caplog.text
+        assert result.exit_code != 0
 
 
 def _make_library_record(

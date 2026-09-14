@@ -636,7 +636,7 @@ describe('useDataStore', () => {
       const store = useDataStore()
       await store.loadOAuthStatus('gog_work', 'gog')
 
-      expect(mockGet).toHaveBeenCalledWith('/gog/status', { source_id: 'gog_work' })
+      expect(mockGet).toHaveBeenCalledWith('/oauth/gog/status', { source_id: 'gog_work' })
       expect(store.oauthStatusFor('gog_work')).toEqual({
         enabled: true,
         connected: true,
@@ -660,24 +660,24 @@ describe('useDataStore', () => {
       expect(store.oauthStatusFor('trakt_work').enabled).toBe(true)
     })
 
-    it('submitGogCode posts the code for that source and re-reads its status', async () => {
+    it('submitOAuthCode posts the code for that source and re-reads its status', async () => {
       mockPost.mockResolvedValueOnce({ message: 'GOG account connected!' })
       mockGet.mockResolvedValueOnce({ enabled: true, connected: true })
 
       const store = useDataStore()
-      await store.submitGogCode('gog_work', 'auth-code')
+      await store.submitOAuthCode('gog_work', 'gog', 'auth-code', 'Connecting…')
 
       expect(mockPost).toHaveBeenCalledWith(
-        '/gog/exchange',
-        { code_or_url: 'auth-code' },
+        '/oauth/gog/exchange',
+        { code: 'auth-code' },
         { source_id: 'gog_work' },
       )
-      expect(mockGet).toHaveBeenCalledWith('/gog/status', { source_id: 'gog_work' })
+      expect(mockGet).toHaveBeenCalledWith('/oauth/gog/status', { source_id: 'gog_work' })
       expect(store.oauthMessages['gog_work']).toBe('GOG account connected!')
       expect(store.oauthStatusFor('gog_work').connected).toBe(true)
     })
 
-    it('submitGogCode surfaces the refusal the server wrote for the user', async () => {
+    it('submitOAuthCode surfaces the refusal the server wrote for the user', async () => {
       mockPost.mockRejectedValueOnce(
         new ApiError(404, 'Not Found', {
           detail: 'GOG is not enabled for that source.',
@@ -685,26 +685,26 @@ describe('useDataStore', () => {
       )
 
       const store = useDataStore()
-      await store.submitGogCode('gog_work', 'auth-code')
+      await store.submitOAuthCode('gog_work', 'gog', 'auth-code', 'Connecting…')
 
       expect(store.oauthMessages['gog_work']).toBe(
         'Error: GOG is not enabled for that source.',
       )
     })
 
-    it('submitGogCode keeps the confirmation and rejects when the re-read fails', async () => {
+    it('submitOAuthCode keeps the confirmation and rejects when the re-read fails', async () => {
       mockPost.mockResolvedValueOnce({ message: 'GOG account connected!' })
       mockGet.mockRejectedValueOnce(new ApiError(503, 'Service Unavailable'))
 
       const store = useDataStore()
 
       await expect(
-        store.submitGogCode('gog_work', 'auth-code'),
+        store.submitOAuthCode('gog_work', 'gog', 'auth-code', 'Connecting…'),
       ).rejects.toBeInstanceOf(ApiError)
       expect(store.oauthMessages['gog_work']).toBe('GOG account connected!')
     })
 
-    it('disconnectGog deletes that source token and re-reads its status', async () => {
+    it('disconnectOAuth deletes that source token and re-reads its status', async () => {
       mockDelete.mockResolvedValue({})
       mockGet.mockResolvedValueOnce({
         enabled: true,
@@ -713,10 +713,10 @@ describe('useDataStore', () => {
       })
 
       const store = useDataStore()
-      await store.disconnectGog('gog_work')
+      await store.disconnectOAuth('gog_work', 'gog', 'Disconnecting…')
 
-      expect(mockDelete).toHaveBeenCalledWith('/gog/token', { source_id: 'gog_work' })
-      expect(mockGet).toHaveBeenCalledWith('/gog/status', { source_id: 'gog_work' })
+      expect(mockDelete).toHaveBeenCalledWith('/oauth/gog/token', { source_id: 'gog_work' })
+      expect(mockGet).toHaveBeenCalledWith('/oauth/gog/status', { source_id: 'gog_work' })
       expect(store.oauthMessages['gog_work']).toBe(
         'Disconnected. You can reconnect below.',
       )
@@ -725,15 +725,15 @@ describe('useDataStore', () => {
   })
 
   describe('trakt device-code auth', () => {
-    it('pollTraktApproval re-reads that source status on success', async () => {
+    it('pollDeviceApproval re-reads that source status on success', async () => {
       mockPost.mockResolvedValueOnce({ connected: true, message: 'Connected' })
       mockGet.mockResolvedValueOnce({ enabled: true, connected: true })
 
       const store = useDataStore()
-      const result = await store.pollTraktApproval('trakt_work', 'dev-code')
+      const result = await store.pollDeviceApproval('trakt_work', 'trakt', 'dev-code')
 
       expect(result.connected).toBe(true)
-      expect(mockGet).toHaveBeenCalledWith('/trakt/status', {
+      expect(mockGet).toHaveBeenCalledWith('/oauth/trakt/status', {
         source_id: 'trakt_work',
       })
       expect(store.oauthStatusFor('trakt_work').connected).toBe(true)
@@ -758,7 +758,7 @@ describe('useDataStore', () => {
       })
     })
 
-    it('disconnectTrakt reports a refused disconnect instead of rejecting', async () => {
+    it('disconnectOAuth reports a refused disconnect instead of rejecting', async () => {
       mockGet.mockResolvedValueOnce({ enabled: true, connected: true })
       mockDelete.mockRejectedValueOnce(
         new ApiError(404, 'Not Found', { detail: 'No active Trakt connection found' }),
@@ -767,7 +767,7 @@ describe('useDataStore', () => {
       const store = useDataStore()
       await store.loadOAuthStatus('trakt_work', 'trakt')
 
-      await store.disconnectTrakt('trakt_work')
+      await store.disconnectOAuth('trakt_work', 'trakt', 'Disconnecting…')
 
       expect(store.oauthMessages['trakt_work']).toBe(
         'Error: No active Trakt connection found',

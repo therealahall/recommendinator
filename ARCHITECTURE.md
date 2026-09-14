@@ -352,8 +352,9 @@ neither a subset of the other. Every service both call sits outside both
 packages: recommendation, ingestion, storage, settings,
 `src/config/service.py` (YAML loading, bootstrap resolution, component
 factories), `src/sources/service.py` (source config CRUD), `src/covers/` (cover fetch guards,
-the disk cache and the backfill both claim), `src/auth/` (GOG,
-Epic and Trakt OAuth) and `src/utils/export.py`.
+the disk cache and the backfill both claim), `src/auth/` (the
+connect, status and disconnect every plugin's declared OAuth flow runs through)
+and `src/utils/export.py`.
 
 Neither interface package imports the other, and each
 framework stays in the package it serves: `fastapi` and `starlette` only under

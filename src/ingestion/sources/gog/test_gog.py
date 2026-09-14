@@ -1,17 +1,21 @@
 import logging
 import traceback
-from unittest.mock import Mock, patch
+from pathlib import Path
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 import requests
+from click.testing import CliRunner
 
-from src.ingestion.plugin_base import SourceError
+from src.ingestion.plugin_base import OAuthError, SourceError
 from src.ingestion.sources.gog.gog import (
     GOG_AUTH_URL,
     GOG_CLIENT_ID,
     GOG_CLIENT_SECRET,
     GogAPIError,
     GogPlugin,
+    exchange_code_for_tokens,
+    extract_code_from_input,
     get_multiple_product_details,
     get_owned_games,
     get_product_details,
@@ -19,6 +23,125 @@ from src.ingestion.sources.gog.gog import (
     refresh_access_token,
 )
 from src.models.content import ConsumptionStatus, ContentType
+from src.storage.manager import StorageManager
+from tests.cli.conftest import _invoke_with_mocks
+
+GOG_LOGGER = "src.ingestion.sources.gog.gog"
+
+
+class TestExtractCodeFromInput:
+    def test_extracts_code_from_url(self) -> None:
+        url = (
+            "https://embed.gog.com/on_login_success?origin=client"
+            "&code=oF8OSgZVMFb7a8Y3Dolrz4YPqDUnG7TCTsekYKcWnFNcmWWCJH7XJS3RN9d9NB0s"
+        )
+
+        result = extract_code_from_input(url)
+
+        assert (
+            result == "oF8OSgZVMFb7a8Y3Dolrz4YPqDUnG7TCTsekYKcWnFNcmWWCJH7XJS3RN9d9NB0s"
+        )
+
+    def test_raises_error_for_short_input(self) -> None:
+        with pytest.raises(OAuthError) as exc_info:
+            extract_code_from_input("short")
+
+        assert "too short" in str(exc_info.value)
+
+
+class TestExchangeCodeForTokens:
+    @patch("src.ingestion.sources.gog.gog.requests.get")
+    def test_successful_exchange(self, mock_get: MagicMock) -> None:
+        mock_response = MagicMock(spec=requests.Response, status_code=200)
+        mock_response.ok = True
+        mock_response.json.return_value = {
+            "access_token": "access123",
+            "refresh_token": "refresh456",
+            "expires_in": 3600,
+        }
+        mock_get.return_value = mock_response
+
+        result = exchange_code_for_tokens("test_code")
+
+        assert result["refresh_token"] == "refresh456"
+        assert result["access_token"] == "access123"
+
+    @patch("src.ingestion.sources.gog.gog.requests.get")
+    def test_exchange_failure(
+        self, mock_get: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        mock_response = MagicMock(spec=requests.Response)
+        mock_response.ok = False
+        mock_response.status_code = 400
+        mock_response.text = "Invalid code"
+        mock_response.json.return_value = {"error_description": "Invalid code"}
+        mock_get.return_value = mock_response
+
+        with caplog.at_level(logging.ERROR, logger=GOG_LOGGER):
+            with pytest.raises(OAuthError, match="Token exchange failed"):
+                exchange_code_for_tokens("bad_code")
+
+        assert "GOG token exchange failed with status 400" in caplog.text
+
+
+class TestGogAuthCredentialChainRegression:
+    @patch("src.ingestion.sources.gog.gog.requests.get")
+    def test_connect_failure_traceback_omits_the_code_and_secret(
+        self, mock_get: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        code = "gog-auth-code-7d1b3e"
+        mock_get.side_effect = requests.ConnectionError(
+            "HTTPSConnectionPool(host='auth.gog.com', port=443): Max retries "
+            f"exceeded with url: /token?client_secret={GOG_CLIENT_SECRET}&code={code}"
+        )
+
+        with caplog.at_level(logging.ERROR, logger=GOG_LOGGER):
+            with pytest.raises(OAuthError) as raised:
+                exchange_code_for_tokens(code)
+
+        rendered = "".join(traceback.format_exception(raised.value))
+        assert code not in rendered
+        assert GOG_CLIENT_SECRET not in rendered
+        assert code not in caplog.text
+        assert GOG_CLIENT_SECRET not in caplog.text
+        assert "GOG token exchange request failed: ConnectionError" in caplog.text
+
+    @patch("src.ingestion.sources.gog.gog.requests.get")
+    def test_cli_connect_logs_no_code_with_its_traceback(
+        self,
+        mock_get: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+        tmp_path: Path,
+    ) -> None:
+        code = "gog-auth-code-9c4e1a70b2"
+        mock_get.side_effect = requests.ConnectionError(
+            "HTTPSConnectionPool(host='auth.gog.com', port=443): Max retries "
+            f"exceeded with url: /token?client_secret={GOG_CLIENT_SECRET}&code={code}"
+        )
+        storage = StorageManager(sqlite_path=tmp_path / "auth.db")
+        storage.sources.upsert(1, "gog", "gog", {}, enabled=True)
+
+        with caplog.at_level(logging.ERROR):
+            result = _invoke_with_mocks(
+                CliRunner(),
+                ["auth", "connect", "--source", "gog", "--no-browser"],
+                storage,
+                input_text=f"{code}\n",
+            )
+
+        chained = [record for record in caplog.records if record.exc_info]
+        assert chained, "the CLI no longer logs a traceback, so this proves nothing"
+        rendered = "".join(
+            "".join(traceback.format_exception(*record.exc_info))
+            for record in chained
+            if record.exc_info
+        )
+        mock_get.assert_called_once()
+        assert "OAuthError: Failed to connect to GOG servers" in rendered
+        assert code not in rendered
+        assert GOG_CLIENT_SECRET not in rendered
+        assert code not in caplog.text
+        assert result.exit_code != 0
 
 
 class TestRefreshAccessToken:

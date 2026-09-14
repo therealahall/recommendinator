@@ -1,15 +1,18 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, toRef, watch } from 'vue'
+import DeviceCodeFlow from '@/components/molecules/DeviceCodeFlow.vue'
 import OAuthConnectFlow from '@/components/molecules/OAuthConnectFlow.vue'
-import TraktDeviceCodeFlow from '@/components/molecules/TraktDeviceCodeFlow.vue'
 import { RECHECKING_STATUS, useOAuthGate } from '@/composables/useOAuthGate'
-import { OAUTH_SERVICE_NAME } from '@/constants/oauth'
 import { useDataStore } from '@/stores/data'
+import type { OAuthConnectSchema } from '@/types/api'
 
 const props = defineProps<{
   sourceId: string
   sourceName: string
   plugin: string
+  /** What the plugin declares, null for one with no account to connect. */
+  oauth: OAuthConnectSchema | null
+  serviceName: string
   /** The source's own enabled flag, which is half of what gates connecting. */
   sourceEnabled: boolean
   disabled: boolean
@@ -20,13 +23,8 @@ const props = defineProps<{
 
 const data = useDataStore()
 
-// Keyed on the plugin: a GOG source named "gog_work" runs the same flow.
-const isGog = computed(() => props.plugin === 'gog')
-const isEpic = computed(() => props.plugin === 'epic_games')
-const isTrakt = computed(() => props.plugin === 'trakt')
-const isOAuthSource = computed(() => props.plugin in OAUTH_SERVICE_NAME)
-
-const gate = useOAuthGate(toRef(props, 'sourceId'), toRef(props, 'plugin'), isOAuthSource)
+const oauthPlugin = computed(() => (props.oauth ? props.plugin : null))
+const gate = useOAuthGate(toRef(props, 'sourceId'), oauthPlugin)
 
 onMounted(gate.reload)
 watch(() => props.gateRevision, gate.refresh)
@@ -41,28 +39,27 @@ watch(
   },
 )
 
-// Named for the source, not just the service: two expanded gog panels would
-// otherwise offer two buttons with the identical accessible name.
+// Named for the source, not just the service: two expanded panels of one
+// service would otherwise offer two buttons with the identical accessible name.
 const disconnectLabel = computed(
-  () => `Disconnect ${props.sourceName} from ${OAUTH_SERVICE_NAME[props.plugin]}`,
+  () => `Disconnect ${props.sourceName} from ${props.serviceName}`,
 )
 const panelLabel = computed(() => `${props.sourceName} connection`)
-const connectedLabel = computed(
-  () => `${OAUTH_SERVICE_NAME[props.plugin]} account connected.`,
-)
-const oauth = computed(() => data.oauthStatusFor(props.sourceId))
+const connectedLabel = computed(() => `${props.serviceName} account connected.`)
+const status = computed(() => data.oauthStatusFor(props.sourceId))
 const message = computed(() => data.oauthMessages[props.sourceId] ?? '')
+const connectable = computed(() => !gate.failed.value && !status.value.connected)
 // Not gated on the auth URL: a source the server will not connect gets one
 // disabled button and a hint naming the remedy, where dropping the whole block
 // left a named, empty group announcing nothing.
-const showConnect = computed(
-  () => !gate.failed.value && (isGog.value || isEpic.value) && !oauth.value.connected,
+const showCodeConnect = computed(
+  () => connectable.value && props.oauth?.flow === 'code_paste',
 )
-const showTraktConnect = computed(
-  () => !gate.failed.value && isTrakt.value && !oauth.value.connected,
+const showDeviceConnect = computed(
+  () => connectable.value && props.oauth?.flow === 'device_code',
 )
-// Neither flow can name its own remedy: Trakt's `enabled` folds "disabled" in
-// with "no client credentials", and Epic nulls the auth URL when its builder
+// Neither flow can name its own remedy: a device-code `enabled` folds "disabled"
+// in with unsaved setup, and a code-paste auth URL is null when its builder
 // throws while enabled. Only the enable flag tells those apart.
 const connectHint = computed(() => {
   // Mid-refresh the two halves disagree, the settings one having moved first.
@@ -70,17 +67,12 @@ const connectHint = computed(() => {
   if (!props.sourceEnabled) {
     return 'Enable this source in the settings below before you can connect.'
   }
-  if (isTrakt.value) {
-    return (
-      'Add the Trakt client ID and client secret in the settings below ' +
-      'before you can connect.'
-    )
-  }
+  if (props.oauth?.setup_hint) return props.oauth.setup_hint
   return 'The service did not return a sign-in link. Try again in a moment.'
 })
 // An unreadable status asserts nothing: claiming a connection next to "could
 // not read the status" leaves no way to tell which statement is current.
-const showConnected = computed(() => !gate.failed.value && oauth.value.connected)
+const showConnected = computed(() => !gate.failed.value && status.value.connected)
 
 const panel = ref<HTMLElement | null>(null)
 const retrying = ref(false)
@@ -95,7 +87,7 @@ const retryStatusLabel = computed(
 // Each outcome can take the control holding focus with it, dropping the
 // keyboard user to <body> (WCAG 2.4.3). Keyed on whether that element actually
 // went away: a refused disconnect leaves its button mounted.
-watch([() => oauth.value.connected, gate.failed], () => {
+watch([() => status.value.connected, gate.failed], () => {
   const focused = document.activeElement
   void nextTick(() => {
     if (!(focused instanceof HTMLElement) || focused.isConnected) return
@@ -107,12 +99,14 @@ watch([() => oauth.value.connected, gate.failed], () => {
 // is reported in the live region instead. The server has already acted by then,
 // so showing the status as unknown puts one statement on screen.
 async function onDisconnect(): Promise<void> {
-  if (props.disabled || disconnecting.value) return
+  if (props.disabled || disconnecting.value || !oauthPlugin.value) return
   disconnecting.value = true
   try {
-    if (isGog.value) await data.disconnectGog(props.sourceId)
-    else if (isEpic.value) await data.disconnectEpic(props.sourceId)
-    else if (isTrakt.value) await data.disconnectTrakt(props.sourceId)
+    await data.disconnectOAuth(
+      props.sourceId,
+      oauthPlugin.value,
+      `Disconnecting ${props.serviceName}...`,
+    )
   } catch {
     gate.failed.value = true
   } finally {
@@ -121,9 +115,14 @@ async function onDisconnect(): Promise<void> {
 }
 
 async function onSubmitCode(code: string): Promise<void> {
+  if (!oauthPlugin.value) return
   try {
-    if (isGog.value) await data.submitGogCode(props.sourceId, code)
-    else if (isEpic.value) await data.submitEpicCode(props.sourceId, code)
+    await data.submitOAuthCode(
+      props.sourceId,
+      oauthPlugin.value,
+      code,
+      `Connecting to ${props.serviceName}...`,
+    )
   } catch {
     gate.failed.value = true
   }
@@ -141,7 +140,7 @@ async function onRetryStatus(): Promise<void> {
 </script>
 
 <template>
-  <template v-if="isOAuthSource">
+  <template v-if="oauth">
     <!--
       Rendered whatever the connection state: it is the focus target when an
       outcome removes the button that had focus, and an empty group would give
@@ -170,35 +169,23 @@ async function onRetryStatus(): Promise<void> {
         @click="onDisconnect"
       >Disconnect</button>
 
-      <template v-if="showConnect">
-        <OAuthConnectFlow
-          v-if="isGog"
-          :source-id="sourceId"
-          :source-name="sourceName"
-          :auth-url="oauth.authUrl"
-          expected-origin="https://login.gog.com"
-          help-text="Paste the redirect URL after logging in:"
-          service-name="GOG Account"
-          :connect-hint="connectHint"
-          @submit="onSubmitCode"
-        />
-        <OAuthConnectFlow
-          v-else-if="isEpic"
-          :source-id="sourceId"
-          :source-name="sourceName"
-          :auth-url="oauth.authUrl"
-          expected-origin="https://www.epicgames.com"
-          help-text="Paste the authorization code from the JSON response:"
-          service-name="Epic Games"
-          :connect-hint="connectHint"
-          @submit="onSubmitCode"
-        />
-      </template>
-
-      <TraktDeviceCodeFlow
-        v-if="showTraktConnect"
+      <OAuthConnectFlow
+        v-if="showCodeConnect"
         :source-id="sourceId"
         :source-name="sourceName"
+        :auth-url="status.authUrl"
+        :help-text="oauth.code_help"
+        :service-name="serviceName"
+        :connect-hint="connectHint"
+        @submit="onSubmitCode"
+      />
+
+      <DeviceCodeFlow
+        v-if="showDeviceConnect"
+        :source-id="sourceId"
+        :source-name="sourceName"
+        :plugin="plugin"
+        :service-name="serviceName"
         :connect-hint="connectHint"
       />
 

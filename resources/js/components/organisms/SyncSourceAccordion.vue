@@ -209,7 +209,9 @@ const intervalLabel = computed(
       <SourceConnectPanel
         :source-id="source.id"
         :source-name="source.display_name"
-        :plugin="config.plugin"
+        :plugin="schema.plugin"
+        :oauth="schema.oauth"
+        :service-name="schema.plugin_display_name"
         :source-enabled="config.enabled"
         :disabled="props.syncing"
         :expanded="expanded"

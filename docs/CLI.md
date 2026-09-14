@@ -505,8 +505,9 @@ uv run python -m src.cli auth connect --source trakt   # device code, prints a U
 uv run python -m src.cli auth disconnect --source gog
 ```
 
-`--source` names the provider; the token belongs to a source id. Pass
-`--source-id` when yours is not called after its plugin:
+`--source` names the source's plugin (`gog`, `epic_games`, `trakt`, or any other
+declaring a connect flow); the token belongs to a source id. Pass `--source-id` when yours is not
+called after its plugin:
 
 ```bash
 uv run python -m src.cli auth connect --source gog --source-id gog_work
