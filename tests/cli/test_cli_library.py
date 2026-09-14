@@ -1332,8 +1332,8 @@ class TestLibraryDuplicates:
         assert "same title" in exact
         assert "apart from a qualifier" not in exact
         assert "same title apart from a qualifier" in looser
-        assert "Deadhouse Gates (N/A, calibre)" in looser
-        assert "Deadhouse Gates (Malazan Book 2) (Steven Erikson, goodreads_csv)" in (
+        assert "Deadhouse Gates (N/A, Calibre)" in looser
+        assert "Deadhouse Gates (Malazan Book 2) (Steven Erikson, Goodreads CSV)" in (
             looser
         )
 
@@ -1665,8 +1665,8 @@ class TestLibraryMergeByName:
 
         assert several.exit_code != 0
         assert "matches more than one item" in several.output
-        assert "Amelie Rising (N/A, tmdb)" in several.output
-        assert "Amelie (N/A, trakt)" in several.output
+        assert "Amelie Rising (N/A, Tmdb)" in several.output
+        assert "Amelie (N/A, Trakt)" in several.output
         assert unknown.exit_code != 0
         assert (
             "No library item matches --absorbed-title 'Delicatessen'." in unknown.output

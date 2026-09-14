@@ -15,6 +15,7 @@ function makeSuggestion(overrides: Partial<DuplicateSuggestion> = {}): Duplicate
         db_id: 3,
         title: 'Deadhouse Gates',
         source: 'calibre',
+        source_name: 'Calibre',
         creator: null,
         release_year: null,
         also_offered: '',
@@ -23,6 +24,7 @@ function makeSuggestion(overrides: Partial<DuplicateSuggestion> = {}): Duplicate
         db_id: 4,
         title: 'Deadhouse Gates (Malazan Book 2)',
         source: 'goodreads_csv',
+        source_name: 'Goodreads CSV',
         creator: 'Steven Erikson',
         release_year: 2000,
         also_offered: '',
@@ -41,6 +43,7 @@ function threeCopies(): Partial<DuplicateSuggestion> {
         db_id: 5,
         title: 'Deadhouse Gates (Malazan, Book Two)',
         source: 'storygraph_csv',
+        source_name: 'Storygraph CSV',
         creator: null,
         release_year: null,
         also_offered: '',
@@ -111,10 +114,15 @@ describe('DuplicatePair', () => {
 
   it('names the copy each button acts on, though two of them read the same', () => {
     const wrapper = mountPair({
-      copies: ['calibre', 'openlibrary', 'goodreads_rss'].map((source, index) => ({
+      copies: [
+        ['calibre', 'Calibre'],
+        ['openlibrary', 'Openlibrary'],
+        ['goodreads_rss', 'Goodreads RSS'],
+      ].map(([source, source_name], index) => ({
         db_id: 3 + index,
         title: 'Dune',
         source,
+        source_name,
         creator: 'Frank Herbert',
         release_year: null,
         also_offered: '',
@@ -124,8 +132,8 @@ describe('DuplicatePair', () => {
     const names = wrapper.findAll('button').map((one) => one.text())
 
     expect(new Set(names).size).toBe(6)
-    expect(names).toContain('Merge, keeping “Dune” from calibre, row 3, suggested to keep')
-    expect(names).toContain('“Dune” from goodreads_rss, row 5 is not the same work')
+    expect(names).toContain('Merge, keeping “Dune” from Calibre, row 3, suggested to keep')
+    expect(names).toContain('“Dune” from Goodreads RSS, row 5 is not the same work')
   })
 
   it('marks the copy the page reports offering in another block as well', () => {
@@ -161,7 +169,7 @@ describe('DuplicatePair', () => {
     const wrapper = mountPair()
 
     expect(wrapper.text()).toContain('Steven Erikson')
-    expect(wrapper.text()).toContain('goodreads_csv')
-    expect(wrapper.text()).toContain('calibre')
+    expect(wrapper.text()).toContain('Goodreads CSV')
+    expect(wrapper.text()).toContain('Calibre')
   })
 })

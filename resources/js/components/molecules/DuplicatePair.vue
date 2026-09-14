@@ -38,7 +38,7 @@ function view(side: DuplicateSide) {
   const proposed = side.db_id === props.suggestion.survivor_id
   // Copies of one work often share a title, so a button names its row (4.1.2).
   const named = `“${side.title}” from ${
-    side.source || 'source not recorded'
+    side.source_name || 'source not recorded'
   }, row ${side.db_id}`
   return {
     keepId: side.db_id,
@@ -47,7 +47,7 @@ function view(side: DuplicateSide) {
     elsewhere: side.also_offered,
     title: side.title,
     creator: side.creator || 'Creator not recorded',
-    source: side.source || 'Source not recorded',
+    source: side.source_name || 'Source not recorded',
     year: side.release_year,
     label:
       props.merging && chosen.value === side.db_id
@@ -116,7 +116,7 @@ function onDecline(copyId: number, otherIds: number[]): void {
         >{{ side.label }}</button>
         <button
           type="button"
-          class="btn btn-ghost dup-side-apart"
+          class="btn btn-secondary dup-side-apart"
           :aria-disabled="busy || undefined"
           @click="onDecline(side.keepId, side.dropIds)"
         >{{ side.apart }}</button>

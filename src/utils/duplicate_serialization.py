@@ -114,6 +114,7 @@ def _side_to_dict(
         "db_id": side.db_id,
         "title": side.title,
         "source": side.source,
+        "source_name": side.source_name,
         "creator": side.creator,
         "release_year": side.release_year,
         "also_offered": ALSO_OFFERED_NOTE if side.db_id in also_offered else "",

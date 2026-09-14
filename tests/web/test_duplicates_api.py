@@ -92,6 +92,18 @@ def test_a_block_is_offered_with_every_copy_and_the_key_that_grouped_them(
     assert block["survivor_id"] == block["copies"][0]["db_id"]
 
 
+def test_a_copy_names_its_source_the_way_its_library_card_does(
+    client: TestClient,
+) -> None:
+    (block,) = _suggestions(client, type="book")["suggestions"]
+    items = client.get("/api/items", params={"limit": 200}).json()
+    cards = {item["db_id"]: item for item in items}
+
+    for copy in block["copies"]:
+        (named,) = cards[copy["db_id"]]["external_ids"]
+        assert copy["source_name"] == named["display_name"]
+
+
 def test_a_limit_cuts_the_offer_and_the_count_still_says_what_is_left(
     client: TestClient,
 ) -> None:
