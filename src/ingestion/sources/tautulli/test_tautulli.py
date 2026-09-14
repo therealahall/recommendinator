@@ -159,29 +159,31 @@ class TestMovies:
         assert items[0].status == ConsumptionStatus.COMPLETED
         assert items[0].rating is None
         assert items[0].metadata["year"] == 2016
-        assert items[0].id == "tautulli:movie:arrival:2016"
+        assert items[0].id == "tautulli:movie:arrival"
 
-    def test_two_yearless_films_sharing_a_title_stay_apart_on_their_release_dates(
+    def test_a_film_stays_one_item_whatever_year_its_plays_report(
         self, plugin: TautulliPlugin
     ) -> None:
+        """A refresh moves the year and a deleted file zeroes the key, so neither
+        may name the film: a second id is a second row the operator re-ignores.
+        """
         server = _FakeTautulli(
             movies=[
+                _movie_row("The Drama", year=2025, rating_key=81234),
+                _movie_row("The Drama", year=2026, rating_key=81234),
                 _movie_row(
-                    "Fully Loaded", year=None, originally_available_at="2000-07-23"
-                ),
-                _movie_row(
-                    "Fully Loaded", year=None, originally_available_at="1999-07-25"
+                    "The Drama",
+                    year=None,
+                    originally_available_at="2026-04-03",
+                    date=_LATER_PLAY,
                 ),
             ]
         )
 
         items = _fetch(server, plugin)
 
-        assert [item.id for item in items] == [
-            "tautulli:movie:fully loaded:2000",
-            "tautulli:movie:fully loaded:1999",
-        ]
-        assert [item.metadata["year"] for item in items] == [2000, 1999]
+        assert [item.id for item in items] == ["tautulli:movie:the drama"]
+        assert items[0].date_completed == date(2024, 3, 2)
 
     def test_a_release_date_never_overrides_the_year_tautulli_reported(
         self, plugin: TautulliPlugin
@@ -196,11 +198,10 @@ class TestMovies:
 
         items = _fetch(server, plugin)
 
-        assert items[0].id == "tautulli:movie:half baked:1998"
         assert items[0].metadata["year"] == 1998
 
     @pytest.mark.parametrize("release_date", [None, "", "unknown", "2000-13-99"])
-    def test_an_unreadable_release_date_leaves_a_yearless_id_rather_than_raising(
+    def test_an_unreadable_release_date_leaves_the_film_undated_rather_than_raising(
         self, plugin: TautulliPlugin, release_date: str | None
     ) -> None:
         server = _FakeTautulli(
@@ -211,7 +212,6 @@ class TestMovies:
 
         items = _fetch(server, plugin)
 
-        assert items[0].id == "tautulli:movie:mystery"
         assert "year" not in items[0].metadata
 
     def test_the_completion_date_is_the_local_day_of_the_latest_play(

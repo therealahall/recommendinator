@@ -3,16 +3,10 @@
 import json
 import re
 import sqlite3
-from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Any
 
-from src.models.detail_fields import (
-    RELEASE_YEAR_FIELDS,
-    ContentTypeFields,
-    text_names,
-    to_int,
-)
+from src.models.detail_fields import ContentTypeFields, text_names
 from src.utils.dates import merge_seasons_watched_dates
 from src.utils.list_merge import merge_string_lists
 from src.utils.series import reconcile_seasons, reconcile_series
@@ -22,7 +16,6 @@ __all__ = [
     "ALLOWED_DETAIL_TABLES",
     "MERGEABLE_DETAIL_COLUMNS",
     "MONOTONIC_DETAIL_COLUMNS",
-    "StatedYear",
     "assert_known_detail_table",
     "bare_title_key",
     "cover_url_is_dead",
@@ -39,8 +32,6 @@ __all__ = [
     "resolve_status_forward",
     "stated_creator",
     "stated_region",
-    "stated_release_year",
-    "years_conflict",
 ]
 
 
@@ -163,20 +154,19 @@ def resolve_status_forward(existing_status: str | None, incoming_status: str) ->
     return existing_status
 
 
-# "The Office (US)" and "DOOM (2016)" collapse onto their namesakes; the year
-# veto below and _title_match's refusal to pick between two rows back that.
+# "The Office (US)" and "DOOM (2016)" collapse onto their namesakes; the region
+# veto below and _title_match's refusal to pick between two rows back the first.
 _REGION_QUALIFIERS = frozenset({"us", "usa", "uk", "gb", "au", "nz", "ca", "jp", "eu"})
 _YEAR = re.compile(r"^\d{4}$")
 # A translation and an audiobook are printings of one work. Keyed on the word
 # "edition" because a list of languages could never be complete.
 _EDITION = re.compile(r"(?:^|\s)edition$|^(?:un)?abridged$")
-# Books get no year veto, so a stripped "(3rd Edition)" hides a second textbook.
+# Nothing vetoes on a year, so a stripped "(3rd Edition)" hides a second textbook.
 _NUMBERED = re.compile(
     r"\d|\b(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth"
     r"|eleventh|twelfth)\b"
 )
 _TRAILING_PARENTHETICAL = re.compile(r"\s*\(([^()]*)\)\s*$")
-_TITLE_YEAR = re.compile(r"\((\d{4})\)\s*$")
 
 
 def _is_qualifier(inner: str) -> bool:
@@ -282,8 +272,8 @@ def stated_region(title: str | None) -> str | None:
 
 
 def regions_conflict(one: str | None, other: str | None) -> bool:
-    """Not the year rule: a region only one side states is not disagreement, it
-    qualifies the Hell's Kitchen nobody else qualifies.
+    """A region only one side states is not disagreement: it qualifies the Hell's
+    Kitchen nobody else qualifies.
     """
     return one is not None and other is not None and one != other
 
@@ -363,31 +353,6 @@ def creators_conflict(one: str | None, other: str | None) -> bool:
     return SequenceMatcher(None, left, right).ratio() < FUZZY_MATCH_THRESHOLD
 
 
-@dataclass(frozen=True)
-class StatedYear:
-    value: int | None = None
-    in_title: bool = False
-
-
-def stated_release_year(
-    content_type: str, stated: Any, title: str | None
-) -> StatedYear:
-    if content_type not in RELEASE_YEAR_FIELDS:
-        return StatedYear()
-    year = to_int(stated)
-    if year is not None:
-        return StatedYear(year)
-    match = _TITLE_YEAR.search(title or "")
-    return StatedYear(int(match.group(1)), in_title=True) if match else StatedYear()
-
-
-def years_conflict(one: StatedYear, other: StatedYear) -> bool:
-    """A year only one source states is not disagreement."""
-    if one.value is not None and other.value is not None:
-        return one.value != other.value
-    return one.in_title or other.in_title
-
-
 def merge_scalar_columns(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -> None:
     """Every other user-owned column is carried across, the duplicate row being
     hidden. ``ignored`` is not read here at all: each row keeps its own, because
@@ -432,24 +397,21 @@ def merge_scalar_columns(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -
     # The CASE expressions repeat the will_change guards on purpose: the Python
     # guard exists to skip the UPDATE, not to decide what it writes.
     cursor.execute(
-        """UPDATE content_items
-           SET rating = CASE WHEN rating IS NULL THEN ? ELSE rating END,
-               review = CASE WHEN review IS NULL THEN ? ELSE review END,
-               date_completed = CASE
-                   WHEN date_completed IS NULL THEN ?
-                   WHEN ? IS NOT NULL AND ? > date_completed THEN ?
-                   ELSE date_completed
-               END,
-               cover_url = CASE
-                   WHEN cover_url IS NULL AND NOT EXISTS (
-                       SELECT 1 FROM content_item_dead_covers
-                        WHERE content_item_id = ? AND cover_url = ?
-                   ) THEN ?
-                   ELSE cover_url
-               END,
-               status = ?,
-               updated_at = CURRENT_TIMESTAMP
-           WHERE id = ?""",
+        "UPDATE content_items"
+        " SET rating = CASE WHEN rating IS NULL THEN ? ELSE rating END,"
+        " review = CASE WHEN review IS NULL THEN ? ELSE review END,"
+        " date_completed = CASE"
+        " WHEN date_completed IS NULL THEN ?"
+        " WHEN ? IS NOT NULL AND ? > date_completed THEN ?"
+        " ELSE date_completed END,"
+        " cover_url = CASE"
+        " WHEN cover_url IS NULL AND NOT EXISTS ("
+        " SELECT 1 FROM content_item_dead_covers"
+        " WHERE content_item_id = ? AND cover_url = ?"
+        " ) THEN ? ELSE cover_url END,"
+        " status = ?,"
+        " updated_at = CURRENT_TIMESTAMP"
+        " WHERE id = ?",
         (
             dup_row["rating"],
             dup_row["review"],

@@ -2,15 +2,17 @@ import json
 import sqlite3
 from dataclasses import dataclass
 
-from src.models.detail_fields import DETAIL_FIELDS, RELEASE_YEAR_FIELDS, FieldKind
+from src.models.detail_fields import (
+    DETAIL_FIELDS,
+    RELEASE_YEAR_FIELDS,
+    FieldKind,
+    to_int,
+)
 from src.storage.merge import (
-    StatedYear,
     creators_conflict,
     detail_join,
     regions_conflict,
     stated_region,
-    stated_release_year,
-    years_conflict,
 )
 from src.utils.series import get_series_name_from_metadata
 from src.utils.sorting import build_search_text, get_sort_title
@@ -98,7 +100,6 @@ def write_derived_columns(cursor: sqlite3.Cursor, db_id: int) -> None:
 @dataclass(frozen=True)
 class MatchSignals:
     creator: str | None = None
-    release_year: StatedYear = StatedYear()
     region: str | None = None
 
 
@@ -106,10 +107,8 @@ def signals_conflict(one: MatchSignals, other: MatchSignals) -> bool:
     """Shared with the save door, which refuses more besides: its key keeps a
     numbered edition apart, and where one key names two rows it takes neither.
     """
-    return (
-        creators_conflict(one.creator, other.creator)
-        or years_conflict(one.release_year, other.release_year)
-        or regions_conflict(one.region, other.region)
+    return creators_conflict(one.creator, other.creator) or regions_conflict(
+        one.region, other.region
     )
 
 
@@ -120,6 +119,7 @@ class MatchRow:
     title: str
     normalized_title: str
     source: str | None
+    release_year: int | None
     signals: MatchSignals
 
 
@@ -138,6 +138,7 @@ def read_live_match_rows(cursor: sqlite3.Cursor, user_id: int) -> list[MatchRow]
             title=row["title"],
             normalized_title=row["normalized_title"] or "",
             source=row["source"],
+            release_year=to_int(row["release_year"]),
             signals=_read_signals(row),
         )
         for row in cursor.fetchall()
@@ -147,9 +148,6 @@ def read_live_match_rows(cursor: sqlite3.Cursor, user_id: int) -> list[MatchRow]
 def _read_signals(row: sqlite3.Row) -> MatchSignals:
     return MatchSignals(
         creator=str(row["creator"]) if row["creator"] else None,
-        release_year=stated_release_year(
-            row["content_type"], row["release_year"], row["title"]
-        ),
         region=stated_region(row["title"]),
     )
 

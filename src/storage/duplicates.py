@@ -189,7 +189,7 @@ def _side(row: MatchRow) -> DuplicateSide:
         title=row.title,
         source=row.source,
         creator=row.signals.creator,
-        release_year=row.signals.release_year.value,
+        release_year=row.release_year,
     )
 
 

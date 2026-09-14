@@ -117,13 +117,12 @@ def _live_rating_key(raw: Any) -> int | None:
     return key if key is not None and key > 0 else None
 
 
-def _stable_id(kind: str, title: str, year: int | None) -> str:
-    """Keyed on the title alone: ``rating_key`` dies with the file, and an
-    episode row's ``year`` is the episode's on some Tautulli versions, so keying
-    on it splits a show. Two same-titled shows therefore collapse into one.
+def _stable_id(kind: str, title: str) -> str:
+    """Keyed on the title alone: ``rating_key`` dies with the file, a refresh
+    moves the year a film's later plays report, and an episode row's ``year`` is
+    the episode's on some Tautulli versions. Two same-titled works are one item.
     """
-    suffix = f":{year}" if year is not None else ""
-    return f"tautulli:{kind}:{title.strip().casefold()}{suffix}"
+    return f"tautulli:{kind}:{title.strip().casefold()}"
 
 
 def _episode_key(row: dict[str, Any]) -> str:
@@ -140,10 +139,9 @@ def _record_movie(movies: dict[str, _WatchedMovie], row: dict[str, Any]) -> None
     if not title or played is None:
         return
 
-    year = _release_year(row)
     movie = movies.setdefault(
-        _stable_id("movie", title, year),
-        _WatchedMovie(title=title, year=year, last_played=played),
+        _stable_id("movie", title),
+        _WatchedMovie(title=title, year=_release_year(row), last_played=played),
     )
     movie.last_played = max(movie.last_played, played)
 
@@ -155,7 +153,7 @@ def _record_episode(shows: dict[str, _WatchedShow], row: dict[str, Any]) -> None
     if not title or season is None or season <= _SPECIALS_SEASON or played is None:
         return
 
-    show = shows.setdefault(_stable_id("show", title, None), _WatchedShow(title=title))
+    show = shows.setdefault(_stable_id("show", title), _WatchedShow(title=title))
     if show.rating_key is None:
         show.rating_key = _live_rating_key(row.get("grandparent_rating_key"))
     show.episodes.setdefault(season, set()).add(_episode_key(row))

@@ -1,4 +1,5 @@
 import json
+import re
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -90,7 +91,7 @@ class SyncRunDict(TypedDict):
 # Changing ``normalize_title_for_matching``, ``get_sort_title`` or
 # ``build_search_text`` needs a bump and a step to rewrite what the old one
 # stored, or dedup lookups stop matching and duplicates accumulate in silence.
-_SCHEMA_VERSION = 25
+_SCHEMA_VERSION = 26
 
 # Rows for these keys are unreachable from the app but would still
 # be overlaid onto config, so they are pruned once on upgrade.
@@ -423,6 +424,8 @@ def create_schema(conn: sqlite3.Connection) -> None:
         # The dropped key was a series name to the build that stored it, so it
         # is still a word in the search text the backfill below rebuilds.
         _clear_derived_columns(cursor)
+    if stored_version < 26:
+        _drop_the_year_from_tautulli_film_ids(cursor)
 
     # Filled after the repair, which recovers a creator that existed only in a
     # blob. Unguarded because the fill selects the rows that need it rather
@@ -955,6 +958,30 @@ def _clear_placeholder_authors(cursor: sqlite3.Cursor) -> None:
 
 def _clear_derived_columns(cursor: sqlite3.Cursor) -> None:
     cursor.execute("UPDATE content_items SET sort_title = NULL, search_text = NULL")
+
+
+_TAUTULLI_DATED_FILM_ID = re.compile(r"^(tautulli:movie:.+):\d{4}$")
+
+
+def _drop_the_year_from_tautulli_film_ids(cursor: sqlite3.Cursor) -> None:
+    """OR IGNORE, oldest row first: where two rows would share the bare id, the
+    other keeps its dated one for the duplicate review, since a merge is the
+    operator's to make.
+    """
+    cursor.execute(
+        "SELECT content_item_id, source, external_id FROM content_item_external_ids"
+        " WHERE content_type = 'movie' AND external_id LIKE 'tautulli:movie:%'"
+        " ORDER BY content_item_id"
+    )
+    for row in cursor.fetchall():
+        match = _TAUTULLI_DATED_FILM_ID.match(row["external_id"])
+        if match is None:
+            continue
+        cursor.execute(
+            "UPDATE OR IGNORE content_item_external_ids SET external_id = ?"
+            " WHERE content_item_id = ? AND source = ?",
+            (match.group(1), row["content_item_id"], row["source"]),
+        )
 
 
 def _migrate_stranded_detail_shapes(cursor: sqlite3.Cursor) -> None:

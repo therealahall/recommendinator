@@ -70,7 +70,6 @@ from src.storage.merge import (
     resolve_status_forward,
     stated_creator,
     stated_region,
-    stated_release_year,
 )
 from src.storage.schema import create_schema, get_default_user_id
 from src.utils.dates import local_today, merge_seasons_watched_dates, utc_now
@@ -306,11 +305,8 @@ def _incoming_creator(item: ContentItem, content_type_value: str) -> str | None:
 
 
 def _incoming_signals(item: ContentItem, content_type_value: str) -> MatchSignals:
-    field = RELEASE_YEAR_FIELDS.get(content_type_value)
-    stated = field.value_from(item.metadata or {}) if field is not None else None
     return MatchSignals(
         creator=_incoming_creator(item, content_type_value),
-        release_year=stated_release_year(content_type_value, stated, item.title),
         region=stated_region(item.title),
     )
 

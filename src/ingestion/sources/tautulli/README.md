@@ -41,6 +41,7 @@ A season is finished only when every episode of it has been watched, counted aga
 **A show no longer in the Plex library still ticks its seasons where Sonarr or TMDB states a size.** Its watch history arrives either way; only where no source states one is there nothing left to measure against.
 
 ## Notes
+- A film is one item per title, whatever year Plex reports for it, so two films sharing a title arrive as one.
 - Tautulli records plays and never ratings, so imported items carry none.
 - Only plays Tautulli itself marked watched are counted, at whatever threshold that instance is configured with.
 - History belonging to other Plex users on the server is not imported.
