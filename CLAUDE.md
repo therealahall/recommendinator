@@ -267,10 +267,12 @@ The main agent's context is precious. Avoid burning it on greps, file reads, and
 
 - **2+ grep/find queries on a topic** → spawn `Explore`. Subagent returns a summary; raw search output stays out of main context.
 - **"Where is X defined / what calls Y / list uses of Z"** → `Explore`. Returns a file:line summary without dumping raw search output into main context.
-- **Single targeted lookup with a known path/symbol** → use `Read`/`Grep` directly. Don't spawn a subagent for one query.
-- **`mcp__ide__getDiagnostics` for type/reference info** when LSP can answer faster than grep.
+- **Single targeted lookup with a known path/symbol** → search directly. Don't spawn a subagent for one query.
+- **`mcp__ide__getDiagnostics` for type/reference info** when LSP can answer faster than a search.
 
-**Tool discipline when greping inline:**
+**Search with `rg`, or `git grep` to reach the gitignored `private/` tree** (`rg -u` reaches it too). A `Grep` tool is not present in every session and plain `grep` is usually not permitted, so reaching for either costs a turn finding out.
+
+**Tool discipline when searching inline:**
 
 - Anchor patterns (`^def foo` not `foo`).
 - Scope to a path (`rg pattern src/cli/`, not whole repo).
