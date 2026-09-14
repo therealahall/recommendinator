@@ -1226,6 +1226,7 @@ class SQLiteDB:
         min_rating: int | None = None,
         limit: int | None = None,
         include_ignored: bool = True,
+        sort_by: str = "title",
     ) -> list[ContentItem]:
         return self.get_content_items(
             user_id=user_id,
@@ -1234,6 +1235,7 @@ class SQLiteDB:
             min_rating=min_rating,
             limit=limit,
             include_ignored=include_ignored,
+            sort_by=sort_by,
         )
 
     def _row_to_content_item(self, row: sqlite3.Row) -> ContentItem:

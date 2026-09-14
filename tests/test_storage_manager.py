@@ -184,6 +184,30 @@ class TestGetSignalItemsRegression:
 
         assert [item.title for item in sampled] == ["Rated Book"]
 
+    def test_a_limit_samples_the_latest_ratings_not_an_alphabetical_prefix(
+        self, temp_storage_manager: StorageManager
+    ) -> None:
+        older = temp_storage_manager.save_content_item(
+            self._book("a", "Alpha Book", ConsumptionStatus.COMPLETED, rating=5)
+        )
+        newer = temp_storage_manager.save_content_item(
+            self._book("z", "Zulu Book", ConsumptionStatus.COMPLETED, rating=4)
+        )
+        with temp_storage_manager.sqlite_db.connection() as conn:
+            for db_id, updated_at in (
+                (older, "2026-01-01 00:00:00"),
+                (newer, "2026-02-01 00:00:00"),
+            ):
+                conn.execute(
+                    "UPDATE content_items SET updated_at = ? WHERE id = ?",
+                    (updated_at, db_id),
+                )
+            conn.commit()
+
+        sampled = temp_storage_manager.get_signal_items(limit=1)
+
+        assert [item.title for item in sampled] == ["Zulu Book"]
+
     def test_the_ignored_read_returns_the_items_the_signal_read_drops(
         self, temp_storage_manager: StorageManager
     ) -> None:
