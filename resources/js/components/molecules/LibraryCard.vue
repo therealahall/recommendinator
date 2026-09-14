@@ -58,10 +58,10 @@ function statusTone(status: string): string | undefined {
           <span class="sr-only">{{ formatContentType(item.content_type) }}. </span>{{ item.title }}
         </h3>
         <div v-if="series.shown" class="item-series">
-          <span aria-hidden="true">{{ series.shown }}</span>
+          <span aria-hidden="true"><span class="series-label">Series</span> {{ series.shown }}</span>
           <span class="sr-only">{{ series.spoken }}</span>
         </div>
-        <div v-if="item.author" class="item-author">{{ item.author }}</div>
+        <div v-if="item.author" class="item-author">by {{ item.author }}</div>
       </div>
     </div>
     <div class="library-meta">
