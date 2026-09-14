@@ -214,6 +214,7 @@ class StorageManager:
         min_rating: int | None = None,
         limit: int | None = None,
         include_ignored: bool = True,
+        sort_by: str = "title",
     ) -> list[ContentItem]:
         return self.sqlite_db.get_completed_items(
             user_id=user_id,
@@ -221,6 +222,7 @@ class StorageManager:
             min_rating=min_rating,
             limit=limit,
             include_ignored=include_ignored,
+            sort_by=sort_by,
         )
 
     def get_signal_items(
@@ -229,9 +231,9 @@ class StorageManager:
         content_type: ContentType | None = None,
         limit: int | None = None,
     ) -> list[ContentItem]:
-        """*limit* cuts the rated set, not the completed one, so a large library
-        samples what the operator rated rather than an alphabetical prefix of
-        everything finished. Ratings start at 1, so ``min_rating`` is that filter.
+        """*limit* cuts the rated set, most recently updated first, so a large
+        library samples what the operator rated lately rather than an
+        alphabetical prefix. Ratings start at 1, so ``min_rating`` is that filter.
         """
         return self.get_completed_items(
             user_id=user_id,
@@ -239,6 +241,7 @@ class StorageManager:
             min_rating=1,
             limit=limit,
             include_ignored=False,
+            sort_by="updated_at",
         )
 
     def get_consumption_items(
