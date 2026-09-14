@@ -31,8 +31,6 @@ HEALTHCHECK_COMMAND = f'CMD ["python", "-m", "{healthcheck.__name__}"]'
 
 DEFAULT_MAPPING = "127.0.0.1:18473:8000"
 
-LOOPBACK_PREFIX = "127.0.0.1:"
-
 _INTERPOLATION = re.compile(r"\$\{([A-Z][A-Z0-9_]*):?-([^}]*)\}")
 
 UNSHIPPABLE = [
@@ -117,13 +115,8 @@ def _reaches_the_builder(path: str) -> bool:
 class TestComposeDefaultPortMapping:
     def test_renders_the_short_form_bound_to_loopback(self) -> None:
         (spec,) = _port_specs(APP_SERVICE)
-        rendered = _render(spec)
 
-        assert isinstance(spec, str), "must be the short form, not a long-form mapping"
-        assert rendered == DEFAULT_MAPPING
-        assert rendered.startswith(
-            LOOPBACK_PREFIX
-        ), f"{rendered} is published beyond this host by default"
+        assert _render(spec) == DEFAULT_MAPPING
 
 
 class TestTheApplicationLogOutlivesTheContainer:

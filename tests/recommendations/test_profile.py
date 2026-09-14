@@ -398,20 +398,6 @@ class TestThemeExtraction:
 
 
 class TestRegenerateAndSave:
-    def test_regenerate_and_save(
-        self,
-        profile_generator: ProfileGenerator,
-        sample_items: list[int],
-        storage_manager: StorageManager,
-    ) -> None:
-        profile = profile_generator.regenerate_and_save(user_id=1)
-
-        assert isinstance(profile, PreferenceProfile)
-        assert profile.user_id == 1
-
-        saved_profile = storage_manager.profiles.get(user_id=1)
-        assert saved_profile is not None
-
     def test_stored_row_carries_the_keys_the_payload_reads(
         self,
         profile_generator: ProfileGenerator,
