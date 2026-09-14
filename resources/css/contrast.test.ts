@@ -742,6 +742,22 @@ describe.each(THEMES)('edges that say where a control is in %s', (_theme, themeP
     }
   })
 
+  it('the arrow that refuses is plated, so no theme leaves colour marking it alone', () => {
+    const component = read(ENRICHMENT_PROVIDERS)
+    const live = ruleBody(component, '.provider-move')
+    const refused = ruleBody(component, ".provider-move[aria-disabled='true']")
+
+    expect(toRgba(declaration(refused, 'background'), vars)).not.toEqual(
+      toRgba(declaration(live, 'background'), vars),
+    )
+    for (const surface of ['--bg-card', '--bg-hover']) {
+      expect(
+        divides(borderColour(refused), toRgba(`var(${surface})`, vars)),
+        surface,
+      ).toBeGreaterThanOrEqual(NON_TEXT)
+    }
+  })
+
   it('a refusal is marked by a rule visible on its own tint', () => {
     const body = ruleBody(read(BASE), '.state--error')
     const tint = over(toRgba(declaration(body, 'background'), vars), toRgba('var(--bg-card)', vars))
