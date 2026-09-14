@@ -34,6 +34,17 @@ describe('Accordion', () => {
     expect(panel.find('.b').text()).toBe('Body')
   })
 
+  it('draws the disclosure mark without text, so no font fallback lands in the header', () => {
+    const wrapper = mount(Accordion, {
+      props: { id: 'src-x', expanded: false },
+      slots: { header: 'Steam', default: 'b' },
+    })
+
+    const mark = wrapper.find('button.accordion-trigger [aria-hidden="true"]')
+    expect(mark.exists()).toBe(true)
+    expect(mark.text()).toBe('')
+  })
+
   it('renders header-actions slot as siblings outside the trigger button', () => {
     const wrapper = mount(Accordion, {
       props: { id: 'src-x', expanded: false },

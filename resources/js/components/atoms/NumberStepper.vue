@@ -150,11 +150,20 @@ function onInput(event: Event) {
   cursor: not-allowed;
 }
 
-/* Its own fill, never a fade (base.css:853): aria-disabled marks "at the bound"
-   and stays focusable, so the glyph has to stay readable. */
+/* The plate base.css:858 gives a locked button, never a fade: a border here
+   would double the group's frame, so the divider it owns dashes instead. */
 .stepper-btn[aria-disabled='true'] {
+  background: var(--bg-primary);
   color: var(--text-muted);
   cursor: not-allowed;
+}
+
+.stepper-decrement[aria-disabled='true'] {
+  border-right-style: dashed;
+}
+
+.stepper-increment[aria-disabled='true'] {
+  border-left-style: dashed;
 }
 
 /* Inset: the clip above cuts the shared outward ring off a full-bleed button. */

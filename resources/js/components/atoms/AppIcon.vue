@@ -6,6 +6,8 @@ import { computed } from 'vue'
 // error instead of an icon that silently renders nothing.
 const GLYPHS = {
   activity: { stroke: 1.9, d: ['M22 12h-4l-3 9L9 3l-3 9H2'] },
+  'arrow-down': { stroke: 1.9, d: ['M12 5v14', 'm19 12-7 7-7-7'] },
+  'arrow-up': { stroke: 1.9, d: ['M12 19V5', 'm5 12 7-7 7 7'] },
   check: { stroke: 2.2, d: ['m20 6-11 11-5-5'] },
   book: {
     stroke: 1.7,
