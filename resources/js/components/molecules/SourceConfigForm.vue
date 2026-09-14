@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, reactive, ref, watch } from 'vue'
+import AppIcon from '@/components/atoms/AppIcon.vue'
 import ConfirmPanel from '@/components/molecules/ConfirmPanel.vue'
 import { rescueFocus } from '@/utils/focus'
 import type { SourceFieldSchema } from '@/types/api'
@@ -495,7 +496,7 @@ function isSecretSet(name: string): boolean {
           class="badge"
           data-tone="success"
           data-testid="form-save-status"
-        >Saved ✓</span>
+        >Saved<AppIcon name="check" /></span>
         <span
           v-else-if="saveStatus === 'error'"
           class="badge badge--wrap"

@@ -1,9 +1,17 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
-// A sprite would need its <symbol> block inlined in the one document and
-// referenced by a bare string; a typed name makes an unknown glyph a vue-tsc
-// error instead of an icon that silently renders nothing.
+interface Glyph {
+  stroke: number
+  fill?: string
+  d: readonly string[]
+}
+
+const STAR = 'M12 2.6 15.1 8.9 22 9.9 17 14.8 18.2 21.7 12 18.4 5.8 21.7 7 14.8 2 9.9 8.9 8.9 12 2.6z'
+
+// A sprite needs its <symbol> inlined and referenced by a bare string; a typed
+// name makes an unknown glyph a vue-tsc error instead. The name carries the
+// fill too, so no caller can ask for a solid cog.
 const GLYPHS = {
   activity: { stroke: 1.9, d: ['M22 12h-4l-3 9L9 3l-3 9H2'] },
   'arrow-down': { stroke: 1.9, d: ['M12 5v14', 'm19 12-7 7-7-7'] },
@@ -70,7 +78,8 @@ const GLYPHS = {
       'M9 20.2a2.2 2.2 0 1 0 0-4.4 2.2 2.2 0 0 0 0 4.4z',
     ],
   },
-  star: { stroke: 1.7, d: ['M12 2.6 15.1 8.9 22 9.9 17 14.8 18.2 21.7 12 18.4 5.8 21.7 7 14.8 2 9.9 8.9 8.9 12 2.6z'] },
+  star: { stroke: 1.7, d: [STAR] },
+  'star-filled': { stroke: 1.7, fill: 'currentColor', d: [STAR] },
   tv: {
     stroke: 1.7,
     d: [
@@ -78,7 +87,7 @@ const GLYPHS = {
       'm7 3 5 4 5-4',
     ],
   },
-} as const
+} as const satisfies Record<string, Glyph>
 
 const props = withDefaults(
   defineProps<{
@@ -88,7 +97,7 @@ const props = withDefaults(
   { size: 16 },
 )
 
-const glyph = computed(() => GLYPHS[props.name])
+const glyph = computed<Glyph>(() => GLYPHS[props.name])
 const sizeClass = computed(() => (props.size === 16 ? '' : `icon--${props.size}`))
 </script>
 
@@ -99,7 +108,7 @@ const sizeClass = computed(() => (props.size === 16 ? '' : `icon--${props.size}`
     aria-hidden="true"
     focusable="false"
     viewBox="0 0 24 24"
-    fill="none"
+    :fill="glyph.fill ?? 'none'"
     stroke="currentColor"
     :stroke-width="glyph.stroke"
     stroke-linecap="round"

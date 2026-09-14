@@ -13,4 +13,8 @@ describe('AppIcon', () => {
   it('takes its colour from the control it sits in, so a tone never strands it', () => {
     expect(mount(AppIcon, { props: { name: 'close' } }).attributes('stroke')).toBe('currentColor')
   })
+
+  it('leaves a glyph that asks for no fill an outline, however the table grows', () => {
+    expect(mount(AppIcon, { props: { name: 'cog' } }).attributes('fill')).toBe('none')
+  })
 })

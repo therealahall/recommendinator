@@ -523,6 +523,29 @@ function fontFaceBlocks(source: string): string[] {
   return [...source.matchAll(/@font-face\s*\{([^}]*)\}/g)].map(([, body]) => body)
 }
 
+function declaredRanges(source: string): [number, number][] {
+  const entries = fontFaceBlocks(source).flatMap((body) => {
+    const declared = body.match(/unicode-range:\s*([^;]+);/)
+    return declared === null ? [] : declared[1].split(',')
+  })
+  if (entries.length === 0) throw new Error('no unicode-range declared in base.css')
+  return entries.map((entry) => {
+    const bounds = entry.trim().match(/^U\+([0-9a-f]+)(?:-([0-9a-f]+))?$/i)
+    if (!bounds) throw new Error(`unsupported unicode-range: ${entry.trim()}`)
+    return [parseInt(bounds[1], 16), parseInt(bounds[2] ?? bounds[1], 16)]
+  })
+}
+
+function paintedText(path: string): string {
+  return readFileSync(`${process.cwd()}/${path}`, 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/(^|[^:])\/\/.*$/gm, '$1')
+    .replace(/&#(x?)([0-9a-f]+);/gi, (_, hex: string, code: string) =>
+      String.fromCodePoint(parseInt(code, hex ? 16 : 10)),
+    )
+}
+
 describe('the faces the app paints with', () => {
   it('fetches every one from this origin, so no page load reaches a font CDN', () => {
     const faces = styledFiles('resources').flatMap((path) =>
@@ -557,6 +580,22 @@ describe('the faces the app paints with', () => {
 
     expect(scanned.length).toBeGreaterThan(0)
     expect(asking).toEqual([])
+  })
+
+  it('paints no character they lack, so nothing on screen falls back to a system face', () => {
+    const ranges = declaredRanges(readBase())
+    const scanned = [...styledFiles('resources', /\.(vue|css)$/), 'index.html']
+    const stranded = scanned.flatMap((path) =>
+      [...paintedText(path)].flatMap((glyph) => {
+        const code = glyph.codePointAt(0)!
+        return ranges.some(([from, to]) => code >= from && code <= to)
+          ? []
+          : [`${path}: U+${code.toString(16).toUpperCase().padStart(4, '0')}`]
+      }),
+    )
+
+    expect(scanned.length).toBeGreaterThan(0)
+    expect(stranded).toEqual([])
   })
 })
 

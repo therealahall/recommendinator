@@ -73,13 +73,13 @@ function statusTone(status: string): string | undefined {
     </div>
     <div v-if="item.rating !== null" class="library-meta-secondary">
       <span v-if="item.rating !== null" class="rating-stars">
-        <span aria-hidden="true">
-          <span
+        <span class="rating-stars-row" aria-hidden="true">
+          <AppIcon
             v-for="star in 5"
             :key="star"
-            class="star"
-            :class="star <= item.rating ? 'filled' : 'empty'"
-          >{{ star <= item.rating ? '★' : '☆' }}</span>
+            :name="star <= item.rating ? 'star-filled' : 'star'"
+            :class="['star', star <= item.rating ? 'filled' : 'empty']"
+          />
         </span>
         <span class="value" aria-hidden="true">{{ item.rating }}/5</span>
         <span class="sr-only">Rated {{ item.rating }} out of 5</span>

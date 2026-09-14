@@ -424,6 +424,12 @@ const LOCKED_FIELDS: [string, string, string, string][] = [
   ['a field a write in its section locked', BASE, '.field', '.field:disabled'],
 ]
 
+const RATED_STARS: [string, string, string][] = [
+  ['a star the rating counts', STAR_RATING, '.star-rating-star.active'],
+  ['a counted star on a library card', BASE, '.rating-stars .star.filled'],
+  ['an uncounted one beside it', BASE, '.rating-stars .star.empty'],
+]
+
 const BORDER_STYLES = new Set(['solid', 'dashed', 'dotted', 'double'])
 
 function colourIn(value: string): string {
@@ -488,6 +494,12 @@ describe.each(THEMES)('editable control edges in %s', (_theme, themePath) => {
 
   it('an unfilled star stays visible against the dialog that rates it', () => {
     const colour = declaration(ruleBody(read(STAR_RATING), '.star-rating-star'), 'color')
+
+    expect(edgeAgainst(colour, 'var(--bg-card)')).toBeGreaterThanOrEqual(NON_TEXT)
+  })
+
+  it.each(RATED_STARS)('%s stays visible on the card carrying it', (_label, path, selector) => {
+    const colour = declaration(ruleBody(read(path), selector), 'color')
 
     expect(edgeAgainst(colour, 'var(--bg-card)')).toBeGreaterThanOrEqual(NON_TEXT)
   })

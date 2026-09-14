@@ -1751,15 +1751,24 @@ button.rec-score {
   list-style: none;
 }
 
-/* Rating is a plain value (no badge chrome): filled/outlined stars convey the
-   value by form, with a visible n/5 and sr-only text for assistive tech. */
+/* Rating is a plain value (no badge chrome): the icon set draws the filled and
+   outlined stars, since the bundled faces carry neither U+2605 nor U+2606. */
 .rating-stars {
   display: inline-flex;
-  align-items: baseline;
+  align-items: center;
   font-size: var(--text-sm);
-  letter-spacing: var(--tracking-wider);
   white-space: nowrap;
   flex-shrink: 0;
+}
+
+.rating-stars-row {
+  display: inline-flex;
+  gap: var(--space-05);
+}
+
+.rating-stars .star {
+  width: 1.1em;
+  height: 1.1em;
 }
 
 .rating-stars .star.filled {
