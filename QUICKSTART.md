@@ -228,8 +228,8 @@ uv run python -m src.cli preferences set-variety 4.0              # 0.0 off, 5.0
 ```
 
 `set-variety` demotes genres you recently finished, per content type, so
-recommendations stay varied. The next entry in a series you are actively reading
-takes half the penalty, nudged down rather than buried. See
+recommendations stay varied. The next entry in a series you are reading takes the
+same penalty as the rest of its genre, so turn the setting down to get back to it. See
 [docs/SCORING.md](docs/SCORING.md) and
 [docs/CUSTOM_RULES.md](docs/CUSTOM_RULES.md).
 

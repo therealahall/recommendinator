@@ -44,7 +44,6 @@ from src.utils.series import (
     expand_tv_shows_to_seasons,
     find_earliest_recommendable,
     inject_seasons_watched_tracking,
-    is_active_series_continuation,
     should_recommend_item,
 )
 
@@ -340,9 +339,6 @@ class RecommendationEngine:
             ranked_items = self._apply_variety_penalty(
                 ranked_items,
                 unignored_consumption_of_type,
-                series_tracking,
-                unconsumed_items,
-                series_order,
                 top_penalty=top_penalty_for_preference(
                     user_preference_config.variety_penalty
                 ),
@@ -491,9 +487,6 @@ class RecommendationEngine:
     def _apply_variety_penalty(
         ranked_items: list[_RankedCandidate],
         unignored_consumption_of_type: list[ContentItem],
-        series_tracking: dict[str, set[float]],
-        unconsumed_items: list[ContentItem],
-        series_order: SeriesOrder,
         *,
         top_penalty: PenaltyFraction,
     ) -> list[_RankedCandidate]:
@@ -503,14 +496,11 @@ class RecommendationEngine:
         if not ladder:
             return ranked_items
 
+        # No series exemption: the series scorers already rank a continuation
+        # first, so a softer penalty only widened its lead as variety went up.
         penalised: list[_RankedCandidate] = []
         for item, score, _ in ranked_items:
-            is_continuation = is_active_series_continuation(
-                item, series_tracking, unconsumed_items, series_order
-            )
-            penalty = variety_penalty_for(
-                item, ladder, is_series_continuation=is_continuation
-            )
+            penalty = variety_penalty_for(item, ladder)
             penalised.append((item, score * (1.0 - penalty), penalty))
 
         penalised.sort(key=lambda entry: entry[1], reverse=True)
