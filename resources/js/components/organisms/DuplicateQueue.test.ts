@@ -35,6 +35,7 @@ function suggestion(
       db_id: survivorId + index,
       title: `${title}${edition}`,
       source: 'calibre',
+      source_name: 'Calibre',
       creator: null,
       release_year: null,
       also_offered: '',

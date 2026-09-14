@@ -13,6 +13,7 @@ from itertools import combinations
 from src.storage.derived import MatchRow, read_live_match_rows, signals_conflict
 from src.storage.item_merges import MergeError, absorbing_merge_id
 from src.storage.merge import bare_title_key
+from src.utils.text import humanize_source_id
 
 _DECLINE_SELECT = (
     "SELECT d.lower_item_id, d.higher_item_id, "
@@ -53,6 +54,10 @@ class DuplicateSide:
     source: str | None
     creator: str | None
     release_year: int | None
+
+    @property
+    def source_name(self) -> str | None:
+        return humanize_source_id(self.source) if self.source else None
 
 
 @dataclass(frozen=True)

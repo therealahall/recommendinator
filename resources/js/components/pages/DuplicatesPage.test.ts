@@ -36,6 +36,7 @@ function block(...ids: number[]): DuplicateSuggestion {
       db_id,
       title: `Row ${db_id}`,
       source: 'calibre',
+      source_name: 'Calibre',
       creator: null,
       release_year: null,
       also_offered: '',

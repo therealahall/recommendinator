@@ -32,6 +32,7 @@ class DuplicateSideResponse(BaseModel):
     db_id: int
     title: str
     source: str | None
+    source_name: str | None
     creator: str | None
     release_year: int | None
     also_offered: str

@@ -60,6 +60,7 @@ from src.utils.export import export_items_csv, export_items_json
 from src.utils.item_serialization import ignore_result_to_dict, item_to_dict
 from src.utils.series import MAX_SEASONS
 from src.utils.sorting import MAX_SEARCH_LENGTH, normalize_for_search
+from src.utils.text import humanize_source_id
 
 
 @click.group()
@@ -803,7 +804,7 @@ def library_export(
 
 
 def _side_summary(side: DuplicateSide, also_offered: Collection[int] = ()) -> str:
-    summary = f"{side.title} ({side.creator or 'N/A'}, {side.source or 'N/A'})"
+    summary = f"{side.title} ({side.creator or 'N/A'}, {side.source_name or 'N/A'})"
     if side.db_id not in also_offered:
         return summary
     return f"{summary}\n{ALSO_OFFERED_NOTE}"
@@ -904,10 +905,8 @@ MERGE_CANDIDATE_LIMIT = 10
 
 
 def _match_summary(item: ContentItem) -> str:
-    return (
-        f"  #{item.db_id} {item.title}"
-        f" ({item.author or 'N/A'}, {item.source or 'N/A'})"
-    )
+    source = humanize_source_id(item.source) if item.source else "N/A"
+    return f"  #{item.db_id} {item.title} ({item.author or 'N/A'}, {source})"
 
 
 def _named_row(storage: StorageManager, name: str, user_id: int, option: str) -> int:

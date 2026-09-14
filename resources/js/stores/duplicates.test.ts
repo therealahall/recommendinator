@@ -30,6 +30,7 @@ function suggestion(survivorId: number, ...absorbedIds: number[]): DuplicateSugg
     db_id,
     title: `Row ${db_id}`,
     source: 'calibre',
+    source_name: 'Calibre',
     creator: null,
     release_year: null,
     also_offered: '',

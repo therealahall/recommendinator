@@ -512,6 +512,7 @@ export interface DuplicateSide {
   db_id: number
   title: string
   source: string | null
+  source_name: string | null
   creator: string | null
   release_year: number | null
   also_offered: string
