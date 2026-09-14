@@ -11,6 +11,7 @@ const CAUTION_BY_SECTION: Record<string, string> = {
 <script setup lang="ts">
 import { computed, nextTick, reactive, ref, watch } from 'vue'
 import Accordion from '@/components/atoms/Accordion.vue'
+import AppIcon from '@/components/atoms/AppIcon.vue'
 import SettingsFieldList from '@/components/molecules/SettingsFieldList.vue'
 import EnrichmentProviders from '@/components/organisms/EnrichmentProviders.vue'
 import { useAnnouncer } from '@/composables/useAnnouncer'
@@ -288,7 +289,7 @@ function onSecretDraft(key: string, hasDraft: boolean): void {
             class="badge"
             data-tone="success"
             :data-testid="`save-status-${sectionKey}`"
-          >Saved ✓</span>
+          >Saved<AppIcon name="check" /></span>
           <span
             v-else-if="saveStatus === 'error'"
             class="badge badge--wrap"

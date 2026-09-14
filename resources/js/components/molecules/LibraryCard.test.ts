@@ -86,6 +86,15 @@ describe('LibraryCard', () => {
     expect(without.find('img').exists()).toBe(false)
   })
 
+  it('says a rating in words and draws the stars it counts unlike the rest', () => {
+    const wrapper = mount(LibraryCard, { props: { item: { ...baseItem, rating: 3 } } })
+
+    const drawn = wrapper.findAll('.rating-stars svg').map((star) => star.html())
+
+    expect(wrapper.text()).toContain('Rated 3 out of 5')
+    expect(new Set(drawn).size).toBe(2)
+  })
+
   it('renders a content-type-aware status label for non-book items', () => {
     const wrapper = mount(LibraryCard, {
       props: { item: { ...baseItem, content_type: 'movie', status: 'unread' } },

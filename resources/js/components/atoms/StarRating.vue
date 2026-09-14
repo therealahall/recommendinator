@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import AppIcon from '@/components/atoms/AppIcon.vue'
+
 const props = defineProps<{
   modelValue: number | null
   ariaLabelledby?: string
@@ -7,6 +9,10 @@ const props = defineProps<{
 const emit = defineEmits<{
   'update:modelValue': [value: number | null]
 }>()
+
+function counted(star: number): boolean {
+  return props.modelValue !== null && star <= props.modelValue
+}
 
 function setRating(value: number) {
   emit('update:modelValue', value)
@@ -25,11 +31,11 @@ function clear() {
         :key="star"
         type="button"
         class="star-rating-star"
-        :class="{ active: props.modelValue !== null && star <= props.modelValue }"
+        :class="{ active: counted(star) }"
         :aria-label="`${star} star${star !== 1 ? 's' : ''}`"
-        :aria-pressed="props.modelValue !== null && star <= props.modelValue"
+        :aria-pressed="counted(star)"
         @click="setRating(star)"
-      >&#9733;</button>
+      ><AppIcon :name="counted(star) ? 'star-filled' : 'star'" /></button>
     </div>
     <button class="btn btn-small btn-clear-rating" type="button" @click="clear">Clear</button>
   </div>
@@ -56,6 +62,11 @@ function clear() {
   padding: 2px;
   line-height: 1;
   transition: color var(--transition-fast);
+}
+
+.star-rating-star .icon {
+  width: 1em;
+  height: 1em;
 }
 
 .star-rating-star.active {

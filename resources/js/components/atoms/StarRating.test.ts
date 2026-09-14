@@ -29,6 +29,23 @@ describe('StarRating', () => {
     })
   })
 
+  it('draws a star it counts unlike one it does not, so hue is never the only cue', () => {
+    const wrapper = mount(StarRating, { props: { modelValue: 3 } })
+
+    const drawn = (pressed: boolean): string[] => [
+      ...new Set(
+        wrapper
+          .findAll('[aria-pressed]')
+          .filter((star) => (star.attributes('aria-pressed') === 'true') === pressed)
+          .map((star) => star.get('svg').html()),
+      ),
+    ]
+
+    expect(drawn(true)).toHaveLength(1)
+    expect(drawn(false)).toHaveLength(1)
+    expect(drawn(true)).not.toEqual(drawn(false))
+  })
+
   it('emits update:modelValue with star value on click', async () => {
     const wrapper = mount(StarRating, { props: { modelValue: null } })
     await wrapper.findAll('.star-rating-star')[2].trigger('click')
