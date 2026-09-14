@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.61.3 (2026-09-14)
+
+### Bug Fixes
+
+- **enrichment**: Say what a run actually did
+  ([`5fba1ab`](https://github.com/therealahall/recommendinator/commit/5fba1ab4529c71e5e93e9038f994743749b741e6))
+
+
 ## v0.61.2 (2026-09-14)
 
 ### Bug Fixes
