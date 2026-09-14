@@ -123,9 +123,8 @@ recommendations and leaves fantasy *movies* and *games* alone. Every
 recommendation reports the penalty it took, in the CLI table and JSON and in the
 web **Score Details** panel.
 
-The next entry in a series you are actively reading takes **60%** of the
-penalty, because finishing book #1 does not mean you are done with the genre.
-Starting a brand-new series in that genre takes the full penalty.
+A series gets no exemption: the next book in one you are partway through takes its
+genre's penalty like any other title.
 
 A finished **TV season** counts as a completion even while the show is still in
 progress, dated by that season's watched date.

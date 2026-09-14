@@ -11,7 +11,6 @@ from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.variety import (
     VARIETY_LADDER_STEPS,
-    VARIETY_SERIES_CONTINUATION_FACTOR,
     VARIETY_TOP_PENALTY,
     _completion_recency,
     build_variety_ladder,
@@ -181,22 +180,6 @@ class TestVarietyPenaltyFor:
             _candidate("Crossover", ["Fantasy", "Science Fiction"]), ladder
         )
         assert penalty == pytest.approx(0.8)
-
-
-class TestVarietySeriesContinuationRegression:
-    def test_series_continuation_softens_penalty_regression(self) -> None:
-        """Bug reported: after reading Expanse book #1, the legit next book #2
-        (Caliban's War) sank to rank 123 under a 48% variety penalty while unreadable
-        novellas floated to the top."""
-        ladder = {"science_fiction": VARIETY_TOP_PENALTY}
-        candidate = _candidate("Caliban's War", ["Science Fiction"])
-        full = variety_penalty_for(candidate, ladder)
-        softened = variety_penalty_for(candidate, ladder, is_series_continuation=True)
-        assert full == pytest.approx(VARIETY_TOP_PENALTY)
-        assert softened == pytest.approx(
-            VARIETY_TOP_PENALTY * VARIETY_SERIES_CONTINUATION_FACTOR
-        )
-        assert softened < full
 
 
 class TestOngoingTvShowFinishedSeasons:

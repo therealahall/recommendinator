@@ -23,8 +23,6 @@ from src.recommendations.scorers import SCORER_NAME_MAP
 from src.recommendations.scoring_pipeline import ScoredCandidate, tiebreaker_key
 from src.recommendations.variety import (
     VARIETY_LADDER_STEPS,
-    VARIETY_SERIES_CONTINUATION_FACTOR,
-    VARIETY_TOP_PENALTY,
 )
 from src.storage.item_merges import MergeEvidence
 from src.storage.manager import StorageManager
@@ -1285,83 +1283,12 @@ class TestVarietyAfterCompletion:
         assert _variety_score_for(recs, "same_genre") == pytest.approx(0.0)
 
 
-@pytest.fixture
-def variety_crossover_library(mock_storage):
-    """Wire *mock_storage* for the issue #74 series continuation scenario."""
-    consumed = ContentItem(
-        id="dragonlance_1",
-        title="Dragonlance: Dragons of Autumn Twilight",
-        content_type=ContentType.BOOK,
-        status=ConsumptionStatus.COMPLETED,
-        rating=5,
-        date_completed=date(2026, 1, 1),
-        metadata={
-            "series_name": "Dragonlance",
-            "series_position": 1,
-            "genres": ["Fantasy"],
-        },
-    )
-    next_in_series = ContentItem(
-        id="dragonlance_2",
-        title="Dragonlance: Dragons of Winter Night",
-        content_type=ContentType.BOOK,
-        status=ConsumptionStatus.UNREAD,
-        metadata={
-            "series_name": "Dragonlance",
-            "series_position": 2,
-            "genres": ["Fantasy"],
-        },
-    )
-    different_genre = ContentItem(
-        id="mystery_book",
-        title="The Hound of the Baskervilles",
-        content_type=ContentType.BOOK,
-        status=ConsumptionStatus.UNREAD,
-        metadata={"genres": ["Mystery"]},
-    )
-
-    mock_storage.get_completed_items = Mock(
-        side_effect=lambda content_type=None, **kwargs: [consumed]
-    )
-    mock_storage.get_unconsumed_items = Mock(
-        return_value=[next_in_series, different_genre]
-    )
-    return mock_storage
-
-
 class TestVarietyAfterCompletionRegression:
-    """Regression tests for the variety_penalty feature (issue #74)."""
-
-    def test_next_in_series_demoted_when_variety_enabled_regression(
-        self, engine, variety_crossover_library
-    ) -> None:
-        """Reported: 'Finished a book, setting turned on, new number 1
-        recommendation is the next book in the series.'"""
-        recs_off = engine.generate_recommendations(
-            content_type=ContentType.BOOK,
-            count=2,
-            user_preference_config=UserPreferenceConfig(variety_penalty=0.0),
-        )
-        assert recs_off[0].item.id == "dragonlance_2"
-
-        recs_on = engine.generate_recommendations(
-            content_type=ContentType.BOOK,
-            count=2,
-            user_preference_config=UserPreferenceConfig(
-                variety_penalty=UserPreferenceConfig.LEGACY_VARIETY_ON
-            ),
-        )
-        assert recs_on[0].item.id == "mystery_book"
-        assert _variety_rank_of(recs_on, "mystery_book") < _variety_rank_of(
-            recs_on, "dragonlance_2"
-        )
-
     def test_decimal_novella_below_next_book_with_variety_regression(
         self, engine, mock_storage
     ) -> None:
         """Decimal novella positions parsed as non-series so they dodged the
-        too-far-ahead suppression, and the variety penalty hit the legit next
-        book at full strength."""
+        too-far-ahead suppression."""
         book_one = ContentItem(
             id="exp1",
             title="Leviathan Wakes (The Expanse, #1)",
@@ -1413,15 +1340,84 @@ class TestVarietyAfterCompletionRegression:
         assert "exp25" not in rec_ids
         assert "exp27" not in rec_ids
 
-        top_fraction = (
-            UserPreferenceConfig.LEGACY_VARIETY_ON
-            / UserPreferenceConfig.MAX_VARIETY_PENALTY
+
+class TestVarietyDemotesTheSeriesBeingReadRegression:
+    """Reported: reading book four of a series, book five held rank one however
+    far variety after completion was turned up."""
+
+    _NEXT_BOOK = "Crawl 5 (Crawler Saga, #5)"
+
+    @pytest.fixture(autouse=True)
+    def _reader_of_book_four(self, real_storage):
+        for position in (1, 2, 3):
+            _save_book(
+                real_storage,
+                item_id=f"saga{position}",
+                title=f"Crawl {position} (Crawler Saga, #{position})",
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+                genre="LitRPG",
+                date_completed=date(2026, position, 1),
+            )
+        _save_book(
+            real_storage,
+            item_id="saga4",
+            title="Crawl 4 (Crawler Saga, #4)",
+            status=ConsumptionStatus.CURRENTLY_CONSUMING,
+            genre="LitRPG",
         )
-        book_two_rec = next(rec for rec in recs if rec.item.id == "exp2")
-        assert book_two_rec.variety_penalty == pytest.approx(
-            top_fraction * VARIETY_SERIES_CONTINUATION_FACTOR
+        _save_book(
+            real_storage,
+            item_id="saga5",
+            title=self._NEXT_BOOK,
+            status=ConsumptionStatus.UNREAD,
+            genre="LitRPG",
         )
-        assert book_two_rec.variety_penalty < top_fraction
+        _save_book(
+            real_storage,
+            item_id="mystery",
+            title="Gone Girl",
+            status=ConsumptionStatus.COMPLETED,
+            rating=4,
+            genre="Mystery",
+            date_completed=date(2025, 6, 1),
+        )
+        for genre in ("LitRPG", "Mystery", "Science Fiction"):
+            _save_book(
+                real_storage,
+                item_id=f"unread-{genre}",
+                title=f"Unread {genre}",
+                status=ConsumptionStatus.UNREAD,
+                genre=genre,
+            )
+
+    @staticmethod
+    def _recommend(engine, strength):
+        return engine.generate_recommendations(
+            content_type=ContentType.BOOK,
+            count=10,
+            user_preference_config=UserPreferenceConfig(variety_penalty=strength),
+        )
+
+    @pytest.mark.parametrize("share_of_slider", [0.25, 0.5, 0.75, 1.0])
+    def test_the_next_book_is_penalised_like_its_genre_across_the_slider(
+        self, real_engine, share_of_slider
+    ):
+        recs = self._recommend(
+            real_engine, UserPreferenceConfig.MAX_VARIETY_PENALTY * share_of_slider
+        )
+        penalties = {rec.item.title: rec.variety_penalty for rec in recs}
+        scores = {rec.item.title: rec.score for rec in recs}
+
+        assert penalties[self._NEXT_BOOK] > 0.0
+        assert penalties[self._NEXT_BOOK] == pytest.approx(penalties["Unread LitRPG"])
+        if share_of_slider == 1.0:
+            # Strictly higher, so a stable sort over tied zeros cannot pass it.
+            assert recs[0].score > scores[self._NEXT_BOOK]
+
+    def test_with_variety_off_the_next_book_holds_rank_one(self, real_engine):
+        recs = self._recommend(real_engine, 0.0)
+        assert recs[0].item.title == self._NEXT_BOOK
 
 
 class TestEngineSeriesSubstitutionRegression:
@@ -2331,40 +2327,6 @@ class TestVarietyLadderConsumptionRegression:
             "Completed-but-unrated books did not fatigue their genre — the "
             "variety ladder is doing nothing for a user who does not rate"
         )
-
-    def test_unrated_first_book_softens_the_penalty_on_book_two_regression(
-        self, real_engine, real_storage
-    ):
-        """The reported library — six fantasy novels torn through unrated — is
-        likely a series, and the widening makes that pair reachable: an unrated #1
-        used to put nothing on the ladder, so #2 took no penalty at all."""
-        self._seed_baseline(real_storage)
-        _save_book(
-            real_storage,
-            item_id="saga1",
-            title="Unrated Beginnings (Saga, #1)",
-            status=ConsumptionStatus.COMPLETED,
-            rating=None,
-            genre="Fantasy",
-            date_completed=self._FANTASY_COMPLETED_ON,
-        )
-        _save_book(
-            real_storage,
-            item_id="saga2",
-            title="Unrated Middles (Saga, #2)",
-            status=ConsumptionStatus.UNREAD,
-            genre="Fantasy",
-        )
-
-        assert self._penalty_for(
-            real_engine, "Unrated Middles (Saga, #2)"
-        ) == pytest.approx(VARIETY_TOP_PENALTY * VARIETY_SERIES_CONTINUATION_FACTOR), (
-            "The next book in the series the user is mid-way through took the "
-            "full genre-fatigue rung — an unrated #1 must soften it, not bury #2"
-        )
-        assert self._fantasy_penalty(real_engine) == pytest.approx(
-            VARIETY_TOP_PENALTY
-        ), "The softening leaked onto a Fantasy candidate that continues nothing"
 
     def test_undated_unrated_completion_sorts_behind_every_dated_completion_regression(
         self, real_engine, real_storage

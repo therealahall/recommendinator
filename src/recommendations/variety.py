@@ -19,8 +19,6 @@ VARIETY_TOP_PENALTY = PenaltyFraction(1.0)
 # Number of distinct recently finished clusters the penalty ladder spans.
 VARIETY_LADDER_STEPS = 5
 
-VARIETY_SERIES_CONTINUATION_FACTOR = 0.6
-
 
 def top_penalty_for_preference(variety_penalty: float) -> PenaltyFraction:
     fraction = variety_penalty / UserPreferenceConfig.MAX_VARIETY_PENALTY
@@ -82,18 +80,10 @@ def build_variety_ladder(
     return ladder
 
 
-def variety_penalty_for(
-    item: ContentItem,
-    ladder: dict[str, float],
-    *,
-    is_series_continuation: bool = False,
-) -> float:
+def variety_penalty_for(item: ContentItem, ladder: dict[str, float]) -> float:
     if not ladder:
         return 0.0
     clusters = get_clusters_for_terms(extract_and_normalize_genres(item.metadata))
-    penalty = max(
+    return max(
         (ladder[cluster] for cluster in clusters if cluster in ladder), default=0.0
     )
-    if is_series_continuation:
-        penalty *= VARIETY_SERIES_CONTINUATION_FACTOR
-    return penalty

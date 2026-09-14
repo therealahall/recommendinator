@@ -17,7 +17,6 @@ from src.utils.series import (
     find_earliest_recommendable,
     get_series_name,
     inject_seasons_watched_tracking,
-    is_active_series_continuation,
     is_first_item_in_series,
     is_next_after_consumed,
     latest_season_watched_date,
@@ -337,53 +336,6 @@ def test_should_recommend_item_if_previous_not_in_data():
         status=ConsumptionStatus.UNREAD,
     )
     assert should_recommend_item(item_me3, series_tracking, unconsumed_items) is True
-
-
-def test_is_active_series_continuation():
-    """Drives the softened variety penalty: the next entry in a series the user is
-    mid-way through should not be demoted as if its genre were finished."""
-    started_tracking = {"The Expanse": {1.0}}
-    unconsumed_items = [
-        ContentItem(
-            id="exp2",
-            title="Caliban's War (The Expanse, #2)",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-        ),
-        ContentItem(
-            id="exp25",
-            title="Gods of Risk (The Expanse, #2.5)",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-        ),
-    ]
-    book_two = unconsumed_items[0]
-    novella_25 = unconsumed_items[1]
-
-    assert (
-        is_active_series_continuation(book_two, started_tracking, unconsumed_items)
-        is True
-    )
-    assert (
-        is_active_series_continuation(novella_25, started_tracking, unconsumed_items)
-        is False
-    )
-
-    first_book = ContentItem(
-        id="new1",
-        title="The Way of Kings (Stormlight, #1)",
-        content_type=ContentType.BOOK,
-        status=ConsumptionStatus.UNREAD,
-    )
-    assert is_active_series_continuation(first_book, {}, [first_book]) is False
-
-    standalone = ContentItem(
-        id="solo",
-        title="A Standalone Novel",
-        content_type=ContentType.BOOK,
-        status=ConsumptionStatus.UNREAD,
-    )
-    assert is_active_series_continuation(standalone, started_tracking, []) is False
 
 
 class TestShouldRecommendNonSequentialSeasons:

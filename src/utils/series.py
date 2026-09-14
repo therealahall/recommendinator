@@ -708,25 +708,6 @@ def find_earliest_recommendable(
     return None
 
 
-def is_active_series_continuation(
-    item: ContentItem,
-    series_tracking: dict[str, set[float]],
-    unconsumed_items: list[ContentItem] | None = None,
-    series_order: SeriesOrder | None = None,
-) -> bool:
-    """The first book of an *unstarted* series and standalone items return False —
-    beginning a brand-new series is not a continuation and should not be
-    shielded from the variety penalty.
-    """
-    order = _order_over(series_order, [item, *(unconsumed_items or ())])
-    located = order.locate(item)
-    if located is None:
-        return False
-    if not series_tracking.get(located[0]):
-        return False
-    return should_recommend_item(item, series_tracking, unconsumed_items, order)
-
-
 _SERIES_MARKER = re.compile(
     r"\s*\(([^()]*?)(?:(?:,\s*|\s+)#\s*|,\s*Book\s+)"
     r"(\d+(?:\.\d+)?)(?:\s*[-–]\s*\d+(?:\.\d+)?)?\)",
