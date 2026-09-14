@@ -5,13 +5,23 @@ from unittest.mock import patch
 import pytest
 from click.testing import CliRunner
 
-from src.auth.trakt import DevicePollResult, DevicePollStatus
+from src.ingestion.plugin_base import DevicePollResult, DevicePollStatus
 from src.storage.manager import StorageManager
-from tests.factories import MALFORMED_IDS, make_storage_mock
+from tests.factories import MALFORMED_IDS
+from tests.fakes.source_plugins import (
+    FAKE_AUTH_URL,
+    FAKE_AUTHORIZATION,
+    FAKE_CODE,
+    FAKE_REFRESH_TOKEN,
+    FakeDeviceCodeFlow,
+)
 
 from .conftest import _invoke_with_mocks
 
 USER_ID = 1
+TOKEN = "refresh_token"
+
+pytestmark = pytest.mark.usefixtures("registry_with_oauth_fakes")
 
 
 @pytest.fixture()
@@ -19,458 +29,292 @@ def storage(tmp_path: Path) -> StorageManager:
     return StorageManager(sqlite_path=tmp_path / "test.db")
 
 
-def _configure(storage: StorageManager, **plugins: str) -> None:
-    for sid, plugin in plugins.items():
-        storage.sources.upsert(USER_ID, sid, plugin, {}, enabled=True)
+def _configure(
+    storage: StorageManager, source_id: str, plugin: str, enabled: bool = True
+) -> None:
+    config = {"client_id": "cid"} if plugin == "fake_device" else {}
+    storage.sources.upsert(USER_ID, source_id, plugin, config, enabled=enabled)
+
+
+def _token(storage: StorageManager, source_id: str) -> str | None:
+    return storage.credentials.get(USER_ID, source_id, TOKEN)
+
+
+def _auth(
+    cli_runner: CliRunner, storage: StorageManager, *args: str, input_text: str = ""
+) -> Any:
+    return _invoke_with_mocks(
+        cli_runner, ["auth", *args], storage, input_text=input_text
+    )
 
 
 class TestAuthStatus:
     def test_auth_status_no_sources_configured(
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
-        result = _invoke_with_mocks(cli_runner, ["auth", "status"], storage)
+        result = _auth(cli_runner, storage, "status")
 
         assert result.exit_code == 0
         assert "No OAuth sources are configured" in result.output
 
-    def test_auth_status_shows_every_oauth_source(
+    def test_every_source_whose_plugin_declares_a_flow_is_listed(
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
-        storage.credentials.save(USER_ID, "gog_work", "refresh_token", "token")
-        _configure(
-            storage, gog_work="gog", epic_work="epic_games", my_books="calibre_web"
+        storage.credentials.save(USER_ID, "paste_work", TOKEN, "token")
+        _configure(storage, "paste_work", "fake_paste")
+        _configure(storage, "device_work", "fake_device")
+        _configure(storage, "books", "fake_file")
+
+        result = _auth(cli_runner, storage, "status")
+
+        assert result.exit_code == 0, result.output
+        assert "  device_work (fake_device): enabled, not connected" in result.output
+        assert "  paste_work (fake_paste): enabled, connected" in result.output
+        assert "books" not in result.output
+
+    def test_a_disabled_source_still_reports_its_token(
+        self, cli_runner: CliRunner, storage: StorageManager
+    ) -> None:
+        storage.credentials.save(USER_ID, "paste_work", TOKEN, "still-live")
+        _configure(storage, "paste_work", "fake_paste", enabled=False)
+
+        result = _auth(cli_runner, storage, "status")
+
+        assert "  paste_work (fake_paste): not enabled, connected" in result.output
+
+
+class TestAPluginDeclaringAFlowConnectsWithNoCoreEditRegression:
+    def test_a_code_paste_flow_connects_and_disconnects(
+        self, cli_runner: CliRunner, storage: StorageManager
+    ) -> None:
+        _configure(storage, "paste_work", "fake_paste")
+        named = ("--source", "fake_paste", "--source-id", "paste_work")
+
+        connected = _auth(
+            cli_runner,
+            storage,
+            "connect",
+            *named,
+            "--no-browser",
+            input_text=f"{FAKE_CODE}\n",
         )
 
-        result = _invoke_with_mocks(cli_runner, ["auth", "status"], storage)
+        assert connected.exit_code == 0, connected.output
+        assert FAKE_AUTH_URL in connected.output
+        assert _token(storage, "paste_work") == FAKE_REFRESH_TOKEN
+        assert "paste_work (fake_paste): enabled, connected" in (
+            _auth(cli_runner, storage, "status").output
+        )
 
-        assert result.exit_code == 0
-        assert "  epic_work (epic_games): enabled, not connected" in result.output
-        assert "  gog_work (gog): enabled, connected" in result.output
-        assert "my_books" not in result.output
+        revoked = _auth(cli_runner, storage, "disconnect", *named, "--yes")
 
+        assert revoked.exit_code == 0, revoked.output
+        assert _token(storage, "paste_work") is None
 
-class TestAuthStatusShowsADisabledSourcesTokenRegression:
-    @pytest.mark.parametrize(
-        ("source_id", "plugin"), [("gog_work", "gog"), ("epic_work", "epic_games")]
-    )
-    def test_a_disabled_source_still_reports_its_token(
-        self,
-        cli_runner: CliRunner,
-        storage: StorageManager,
-        source_id: str,
-        plugin: str,
+    def test_a_device_code_flow_connects_and_disconnects(
+        self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
-        storage.credentials.save(USER_ID, source_id, "refresh_token", "still-live")
-        storage.sources.upsert(USER_ID, source_id, plugin, {}, enabled=False)
+        _configure(storage, "device_work", "fake_device")
+        named = ("--source", "fake_device", "--source-id", "device_work")
 
-        result = _invoke_with_mocks(cli_runner, ["auth", "status"], storage)
+        with patch("src.cli.commands._auth.time.sleep") as slept:
+            connected = _auth(cli_runner, storage, "connect", *named)
 
-        assert f"  {source_id} ({plugin}): not enabled, connected" in result.output
+        assert connected.exit_code == 0, connected.output
+        assert FAKE_AUTHORIZATION.user_code in connected.output
+        slept.assert_called_once_with(FAKE_AUTHORIZATION.interval)
+        assert _token(storage, "device_work") == FAKE_REFRESH_TOKEN
 
+        revoked = _auth(cli_runner, storage, "disconnect", *named, "--yes")
 
-class TestAuthStatusSeesADatabaseBackedSourceRegression:
-    @pytest.mark.parametrize(
-        ("source_id", "plugin"), [("gog_db", "gog"), ("epic_db", "epic_games")]
-    )
-    def test_a_db_only_source_is_listed_and_enabled(
-        self,
-        cli_runner: CliRunner,
-        storage: StorageManager,
-        source_id: str,
-        plugin: str,
-    ) -> None:
-        storage.sources.upsert(USER_ID, source_id, plugin, {}, enabled=True)
-        storage.credentials.save(USER_ID, source_id, "refresh_token", "token")
-
-        result = _invoke_with_mocks(cli_runner, ["auth", "status"], storage)
-
-        assert f"  {source_id} ({plugin}): enabled, connected" in result.output
+        assert revoked.exit_code == 0, revoked.output
+        assert _token(storage, "device_work") is None
 
 
 class TestAuthConnect:
-    def test_connect_source_not_enabled(self, cli_runner: CliRunner) -> None:
-        mock_storage = make_storage_mock()
-        with patch("src.cli.commands._auth.is_gog_enabled", return_value=False):
-            result = _invoke_with_mocks(
-                cli_runner,
-                ["auth", "connect", "--source", "gog"],
-                mock_storage,
-            )
+    def test_a_source_that_is_not_enabled_is_refused(
+        self, cli_runner: CliRunner, storage: StorageManager
+    ) -> None:
+        result = _auth(cli_runner, storage, "connect", "--source", "fake_paste")
 
         assert result.exit_code != 0
-        assert "'gog' is not an enabled gog source" in result.output
+        assert "Fake Paste is not enabled or set up for that source" in result.output
+        assert "authentication failed" not in result.output
 
-    def test_connect_gog(self, cli_runner: CliRunner) -> None:
-        mock_storage = make_storage_mock()
-        auth_code = "test-auth-code-abc123xyz"
-        with (
-            patch("src.cli.commands._auth.is_gog_enabled", return_value=True),
-            patch(
-                "src.cli.commands._auth.get_gog_auth_url",
-                return_value="https://auth.gog.com/auth?client_id=test",
-            ),
-            patch(
-                "src.cli.commands._auth.exchange_gog_code",
-                return_value={"refresh_token": "test-token"},
-            ),
-            patch("src.cli.commands._auth.save_gog_token") as mock_save,
-            patch("webbrowser.open"),
-        ):
-            result = _invoke_with_mocks(
-                cli_runner,
-                ["auth", "connect", "--source", "gog"],
-                mock_storage,
-                input_text=f"{auth_code}\n",
-            )
+    def test_the_source_id_defaults_to_the_plugin_name(
+        self, cli_runner: CliRunner, storage: StorageManager
+    ) -> None:
+        _configure(storage, "fake_paste", "fake_paste")
 
-        assert result.exit_code == 0
-        assert "connected successfully" in result.output.lower()
-        mock_save.assert_called_once_with(
-            mock_storage, "test-token", source_id="gog", user_id=1
+        result = _auth(
+            cli_runner,
+            storage,
+            "connect",
+            "--source",
+            "fake_paste",
+            "--no-browser",
+            input_text=f"{FAKE_CODE}\n",
         )
 
-    def test_connect_trakt_success(self, cli_runner: CliRunner) -> None:
-        mock_storage = make_storage_mock()
-        flow = {
-            "device_code": "dev123",
-            "user_code": "ABCD1234",
-            "verification_url": "https://trakt.tv/activate",
-            "expires_in": 600,
-            "interval": 5,
-        }
-        with (
-            patch(
-                "src.cli.commands._auth.resolve_trakt_client_credentials",
-                return_value=("cid", "secret"),
-            ),
-            patch("src.cli.commands._auth.start_device_auth_flow", return_value=flow),
-            patch(
-                "src.cli.commands._auth.poll_device_token",
-                return_value=DevicePollResult(
-                    DevicePollStatus.SUCCESS, "trakt-refresh"
-                ),
-            ),
-            patch("src.cli.commands._auth.save_trakt_token") as mock_save,
-            patch("src.cli.commands._auth.time.sleep") as mock_sleep,
-        ):
-            result = _invoke_with_mocks(
-                cli_runner,
-                ["auth", "connect", "--source", "trakt"],
-                mock_storage,
-            )
+        assert result.exit_code == 0, result.output
+        assert _token(storage, "fake_paste") == FAKE_REFRESH_TOKEN
 
-        assert result.exit_code == 0
-        assert "ABCD1234" in result.output
-        assert "connected successfully" in result.output.lower()
-        mock_save.assert_called_once_with(
-            mock_storage, "trakt-refresh", source_id="trakt", user_id=1
+    def test_a_refused_code_stores_nothing(
+        self, cli_runner: CliRunner, storage: StorageManager
+    ) -> None:
+        _configure(storage, "fake_paste", "fake_paste")
+
+        result = _auth(
+            cli_runner,
+            storage,
+            "connect",
+            "--source",
+            "fake_paste",
+            "--no-browser",
+            input_text="not-the-code\n",
         )
-        mock_sleep.assert_called_once_with(flow["interval"])
 
-    def test_connect_trakt_denied(self, cli_runner: CliRunner) -> None:
-        mock_storage = make_storage_mock()
-        flow = {
-            "device_code": "dev123",
-            "user_code": "ABCD1234",
-            "verification_url": "https://trakt.tv/activate",
-            "expires_in": 600,
-            "interval": 5,
-        }
+        assert result.exit_code != 0
+        assert "Fake Paste authentication failed" in result.output
+        assert _token(storage, "fake_paste") is None
+
+    def test_a_denied_device_flow_stores_nothing(
+        self, cli_runner: CliRunner, storage: StorageManager
+    ) -> None:
+        _configure(storage, "fake_device", "fake_device")
+
         with (
-            patch(
-                "src.cli.commands._auth.resolve_trakt_client_credentials",
-                return_value=("cid", "secret"),
-            ),
-            patch("src.cli.commands._auth.start_device_auth_flow", return_value=flow),
-            patch(
-                "src.cli.commands._auth.poll_device_token",
+            patch.object(
+                FakeDeviceCodeFlow,
+                "poll",
                 return_value=DevicePollResult(DevicePollStatus.DENIED),
             ),
-            patch("src.cli.commands._auth.save_trakt_token") as mock_save,
             patch("src.cli.commands._auth.time.sleep"),
         ):
-            result = _invoke_with_mocks(
-                cli_runner,
-                ["auth", "connect", "--source", "trakt"],
-                mock_storage,
-            )
+            result = _auth(cli_runner, storage, "connect", "--source", "fake_device")
 
         assert result.exit_code != 0
         assert "denied" in result.output.lower()
-        mock_save.assert_not_called()
+        assert _token(storage, "fake_device") is None
 
-    def test_connect_no_refresh_token(self, cli_runner: CliRunner) -> None:
-        mock_storage = make_storage_mock()
-        auth_code = "test-auth-code-abc123xyz"
-        with (
-            patch("src.cli.commands._auth.is_gog_enabled", return_value=True),
-            patch(
-                "src.cli.commands._auth.get_gog_auth_url",
-                return_value="https://auth.gog.com",
-            ),
-            patch(
-                "src.cli.commands._auth.exchange_gog_code",
-                return_value={"access_token": "only"},
-            ),
-            patch("webbrowser.open"),
-        ):
-            result = _invoke_with_mocks(
-                cli_runner,
-                ["auth", "connect", "--source", "gog"],
-                mock_storage,
-                input_text=f"{auth_code}\n",
-            )
+    def test_a_device_source_missing_its_setup_is_not_called_a_failed_sign_in(
+        self, cli_runner: CliRunner, storage: StorageManager
+    ) -> None:
+        storage.sources.upsert(USER_ID, "fake_device", "fake_device", {}, enabled=True)
+
+        result = _auth(cli_runner, storage, "connect", "--source", "fake_device")
 
         assert result.exit_code != 0
-        assert "No refresh token received" in result.output
+        assert "not enabled" in result.output
+        assert "authentication failed" not in result.output
 
-
-class TestConnectingASourceTheWebCanConnectRegression:
-    @staticmethod
-    def _connect(cli_runner: CliRunner, storage: StorageManager, *extra: str) -> Any:
-        with (
-            patch(
-                "src.cli.commands._auth.get_gog_auth_url",
-                return_value="https://auth.gog.com",
-            ),
-            patch(
-                "src.cli.commands._auth.exchange_gog_code",
-                return_value={"refresh_token": "fresh-token"},
-            ),
-        ):
-            return _invoke_with_mocks(
-                cli_runner,
-                ["auth", "connect", "--source", "gog", "--no-browser", *extra],
-                storage,
-                input_text="an-authorization-code-long-enough\n",
-            )
-
-    def test_a_db_only_source_can_be_connected(
-        self, cli_runner: CliRunner, storage: StorageManager
+    @pytest.mark.parametrize(
+        ("verb", "flag"), [("connect", "--no-browser"), ("disconnect", "--yes")]
+    )
+    def test_a_plugin_declaring_no_flow_names_the_ones_that_do(
+        self, cli_runner: CliRunner, storage: StorageManager, verb: str, flag: str
     ) -> None:
-        storage.sources.upsert(USER_ID, "gog", "gog", {}, enabled=True)
+        result = _auth(cli_runner, storage, verb, "--source", "fake_file", flag)
 
-        result = self._connect(cli_runner, storage)
-
-        assert result.exit_code == 0, result.output
-        assert storage.credentials.get(USER_ID, "gog", "refresh_token") == "fresh-token"
-
-    def test_a_named_source_takes_its_own_token(
-        self, cli_runner: CliRunner, storage: StorageManager
-    ) -> None:
-        _configure(storage, gog_work="gog")
-
-        result = self._connect(cli_runner, storage, "--source-id", "gog_work")
-
-        assert result.exit_code == 0, result.output
-        assert (
-            storage.credentials.get(USER_ID, "gog_work", "refresh_token")
-            == "fresh-token"
-        )
-        assert storage.credentials.get(USER_ID, "gog", "refresh_token") is None
-
-    def test_a_named_trakt_source_resolves_its_own_client_credentials(
-        self, cli_runner: CliRunner, storage: StorageManager
-    ) -> None:
-        storage.sources.upsert(
-            USER_ID, "trakt_work", "trakt", {"client_id": "cid"}, enabled=True
-        )
-        storage.credentials.save(USER_ID, "trakt_work", "client_secret", "secret")
-
-        with (
-            patch(
-                "src.cli.commands._auth.start_device_auth_flow",
-                return_value={
-                    "device_code": "dev123",
-                    "user_code": "ABCD1234",
-                    "verification_url": "https://trakt.tv/activate",
-                    "expires_in": 600,
-                    "interval": 5,
-                },
-            ),
-            patch(
-                "src.cli.commands._auth.poll_device_token",
-                return_value=DevicePollResult(DevicePollStatus.SUCCESS, "trakt-token"),
-            ),
-            patch("src.cli.commands._auth.time.sleep"),
-        ):
-            result = _invoke_with_mocks(
-                cli_runner,
-                ["auth", "connect", "--source", "trakt", "--source-id", "trakt_work"],
-                storage,
-            )
-
-        assert result.exit_code == 0, result.output
-        assert (
-            storage.credentials.get(USER_ID, "trakt_work", "refresh_token")
-            == "trakt-token"
-        )
-
-
-PROVIDERS = [("gog", "gog"), ("epic", "epic_games"), ("trakt", "trakt")]
+        assert result.exit_code != 0
+        assert "--source must be one of: fake_device, fake_paste" in result.output
 
 
 class TestAuthDisconnect:
-    @pytest.mark.parametrize(("source", "plugin"), PROVIDERS)
-    def test_disconnect_deletes_the_default_sources_token(
-        self,
-        cli_runner: CliRunner,
-        storage: StorageManager,
-        source: str,
-        plugin: str,
-    ) -> None:
-        storage.credentials.save(USER_ID, plugin, "refresh_token", "token")
-        _configure(storage, **{plugin: plugin})
-
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["auth", "disconnect", "--source", source, "--yes"],
-            storage,
-        )
-
-        assert result.exit_code == 0
-        assert "disconnected" in result.output.lower()
-        assert storage.credentials.get(USER_ID, plugin, "refresh_token") is None
-
-    def test_disconnect_without_yes(
+    def test_disconnect_without_yes_asks_first(
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
-        storage.credentials.save(USER_ID, "gog", "refresh_token", "token")
-        _configure(storage, gog="gog")
+        storage.credentials.save(USER_ID, "fake_paste", TOKEN, "token")
+        _configure(storage, "fake_paste", "fake_paste")
 
-        result = _invoke_with_mocks(
+        result = _auth(
             cli_runner,
-            ["auth", "disconnect", "--source", "gog"],
             storage,
+            "disconnect",
+            "--source",
+            "fake_paste",
             input_text="n\n",
         )
 
         assert "Aborted" in result.output
-        assert storage.credentials.get(USER_ID, "gog", "refresh_token") == "token"
+        assert _token(storage, "fake_paste") == "token"
 
     def test_disconnect_no_active_connection(
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
-        _configure(storage, gog="gog")
+        _configure(storage, "fake_paste", "fake_paste")
 
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["auth", "disconnect", "--source", "gog", "--yes"],
-            storage,
+        result = _auth(
+            cli_runner, storage, "disconnect", "--source", "fake_paste", "--yes"
         )
 
         assert result.exit_code != 0
-        assert "No active gog connection" in result.output
+        assert "No active Fake Paste connection" in result.output
 
-
-class TestDisconnectingASourceOfItsOwnNameRegression:
-    @pytest.mark.parametrize(("source", "plugin"), PROVIDERS)
-    def test_a_named_source_can_revoke_its_own_token(
-        self,
-        cli_runner: CliRunner,
-        storage: StorageManager,
-        source: str,
-        plugin: str,
-    ) -> None:
-        storage.credentials.save(USER_ID, f"{plugin}_work", "refresh_token", "mine")
-        storage.credentials.save(
-            USER_ID, plugin, "refresh_token", "the-plugin-name-row"
-        )
-        _configure(storage, **{f"{plugin}_work": plugin})
-
-        result = _invoke_with_mocks(
-            cli_runner,
-            [
-                "auth",
-                "disconnect",
-                "--source",
-                source,
-                "--source-id",
-                f"{plugin}_work",
-                "--yes",
-            ],
-            storage,
-        )
-
-        assert result.exit_code == 0
-        assert (
-            storage.credentials.get(USER_ID, f"{plugin}_work", "refresh_token") is None
-        )
-        assert (
-            storage.credentials.get(USER_ID, plugin, "refresh_token")
-            == "the-plugin-name-row"
-        )
-
-    def test_a_disabled_source_can_still_revoke_its_token(
+    def test_a_named_source_revokes_only_its_own_token(
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
-        storage.credentials.save(USER_ID, "gog_work", "refresh_token", "still-live")
-        storage.sources.upsert(USER_ID, "gog_work", "gog", {}, enabled=False)
+        storage.credentials.save(USER_ID, "paste_work", TOKEN, "mine")
+        storage.credentials.save(USER_ID, "fake_paste", TOKEN, "the-plugin-name-row")
+        _configure(storage, "paste_work", "fake_paste")
 
-        result = _invoke_with_mocks(
+        result = _auth(
             cli_runner,
-            [
-                "auth",
-                "disconnect",
-                "--source",
-                "gog",
-                "--source-id",
-                "gog_work",
-                "--yes",
-            ],
             storage,
+            "disconnect",
+            "--source",
+            "fake_paste",
+            "--source-id",
+            "paste_work",
+            "--yes",
         )
 
-        assert result.exit_code == 0
-        assert storage.credentials.get(USER_ID, "gog_work", "refresh_token") is None
+        assert result.exit_code == 0, result.output
+        assert _token(storage, "paste_work") is None
+        assert _token(storage, "fake_paste") == "the-plugin-name-row"
 
     def test_an_id_another_plugin_owns_is_refused(
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
-        storage.credentials.save(USER_ID, "trakt_work", "refresh_token", "not-gogs")
-        _configure(storage, trakt_work="trakt")
+        storage.credentials.save(USER_ID, "device_work", TOKEN, "not-paste")
+        _configure(storage, "device_work", "fake_device")
 
-        result = _invoke_with_mocks(
+        result = _auth(
             cli_runner,
-            [
-                "auth",
-                "disconnect",
-                "--source",
-                "gog",
-                "--source-id",
-                "trakt_work",
-                "--yes",
-            ],
             storage,
+            "disconnect",
+            "--source",
+            "fake_paste",
+            "--source-id",
+            "device_work",
+            "--yes",
         )
 
         assert result.exit_code != 0
-        assert "No active gog connection" in result.output
-        assert (
-            storage.credentials.get(USER_ID, "trakt_work", "refresh_token")
-            == "not-gogs"
-        )
+        assert "No active Fake Paste connection" in result.output
+        assert _token(storage, "device_work") == "not-paste"
 
-
-class TestRevokingATokenNoSourceClaimsRegression:
-    @pytest.mark.parametrize(("source", "plugin"), PROVIDERS)
-    def test_a_stranded_token_can_still_be_revoked(
-        self,
-        cli_runner: CliRunner,
-        storage: StorageManager,
-        source: str,
-        plugin: str,
+    @pytest.mark.parametrize("enabled", [True, False, None])
+    def test_a_token_is_revocable_whatever_its_source_state(
+        self, cli_runner: CliRunner, storage: StorageManager, enabled: bool | None
     ) -> None:
-        storage.credentials.save(USER_ID, plugin, "refresh_token", "stranded")
+        storage.credentials.save(USER_ID, "paste_work", TOKEN, "still-live")
+        if enabled is not None:
+            _configure(storage, "paste_work", "fake_paste", enabled=enabled)
 
-        result = _invoke_with_mocks(
+        result = _auth(
             cli_runner,
-            ["auth", "disconnect", "--source", source, "--yes"],
             storage,
+            "disconnect",
+            "--source",
+            "fake_paste",
+            "--source-id",
+            "paste_work",
+            "--yes",
         )
 
         assert result.exit_code == 0, result.output
-        assert storage.credentials.get(USER_ID, plugin, "refresh_token") is None
+        assert _token(storage, "paste_work") is None
 
 
 class TestBothAuthVerbsValidateTheSourceId:
@@ -478,35 +322,29 @@ class TestBothAuthVerbsValidateTheSourceId:
 
     @pytest.mark.parametrize("verb", sorted(_VERB_FLAGS))
     @pytest.mark.parametrize("bad_id", MALFORMED_IDS)
-    @pytest.mark.parametrize(("source", "plugin"), PROVIDERS)
+    @pytest.mark.parametrize("plugin", ["fake_paste", "fake_device"])
     def test_a_malformed_id_is_refused_before_anything_reads_it(
         self,
         cli_runner: CliRunner,
         storage: StorageManager,
         verb: str,
         bad_id: str,
-        source: str,
         plugin: str,
     ) -> None:
-        storage.credentials.save(USER_ID, plugin, "refresh_token", "the-default-id")
-        _configure(storage, **{plugin: plugin})
+        storage.credentials.save(USER_ID, plugin, TOKEN, "the-default-id")
+        _configure(storage, plugin, plugin)
 
-        result = _invoke_with_mocks(
+        result = _auth(
             cli_runner,
-            [
-                "auth",
-                verb,
-                "--source",
-                source,
-                "--source-id",
-                bad_id,
-                *self._VERB_FLAGS[verb],
-            ],
             storage,
+            verb,
+            "--source",
+            plugin,
+            "--source-id",
+            bad_id,
+            *self._VERB_FLAGS[verb],
         )
 
         assert result.exit_code != 0
         assert "--source-id must start with a lowercase letter" in result.output
-        assert storage.credentials.get(USER_ID, plugin, "refresh_token") == (
-            "the-default-id"
-        )
+        assert _token(storage, plugin) == "the-default-id"

@@ -9,7 +9,16 @@ from typing import Any
 import pytest
 
 from src.ingestion import registry as registry_module
-from src.ingestion.plugin_base import ConfigField, SourcePlugin
+from src.ingestion.plugin_base import (
+    CodePasteFlow,
+    ConfigField,
+    DeviceAuthorization,
+    DeviceCodeFlow,
+    DevicePollResult,
+    DevicePollStatus,
+    OAuthError,
+    SourcePlugin,
+)
 from src.ingestion.registry import PluginRegistry
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 
@@ -133,6 +142,96 @@ class FakeApiPlugin(SourcePlugin):
         )
 
 
+FAKE_AUTH_URL = "https://fake-service.example/sign-in"
+FAKE_CODE = "the-code-the-fake-service-shows"
+FAKE_REFRESH_TOKEN = "fake-refresh-token"
+FAKE_AUTHORIZATION = DeviceAuthorization(
+    device_code="fake-device-code",
+    user_code="FAKE-1234",
+    verification_url="https://fake-service.example/activate",
+    expires_in=600,
+    interval=5,
+)
+
+
+class FakeCodePasteFlow(CodePasteFlow):
+    code_help = "Paste the code the fake service shows:"
+
+    def auth_url(self, config: dict[str, Any]) -> str:
+        return FAKE_AUTH_URL
+
+    def exchange_code(self, pasted: str, config: dict[str, Any]) -> str:
+        if pasted != FAKE_CODE:
+            raise OAuthError("the fake service refused that code")
+        return FAKE_REFRESH_TOKEN
+
+
+class FakeDeviceCodeFlow(DeviceCodeFlow):
+    setup_hint = "Save a client ID before you can connect."
+
+    def is_ready(self, config: dict[str, Any]) -> bool:
+        return bool(config.get("client_id"))
+
+    def start(self, config: dict[str, Any]) -> DeviceAuthorization:
+        return FAKE_AUTHORIZATION
+
+    def poll(self, device_code: str, config: dict[str, Any]) -> DevicePollResult:
+        if device_code != FAKE_AUTHORIZATION.device_code:
+            raise OAuthError("the fake service does not know that device code")
+        return DevicePollResult(DevicePollStatus.SUCCESS, FAKE_REFRESH_TOKEN)
+
+
+class _FakeAccountPlugin(SourcePlugin):
+    @property
+    def content_types(self) -> list[ContentType]:
+        return [ContentType.VIDEO_GAME]
+
+    @property
+    def requires_api_key(self) -> bool:
+        return True
+
+    def get_config_schema(self) -> list[ConfigField]:
+        return [
+            ConfigField(
+                name="client_id",
+                field_type=str,
+                required=False,
+                default="",
+                description="Client ID",
+            )
+        ]
+
+    def validate_config(self, config: dict[str, Any], **kwargs: Any) -> list[str]:
+        return []
+
+    def fetch(self, config: dict[str, Any]) -> Iterator[ContentItem]:
+        yield from ()
+
+
+class FakeCodePastePlugin(_FakeAccountPlugin):
+    oauth = FakeCodePasteFlow()
+
+    @property
+    def name(self) -> str:
+        return "fake_paste"
+
+    @property
+    def display_name(self) -> str:
+        return "Fake Paste"
+
+
+class FakeDevicePlugin(_FakeAccountPlugin):
+    oauth = FakeDeviceCodeFlow()
+
+    @property
+    def name(self) -> str:
+        return "fake_device"
+
+    @property
+    def display_name(self) -> str:
+        return "Fake Device"
+
+
 FAILED_PLUGIN_MODULE = "goodreads_rss"
 FAILED_PLUGIN_REASON = "ModuleNotFoundError: No module named 'nonesuch'"
 UNLOADED_PLUGIN = "goodreads_rss_shelves"
@@ -151,6 +250,20 @@ def registry_with_source_fakes() -> Iterator[None]:
     registry._import_errors.clear()
     registry.register(FakeFilePlugin())
     registry.register(FakeApiPlugin())
+    yield
+    PluginRegistry.reset_instance()
+
+
+@pytest.fixture()
+def registry_with_oauth_fakes() -> Iterator[None]:
+    """Only fakes, so no connect path can lean on a real service's code."""
+    registry = PluginRegistry.get_instance()
+    registry._discovered = True
+    registry._plugins.clear()
+    registry._import_errors.clear()
+    registry.register(FakeFilePlugin())
+    registry.register(FakeCodePastePlugin())
+    registry.register(FakeDevicePlugin())
     yield
     PluginRegistry.reset_instance()
 

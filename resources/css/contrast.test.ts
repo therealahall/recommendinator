@@ -330,6 +330,7 @@ const NON_TEXT = 3
 
 const ACCORDION = 'resources/js/components/atoms/Accordion.vue'
 const DATA_PAGE = 'resources/js/components/pages/DataPage.vue'
+const DEVICE_FLOW = 'resources/js/components/molecules/DeviceCodeFlow.vue'
 const ENRICHMENT_PROVIDERS = 'resources/js/components/organisms/EnrichmentProviders.vue'
 const NUMBER_STEPPER = 'resources/js/components/atoms/NumberStepper.vue'
 const PREFERENCES_PAGE = 'resources/js/components/pages/PreferencesPage.vue'
@@ -337,7 +338,6 @@ const SEASON_CHECKLIST = 'resources/js/components/molecules/SeasonChecklist.vue'
 const SOURCE_CONFIG_FORM = 'resources/js/components/molecules/SourceConfigForm.vue'
 const SOURCE_SYNC_PROGRESS = 'resources/js/components/molecules/SourceSyncProgress.vue'
 const STAR_RATING = 'resources/js/components/atoms/StarRating.vue'
-const TRAKT_FLOW = 'resources/js/components/molecules/TraktDeviceCodeFlow.vue'
 const WEIGHTS = 'resources/js/components/organisms/WeightsDialog.vue'
 
 const MUTED_SURFACES = [
@@ -539,8 +539,8 @@ const TINTED_TEXT: [string, string, string, string][] = [
   ['how far that scorer reached', BASE, '.score-value', '--bg-primary'],
   ['the points variety took off', BASE, '.score-row-penalty .score-value', '--bg-primary'],
   ['a hovered scorer tooltip', BASE, '.scorer-tooltip-wrap:hover .scorer-tooltip-icon', '--bg-card'],
-  ['the Trakt activation link', TRAKT_FLOW, '.trakt-flow-link', '--bg-card'],
-  ['a Trakt connect failure', TRAKT_FLOW, '.trakt-flow-status--error', '--bg-card'],
+  ['the device-code activation link', DEVICE_FLOW, '.device-flow-link', '--bg-card'],
+  ['a device-code connect failure', DEVICE_FLOW, '.device-flow-status--error', '--bg-card'],
   ['a provider list caption', ENRICHMENT_PROVIDERS, '.provider-list-caption', '--bg-card'],
   ['an arrow that reorders a provider', ENRICHMENT_PROVIDERS, '.provider-move', '--bg-card'],
   // The row the arrows sit in fills with --bg-hover under a pointer and under

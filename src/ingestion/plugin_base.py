@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterator
-from typing import TYPE_CHECKING, Any, final
+from dataclasses import dataclass
+from enum import Enum
+from typing import TYPE_CHECKING, Any, ClassVar, final
 
 # Re-exported: docs/PLUGIN_DEVELOPMENT.md tells plugin authors to import
 # ConfigField from here, and every plugin in and out of the repo does.
@@ -46,9 +48,77 @@ class SourceError(Exception):
         super().__init__(f"{plugin_name}: {message}")
 
 
+class OAuthError(Exception):
+    """A connect flow's refusal. Both interfaces log it and answer with a fixed
+    string, so it may say what failed but must never quote a credential.
+    """
+
+
+@dataclass(frozen=True)
+class DeviceAuthorization:
+    device_code: str
+    user_code: str
+    verification_url: str
+    expires_in: int
+    interval: int
+
+
+class DevicePollStatus(str, Enum):
+    SUCCESS = "success"
+    PENDING = "pending"
+    SLOW_DOWN = "slow_down"
+    EXPIRED = "expired"
+    DENIED = "denied"
+
+
+@dataclass(frozen=True)
+class DevicePollResult:
+    """``refresh_token`` is only populated when ``status`` is ``SUCCESS``."""
+
+    status: DevicePollStatus
+    refresh_token: str | None = None
+
+
+class OAuthFlow:
+    """How a source connects its account. Core stores, reports and revokes the
+    token; the flow only talks to the service.
+    """
+
+    #: What must be saved before the flow can start.
+    setup_hint: ClassVar[str] = ""
+
+    def is_ready(self, config: dict[str, Any]) -> bool:
+        return True
+
+
+class CodePasteFlow(OAuthFlow, ABC):
+    """Opens a sign-in link, then takes back what the service showed."""
+
+    #: What to paste back, and where the service shows it.
+    code_help: ClassVar[str] = ""
+
+    @abstractmethod
+    def auth_url(self, config: dict[str, Any]) -> str: ...
+
+    @abstractmethod
+    def exchange_code(self, pasted: str, config: dict[str, Any]) -> str:
+        """The refresh token for what was pasted, or ``OAuthError``."""
+
+
+class DeviceCodeFlow(OAuthFlow, ABC):
+    """Shows a code to enter on the service's site, then polls for approval."""
+
+    @abstractmethod
+    def start(self, config: dict[str, Any]) -> DeviceAuthorization: ...
+
+    @abstractmethod
+    def poll(self, device_code: str, config: dict[str, Any]) -> DevicePollResult: ...
+
+
 class SourcePlugin(ABC):
     #: Until the user picks one; a key of ``schedule.SYNC_INTERVAL_KEYS``.
     default_sync_interval: str = "daily"
+    oauth: OAuthFlow | None = None
 
     @property
     @abstractmethod

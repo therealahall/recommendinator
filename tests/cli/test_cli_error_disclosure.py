@@ -32,7 +32,7 @@ from src.sources.service import SOURCE_ID_RULE, SOURCE_MISCONFIGURED_DETAIL
 from src.storage.accounts import AccountStore
 from src.storage.manager import StorageManager
 from tests.factories import make_storage_mock
-from tests.fakes.source_plugins import FakeFilePlugin
+from tests.fakes.source_plugins import FakeCodePasteFlow, FakeFilePlugin
 
 from .conftest import _invoke_with_mocks
 
@@ -247,25 +247,26 @@ class TestUpdateNamesTheSettingRatherThanThePath:
 class TestVerboseIsAnsweredByEveryCommandThatRefusesRegression:
     _CODE = "test-auth-code-abc123xyz\n"
 
+    @pytest.mark.usefixtures("registry_with_oauth_fakes")
     def test_auth_connect_puts_the_exchanges_reason_on_the_terminal(
-        self, cli_runner: CliRunner
+        self, cli_runner: CliRunner, tmp_path: Path
     ) -> None:
-        with (
-            patch("src.cli.commands._auth.is_gog_enabled", return_value=True),
-            patch(
-                "src.cli.commands._auth.get_gog_auth_url",
-                return_value="https://auth.gog.com",
-            ),
-            patch(
-                "src.cli.commands._auth.exchange_gog_code",
-                side_effect=RuntimeError(_FAULT),
-            ),
-            patch("webbrowser.open"),
+        storage = StorageManager(sqlite_path=tmp_path / "auth.db")
+        storage.sources.upsert(1, "fake_paste", "fake_paste", {}, enabled=True)
+        with patch.object(
+            FakeCodePasteFlow, "exchange_code", side_effect=RuntimeError(_FAULT)
         ):
             result = _invoke_with_mocks(
                 cli_runner,
-                ["--verbose", "auth", "connect", "--source", "gog"],
-                make_storage_mock(),
+                [
+                    "--verbose",
+                    "auth",
+                    "connect",
+                    "--source",
+                    "fake_paste",
+                    "--no-browser",
+                ],
+                storage,
                 input_text=self._CODE,
             )
 

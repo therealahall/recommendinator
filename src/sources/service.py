@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal
 
 from src.ingestion.paths import PathNotAllowed, resolve_source_path
-from src.ingestion.plugin_base import SourcePlugin
+from src.ingestion.plugin_base import CodePasteFlow, SourcePlugin
 from src.ingestion.registry import get_registry
 from src.ingestion.schedule import (
     SYNC_INTERVAL_PRESETS,
@@ -362,8 +362,8 @@ def resolve_input_for_plugin(
     storage: StorageManager,
     user_id: int = 1,
 ) -> ResolvedInput | None:
-    """A client-supplied id is a credential key: unchecked, a GOG exchange files
-    its token where Trakt reads one.
+    """A client-supplied id is a credential key: unchecked, one plugin's token
+    exchange files its token where another plugin reads one.
     """
     source = _configured_source(_source_row(source_id, storage, user_id))
     if source is None or source.plugin.name != plugin_name:
@@ -465,6 +465,17 @@ def build_runs_view(runs: list[SyncRunDict]) -> list[dict[str, Any]]:
     ]
 
 
+def _oauth_view(plugin: SourcePlugin) -> dict[str, str] | None:
+    flow = plugin.oauth
+    if flow is None:
+        return None
+    return {
+        "flow": "code_paste" if isinstance(flow, CodePasteFlow) else "device_code",
+        "code_help": flow.code_help if isinstance(flow, CodePasteFlow) else "",
+        "setup_hint": flow.setup_hint,
+    }
+
+
 def build_schema_view(source_id: str, plugin: SourcePlugin) -> dict[str, Any]:
     return {
         "source_id": source_id,
@@ -486,6 +497,7 @@ def build_schema_view(source_id: str, plugin: SourcePlugin) -> dict[str, Any]:
             }
             for field in plugin.get_config_schema()
         ],
+        "oauth": _oauth_view(plugin),
     }
 
 

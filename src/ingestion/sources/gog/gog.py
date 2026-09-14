@@ -4,12 +4,15 @@ import logging
 import time
 from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING, Any
+from urllib.parse import parse_qs, urlparse
 
 import requests
 
 from src.ingestion.plugin_base import (
+    CodePasteFlow,
     ConfigField,
     CredentialUpdateCallback,
+    OAuthError,
     ProgressCallback,
     SourceError,
     SourcePlugin,
@@ -39,6 +42,8 @@ GOG_CLIENT_SECRET = "9d85c43b1482497dbbce61f6e4aa173a433796eeae2ca8c5f6129f2dc4d
 GOG_AUTH_URL = "https://auth.gog.com/token"
 GOG_EMBED_URL = "https://embed.gog.com"
 GOG_API_URL = "https://api.gog.com"
+GOG_LOGIN_URL = "https://auth.gog.com/auth"
+GOG_REDIRECT_URI = "https://embed.gog.com/on_login_success?origin=client"
 
 
 class GogAPIError(Exception):
@@ -219,7 +224,83 @@ def get_multiple_product_details(
     return details
 
 
+def extract_code_from_input(user_input: str) -> str:
+    user_input = user_input.strip()
+
+    if user_input.startswith("http"):
+        query_params = parse_qs(urlparse(user_input).query)
+        if "code" in query_params:
+            return query_params["code"][0]
+        raise OAuthError(
+            "URL does not contain a 'code' parameter. "
+            "Make sure you copied the full redirect URL after logging in."
+        )
+
+    if len(user_input) < 20:
+        raise OAuthError(
+            "Input appears too short to be a valid authorization code. "
+            "Please copy the full code or URL."
+        )
+
+    return user_input
+
+
+def exchange_code_for_tokens(code: str) -> dict[str, Any]:
+    params = {
+        "client_id": GOG_CLIENT_ID,
+        "client_secret": GOG_CLIENT_SECRET,
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": GOG_REDIRECT_URI,
+    }
+
+    try:
+        response = request_within_origin(
+            requests.get, GOG_AUTH_URL, "GOG", fixed_endpoint_refusal, params=params
+        )
+
+        if not response.ok:
+            logger.error(
+                "GOG token exchange failed with status %d", response.status_code
+            )
+            raise OAuthError(
+                "Token exchange failed. Please try again or check your authorization code."
+            )
+
+        data: dict[str, Any] = response.json()
+
+        if "refresh_token" not in data:
+            raise OAuthError("Response missing refresh_token")
+
+        return data
+
+    except requests.RequestException as error:
+        # The authorization code and client secret are query parameters here, so
+        # the URL inside ``error`` is a secret — it may reach neither the log nor
+        # the ``__cause__`` chain the CLI renders with ``exc_info=True``.
+        logger.error("GOG token exchange request failed: %s", exception_for_log(error))
+        raise OAuthError("Failed to connect to GOG servers") from None
+    except RedirectRefused as refused:
+        raise OAuthError(str(refused)) from None
+
+
+class GogOAuth(CodePasteFlow):
+    code_help = "Paste the redirect URL after logging in:"
+
+    def auth_url(self, config: dict[str, Any]) -> str:
+        return (
+            f"{GOG_LOGIN_URL}?client_id={GOG_CLIENT_ID}"
+            f"&redirect_uri={GOG_REDIRECT_URI}&response_type=code&layout=client2"
+        )
+
+    def exchange_code(self, pasted: str, config: dict[str, Any]) -> str:
+        tokens = exchange_code_for_tokens(extract_code_from_input(pasted))
+        return str(tokens["refresh_token"])
+
+
 class GogPlugin(SourcePlugin):
+    oauth = GogOAuth()
+
     @property
     def name(self) -> str:
         return "gog"

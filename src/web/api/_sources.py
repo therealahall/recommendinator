@@ -1,5 +1,5 @@
 import logging
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
@@ -47,12 +47,19 @@ class SyncIntervalOption(BaseModel):
     label: str
 
 
+class OAuthConnectSchema(BaseModel):
+    flow: Literal["code_paste", "device_code"]
+    code_help: str
+    setup_hint: str
+
+
 class SourceSchemaResponse(BaseModel):
     source_id: str
     plugin: str
     plugin_display_name: str
     fields: list[SourceFieldSchema]
     sync_intervals: list[SyncIntervalOption]
+    oauth: OAuthConnectSchema | None
 
 
 class SourceConfigResponse(BaseModel):

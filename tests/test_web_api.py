@@ -23,9 +23,6 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from src.auth.epic import EpicAuthError
-from src.auth.gog import GogAuthError
-from src.auth.trakt import DevicePollResult, DevicePollStatus, TraktAuthError
 from src.config.service import load_config
 from src.enrichment.manager import EnrichmentManager, EnrichmentStart
 from src.ingestion.paths import get_allowed_source_roots
@@ -2012,106 +2009,6 @@ def test_edit_rejects_oversized_manual_metadata(client, mock_components):
     mock_components["storage"].update_item_from_ui.assert_not_called()
 
 
-class TestExchangeGogTokenEndpoint:
-    def test_successful_exchange_saves_to_db(
-        self, client: TestClient, mock_components: dict
-    ) -> None:
-        configure_source("gog", "gog")
-
-        with (
-            patch("src.web.api._oauth.extract_gog_code", return_value="valid_code"),
-            patch(
-                "src.web.api._oauth.exchange_gog_tokens",
-                return_value={
-                    "access_token": "access123",
-                    "refresh_token": "super_secret_token",
-                },
-            ),
-            patch("src.web.api._oauth.save_gog_token") as mock_save,
-        ):
-            response = client.post(
-                "/api/gog/exchange", json={"code_or_url": "valid_code"}
-            )
-
-        assert response.status_code == 200
-        body = response.json()
-        assert body["success"] is True
-        assert "refresh_token" not in body
-        assert "super_secret_token" not in str(body)
-        mock_save.assert_called_once_with(
-            mock_components["storage"], "super_secret_token", source_id="gog"
-        )
-
-    def test_exchange_succeeds_with_readonly_config(
-        self, client: TestClient, mock_components: dict
-    ) -> None:
-        """Bug: Docker mounts config read-only, causing OSError when
-        update_config_with_token tried to write."""
-        configure_source("gog", "gog")
-
-        with (
-            patch("src.web.api._oauth.extract_gog_code", return_value="valid_code"),
-            patch(
-                "src.web.api._oauth.exchange_gog_tokens",
-                return_value={
-                    "access_token": "access123",
-                    "refresh_token": "super_secret_token",
-                },
-            ),
-            patch("src.web.api._oauth.save_gog_token"),
-        ):
-            response = client.post(
-                "/api/gog/exchange", json={"code_or_url": "valid_code"}
-            )
-
-        assert response.status_code == 200
-        body = response.json()
-        assert body["success"] is True
-        assert "manual_setup" not in body
-
-    def test_auth_error_returns_generic_400(
-        self, client: TestClient, mock_components: dict
-    ) -> None:
-        configure_source("gog", "gog")
-
-        with patch(
-            "src.web.api._oauth.extract_gog_code",
-            side_effect=GogAuthError("Internal details that must not leak"),
-        ):
-            response = client.post("/api/gog/exchange", json={"code_or_url": "bad"})
-
-        assert response.status_code == 400
-        body = response.json()
-        assert body["detail"] == "GOG authentication failed"
-        assert "Internal details" not in str(body)
-
-    def test_unexpected_exception_returns_generic_500(
-        self, client: TestClient, mock_components: dict
-    ) -> None:
-        configure_source("gog", "gog")
-
-        with patch(
-            "src.web.api._oauth.extract_gog_code",
-            side_effect=RuntimeError("Internal database state is corrupt"),
-        ):
-            response = client.post("/api/gog/exchange", json={"code_or_url": "any"})
-
-        assert response.status_code == 500
-        body = response.json()
-        assert body["detail"] == "Unexpected error during GOG authentication"
-        assert "Internal database state" not in str(body)
-
-    def test_gog_not_enabled_returns_400(
-        self, client: TestClient, mock_components: dict
-    ) -> None:
-        configure_source("gog", "gog", enabled=False)
-
-        response = client.post("/api/gog/exchange", json={"code_or_url": "some_code"})
-
-        assert response.status_code == 400
-        assert "not enabled" in response.json()["detail"]
-
-
 class TestPaginationAndSorting:
     def test_sort_by_invalid_value_returns_400(
         self, client: TestClient, mock_components: dict
@@ -2759,356 +2656,6 @@ class TestConfigReload:
         assert response.status_code == 500
 
 
-class TestExchangeEpicTokenEndpoint:
-    def test_successful_exchange_saves_to_db(
-        self, client: TestClient, mock_components: dict
-    ) -> None:
-        configure_source("epic_games", "epic_games")
-
-        with (
-            patch("src.web.api._oauth.extract_epic_code", return_value="valid_code"),
-            patch(
-                "src.web.api._oauth.exchange_epic_tokens",
-                return_value={
-                    "access_token": "access123",
-                    "refresh_token": "super_secret_token",
-                },
-            ),
-            patch("src.web.api._oauth.save_epic_token") as mock_save,
-        ):
-            response = client.post(
-                "/api/epic/exchange", json={"code_or_json": "valid_code"}
-            )
-
-        assert response.status_code == 200
-        body = response.json()
-        assert body["success"] is True
-        assert set(body.keys()) == {"success", "message"}
-        assert "super_secret_token" not in str(body)
-        assert "access123" not in str(body)
-        mock_save.assert_called_once_with(
-            mock_components["storage"], "super_secret_token", source_id="epic_games"
-        )
-
-    def test_auth_error_returns_generic_400(
-        self, client: TestClient, mock_components: dict
-    ) -> None:
-        configure_source("epic_games", "epic_games")
-
-        with patch(
-            "src.web.api._oauth.extract_epic_code",
-            side_effect=EpicAuthError("Internal details that must not leak"),
-        ):
-            response = client.post("/api/epic/exchange", json={"code_or_json": "bad"})
-
-        assert response.status_code == 400
-        body = response.json()
-        assert body["detail"] == "Epic Games authentication failed"
-        assert "Internal details" not in str(body)
-
-    def test_epic_not_enabled_returns_400(
-        self, client: TestClient, mock_components: dict
-    ) -> None:
-        configure_source("epic_games", "epic_games", enabled=False)
-
-        response = client.post("/api/epic/exchange", json={"code_or_json": "some_code"})
-
-        assert response.status_code == 400
-        assert (
-            response.json()["detail"]
-            == "Epic Games is not enabled in the current configuration."
-        )
-
-    def test_unexpected_error_returns_500(
-        self, client: TestClient, mock_components: dict
-    ) -> None:
-        configure_source("epic_games", "epic_games")
-
-        with (
-            patch("src.web.api._oauth.extract_epic_code", return_value="valid_code"),
-            patch(
-                "src.web.api._oauth.exchange_epic_tokens",
-                side_effect=RuntimeError("unexpected"),
-            ),
-        ):
-            response = client.post(
-                "/api/epic/exchange", json={"code_or_json": "valid_code"}
-            )
-
-        assert response.status_code == 500
-        body = response.json()
-        assert body["detail"] == "Unexpected error during Epic Games authentication"
-        assert "RuntimeError" not in str(body)
-
-
-class TestEpicStatus:
-    def test_epic_enabled_connected(self, client, mock_components):
-        with (
-            patch("src.web.api._oauth.is_epic_enabled", return_value=True),
-            patch("src.web.api._oauth.has_epic_token", return_value=True),
-            patch(
-                "src.web.api._oauth.get_epic_auth_url",
-                return_value="https://www.epicgames.com/id/login?test",
-            ),
-        ):
-            response = client.get("/api/epic/status")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["enabled"] is True
-        assert data["connected"] is True
-        assert data["auth_url"] == "https://www.epicgames.com/id/login?test"
-
-    def test_epic_disabled(self, client, mock_components):
-        with (
-            patch("src.web.api._oauth.is_epic_enabled", return_value=False),
-            patch("src.web.api._oauth.has_epic_token", return_value=False),
-        ):
-            response = client.get("/api/epic/status")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["enabled"] is False
-        assert data["connected"] is False
-        assert data["auth_url"] is None
-
-    def test_epic_enabled_auth_url_failure_returns_null(self, client, mock_components):
-        with (
-            patch("src.web.api._oauth.is_epic_enabled", return_value=True),
-            patch("src.web.api._oauth.has_epic_token", return_value=False),
-            patch(
-                "src.web.api._oauth.get_epic_auth_url",
-                side_effect=RuntimeError("EPCAPI broken"),
-            ),
-        ):
-            response = client.get("/api/epic/status")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["enabled"] is True
-        assert data["connected"] is False
-        assert data["auth_url"] is None
-
-
-class TestAuthDisconnectEndpoints:
-    @pytest.fixture(autouse=True)
-    def oauth_sources(self, mock_components):
-        configure_source("gog", "gog")
-        configure_source("epic_games", "epic_games")
-        configure_source("trakt", "trakt")
-
-    @pytest.mark.parametrize(
-        ("provider", "source_id"),
-        [("gog", "trakt"), ("epic", "gog"), ("trakt", "epic_games")],
-    )
-    def test_disconnect_refuses_a_source_running_another_plugin(
-        self, client, mock_components, provider, source_id
-    ):
-        """The id is the credential key, so each route owns which ones it may use."""
-        storage = mock_components["storage"]
-        storage.credentials.delete.return_value = True
-
-        response = client.delete(f"/api/{provider}/token?source_id={source_id}")
-
-        assert response.status_code == 404, response.text
-        storage.credentials.delete.assert_not_called()
-
-    def test_gog_disconnect_success(self, client, mock_components):
-        storage = mock_components["storage"]
-        storage.credentials.delete.return_value = True
-
-        response = client.delete("/api/gog/token")
-
-        assert response.status_code == 200
-        assert response.json() == {"success": True, "message": "GOG disconnected."}
-        storage.credentials.delete.assert_called_once_with(1, "gog", "refresh_token")
-
-    def test_gog_disconnect_not_connected(self, client, mock_components):
-        mock_components["storage"].credentials.delete.return_value = False
-
-        response = client.delete("/api/gog/token")
-
-        assert response.status_code == 404
-
-    def test_gog_disconnect_custom_user_id(self, client, mock_components):
-        storage = mock_components["storage"]
-        storage.credentials.delete.return_value = True
-
-        response = client.delete("/api/gog/token?user_id=5")
-
-        assert response.status_code == 200
-        storage.credentials.delete.assert_called_once_with(5, "gog", "refresh_token")
-
-
-class TestTraktStartDeviceFlow:
-    def test_returns_user_code_and_url(self, client, mock_components) -> None:
-        with (
-            patch(
-                "src.web.api._oauth.resolve_trakt_client_credentials",
-                return_value=("cid", "secret"),
-            ),
-            patch(
-                "src.web.api._oauth.start_device_auth_flow",
-                return_value={
-                    "device_code": "dev123",
-                    "user_code": "ABCD1234",
-                    "verification_url": "https://trakt.tv/activate",
-                    "expires_in": 600,
-                    "interval": 5,
-                },
-            ),
-        ):
-            response = client.post("/api/trakt/start-device-flow")
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data == {
-            "user_code": "ABCD1234",
-            "verification_url": "https://trakt.tv/activate",
-            "device_code": "dev123",
-            "expires_in": 600,
-            "interval": 5,
-        }
-        assert "secret" not in response.text
-
-    def test_not_configured_returns_400(self, client, mock_components) -> None:
-        """The raw resolver error (which can name config internals) must never reach
-        the client; only the generic message is surfaced."""
-        with patch(
-            "src.web.api._oauth.resolve_trakt_client_credentials",
-            side_effect=TraktAuthError("Trakt is not configured."),
-        ):
-            response = client.post("/api/trakt/start-device-flow")
-
-        assert response.status_code == 400
-        assert response.json()["detail"] == "Trakt authentication failed"
-
-
-class TestTraktPollDeviceApproval:
-    def test_success_saves_token(self, client, mock_components) -> None:
-        with (
-            patch(
-                "src.web.api._oauth.resolve_trakt_client_credentials",
-                return_value=("cid", "secret"),
-            ),
-            patch(
-                "src.web.api._oauth.poll_device_token",
-                return_value=DevicePollResult(DevicePollStatus.SUCCESS, "refresh-xyz"),
-            ),
-            patch("src.web.api._oauth.save_trakt_token") as mock_save,
-        ):
-            response = client.post(
-                "/api/trakt/poll-device-approval", json={"device_code": "dev1234567"}
-            )
-
-        assert response.status_code == 200
-        assert response.json()["connected"] is True
-        mock_save.assert_called_once_with(
-            mock_components["storage"], "refresh-xyz", source_id="trakt", user_id=1
-        )
-
-    def test_pending_returns_status(self, client, mock_components) -> None:
-        with (
-            patch(
-                "src.web.api._oauth.resolve_trakt_client_credentials",
-                return_value=("cid", "secret"),
-            ),
-            patch(
-                "src.web.api._oauth.poll_device_token",
-                return_value=DevicePollResult(DevicePollStatus.PENDING),
-            ),
-            patch("src.web.api._oauth.save_trakt_token") as mock_save,
-        ):
-            response = client.post(
-                "/api/trakt/poll-device-approval", json={"device_code": "dev1234567"}
-            )
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["connected"] is False
-        assert data["status"] == "pending"
-        mock_save.assert_not_called()
-
-    @pytest.mark.parametrize(
-        "status",
-        [
-            DevicePollStatus.SLOW_DOWN,
-            DevicePollStatus.EXPIRED,
-            DevicePollStatus.DENIED,
-        ],
-    )
-    def test_non_terminal_statuses_return_message(
-        self, client, mock_components, status
-    ) -> None:
-        with (
-            patch(
-                "src.web.api._oauth.resolve_trakt_client_credentials",
-                return_value=("cid", "secret"),
-            ),
-            patch(
-                "src.web.api._oauth.poll_device_token",
-                return_value=DevicePollResult(status),
-            ),
-            patch("src.web.api._oauth.save_trakt_token") as mock_save,
-        ):
-            response = client.post(
-                "/api/trakt/poll-device-approval", json={"device_code": "dev1234567"}
-            )
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["connected"] is False
-        assert data["status"] == status.value
-        assert isinstance(data["message"], str) and data["message"]
-        mock_save.assert_not_called()
-
-    def test_success_without_refresh_token_returns_500(
-        self, client, mock_components
-    ) -> None:
-        with (
-            patch(
-                "src.web.api._oauth.resolve_trakt_client_credentials",
-                return_value=("cid", "secret"),
-            ),
-            patch(
-                "src.web.api._oauth.poll_device_token",
-                return_value=DevicePollResult(DevicePollStatus.SUCCESS, None),
-            ),
-            patch("src.web.api._oauth.save_trakt_token") as mock_save,
-        ):
-            response = client.post(
-                "/api/trakt/poll-device-approval", json={"device_code": "dev1234567"}
-            )
-
-        assert response.status_code == 500
-        assert response.json()["detail"] == "Trakt authentication failed"
-        mock_save.assert_not_called()
-
-    def test_poll_error_message_is_generic(self, client, mock_components) -> None:
-        with (
-            patch(
-                "src.web.api._oauth.resolve_trakt_client_credentials",
-                return_value=("cid", "secret"),
-            ),
-            patch(
-                "src.web.api._oauth.poll_device_token",
-                side_effect=TraktAuthError("invalid device code 0xdeadbeef"),
-            ),
-        ):
-            response = client.post(
-                "/api/trakt/poll-device-approval", json={"device_code": "dev1234567"}
-            )
-
-        assert response.status_code == 400
-        assert response.json()["detail"] == "Trakt authentication failed"
-
-    def test_short_device_code_rejected(self, client, mock_components) -> None:
-        with patch("src.web.api._oauth.poll_device_token") as mock_poll:
-            response = client.post(
-                "/api/trakt/poll-device-approval", json={"device_code": "short"}
-            )
-
-        assert response.status_code == 422
-        mock_poll.assert_not_called()
-
-
 _SETTINGS_SECRET_KEY = "enrichment.providers.tmdb.api_key"
 _SETTINGS_INT_KEY = "recommendations.default_count"
 
@@ -3655,23 +3202,38 @@ _GUARDED_ENDPOINTS = [
         ("storage", "config"),
         body={"item_id": 1, "provider": "tmdb", "record_id": "603"},
     ),
-    _Endpoint("GET", "/api/gog/status", ("storage",)),
-    _Endpoint("POST", "/api/gog/exchange", ("storage",), body={"code_or_url": "code"}),
-    _Endpoint("DELETE", "/api/gog/token", ("storage",)),
-    _Endpoint("GET", "/api/epic/status", ("storage",)),
     _Endpoint(
-        "POST", "/api/epic/exchange", ("storage",), body={"code_or_json": "code"}
+        "GET",
+        "/api/oauth/{plugin_name}/status",
+        ("storage",),
+        url="/api/oauth/any/status?source_id=any",
     ),
-    _Endpoint("DELETE", "/api/epic/token", ("storage",)),
-    _Endpoint("GET", "/api/trakt/status", ("storage",)),
-    _Endpoint("POST", "/api/trakt/start-device-flow", ("storage",)),
     _Endpoint(
         "POST",
-        "/api/trakt/poll-device-approval",
+        "/api/oauth/{plugin_name}/exchange",
         ("storage",),
+        url="/api/oauth/any/exchange?source_id=any",
+        body={"code": "code"},
+    ),
+    _Endpoint(
+        "POST",
+        "/api/oauth/{plugin_name}/start-device-flow",
+        ("storage",),
+        url="/api/oauth/any/start-device-flow?source_id=any",
+    ),
+    _Endpoint(
+        "POST",
+        "/api/oauth/{plugin_name}/poll-device-approval",
+        ("storage",),
+        url="/api/oauth/any/poll-device-approval?source_id=any",
         body={"device_code": "dev1234567"},
     ),
-    _Endpoint("DELETE", "/api/trakt/token", ("storage",)),
+    _Endpoint(
+        "DELETE",
+        "/api/oauth/{plugin_name}/token",
+        ("storage",),
+        url="/api/oauth/any/token?source_id=any",
+    ),
     _Endpoint("GET", "/api/profile", ("storage",)),
     _Endpoint("POST", "/api/profile/regenerate", ("storage",)),
     _Endpoint("POST", "/api/enrichment/stop", ("storage",)),

@@ -48,6 +48,7 @@ const baseSchema: SourceSchemaResponse = {
   source_id: 'steam',
   plugin: 'steam',
   plugin_display_name: 'Steam',
+  oauth: null,
   sync_intervals: [
     { key: 'off', label: 'Off' },
     { key: '6h', label: 'Every 6 hours' },
@@ -102,12 +103,13 @@ describe('SyncSourceAccordion', () => {
     store: ReturnType<typeof useDataStore>,
     cfg: SourceConfigResponse,
     oauth?: OAuthStatus,
+    schema: SourceSchemaResponse = baseSchema,
   ) {
     const loadSchema = vi
       .spyOn(store, 'loadSourceSchema')
       .mockImplementation(async (id: string) => {
-        store.sourceSchemas[id] = baseSchema
-        return baseSchema
+        store.sourceSchemas[id] = schema
+        return schema
       })
     const loadConfig = vi
       .spyOn(store, 'loadSourceConfig')
@@ -732,7 +734,7 @@ describe('SyncSourceAccordion', () => {
     })
   })
 
-  describe('trakt device-code connect/disconnect', () => {
+  describe('device-code connect/disconnect', () => {
     const traktSource = {
       ...baseSource,
       id: 'trakt_work',
@@ -745,13 +747,25 @@ describe('SyncSourceAccordion', () => {
       plugin: 'trakt',
       plugin_display_name: 'Trakt',
     }
+    const traktSchema: SourceSchemaResponse = {
+      ...baseSchema,
+      source_id: 'trakt_work',
+      plugin: 'trakt',
+      plugin_display_name: 'Trakt',
+      oauth: { flow: 'device_code', code_help: '', setup_hint: '' },
+    }
 
     async function expandTrakt(connected: boolean) {
       const wrapper = mount(SyncSourceAccordion, {
         props: { source: traktSource, syncing: false },
       })
       const store = useDataStore()
-      primeStore(store, traktConfig, { enabled: true, connected, authUrl: null })
+      primeStore(
+        store,
+        traktConfig,
+        { enabled: true, connected, authUrl: null },
+        traktSchema,
+      )
 
       await wrapper.find('button.accordion-trigger').trigger('click')
       await flushPromises()
@@ -761,7 +775,7 @@ describe('SyncSourceAccordion', () => {
     it('renders the device-code connect flow when trakt is not connected', async () => {
       const { wrapper } = await expandTrakt(false)
 
-      expect(wrapper.find('[data-testid="trakt-connect-btn"]').exists()).toBe(
+      expect(wrapper.find('[data-testid="device-connect-btn"]').exists()).toBe(
         true,
       )
       expect(
@@ -772,20 +786,24 @@ describe('SyncSourceAccordion', () => {
     it('clicking Disconnect names the source being disconnected', async () => {
       const { wrapper, store } = await expandTrakt(true)
       const disconnect = vi
-        .spyOn(store, 'disconnectTrakt')
+        .spyOn(store, 'disconnectOAuth')
         .mockResolvedValue(undefined)
 
       await wrapper
         .find('[data-testid="disconnect-btn-trakt_work"]')
         .trigger('click')
 
-      expect(disconnect).toHaveBeenCalledWith('trakt_work')
+      expect(disconnect).toHaveBeenCalledWith(
+        'trakt_work',
+        'trakt',
+        expect.any(String),
+      )
     })
 
     it('disconnects once when Disconnect is activated twice in flight', async () => {
       const { wrapper, store } = await expandTrakt(true)
       const disconnect = vi
-        .spyOn(store, 'disconnectTrakt')
+        .spyOn(store, 'disconnectOAuth')
         .mockImplementation(() => new Promise<never>(() => {}))
 
       const button = wrapper.find('[data-testid="disconnect-btn-trakt_work"]')
@@ -816,12 +834,13 @@ describe('SyncSourceAccordion', () => {
         attachTo: document.body,
       })
       const store = useDataStore()
-      primeStore(store, traktConfig, {
-        enabled: true,
-        connected: true,
-        authUrl: null,
-      })
-      vi.spyOn(store, 'disconnectTrakt').mockImplementation(async (id) => {
+      primeStore(
+        store,
+        traktConfig,
+        { enabled: true, connected: true, authUrl: null },
+        traktSchema,
+      )
+      vi.spyOn(store, 'disconnectOAuth').mockImplementation(async (id) => {
         store.oauthStatus[id] = { enabled: true, connected: false, authUrl: null }
       })
 
@@ -844,7 +863,12 @@ describe('SyncSourceAccordion', () => {
         attachTo: document.body,
       })
       const store = useDataStore()
-      const { loadOAuthStatus } = primeStore(store, traktConfig)
+      const { loadOAuthStatus } = primeStore(
+        store,
+        traktConfig,
+        undefined,
+        traktSchema,
+      )
       loadOAuthStatus.mockRejectedValueOnce(new Error('status read failed'))
 
       await wrapper.find('button.accordion-trigger').trigger('click')
@@ -853,12 +877,60 @@ describe('SyncSourceAccordion', () => {
       expect(wrapper.get('[data-testid="oauth-status-error"]').text()).toContain(
         'Could not read',
       )
-      expect(wrapper.find('[data-testid="trakt-connect-btn"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="device-connect-btn"]').exists()).toBe(false)
       wrapper.unmount()
     })
   })
 
-  describe('gog/epic connect/disconnect', () => {
+  describe('a plugin declaring an OAuth flow', () => {
+    it('connects through the service the plugin declares', async () => {
+      const source = {
+        ...baseSource,
+        id: 'fake_work',
+        display_name: 'Fake (work)',
+        plugin_display_name: 'Fake',
+      }
+      const config: SourceConfigResponse = {
+        ...sourceConfig,
+        source_id: 'fake_work',
+        plugin: 'fake_oauth',
+        plugin_display_name: 'Fake',
+      }
+      const schema: SourceSchemaResponse = {
+        ...baseSchema,
+        source_id: 'fake_work',
+        plugin: 'fake_oauth',
+        plugin_display_name: 'Fake',
+        oauth: { flow: 'code_paste', code_help: '', setup_hint: '' },
+      }
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source, syncing: false },
+      })
+      const store = useDataStore()
+      const { loadOAuthStatus } = primeStore(
+        store,
+        config,
+        { enabled: true, connected: false, authUrl: 'https://login.example.com/auth' },
+        schema,
+      )
+      const submit = vi.spyOn(store, 'submitOAuthCode').mockResolvedValue(undefined)
+
+      await wrapper.find('button.accordion-trigger').trigger('click')
+      await flushPromises()
+      wrapper.findComponent(OAuthConnectFlow).vm.$emit('submit', 'auth-code')
+      await flushPromises()
+
+      expect(loadOAuthStatus).toHaveBeenCalledWith('fake_work', 'fake_oauth')
+      expect(submit).toHaveBeenCalledWith(
+        'fake_work',
+        'fake_oauth',
+        'auth-code',
+        expect.any(String),
+      )
+    })
+  })
+
+  describe('code-paste disconnect', () => {
     const gogSource = {
       ...baseSource,
       id: 'gog_work',
@@ -871,41 +943,28 @@ describe('SyncSourceAccordion', () => {
       plugin: 'gog',
       plugin_display_name: 'GOG',
     }
+    const gogSchema: SourceSchemaResponse = {
+      ...baseSchema,
+      source_id: 'gog_work',
+      plugin: 'gog',
+      plugin_display_name: 'GOG',
+      oauth: { flow: 'code_paste', code_help: '', setup_hint: '' },
+    }
 
-    async function expandGog(
-      connected: boolean,
-      authUrl: string | null = 'https://auth.gog.com/auth',
-    ) {
+    it('reports the status as unknown when a disconnect cannot be re-read', async () => {
       const wrapper = mount(SyncSourceAccordion, {
         props: { source: gogSource, syncing: false },
       })
       const store = useDataStore()
-      primeStore(store, gogConfig, {
-        enabled: true,
-        connected,
-        authUrl,
-      })
-
+      primeStore(
+        store,
+        gogConfig,
+        { enabled: true, connected: true, authUrl: 'https://auth.gog.com/auth' },
+        gogSchema,
+      )
       await wrapper.find('button.accordion-trigger').trigger('click')
       await flushPromises()
-      return { wrapper, store }
-    }
-
-    it('submitting the code names the source being connected', async () => {
-      const { wrapper, store } = await expandGog(false)
-      const submit = vi.spyOn(store, 'submitGogCode').mockResolvedValue(undefined)
-
-      const flow = wrapper.findComponent(OAuthConnectFlow)
-      expect(flow.props('authUrl')).toBe('https://auth.gog.com/auth')
-      flow.vm.$emit('submit', 'auth-code')
-      await flushPromises()
-
-      expect(submit).toHaveBeenCalledWith('gog_work', 'auth-code')
-    })
-
-    it('reports the status as unknown when a disconnect cannot be re-read', async () => {
-      const { wrapper, store } = await expandGog(true)
-      vi.spyOn(store, 'disconnectGog').mockImplementation(async (id: string) => {
+      vi.spyOn(store, 'disconnectOAuth').mockImplementation(async (id: string) => {
         store.oauthMessages[id] = 'Disconnected. You can reconnect below.'
         throw new Error('status read failed')
       })
@@ -922,50 +981,6 @@ describe('SyncSourceAccordion', () => {
         'Could not read',
       )
       expect(wrapper.find('[data-testid="oauth-status-retry"]').exists()).toBe(true)
-    })
-
-    const epicSource = {
-      ...baseSource,
-      id: 'epic_work',
-      display_name: 'Epic (work)',
-      plugin_display_name: 'Epic Games',
-    }
-    const epicConfig: SourceConfigResponse = {
-      ...sourceConfig,
-      source_id: 'epic_work',
-      plugin: 'epic_games',
-      plugin_display_name: 'Epic Games',
-    }
-
-    async function expandEpic(connected: boolean) {
-      const wrapper = mount(SyncSourceAccordion, {
-        props: { source: epicSource, syncing: false },
-      })
-      const store = useDataStore()
-      primeStore(store, epicConfig, {
-        enabled: true,
-        connected,
-        authUrl: 'https://www.epicgames.com/id/api/redirect',
-      })
-
-      await wrapper.find('button.accordion-trigger').trigger('click')
-      await flushPromises()
-      return { wrapper, store }
-    }
-
-    it('renders the Epic flow, not the GOG one, for an epic_games source', async () => {
-      const { wrapper, store } = await expandEpic(false)
-      const submit = vi.spyOn(store, 'submitEpicCode').mockResolvedValue(undefined)
-      const gogSubmit = vi.spyOn(store, 'submitGogCode')
-
-      const flow = wrapper.findComponent(OAuthConnectFlow)
-      expect(flow.props('serviceName')).toBe('Epic Games')
-      expect(flow.props('expectedOrigin')).toBe('https://www.epicgames.com')
-      flow.vm.$emit('submit', 'auth-code')
-      await flushPromises()
-
-      expect(submit).toHaveBeenCalledWith('epic_work', 'auth-code')
-      expect(gogSubmit).not.toHaveBeenCalled()
     })
   })
 

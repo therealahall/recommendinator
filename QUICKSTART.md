@@ -189,7 +189,7 @@ uv run python -m src.cli library edit --id 42 --rating 5 --status completed
 uv run python -m src.cli library edit --id 42 --seasons-watched 1,2,3   # each 1-200
 uv run python -m src.cli library ignore --id 42    # and library unignore
 
-uv run python -m src.cli auth connect --source gog     # or epic, trakt
+uv run python -m src.cli auth connect --source gog     # or epic_games, trakt
 uv run python -m src.cli auth status
 ```
 

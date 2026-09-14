@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
@@ -8,8 +9,10 @@ from legendary.api.egs import EPCAPI
 from legendary.models.exceptions import InvalidCredentialsError
 
 from src.ingestion.plugin_base import (
+    CodePasteFlow,
     ConfigField,
     CredentialUpdateCallback,
+    OAuthError,
     ProgressCallback,
     SourceError,
     SourcePlugin,
@@ -119,7 +122,72 @@ def extract_metadata_fields(
     return metadata
 
 
+def extract_code_from_input(user_input: str) -> str:
+    user_input = user_input.strip()
+
+    try:
+        data = json.loads(user_input)
+        if "authorizationCode" in data:
+            code = data["authorizationCode"]
+            if code and isinstance(code, str):
+                extracted: str = code.strip()
+                return extracted
+        raise OAuthError(
+            "JSON does not contain an 'authorizationCode' field. "
+            "Please copy the full JSON response from Epic's redirect page."
+        )
+    except json.JSONDecodeError:
+        # json.JSONDecodeError is a subclass of ValueError; catching only
+        # JSONDecodeError avoids silently swallowing unrelated ValueErrors.
+        pass
+
+    if len(user_input) < 20:
+        raise OAuthError(
+            "Input appears too short to be a valid authorization code. "
+            "Please copy the full code or JSON response."
+        )
+
+    return user_input
+
+
+def exchange_code_for_tokens(code: str) -> dict[str, Any]:
+    api = EPCAPI()
+    try:
+        session_data: dict[str, Any] = api.start_session(authorization_code=code)
+
+        if "refresh_token" not in session_data:
+            raise OAuthError("Response missing refresh_token")
+
+        return session_data
+
+    except InvalidCredentialsError as error:
+        logger.error("Epic token exchange failed (InvalidCredentialsError)")
+        raise OAuthError(
+            "Token exchange failed. The authorization code may be expired or invalid. "
+            "Please try again."
+        ) from error
+    except OAuthError:
+        raise  # Don't let the broad Exception handler below swallow our own errors
+    except Exception as error:
+        logger.error("Epic token exchange request failed: %s", type(error).__name__)
+        raise OAuthError("Failed to connect to Epic Games servers") from error
+
+
+class EpicOAuth(CodePasteFlow):
+    code_help = "Paste the authorization code from the JSON response:"
+
+    def auth_url(self, config: dict[str, Any]) -> str:
+        url: str = EPCAPI().get_auth_url()
+        return url
+
+    def exchange_code(self, pasted: str, config: dict[str, Any]) -> str:
+        tokens = exchange_code_for_tokens(extract_code_from_input(pasted))
+        return str(tokens["refresh_token"])
+
+
 class EpicGamesPlugin(SourcePlugin):
+    oauth = EpicOAuth()
+
     @property
     def name(self) -> str:
         return "epic_games"

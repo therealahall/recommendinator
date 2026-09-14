@@ -10,7 +10,6 @@ function mountFlow(sourceId: string, sourceName = `GOG (${sourceId})`) {
       sourceId,
       sourceName,
       authUrl: 'https://login.gog.com/auth',
-      expectedOrigin: 'https://login.gog.com',
       helpText: 'Paste the redirect URL after logging in:',
       serviceName: 'GOG Account',
       connectHint: HINT,
@@ -28,27 +27,6 @@ async function openCodeStep(sourceId: string, sourceName?: string) {
 describe('OAuthConnectFlow', () => {
   afterEach(() => {
     vi.restoreAllMocks()
-  })
-
-  it('does not open an auth URL from an unexpected origin', async () => {
-    const open = vi.spyOn(window, 'open').mockReturnValue(null)
-    vi.spyOn(console, 'error').mockImplementation(() => {})
-    const wrapper = mount(OAuthConnectFlow, {
-      props: {
-        sourceId: 'gog_work',
-        sourceName: 'GOG (work)',
-        authUrl: 'https://evil.example.com/auth',
-        expectedOrigin: 'https://login.gog.com',
-        helpText: '',
-        serviceName: 'GOG Account',
-        connectHint: HINT,
-      },
-    })
-
-    await wrapper.get('button').trigger('click')
-
-    expect(open).not.toHaveBeenCalled()
-    expect(wrapper.find('input').exists()).toBe(false)
   })
 
   it('emits the trimmed code and clears the field', async () => {
@@ -70,7 +48,6 @@ describe('OAuthConnectFlow', () => {
         sourceId: 'gog_work',
         sourceName: 'GOG (work)',
         authUrl: null,
-        expectedOrigin: 'https://login.gog.com',
         helpText: '',
         serviceName: 'GOG Account',
         connectHint: HINT,

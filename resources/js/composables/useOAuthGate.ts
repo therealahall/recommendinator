@@ -6,13 +6,9 @@ import { useDataStore } from '@/stores/data'
 export const RECHECKING_STATUS = 'Rechecking the connection status…'
 const STATUS_UPDATED = 'Connection status updated.'
 
-/** `active` is false for a plugin with no connect flow, where every verb here
- *  is a no-op. */
-export function useOAuthGate(
-  sourceId: Ref<string>,
-  plugin: Ref<string>,
-  active: Ref<boolean>,
-) {
+/** `plugin` is null where the plugin declares no connect flow, and every verb
+ *  here is then a no-op. */
+export function useOAuthGate(sourceId: Ref<string>, plugin: Ref<string | null>) {
   const data = useDataStore()
   const failed = ref(false)
   const refreshing = ref(false)
@@ -21,7 +17,7 @@ export function useOAuthGate(
   // Tracked, not swallowed: the fallback reads as "not connected", which offers
   // a Connect button and a hint naming a remedy unrelated to the failure.
   async function reload(): Promise<void> {
-    if (!active.value) return
+    if (!plugin.value) return
     try {
       await data.loadOAuthStatus(sourceId.value, plugin.value)
       failed.value = false
@@ -34,7 +30,7 @@ export function useOAuthGate(
   // or stores a client credential, so without this the Connect button stays
   // dead under a hint that has moved on to naming a different remedy.
   async function refresh(): Promise<void> {
-    if (!active.value) return
+    if (!plugin.value) return
     const mine = ++generation
     refreshing.value = true
     data.setOAuthMessage(sourceId.value, RECHECKING_STATUS)
