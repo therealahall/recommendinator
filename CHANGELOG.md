@@ -1,6 +1,35 @@
 # CHANGELOG
 
 
+## v0.62.0 (2026-09-14)
+
+### Bug Fixes
+
+- **settings**: Say a reorder arrow refuses the way every other control does
+  ([`c1f706c`](https://github.com/therealahall/recommendinator/commit/c1f706c0af4e53dfd9d1c619e3203e37d321dcc2))
+
+- **ui**: Let a rating be read without colour
+  ([`a8210f5`](https://github.com/therealahall/recommendinator/commit/a8210f5ebbaa7d09999efbaa33134f74aaf910ef))
+
+- **ui**: Mark a control at its bound by more than its colour
+  ([`7897c9b`](https://github.com/therealahall/recommendinator/commit/7897c9be81e38d30a7dff7e81c5b3f23cdd52296))
+
+### Documentation
+
+- Name the search tools a session actually has
+  ([`5344153`](https://github.com/therealahall/recommendinator/commit/53441531ebc23f455e90ef56850c828f82e6839f))
+
+### Features
+
+- **settings**: Rank enrichment providers where you turn them on
+  ([`539077d`](https://github.com/therealahall/recommendinator/commit/539077d5f7cbbefc83a04a57995985c11adf004e))
+
+### Testing
+
+- **ui**: Scan the files where user-facing strings live
+  ([`fe80cc3`](https://github.com/therealahall/recommendinator/commit/fe80cc37f5eab7b3c7f1039c60430676fbab0a68))
+
+
 ## v0.61.3 (2026-09-14)
 
 ### Bug Fixes
