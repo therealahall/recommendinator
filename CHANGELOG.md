@@ -1,6 +1,20 @@
 # CHANGELOG
 
 
+## v0.62.2 (2026-09-14)
+
+### Bug Fixes
+
+- **export**: Carry where a series position came from
+  ([`916c716`](https://github.com/therealahall/recommendinator/commit/916c7167deee64a7a15e7545834e81ea28a806f5))
+
+- **profile**: Sample the latest ratings, not an alphabetical prefix
+  ([`99a9671`](https://github.com/therealahall/recommendinator/commit/99a96718bcbf05736c4cfdb731422798215d625a))
+
+- **recommendations**: Let variety demote the next book in a series
+  ([`f7255cf`](https://github.com/therealahall/recommendinator/commit/f7255cfe5f873310116c19a11b6de44d3cc6cd79))
+
+
 ## v0.62.1 (2026-09-14)
 
 ### Bug Fixes
