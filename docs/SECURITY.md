@@ -60,34 +60,21 @@ it blames, or repeats a path-containment refusal verbatim, and a sync names the
 settings it matched or answers a fixed string. The reason goes to the log
 instead.
 
-**One carve-out: a plugin module that failed to import.** `GET
-/api/sync/sources`, `GET /api/plugins`, the 400 from `POST /api/update` and the
-400 `require_plugin` raises for every `/api/sync/sources/{source_id}/*` route
-carry the module name and the exception that lost it, because that is the answer
-the operator needs and those routes need a session.
+**Two kinds of error are echoed anyway. Something that would not load is the
+first.** A plugin module that would not import, a directory holding no
+templates, a file the chosen format cannot parse. That message describes this
+install, or the caller's own input that could not be read, and nothing else the
+request reached — it is the answer needed to fix either. Every route carrying
+one is behind a session.
 
-**The second: templates that are not installed.** The 503 from both
-`/api/import/templates` routes names the directory it looked in, because a
-broken install is fixed from that path.
+**The second is a refusal whose wording is fixed.** Its message is composed from
+values the request already sent and from names the app's own registries hold, so
+echoing it hands the caller nothing it did not arrive with.
 
-**The third: a file the chosen format cannot parse.** The 400 from `POST
-/api/import` repeats the parser's own words because nothing else says which row
-to fix. A row that fails to save inside a 200 is named by exception class, never
-quoted.
-
-**The fourth: a correction to a field the content type does not state.** The
-400 from `PATCH /api/items/{db_id}` repeats `UncorrectableFieldError`, whose
-message is fixed over the content type and one of two field names, and holds
-nothing from the request.
-
-**The fifth: a merge or an undo storage refused.** The 409 from `_refused_merge`
-repeats `MergeError`, which names the row or merge to deal with first, built
-from ids the request already carries.
-
-**The sixth: a pin no enrichment run could read back.** The 400 from `POST
-/api/enrichment/pin` repeats `PinRefused`, worded from the provider and record
-the request named and the registry's own provider names. Nothing else from
-`EnrichmentManager.pin` is echoed.
+Everything else is logged and answered with a fixed string, including a row that
+fails to save inside a 200, which is named by exception class and never quoted.
+`detail=str(error)` on anything outside those two kinds is a defect. To see
+where it stands today, run `git grep -n 'detail=str(' -- src`.
 
 ## Web sign-in
 
@@ -99,7 +86,7 @@ holding the database — there is no email and no reset link.
 
 - **The claim window stays open until someone uses it** — boot warns while it
   is, and the loopback default bounds who can reach it.
-- **Nothing under `/api` is exempt** but the four `/api/auth` routes.
+- **Nothing under `/api` is exempt** but the `/api/auth` routes.
   `GET /api/status` stays gated: its feature report is a free fingerprint, and
   the container health check reads that 401 as healthy.
 - **The SPA shell (`/`, `/static/*`) is not gated**: it draws the sign-in form,
@@ -206,18 +193,17 @@ uv sync --locked
 - [ ] Web interface on localhost (Docker's default), or behind a TLS proxy
 - [ ] Docker containers run as a non-root user
 
-**The logs are not guaranteed key-free.** The integrations that put a credential
-in the request URL — Steam, TMDB, RAWG and GOG — render a request failure as its
-status code or error class, and every OAuth connect flow logs only an error type
-name or a status code. None of them attaches a traceback.
+**The logs are not guaranteed key-free.** Every integration that puts a
+credential in the request URL renders a request failure as its status code or
+error class, and every OAuth connect flow logs only an error type name or a
+status code. None of them attaches a traceback.
 
 Rendering the message is only half of it: a traceback walks `__cause__`, so an
 exception chained from a request error prints that request's URL.
-`tests/test_credential_url_chains.py` holds every such caller to both halves — a
-chain-free handler and an entry in its `_CREDENTIAL_URL_FUNCTIONS` list — and
-enrols new ones by scanning `src/auth/`, `src/config/`,
-`src/enrichment/providers/`, `src/ingestion/sources/`, `src/sources/`,
-`src/utils/` and `src/web/` for a credential key beside a `params=` call.
+`tests/test_credential_url_chains.py` holds every such caller to both halves, a
+chain-free handler and an entry in its `_CREDENTIAL_URL_FUNCTIONS` list, and
+enrols new ones by scanning `src/` and `private/plugins/` for a credential key
+beside a `params=` call.
 
 That covers how a failure is rendered. The transports carry the same URLs.
 `urllib3.connectionpool` logs each request target, query string included, at
@@ -231,8 +217,8 @@ truncated or encoded form of the secret survives it.
 
 ## Automated security review
 
-**The one committed agent is a prompt with the reviewer's permissions.** Treat a
-change to `.claude/agents/parity-review.md` like a change to CI configuration:
+**A committed agent is a prompt carrying the reviewer's permissions.** Treat a
+change to anything under `.claude/agents/` like a change to CI configuration:
 an edit changes what the review does, including the review of the branch making
 the edit. Reviewing that diff by hand is the only control.
 
@@ -259,12 +245,11 @@ Changes are audited for the following before they are committed.
 - CORS defaults to localhost, never wildcard
 - `allow_credentials=False` when wildcard origins are used
 - Internal error detail never reaches an HTTP response (`detail=str(error)` is
-  forbidden), with the six carve-outs above as the only exceptions. Five are
-  the whole of `git grep -n 'detail=str(' -- src`, six call sites, because the
-  templates 503 raises twice. The first reaches a body two ways, so that grep
-  misses it: named response fields on the source and plugin listings,
-  and `unusable_detail` in the sync 400 and in `require_plugin`, which composes
-  the failed module's own exception text
+  forbidden), with the two kinds above as the only exceptions. That grep is not
+  the whole surface: a failed plugin import also reaches a body through named
+  response fields on the source and plugin listings, and through
+  `unusable_detail` in the sync 400 and in `require_plugin`, which composes the
+  failed module's own exception text
 - Module-level imports only
 - Copy dicts and lists before mutating data passed in from outside
 - `is not None` rather than a truthy check for security-relevant values

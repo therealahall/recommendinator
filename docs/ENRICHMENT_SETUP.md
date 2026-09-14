@@ -188,9 +188,9 @@ A rejected request — usually an invalid, revoked or expired API key returning
 rejected the same way. After five rejections in a row the provider is dropped
 for the rest of the run.
 
-Items the dropped provider never reached keep the status they had, so the next
-run picks them up. Fix the key, run enrichment again, then `--retry-not-found`
-for the few that already settled.
+Fix the key and run enrichment again — the run's **Pending** and **Enriched**
+counts say what is still outstanding. Then `--retry-not-found` for the few that
+already settled.
 
 ### API key errors
 

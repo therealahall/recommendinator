@@ -15,8 +15,10 @@ from src.storage.manager import StorageManager
 from src.utils.item_serialization import (
     CANDIDATES_UNAVAILABLE,
     ENRICHMENT_UNAVAILABLE,
+    UnknownEnrichmentProvider,
     enrichment_candidates_to_dict,
     enrichment_pin_to_dict,
+    enrichment_provider_filter,
     enrichment_providers_to_list,
     enrichment_reset_to_dict,
 )
@@ -286,8 +288,13 @@ def reset_enrichment(
                 detail="Invalid content type. Valid options: book, movie, tv_show, video_game",
             ) from None
 
+    try:
+        provider = enrichment_provider_filter(request.provider)
+    except UnknownEnrichmentProvider as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
     if request.item_id is not None:
-        if request.provider or request.content_type:
+        if provider or request.content_type:
             raise HTTPException(
                 status_code=400,
                 detail="item_id cannot be combined with provider or content_type.",
@@ -295,7 +302,7 @@ def reset_enrichment(
         _item_or_404(storage, request.item_id, request.user_id)
 
     count = storage.enrichment.reset(
-        provider=request.provider,
+        provider=provider,
         content_type=content_type,
         user_id=request.user_id,
         content_item_id=request.item_id,

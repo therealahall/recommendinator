@@ -127,7 +127,7 @@ index.html            # Vite SPA entry point
 vite.config.ts        # Vite build configuration
 tests/                # Cross-cutting tests (CLI, web, storage, recommendations).
                       # Plugin-local tests live next to the plugin: src/.../<plugin>/test_<plugin>.py.
-conftest.py           # Six autouse fixtures, function-scoped, applying to every test in
+conftest.py           # Autouse fixtures, function-scoped, applying to every test in
                       # every tree: each test is kept off the real credential key and the
                       # production log file, starts with the dependency-drift cache empty,
                       # runs with the timezone pinned to UTC (request

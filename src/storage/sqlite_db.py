@@ -465,9 +465,12 @@ class SQLiteDB:
             conn.commit()
             return saved
 
-    def save_enrichment_metadata(self, db_id: int, item: ContentItem) -> None:
+    def save_enrichment_metadata(
+        self, db_id: int, item: ContentItem, *, replace_cover: bool = False
+    ) -> None:
         """A row absorbed since the batch read it is refused rather
         than redirected: the survivor is enriched on its own turn.
+        *replace_cover* overwrites a stored cover, which only a pin asks for.
         """
         with self.connection() as conn:
             cursor = conn.cursor()
@@ -481,7 +484,7 @@ class SQLiteDB:
                 return
             content_type = row["content_type"]
             if (
-                row["cover_url"] is None
+                (row["cover_url"] is None or replace_cover)
                 and item.cover_url
                 and not cover_url_is_dead(cursor, db_id, item.cover_url)
             ):

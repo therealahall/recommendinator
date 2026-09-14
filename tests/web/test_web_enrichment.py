@@ -449,6 +449,27 @@ class TestEnrichmentReset:
         assert storage.enrichment.reset.call_args[1]["content_item_id"] == 7
         assert manager.start_enrichment.call_args.kwargs["content_item_id"] == 7
 
+    @pytest.mark.parametrize("provider", ["all", ""])
+    def test_reset_reads_an_unfiltered_provider_as_no_filter_beside_an_item_regression(
+        self, provider: str
+    ) -> None:
+        storage = make_storage_mock()
+        storage.enrichment.reset.return_value = 1
+        manager = MagicMock(spec=EnrichmentManager)
+        manager.start_enrichment.return_value = EnrichmentStart.STARTED
+
+        with (
+            patch("src.web.api._enrichment.EnrichmentManager", return_value=manager),
+            _client(storage, {}) as client,
+        ):
+            response = client.post(
+                "/api/enrichment/reset", json={"item_id": 7, "provider": provider}
+            )
+
+        assert response.status_code == 200
+        assert storage.enrichment.reset.call_args.kwargs["provider"] is None
+        assert manager.start_enrichment.call_args.kwargs["content_item_id"] == 7
+
     def test_reset_refuses_an_item_id_beside_a_filter(self) -> None:
         storage = make_storage_mock()
 
@@ -469,6 +490,21 @@ class TestEnrichmentReset:
             response = client.post("/api/enrichment/reset", json={"item_id": 999})
 
         assert response.status_code == 404
+        storage.enrichment.reset.assert_not_called()
+
+    def test_reset_refuses_a_provider_nothing_installed_and_names_what_is(self) -> None:
+        storage = make_storage_mock()
+
+        with _client(storage, {}) as client:
+            response = client.post(
+                "/api/enrichment/reset", json={"provider": "nosuchprovider"}
+            )
+
+        assert response.status_code == 400
+        detail = response.json()["detail"]
+        assert "Unknown provider 'nosuchprovider'" in detail
+        for name in get_enrichment_registry().get_all_providers():
+            assert name in detail
         storage.enrichment.reset.assert_not_called()
 
     def test_reset_invalid_content_type(self) -> None:
