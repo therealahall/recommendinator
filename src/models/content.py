@@ -2,9 +2,7 @@ from datetime import date
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field
-
-from src.utils.text import humanize_source_id
+from pydantic import BaseModel, ConfigDict, Field
 
 DEFAULT_USER_ID = 1
 
@@ -64,12 +62,9 @@ class ConsumptionStatus(str, Enum):
 class ExternalId(BaseModel):
     source: str
     external_id: str
-
-    # Derived here, not client-side: a TypeScript copy of the acronym table drifts.
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def display_name(self) -> str:
-        return humanize_source_id(self.source)
+    # Filled by storage: the name a source was given lives in a table this
+    # model cannot reach.
+    display_name: str
 
 
 class ContentItem(BaseModel):

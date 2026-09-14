@@ -80,13 +80,11 @@ TRADEMARK_PATTERN = re.compile(r"[™®©]")
 
 _UPPERCASE_WORDS: dict[str, str] = {
     "tv": "TV",
-    "gog": "GOG",
     "api": "API",
     "id": "ID",
     "csv": "CSV",
     "json": "JSON",
     "rss": "RSS",
-    "roms": "ROMs",
 }
 
 

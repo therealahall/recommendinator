@@ -635,7 +635,6 @@ class TestSyncManagerLogInjectionRegression:
 
 
 SCHEDULER_LOGGER = "src.web.scheduler"
-STEAM_LABEL = "Steam"
 
 
 def _steam_source(
@@ -686,7 +685,7 @@ class TestScheduledSyncDispatch:
 
         self._tick(storage, manager)
 
-        assert manager.start_sync.call_args.args[0] == STEAM_LABEL
+        assert manager.start_sync.call_args.args[0] == "steam"
         with patch(
             "src.web.sync_dispatch.execute_multi_source_sync", return_value=[]
         ) as execute:
@@ -745,7 +744,7 @@ class TestScheduledSyncDispatch:
         manager.is_running.return_value = False
         self._tick(storage, manager)
 
-        assert manager.start_sync.call_args.args[0] == STEAM_LABEL
+        assert manager.start_sync.call_args.args[0] == "steam"
         assert storage.sync_runs.latest_per_source(1)["steam"]["id"] == run_id
 
     def test_a_source_another_process_holds_is_dispatched_once_it_is_released(
@@ -764,7 +763,7 @@ class TestScheduledSyncDispatch:
         storage.sync_runs.release(held)
         self._tick(storage, manager)
 
-        assert manager.start_sync.call_args.args[0] == STEAM_LABEL
+        assert manager.start_sync.call_args.args[0] == "steam"
 
     def test_a_dispatch_the_manager_declines_leaves_the_source_claimable(
         self, storage: StorageManager
@@ -873,7 +872,7 @@ class TestAutoEnrichGate:
     def test_a_finished_sync_starts_nothing_when_auto_enrich_is_off(self) -> None:
         dispatch = build_sync_job(
             MagicMock(spec=SyncManager),
-            STEAM_LABEL,
+            "steam",
             [ResolvedInput("steam", MagicMock(), {"_source_id": "steam"})],
             [7],
             make_storage_mock(),

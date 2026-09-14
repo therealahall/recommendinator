@@ -356,6 +356,7 @@ class TestOpeningADatabaseThatPredatesSyncScheduling:
         assert stored is not None
         assert stored["config_json"] == '{"vanity_url": "myname"}'
         assert stored["sync_interval"] is None
+        assert stored["display_name"] is None
         temp_db.execute(
             "INSERT INTO sync_runs (user_id, source_id, started_at, finished_at,"
             " status) VALUES (1, 'steam', '2026-03-01T12:00:00.000000+00:00',"

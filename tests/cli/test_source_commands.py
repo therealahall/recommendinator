@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner, Result
 
+from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.manager import StorageManager
 from src.storage.schema import SyncRunStatus
 from tests.cli.conftest import _invoke_with_mocks
@@ -173,6 +174,45 @@ class TestSourceSchedule:
         )
 
         assert result.exit_code != 0
+
+
+@pytest.mark.usefixtures("registry_with_source_fakes")
+class TestSourceRename:
+    def test_the_name_given_is_what_list_and_library_show_call_the_source(
+        self, cli_runner: CliRunner, seeded: StorageManager
+    ) -> None:
+        db_id = seeded.save_content_item(
+            ContentItem(
+                id="g1",
+                source="my_games",
+                title="Hades",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.UNREAD,
+            ),
+            user_id=1,
+        )
+
+        renamed = _invoke_with_mocks(
+            cli_runner,
+            ["source", "rename", "my_games", "PlayStation", "--format", "json"],
+            mock_storage=seeded,
+        )
+        listed = _invoke_with_mocks(
+            cli_runner, ["source", "list", "--format", "json"], mock_storage=seeded
+        )
+        shown = _invoke_with_mocks(
+            cli_runner,
+            ["library", "show", "--id", str(db_id), "--format", "json"],
+            mock_storage=seeded,
+        )
+
+        assert renamed.exit_code == 0, renamed.output
+        assert json.loads(renamed.output)["display_name"] == "PlayStation"
+        (entry,) = [one for one in json.loads(listed.output) if one["id"] == "my_games"]
+        assert entry["display_name"] == "PlayStation"
+        assert [
+            pair["display_name"] for pair in json.loads(shown.output)["external_ids"]
+        ] == ["PlayStation"]
 
 
 @pytest.mark.usefixtures("registry_with_source_fakes")

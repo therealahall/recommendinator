@@ -58,7 +58,7 @@ export const useDataStore = defineStore('data', () => {
   const syncMessage = ref('')
   const syncLoading = ref(false)
   const syncSourcesError = ref('')
-  // Optimistic set of in-flight source labels — populated immediately on
+  // Optimistic set of in-flight job keys — populated immediately on
   // triggerSync so the per-accordion Sync button switches to "Syncing…"
   // without waiting for the next /sync/status poll.
   const optimisticTriggers = ref<Set<string>>(new Set())
@@ -67,15 +67,17 @@ export const useDataStore = defineStore('data', () => {
   // slot and nothing else would know it is spoken for.
   const umbrellaSourceIds = ref<Set<string>>(new Set())
 
-  const jobsByLabel = computed<Record<string, SyncJobResponse>>(() => {
+  // A job, its progress slots and its errors are keyed by source id, never by
+  // name: two sources may share one, and a rename mid-run would strand the run.
+  const jobsByKey = computed<Record<string, SyncJobResponse>>(() => {
     const map: Record<string, SyncJobResponse> = {}
     for (const job of syncJobs.value) map[job.source] = job
     return map
   })
 
-  function isLabelRunning(label: string): boolean {
-    if (optimisticTriggers.value.has(label)) return true
-    const job = jobsByLabel.value[label]
+  function isKeyRunning(key: string): boolean {
+    if (optimisticTriggers.value.has(key)) return true
+    const job = jobsByKey.value[key]
     return job?.status === 'running'
   }
 
@@ -86,52 +88,58 @@ export const useDataStore = defineStore('data', () => {
       syncJobs.value.some((job) => job.status === 'running'),
   )
 
-  function jobForLabel(label: string): SyncJobResponse | null {
-    return jobsByLabel.value[label] || null
+  function jobForKey(key: string): SyncJobResponse | null {
+    return jobsByKey.value[key] || null
   }
 
   /** The umbrella run, for a source it resolved to sync. The server fixes
    *  that list at trigger time, so a source enabled mid-run is not in it. */
-  function umbrellaJobFor(label: string): SyncJobResponse | null {
-    const umbrella = jobForLabel(ALL_SOURCES_LABEL)
+  function umbrellaJobFor(sourceId: string): SyncJobResponse | null {
+    const umbrella = jobForKey(ALL_SOURCES_LABEL)
     if (!umbrella) return null
-    return umbrella.sources.some((entry) => entry.source === label)
+    return umbrella.sources.some((entry) => entry.source === sourceId)
       ? umbrella
       : null
   }
 
   /** Terminal jobs are retained, so rendering the older of the two is how a
    *  message from the newer run ends up displayed nowhere. */
-  function currentJobForLabel(label: string): SyncJobResponse | null {
-    const own = jobForLabel(label)
-    if (label === ALL_SOURCES_LABEL) return own
-    const umbrella = umbrellaJobFor(label)
+  function currentJobForKey(key: string): SyncJobResponse | null {
+    const own = jobForKey(key)
+    if (key === ALL_SOURCES_LABEL) return own
+    const umbrella = umbrellaJobFor(key)
     if (!own || !umbrella) return own || umbrella
     // Both are ISO-8601 off the same clock, so ordering them as text orders
     // them in time — and no parse can trip over Python's microseconds.
     return (umbrella.started_at ?? '') > (own.started_at ?? '') ? umbrella : own
   }
 
+  function jobKeyForSourceId(sourceId: string): string {
+    return sourceId === 'all' ? ALL_SOURCES_LABEL : sourceId
+  }
+
+  /** What the banner calls a job, read at render so a rename shows at once. */
+  function nameForJobKey(key: string): string {
+    return syncSources.value.find((s) => s.id === key)?.display_name ?? key
+  }
+
   function jobForSourceId(sourceId: string): SyncJobResponse | null {
-    if (sourceId === 'all') return jobForLabel(ALL_SOURCES_LABEL)
-    const display = syncSources.value.find((s) => s.id === sourceId)?.display_name
-    return display ? currentJobForLabel(display) : null
+    return currentJobForKey(jobKeyForSourceId(sourceId))
   }
 
   function isSourceIdSyncing(sourceId: string): boolean {
-    if (sourceId === 'all') return isLabelRunning(ALL_SOURCES_LABEL)
+    if (sourceId === 'all') return isKeyRunning(ALL_SOURCES_LABEL)
     const source = syncSources.value.find((s) => s.id === sourceId)
     if (!source) return false
-    const display = source.display_name
-    if (isLabelRunning(display)) return true
+    if (isKeyRunning(sourceId)) return true
     // Until the trigger resolves the run's members are unknown, and every
     // source it can resolve to is an enabled one.
     if (optimisticTriggers.value.has(ALL_SOURCES_LABEL)) return source.enabled
-    if (jobForLabel(ALL_SOURCES_LABEL)?.status !== 'running') return false
+    if (jobForKey(ALL_SOURCES_LABEL)?.status !== 'running') return false
     // The progress slot is the fallback for a store that did not start the run
     // — a reload mid-run has no resolved list to answer from.
     return (
-      umbrellaSourceIds.value.has(sourceId) || umbrellaJobFor(display) !== null
+      umbrellaSourceIds.value.has(sourceId) || umbrellaJobFor(sourceId) !== null
     )
   }
 
@@ -171,27 +179,11 @@ export const useDataStore = defineStore('data', () => {
     }
   }
 
-  function _labelForSourceId(sourceId: string): string {
-    if (sourceId === 'all') return ALL_SOURCES_LABEL
-    const found = syncSources.value.find((s) => s.id === sourceId)
-    if (!found) {
-      // Fallback to the raw ID so triggerSync can still post the request,
-      // but warn loudly: a missing entry in syncSources usually means the
-      // store has not loaded yet or the caller passed a stale ID.
-      console.warn(
-        `triggerSync: no source with id="${sourceId}" in syncSources; ` +
-          'using the raw ID as the job label fallback.',
-      )
-      return sourceId
-    }
-    return found.display_name
-  }
-
   async function triggerSync(sourceId: string) {
-    const label = _labelForSourceId(sourceId)
-    syncMessage.value = `Starting sync for ${label}...`
+    const key = jobKeyForSourceId(sourceId)
+    syncMessage.value = `Starting sync for ${nameForJobKey(key)}...`
     syncStatus.value = 'running'
-    optimisticTriggers.value = new Set([...optimisticTriggers.value, label])
+    optimisticTriggers.value = new Set([...optimisticTriggers.value, key])
     try {
       const data = await api.post<UpdateResponse>('/update', {
         source: sourceId,
@@ -205,7 +197,7 @@ export const useDataStore = defineStore('data', () => {
       // until a reload.
       if (!data.sources?.length) {
         const next = new Set(optimisticTriggers.value)
-        next.delete(label)
+        next.delete(key)
         optimisticTriggers.value = next
         if (next.size === 0) syncStatus.value = 'idle'
         return
@@ -218,7 +210,7 @@ export const useDataStore = defineStore('data', () => {
         'Error: unexpected failure — check the console',
       )
       const next = new Set(optimisticTriggers.value)
-      next.delete(label)
+      next.delete(key)
       optimisticTriggers.value = next
       if (next.size === 0) syncStatus.value = 'failed'
     }
@@ -229,14 +221,14 @@ export const useDataStore = defineStore('data', () => {
       const data = await api.get<SyncStatusResponse>('/sync/status')
       syncJobs.value = data.jobs || []
 
-      // Drop optimistic flags whose labels the server has now ack'd —
+      // Drop optimistic flags whose keys the server has now ack'd —
       // start_sync transitions the job to RUNNING before returning, so
-      // any label present in syncJobs is also reflected in the server's
+      // any key present in syncJobs is also reflected in the server's
       // authoritative state and no longer needs the optimistic shadow.
       const seen = new Set(syncJobs.value.map((j) => j.source))
       const next = new Set<string>()
-      for (const label of optimisticTriggers.value) {
-        if (!seen.has(label)) next.add(label)
+      for (const key of optimisticTriggers.value) {
+        if (!seen.has(key)) next.add(key)
       }
       optimisticTriggers.value = next
 
@@ -252,7 +244,7 @@ export const useDataStore = defineStore('data', () => {
         if (failedJobs.length > 0) {
           syncStatus.value = 'failed'
           const first = failedJobs[0]
-          syncMessage.value = `Failed (${first.source}): ${
+          syncMessage.value = `Failed (${nameForJobKey(first.source)}): ${
             first.error_message || 'Unknown error'
           }`
         } else {
@@ -260,7 +252,7 @@ export const useDataStore = defineStore('data', () => {
           const { errors, total } = visibleErrors(syncJobs.value)
           // Named: two per-source syncs can run at once.
           const newest = newestJob(syncJobs.value)
-          let msg = `Completed (${newest.source}): ${buildCountsSummary(newest)}`
+          let msg = `Completed (${nameForJobKey(newest.source)}): ${buildCountsSummary(newest)}`
           if (errors.length > 0) msg += ` — ${describeErrors(errors, total)}`
           syncMessage.value = msg
         }
@@ -300,7 +292,7 @@ export const useDataStore = defineStore('data', () => {
     const errors: SyncErrorResponse[] = []
     let omitted = 0
     for (const job of jobs) {
-      const owns = (label: string) => currentJobForLabel(label) === job
+      const owns = (key: string) => currentJobForKey(key) === job
       errors.push(...job.errors.filter((error) => owns(error.source)))
       for (const slot of job.sources) {
         if (owns(slot.source)) omitted += slot.omitted_errors
@@ -335,7 +327,7 @@ export const useDataStore = defineStore('data', () => {
     const [first] = errors
     const rest = total - 1
     const more = rest > 0 ? ` (+${rest} more)` : ''
-    return `${first.source}: ${first.message}${more}`
+    return `${nameForJobKey(first.source)}: ${first.message}${more}`
   }
 
   function buildRunningMessage(running: SyncJobResponse[]): string {
@@ -367,7 +359,7 @@ export const useDataStore = defineStore('data', () => {
     if (running.length === 1) {
       const job = running[0]
       const item = job.current_item ? truncate(job.current_item, 50) : '...'
-      return `${summary} - Syncing ${job.source}: ${item}${errorNote}`
+      return `${summary} - Syncing ${nameForJobKey(job.source)}: ${item}${errorNote}`
     }
     return `${summary} - Syncing ${running.length} sources in parallel${errorNote}`
   }
@@ -700,6 +692,20 @@ export const useDataStore = defineStore('data', () => {
     syncSources.value = await api.get<SyncSourceResponse[]>('/sync/sources')
   }
 
+  async function setSourceDisplayName(
+    sourceId: string,
+    displayName: string,
+  ): Promise<void> {
+    const updated = await api.put<SourceConfigResponse>(
+      `/sync/sources/${encodeURIComponent(sourceId)}/display-name`,
+      { display_name: displayName },
+    )
+    sourceConfigs.value = { ...sourceConfigs.value, [sourceId]: updated }
+    // Re-read, not a local patch: a cleared name resolves server-side. Quiet
+    // for the reason setSourceSchedule is.
+    syncSources.value = await api.get<SyncSourceResponse[]>('/sync/sources')
+  }
+
   /** Called when the history disclosure opens, so a page load is not one of
    *  these per row. */
   async function loadSourceRuns(
@@ -729,9 +735,8 @@ export const useDataStore = defineStore('data', () => {
       payload,
     )
     sourceConfigs.value = { ...sourceConfigs.value, [created.source_id]: created }
-    // Refresh the listing from the server so the new entry's display_name
-    // matches ``humanize_source_id`` (the server-side canonical form, which
-    // applies acronym capitalisation we'd diverge from if synthesised here).
+    // Refresh the listing from the server: only it knows the new entry's
+    // display_name, which comes from the plugin's own name.
     await loadSyncSources()
     return created
   }
@@ -842,6 +847,7 @@ export const useDataStore = defineStore('data', () => {
     clearSourceSecret,
     setSourceEnabled,
     setSourceSchedule,
+    setSourceDisplayName,
     loadSourceRuns,
     loadAvailablePlugins,
     createSource,

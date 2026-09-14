@@ -34,7 +34,7 @@ class SyncDispatch:
 
 def build_sync_job(
     sync_manager: SyncManager,
-    source_label: str,
+    job_key: str,
     resolved: list[ResolvedInput],
     claim_ids: Sequence[int],
     storage: StorageManager,
@@ -54,7 +54,7 @@ def build_sync_job(
             current_source: str | None,
         ) -> None:
             sync_manager.update_progress(
-                source=source_label,
+                source=job_key,
                 items_processed=items_processed,
                 total_items=total_items,
                 current_item=current_item,
@@ -63,15 +63,15 @@ def build_sync_job(
 
         def result_callback(result: SyncResult) -> None:
             sync_manager.record_source_result(
-                source_label,
-                result.source_name,
+                job_key,
+                result.source_id,
                 items_added=result.items_added,
                 items_updated=result.items_updated,
                 items_unchanged=result.items_unchanged,
                 omitted_errors=result.omitted_errors,
             )
             for error_message in result.errors:
-                sync_manager.add_error(source_label, result.source_name, error_message)
+                sync_manager.add_error(job_key, result.source_id, error_message)
             record_run(result)
 
         try:

@@ -91,6 +91,7 @@ function createdConfig(sourceId: string, plugin = 'calibre_web'): SourceConfigRe
     source_id: sourceId,
     plugin,
     plugin_display_name: 'Calibre-Web',
+    display_name: 'Calibre-Web',
     enabled: true,
     field_values: {},
     secret_status: {},

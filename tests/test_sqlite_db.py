@@ -3861,6 +3861,19 @@ class TestEachSourceHoldsItsOwnExternalId:
             }
         ]
 
+    def test_an_importers_rows_are_named_by_the_importer_not_guessed_from_its_id(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        importer = GoodreadsCsvImporter()
+        db_id = temp_db.save_content_item(self._game(importer.name, "1", "Doom"))
+
+        stored = temp_db.get_content_item(db_id)
+
+        assert stored is not None
+        assert [pair.display_name for pair in stored.external_ids] == [
+            importer.display_name
+        ]
+
 
 class TestTheIdTableIsSeekedNotScanned:
     def test_it_reaches_the_row_through_the_id_table_and_scans_nothing(

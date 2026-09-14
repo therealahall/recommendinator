@@ -4,6 +4,7 @@ import { progressMilestone } from '@/utils/format'
 import type { SyncJobResponse, SyncSourceProgressResponse } from '@/types/api'
 
 const props = defineProps<{
+  sourceId: string
   sourceName: string
   job?: SyncJobResponse | null
 }>()
@@ -13,7 +14,7 @@ const props = defineProps<{
 const progress = computed<Omit<SyncSourceProgressResponse, 'omitted_errors'> | null>(() => {
   const job = props.job
   if (!job || job.status !== 'running') return null
-  if (job.source === props.sourceName) {
+  if (job.source === props.sourceId) {
     return {
       source: job.source,
       items_processed: job.items_processed,
@@ -25,7 +26,7 @@ const progress = computed<Omit<SyncSourceProgressResponse, 'omitted_errors'> | n
       items_unchanged: job.items_unchanged,
     }
   }
-  return job.sources.find((entry) => entry.source === props.sourceName) || null
+  return job.sources.find((entry) => entry.source === props.sourceId) || null
 })
 
 const label = computed<string>(() => {

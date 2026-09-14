@@ -12,6 +12,7 @@ from src.cli._shared import abort_after_failure
 from src.cli.commands._enrichment import run_enrichment
 from src.config.service import auto_enrich_enabled
 from src.enrichment.manager import EnrichmentStart
+from src.ingestion.source_labels import label_for_source
 from src.ingestion.sync import (
     ALL_SOURCES_LABEL,
     MAX_WORKERS_CEILING,
@@ -36,7 +37,7 @@ from src.sources.service import (
     unusable_detail,
 )
 from src.utils.item_serialization import ENRICHMENT_UNAVAILABLE
-from src.utils.text import humanize_source_id, sanitize_for_log
+from src.utils.text import sanitize_for_log
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +48,7 @@ SYNC_FAILED = "Sync failed due to an internal error"
 def _source_view(result: SyncResult) -> dict[str, Any]:
     """One source's counts, shaped as ``SyncSourceProgressResponse``."""
     return {
-        "source": result.source_name,
+        "source": result.source_id,
         "items_processed": result.items_synced,
         "total_items": result.total_items,
         "current_item": None,
@@ -73,7 +74,7 @@ def _status_view(
     items_processed = sum(result.items_synced for result in results)
     total_items = sum(result.total_items for result in results)
     errors = [
-        {"source": result.source_name, "message": message}
+        {"source": result.source_id, "message": message}
         for result in results
         for message in result.errors
     ]
@@ -205,7 +206,7 @@ def update(
             )
             if validation_errors:
                 click.echo(
-                    f"  {resolved_entry.plugin.display_name}: Error: "
+                    f"  {label_for_source(storage, resolved_entry.source_id)}: Error: "
                     f"{_refusal(resolved_entry, validation_errors)}",
                     err=True,
                 )
@@ -246,7 +247,7 @@ def update(
 
     claimed, refused = claim_sources(storage, [entry.source_id for entry in valid])
     if refused:
-        click.echo(f"Error: {already_syncing_detail(refused)}", err=True)
+        click.echo(f"Error: {already_syncing_detail(storage, refused)}", err=True)
     valid = [entry for entry in valid if entry.source_id in claimed]
     if not valid:
         report_nothing_ran()
@@ -265,6 +266,9 @@ def update(
     # workers can interleave; serialise output via a lock.
     output_lock = threading.Lock()
     last_reported: dict[str, int] = {}
+    names = {
+        entry.source_id: label_for_source(storage, entry.source_id) for entry in valid
+    }
 
     def cli_progress(
         items_processed: int,
@@ -274,7 +278,9 @@ def update(
     ) -> None:
         if not (total_items and items_processed > 0 and items_processed % 10 == 0):
             return
-        prefix = f"[{current_source}] " if current_source else ""
+        prefix = (
+            f"[{names.get(current_source, current_source)}] " if current_source else ""
+        )
         with output_lock:
             # Suppress duplicate "Processed N/M" lines a worker may emit
             # if its callback fires twice for the same threshold.
@@ -304,8 +310,8 @@ def update(
         # source at both Start doors until it went stale.
         release_sources(storage, claimed.values())
 
-    label = ALL_SOURCES_LABEL if source == "all" else humanize_source_id(source)
-    view = _status_view(label, results, started_at, datetime.now())
+    job_key = ALL_SOURCES_LABEL if source == "all" else source
+    view = _status_view(job_key, results, started_at, datetime.now())
     job = view["jobs"][0]
 
     json_output = output_format == "json"
@@ -316,7 +322,7 @@ def update(
             job["sources"], results, valid, strict=True
         ):
             click.echo(
-                f"  {entry.plugin.display_name} ({entry.source_id}): "
+                f"  {result.source_name} ({entry.source_id}): "
                 f"{_counts(source_view)}"
             )
             for message in result.errors:

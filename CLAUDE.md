@@ -85,7 +85,8 @@ src/
 │   │                 # guard every credentialed request walks — source plugins,
 │   │                 # enrichment providers, the OAuth token exchanges and the
 │   │                 # cover fetch alike; schedule.py the cadence presets,
-│   │                 # failure backoff and due computation
+│   │                 # failure backoff and due computation; source_labels.py
+│   │                 # the one label every surface shows for a source
 │   ├── importers/    # One-off file formats, reached only by import
 │   └── sources/      # Source plugins (folder-per-plugin: <name>/<name>.py + README.md + test_<name>.py).
 │                     # _isolation/ is not a plugin: it holds the test proving plugin-local

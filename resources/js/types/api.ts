@@ -204,6 +204,7 @@ export interface SourceConfigResponse {
   source_id: string
   plugin: string
   plugin_display_name: string
+  display_name: string
   enabled: boolean
   field_values: Record<string, unknown>
   secret_status: Record<string, boolean>

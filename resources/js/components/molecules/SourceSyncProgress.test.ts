@@ -4,12 +4,12 @@ import SourceSyncProgress from './SourceSyncProgress.vue'
 import { progressMilestone } from '@/utils/format'
 import type { SyncJobResponse } from '@/types/api'
 
-const SOURCE = 'Steam'
+const SOURCE_ID = 'steam'
 const CROSSING = [...Array(101).keys()].find(percent => progressMilestone(percent) > 0)!
 
 const running = (percent: number): SyncJobResponse =>
   ({
-    source: SOURCE,
+    source: SOURCE_ID,
     status: 'running',
     items_processed: percent,
     current_item: `item ${percent}`,
@@ -19,7 +19,7 @@ const running = (percent: number): SyncJobResponse =>
 describe('SourceSyncProgress', () => {
   it('speaks once a milestone is crossed, and says nothing on the polls between', async () => {
     const wrapper = mount(SourceSyncProgress, {
-      props: { sourceName: SOURCE, job: running(CROSSING - 2) },
+      props: { sourceId: SOURCE_ID, sourceName: 'Steam', job: running(CROSSING - 2) },
     })
     const region = wrapper.get('[data-testid="sync-progress-status"]')
     const opening = region.text()

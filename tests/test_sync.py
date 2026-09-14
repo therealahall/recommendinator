@@ -859,6 +859,7 @@ class TestTheOtherSyncSinksEscapeTheirValuesToo:
         plugin.display_name = "CSV"
         plugin.fetch.return_value = iter([])
         storage = make_storage_mock()
+        storage.sources.get.return_value = None
 
         with caplog.at_level(logging.INFO, logger="src.ingestion.sync"):
             result = execute_sync(

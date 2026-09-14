@@ -13,6 +13,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Literal, TypeVar
 
+from src.ingestion.source_labels import source_label
 from src.models.content import (
     ConsumptionStatus,
     ContentItem,
@@ -259,8 +260,11 @@ _CONTENT_ITEM_FROM = _build_content_item_from()
 # character. The group's ids, as two terms rather than a COALESCE no index seeks.
 _EXTERNAL_IDS_TERM = (
     "(SELECT json_group_array(json_object("
-    "'source', x.source, 'external_id', x.external_id))"
+    "'source', x.source, 'external_id', x.external_id,"
+    " 'named', sc.display_name, 'plugin', sc.plugin))"
     " FROM content_item_external_ids x"
+    " LEFT JOIN source_configs sc"
+    " ON sc.user_id = x.user_id AND sc.source_id = x.source"
     " WHERE x.content_item_id = ci.id"
     " OR x.content_item_id IN (SELECT owner.id FROM content_items owner"
     " WHERE owner.merged_into = ci.id)) as external_ids"
@@ -1278,7 +1282,13 @@ class SQLiteDB:
 
         external_ids = sorted(
             (
-                ExternalId.model_validate(pair)
+                ExternalId(
+                    source=pair["source"],
+                    external_id=pair["external_id"],
+                    display_name=source_label(
+                        pair["source"], pair["named"], pair["plugin"]
+                    ),
+                )
                 for pair in json.loads(row["external_ids"])
             ),
             key=lambda pair: (pair.source, pair.external_id),

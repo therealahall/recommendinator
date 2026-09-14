@@ -15,6 +15,7 @@ from src.cli._shared import (
     series_label,
     write_output_file,
 )
+from src.ingestion.source_labels import label_for_source
 from src.models.content import (
     MAX_CREATOR_LENGTH,
     MAX_DESCRIPTION_LENGTH,
@@ -60,7 +61,6 @@ from src.utils.export import export_items_csv, export_items_json
 from src.utils.item_serialization import ignore_result_to_dict, item_to_dict
 from src.utils.series import MAX_SEASONS
 from src.utils.sorting import MAX_SEARCH_LENGTH, normalize_for_search
-from src.utils.text import humanize_source_id
 
 
 @click.group()
@@ -904,8 +904,8 @@ def library_duplicates(
 MERGE_CANDIDATE_LIMIT = 10
 
 
-def _match_summary(item: ContentItem) -> str:
-    source = humanize_source_id(item.source) if item.source else "N/A"
+def _match_summary(storage: StorageManager, item: ContentItem, user_id: int) -> str:
+    source = label_for_source(storage, item.source, user_id) if item.source else "N/A"
     return f"  #{item.db_id} {item.title} ({item.author or 'N/A'}, {source})"
 
 
@@ -927,7 +927,7 @@ def _named_row(storage: StorageManager, name: str, user_id: int, option: str) ->
         return cast(int, found[0].db_id)
     if not found:
         abort_with(f"No library item matches {option} {name!r}.")
-    listed = "\n".join(_match_summary(item) for item in found)
+    listed = "\n".join(_match_summary(storage, item, user_id) for item in found)
     abort_with(
         f"{option} {name!r} matches more than one item. Name one of these more"
         f" fully, or pass its ID:\n{listed}"

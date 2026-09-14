@@ -288,8 +288,11 @@ uv run python -m src.cli source create my_roms roms
 uv run python -m src.cli source set my_roms paths inputs/roms
 uv run python -m src.cli source show my_roms       # also schema, enable, disable, remove
 uv run python -m src.cli source schedule my_roms weekly   # off, hourly, 6h, daily, weekly
+uv run python -m src.cli source rename my_roms "Retro Games"   # "" restores the default
 uv run python -m src.cli source history my_roms    # past runs; omit the id for all
 ```
+
+`source rename` sets the name every screen and command shows for a source; its id stays. Unnamed, a source is called by its plugin's name plus the rest of its id, so `gog_work` reads "GOG Work".
 
 `source schedule` takes one of those five keys. The web server syncs each source
 on its cadence while it is running; `off` leaves it to `update`. Unscheduled, a
