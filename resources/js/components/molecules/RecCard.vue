@@ -113,7 +113,7 @@ function toggleBreakdown() {
             <span class="sr-only">{{ typeLabel }}. </span>{{ rec.title }}
           </h3>
           <div v-if="series.shown" class="rec-series">
-            <span aria-hidden="true">{{ series.shown }}</span>
+            <span aria-hidden="true"><span class="series-label">Series</span> {{ series.shown }}</span>
             <span class="sr-only">{{ series.spoken }}</span>
           </div>
           <div v-if="rec.author" class="rec-author">by {{ rec.author }}</div>
