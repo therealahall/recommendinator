@@ -1,6 +1,20 @@
 # CHANGELOG
 
 
+## v0.62.1 (2026-09-14)
+
+### Bug Fixes
+
+- **duplicates**: Name a copy's source and offer both choices equally
+  ([`4569f5c`](https://github.com/therealahall/recommendinator/commit/4569f5c4e79ce8e6dc0fd7b87b3702bef1ce78ed))
+
+- **ui**: Set a series in italic rather than labelling it
+  ([`bbffc06`](https://github.com/therealahall/recommendinator/commit/bbffc065b02a29a68b4b8b4c236ccfaa0bdc4db7))
+
+- **ui**: Tell a series from its creator on a card
+  ([`8a35aa4`](https://github.com/therealahall/recommendinator/commit/8a35aa46a9cc4c95ee54289d841441eb7c1b49d2))
+
+
 ## v0.62.0 (2026-09-14)
 
 ### Bug Fixes
