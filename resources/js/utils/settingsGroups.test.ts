@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { groupSettings } from './settingsGroups'
+import { groupSettings, providerGroups } from './settingsGroups'
 import type { SettingView } from '@/types/api'
 
 function setting(key: string, label: string): SettingView {
@@ -104,5 +104,51 @@ describe('groupSettings', () => {
 
     expect(groups).toHaveLength(1)
     expect(groups[0].label).toBe('Scorer Weights')
+  })
+})
+
+describe('providerGroups', () => {
+  it('gives a provider holding one setting a group of its own', () => {
+    const { providers } = providerGroups([
+      setting('enrichment.enabled', 'Enrichment enabled'),
+      setting('enrichment.providers.openlibrary.enabled', 'Open Library enabled'),
+    ])
+
+    expect(providers.map((entry) => entry.name)).toEqual(['openlibrary'])
+    expect(providers[0].label).toBe('Open Library')
+  })
+
+  it('leaves every key outside the provider tree for the generic grouping', () => {
+    const { rest } = providerGroups([
+      setting('enrichment.enabled', 'Enrichment enabled'),
+      setting('enrichment.provider_order', 'Provider precedence'),
+      setting('enrichment.providers.tmdb.api_key', 'TMDB API key'),
+    ])
+
+    expect(rest.map((entry) => entry.key)).toEqual([
+      'enrichment.enabled',
+      'enrichment.provider_order',
+    ])
+  })
+
+  it('keeps every key sharing a provider name in that provider', () => {
+    const { providers } = providerGroups([
+      setting('enrichment.providers.tmdb.api_key', 'TMDB API key'),
+      setting('enrichment.providers.rawg.enabled', 'RAWG enabled'),
+      setting('enrichment.providers.tmdb.language', 'TMDB language'),
+    ])
+
+    expect(providers.map((entry) => entry.name)).toEqual(['tmdb', 'rawg'])
+    expect(providers[0].settings.map((entry) => entry.key)).toEqual([
+      'enrichment.providers.tmdb.api_key',
+      'enrichment.providers.tmdb.language',
+    ])
+  })
+
+  it('finds no provider in a section that has none', () => {
+    const { providers, rest } = providerGroups([setting('logging.level', 'Log level')])
+
+    expect(providers).toEqual([])
+    expect(rest).toHaveLength(1)
   })
 })

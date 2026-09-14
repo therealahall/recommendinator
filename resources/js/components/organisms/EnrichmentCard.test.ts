@@ -80,6 +80,14 @@ describe('EnrichmentCard', () => {
     expect(data.enableEnrichment).toHaveBeenCalled()
   })
 
+  it('names no individual provider in the copy, which went stale every time one shipped', () => {
+    const copy = mountWithEnrichment().get('.help-text').text()
+
+    for (const provider of ['TMDB', 'OpenLibrary', 'Open Library', 'RAWG', 'IGDB', 'Hardcover']) {
+      expect(copy).not.toContain(provider)
+    }
+  })
+
   it('mounts the progress region before the first tick, not along with it', () => {
     const wrapper = mountWithEnrichment()
 

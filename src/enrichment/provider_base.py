@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 # Re-exported: every enrichment provider imports ConfigField from here, the
@@ -134,6 +134,11 @@ class ProviderRefusedError(ProviderError):
         self.codes = sanitize_for_log(codes)
 
 
+#: Where a provider that states no precedence sits: behind every provider that
+#: states one, so installing one cannot displace the order the rest agreed on.
+TRAILING_PRECEDENCE = 100
+
+
 class EnrichmentProvider(ABC):
     @property
     @abstractmethod
@@ -156,6 +161,13 @@ class EnrichmentProvider(ABC):
     @property
     def description(self) -> str:
         return f"Enrich metadata from {self.display_name}"
+
+    @property
+    def precedence(self) -> int:
+        """Where this provider is tried in the default order, lowest first. The
+        shipped providers leave gaps, so another can state a place between two.
+        """
+        return TRAILING_PRECEDENCE
 
     @property
     def rate_limit_requests_per_second(self) -> float:
@@ -210,6 +222,27 @@ class EnrichmentProvider(ABC):
 
 def _overrides(provider_class: type[EnrichmentProvider], method: str) -> bool:
     return getattr(provider_class, method) is not getattr(EnrichmentProvider, method)
+
+
+def flags_no_credential(provider: EnrichmentProvider) -> bool:
+    """Whether a provider needing an api key marks no field sensitive."""
+    return provider.requires_api_key and not any(
+        declared.sensitive for declared in provider.get_config_schema()
+    )
+
+
+def stored_config_schema(provider: EnrichmentProvider) -> list[ConfigField]:
+    """Read wherever a field's value is stored: an unflagged credential would
+    have the operator's token typed into a plaintext ``settings`` row, so a
+    provider that flags none has its text fields read as sensitive instead.
+    """
+    declared = provider.get_config_schema()
+    if not flags_no_credential(provider):
+        return declared
+    return [
+        replace(entry, sensitive=True) if entry.field_type is str else entry
+        for entry in declared
+    ]
 
 
 def states_a_match(provider: EnrichmentProvider) -> bool:

@@ -50,6 +50,45 @@ function labelFor(path: string, settings: SettingView[]): string {
   return humanizeSection(leaf)
 }
 
+const PROVIDER_PREFIX = 'enrichment.providers.'
+
+export interface ProviderGroup extends SettingGroup {
+  /** The registry's own name for the provider, which the precedence order ranks. */
+  name: string
+}
+
+export interface SplitProviders {
+  rest: SettingView[]
+  providers: ProviderGroup[]
+}
+
+/** Split out ahead of the generic grouping, not by it: the pair rule below would
+ *  drop the two providers holding one setting out of the ranked list they
+ *  belong in. */
+export function providerGroups(settings: SettingView[]): SplitProviders {
+  const rest: SettingView[] = []
+  const byName = new Map<string, SettingView[]>()
+  for (const setting of settings) {
+    if (!setting.key.startsWith(PROVIDER_PREFIX)) {
+      rest.push(setting)
+      continue
+    }
+    const name = setting.key.slice(PROVIDER_PREFIX.length).split('.')[0]
+    const members = byName.get(name)
+    if (members) members.push(setting)
+    else byName.set(name, [setting])
+  }
+  return {
+    rest,
+    providers: Array.from(byName, ([name, members]) => ({
+      id: slug(PROVIDER_PREFIX + name),
+      name,
+      label: labelFor(PROVIDER_PREFIX + name, members),
+      settings: members,
+    })),
+  }
+}
+
 export function groupSettings(settings: SettingView[]): GroupedSettings {
   const byPath = new Map<string, SettingView[]>()
   for (const setting of settings) {

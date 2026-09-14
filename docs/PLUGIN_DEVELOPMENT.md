@@ -521,12 +521,10 @@ Worked examples: `src/ingestion/sources/gog/gog.py` and
 
 ## Enrichment providers
 
-Providers use the folder layout source plugins use, under
-`src/enrichment/providers/<name>/`, where `EnrichmentRegistry` discovers one, so
-shipping a provider edits no core file.
-
-A provider you do not want in the repo goes in `private/plugins/`: both
-registries scan it and each keeps the classes it recognises.
+Providers use the source-plugin folder layout under
+`src/enrichment/providers/<name>/`, discovered by `EnrichmentRegistry`, so
+shipping one edits no core file. One you do not want in the repo goes in
+`private/plugins/`: both registries scan it and keep the classes they recognise.
 
 Everything above `rate_limit_requests_per_second` works as it does on a source
 plugin; the rest differs:
@@ -579,7 +577,7 @@ class MyEnrichmentProvider(EnrichmentProvider):
 
     @property
     def rate_limit_requests_per_second(self) -> float:
-        return 5.0  # default is 1.0
+        return 5.0  # the manager throttles you at this rate; default is 1.0
 
     def enrich(
         self, item: ContentItem, config: dict[str, Any]
@@ -625,30 +623,38 @@ class MyEnrichmentProvider(EnrichmentProvider):
         return is_numeric_record_id(record_id)
 ```
 
-The re-check in `enrich` is the half that repairs an install: tightening
+The re-check in `enrich` is what repairs an install: tightening
 `accepts_record_id` leaves a bad pin stored, and only the read drops it. Accept
-only ids you offered as candidates: one you cannot look up is a pin every run
-ignores, and one spliced into a URL path is an operator-typed path segment.
+only ids you offered — one reaching a URL path is operator-typed.
 
 Every request carrying the api key goes through `request_within_origin`, since
 `requests` replays the key onto whatever host a `Location` names.
 `tests/test_credential_url_chains.py` fails a provider calling `requests`
 directly.
 
-`fetch_series_ordinal` is optional and separate from the match: it is asked only
-while a stronger source has not positioned the item, and implementing it alone
-never settles an item's provider or quality. Implement it or `enrich`; a
-provider with neither is refused when its class is created.
+`fetch_series_ordinal` is separate from the match: asked only while no stronger
+source has positioned the item, and alone it never settles an item's provider or
+quality. Implement it or `enrich`; a class with neither is refused when it is
+defined.
 
-Name the series your position counts within: the position is taken only where
-your name agrees with the one already stored, so a sub-series' number is refused
-rather than filed under its parent. Your name is written only where nothing has
-named the series yet.
+Your position is taken only where your series name agrees with the stored one,
+so a sub-series' number is not filed under its parent. Your name is written only
+where nothing named the series yet.
 
-The manager throttles you from `rate_limit_requests_per_second`, the merge is
-gap-filling bar the series fields, and config lives under
-`enrichment.providers.<name>` in the settings registry — set from the Settings
-page or the `settings` CLI, with the api key going through `settings set-secret`.
+The merge is gap-filling bar the series fields.
+
+Your config needs no entry anywhere: the settings registry reads
+`get_config_schema()` and offers each field under `enrichment.providers.<name>`,
+adding the `enabled` toggle itself — from the Settings page or the `settings`
+CLI, a `sensitive` field going through `settings set-secret`. A field's
+`description` is its help text and its `pattern` the format a save is checked
+against.
+
+A declared default is what the registry offers the operator, not what arrives in
+`config` — read it with `config.get(name, DEFAULT)`.
+
+Override `precedence` to say where you are tried in the default order, lowest
+first; state nothing and you follow every provider that does.
 
 ## Plugins to read
 

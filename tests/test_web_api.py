@@ -51,7 +51,7 @@ from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.engine import RecommendationEngine
 from src.recommendations.record import Recommendation
 from src.recommendations.scorers import SCORER_NAME_MAP
-from src.settings.metadata import default_of
+from src.settings.metadata import PROVIDER_ORDER_KEY, default_of
 from src.settings.service import build_settings_view
 from src.sources.service import SOURCE_MISCONFIGURED_DETAIL, resolve_inputs
 from src.storage.manager import (
@@ -3268,6 +3268,26 @@ class TestSettingsEndpoints:
         assert response.status_code == 422
         assert response.json()["detail"]["key"] == "web.allowed_origins"
         assert storage.settings.get("web.allowed_origins") is None
+
+    def test_a_provider_no_list_names_is_configurable_and_rankable(
+        self, settings_env, registry_with_a_private_provider: str
+    ) -> None:
+        """The page ranks the providers it is shown, so one missing from the
+        payload left every order it could send short a name — and the save
+        refused, with nothing the operator could do about it."""
+        client, storage, _config = settings_env
+        toggle = f"enrichment.providers.{registry_with_a_private_provider}.enabled"
+
+        listed = client.get("/api/settings").json()
+        order = self._find(listed, PROVIDER_ORDER_KEY)["value"]
+        response = client.put(
+            "/api/settings", json={"updates": {toggle: True, PROVIDER_ORDER_KEY: order}}
+        )
+
+        assert self._find(listed, toggle)["value"] is False
+        assert registry_with_a_private_provider in order
+        assert response.status_code == 200
+        assert storage.settings.get(toggle) is True
 
     def test_delete_sensitive_key_is_graceful_not_500(self, settings_env) -> None:
         """Reported: resetting a secret leaf via the web returns 500 Internal Server

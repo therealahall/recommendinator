@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
+from src.cli.main import cli
 from src.enrichment.manager import (
     EnrichmentJobStatus,
     EnrichmentManager,
@@ -81,6 +82,19 @@ def _claims(storage: StorageManager) -> Callable[..., EnrichmentStart]:
 
 
 class TestEnrichmentStart:
+    def test_help_names_no_individual_provider_so_it_cannot_go_stale(
+        self, cli_runner: CliRunner
+    ) -> None:
+        result = cli_runner.invoke(cli, ["enrichment", "start", "--help"])
+
+        assert result.exit_code == 0
+        providers = get_enrichment_registry().get_all_providers()
+        # A failed provider import is swallowed by the registry, and an empty
+        # registry would pass the sweep below without reading a word of help.
+        assert providers
+        for provider in providers:
+            assert provider not in result.output.lower()
+
     def test_disabled_enrichment_names_the_surface_that_turns_it_on(
         self, cli_runner: CliRunner
     ) -> None:

@@ -303,6 +303,29 @@ class TestTheProviderOrderNeedsNoCommandOfItsOwn:
         assert storage.settings.get(_ORDER_KEY) is None
 
 
+class TestAProviderNoListNames:
+    def test_it_is_configurable_and_rankable_from_the_cli(
+        self,
+        cli_runner: CliRunner,
+        storage: StorageManager,
+        registry_with_a_private_provider: str,
+    ) -> None:
+        toggle = f"enrichment.providers.{registry_with_a_private_provider}.enabled"
+
+        enabled = _invoke_with_mocks(
+            cli_runner, ["settings", "set", toggle, "true"], storage
+        )
+        order = default_of(_ORDER_KEY)
+        ranked = _invoke_with_mocks(
+            cli_runner, ["settings", "set", _ORDER_KEY, ", ".join(order)], storage
+        )
+
+        assert enabled.exit_code == 0
+        assert storage.settings.get(toggle) is True
+        assert ranked.exit_code == 0
+        assert registry_with_a_private_provider in storage.settings.get(_ORDER_KEY)
+
+
 class TestSettingsReset:
     def test_reset_removes_override(
         self, cli_runner: CliRunner, storage: StorageManager

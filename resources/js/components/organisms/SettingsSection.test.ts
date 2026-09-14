@@ -66,6 +66,17 @@ function boolSetting(key: string, value: boolean): SettingView {
   return { ...textSetting(key, ''), type: 'bool', widget: 'toggle', value } as SettingView
 }
 
+function orderSetting(value: string[], extra: Partial<SettingView> = {}): SettingView {
+  return {
+    ...textSetting('enrichment.provider_order', ''),
+    label: 'Provider precedence',
+    type: 'list',
+    widget: 'provider-order',
+    value,
+    ...extra,
+  } as SettingView
+}
+
 function secretSetting(key: string, hasSecret: boolean): SettingView {
   return { ...textSetting(key, ''), sensitive: true, has_secret: hasSecret } as SettingView
 }
@@ -106,6 +117,15 @@ async function mountSection(section: SettingsSectionType): Promise<VueWrapper> {
   const wrapper = renderSection(section)
   await openEverything(wrapper)
   return wrapper
+}
+
+/** What is on the button rather than what is read off it. */
+function visibleText(element: Element): string {
+  return Array.from(element.childNodes)
+    .filter((node) => !(node instanceof HTMLElement && node.classList.contains('sr-only')))
+    .map((node) => node.textContent ?? '')
+    .join('')
+    .trim()
 }
 
 /** What the operator can actually reach: a collapsed panel carries `hidden`. */
@@ -222,7 +242,11 @@ describe('SettingsSection', () => {
     // the section arrives back as a fresh object of server truth.
     await wrapper.setProps({ section: served() })
 
-    expect(wrapper.find('[data-testid="save-enrichment"]').text()).toBe('Save Enrichment')
+    const save = wrapper.get('[data-testid="save-enrichment"]')
+    expect(visibleText(save.element)).toBe('Save')
+    // Six sections each carry one, so the section it saves stays in its
+    // accessible name rather than leaving six identical buttons (WCAG 2.4.6).
+    expect(save.get('span.sr-only').text()).toBe('Enrichment')
     await wrapper.find('[data-testid="save-enrichment"]').trigger('click')
     await flushPromises()
 
@@ -261,7 +285,7 @@ describe('SettingsSection', () => {
     expect(mockPut).toHaveBeenCalledTimes(1)
     expect(mockDelete).not.toHaveBeenCalled()
     expect(save.attributes('aria-disabled')).toBe('true')
-    // Dimmed with its label unchanged reads as "Save Enrichment, dimmed", so the
+    // Dimmed with its label unchanged reads as "Save, dimmed", so the
     // description is where the reason lives.
     expect(wrapper.get(`[id="${save.attributes('aria-describedby')}"]`).text()).toContain(
       'in flight',
@@ -500,20 +524,189 @@ describe('SettingsSection', () => {
       expect(reachable(wrapper, 'setting-enrichment.providers.zzztest.region')).toBe(true)
     })
 
-    it('renders a provider holding one setting inline, not behind a disclosure of one', () => {
+    it('gives a provider holding one setting an accordion of its own, like every other provider', async () => {
       const wrapper = renderSection(
         {
           section: 'enrichment',
           settings: [
             textSetting('enrichment.enabled', 'on'),
-            textSetting('enrichment.providers.openlibrary.enabled', 'on'),
+            textSetting('enrichment.providers.openlibrary.enabled', 'on', {
+              label: 'Open Library enabled',
+            }),
           ],
         },
         true,
       )
 
+      expect(reachable(wrapper, 'setting-enrichment.enabled')).toBe(true)
+      expect(reachable(wrapper, 'setting-enrichment.providers.openlibrary.enabled')).toBe(false)
+
+      await accordionTrigger(wrapper, 'Open Library').trigger('click')
+
       expect(reachable(wrapper, 'setting-enrichment.providers.openlibrary.enabled')).toBe(true)
-      expect(wrapper.findAll('button.accordion-trigger')).toHaveLength(1)
+    })
+
+    it('renders the provider order as a list of providers rather than a field of tags', () => {
+      const wrapper = renderSection(
+        {
+          section: 'enrichment',
+          settings: [
+            orderSetting(['tmdb']),
+            boolSetting('enrichment.providers.tmdb.enabled', true),
+          ],
+        },
+        true,
+      )
+
+      expect(wrapper.find('[data-testid="setting-enrichment.provider_order"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="provider-order"]').exists()).toBe(true)
+    })
+
+    it('saves a reordered precedence through the same section save as every other edit', async () => {
+      mockPut.mockResolvedValue({ sections: [] })
+      const wrapper = renderSection(
+        {
+          section: 'enrichment',
+          settings: [
+            orderSetting(['tmdb', 'rawg']),
+            boolSetting('enrichment.providers.tmdb.enabled', true),
+            boolSetting('enrichment.providers.rawg.enabled', true),
+          ],
+        },
+        true,
+      )
+
+      await wrapper.get('[data-provider="rawg"] [data-direction="up"]').trigger('click')
+      await wrapper.get('[data-testid="save-enrichment"]').trigger('click')
+      await flushPromises()
+
+      expect(mockPut).toHaveBeenCalledWith('/settings', {
+        updates: { 'enrichment.provider_order': ['rawg', 'tmdb'] },
+      })
+    })
+
+    it('saves an order a provider registered since it was stored is missing from', async () => {
+      mockPut.mockResolvedValue({ sections: [] })
+      const wrapper = renderSection(
+        {
+          section: 'enrichment',
+          settings: [
+            orderSetting(['tmdb', 'rawg']),
+            boolSetting('enrichment.providers.tmdb.enabled', true),
+            boolSetting('enrichment.providers.rawg.enabled', true),
+            boolSetting('enrichment.providers.igdb.enabled', true),
+          ],
+        },
+        true,
+      )
+
+      await wrapper.get('[data-provider="rawg"] [data-direction="up"]').trigger('click')
+      await wrapper.get('[data-testid="save-enrichment"]').trigger('click')
+      await flushPromises()
+
+      // The service refuses an order leaving a provider unranked, so igdb has to
+      // leave with it or the section can never be saved again.
+      expect(mockPut).toHaveBeenCalledWith('/settings', {
+        updates: { 'enrichment.provider_order': ['rawg', 'tmdb', 'igdb'] },
+      })
+    })
+
+    it('catches the focus a landed order reset takes with it, having no field to land on', async () => {
+      const order = reactive(
+        orderSetting(['tmdb'], {
+          db_overridden: true,
+          has_stored_value: true,
+        }) as SettingViewValue,
+      )
+      mockDelete.mockImplementation(async () => {
+        order.db_overridden = false
+        order.has_stored_value = false
+        return { sections: [] }
+      })
+      const wrapper = renderSection(
+        {
+          section: 'enrichment',
+          settings: [order, boolSetting('enrichment.providers.tmdb.enabled', true)],
+        },
+        true,
+      )
+      const reset = wrapper.get('[data-testid="reset-enrichment.provider_order"]')
+      ;(reset.element as HTMLButtonElement).focus()
+
+      await reset.trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="reset-enrichment.provider_order"]').exists()).toBe(false)
+      expect(document.activeElement).toBe(wrapper.get('[data-testid="save-enrichment"]').element)
+    })
+
+    it('catches the focus a refused order save leaves, having no field to land on', async () => {
+      mockPut.mockRejectedValue(
+        new MockApiError(422, 'Unprocessable Entity', {
+          detail: {
+            key: 'enrichment.provider_order',
+            reason: 'names no installed enrichment provider',
+          },
+        }),
+      )
+      const wrapper = renderSection(
+        {
+          section: 'enrichment',
+          settings: [
+            orderSetting(['tmdb', 'rawg']),
+            boolSetting('enrichment.providers.tmdb.enabled', true),
+            boolSetting('enrichment.providers.rawg.enabled', true),
+          ],
+        },
+        true,
+      )
+      await wrapper.get('[data-provider="rawg"] [data-direction="up"]').trigger('click')
+      ;(document.activeElement as HTMLElement).blur()
+      expect(document.activeElement).toBe(document.body)
+
+      await wrapper.get('[data-testid="save-enrichment"]').trigger('click')
+      await flushPromises()
+
+      expect(document.activeElement).toBe(wrapper.get('[data-testid="save-enrichment"]').element)
+    })
+
+    it('opens the shut provider holding a value the server refused', async () => {
+      const key = 'enrichment.providers.zzztest.language'
+      mockPut.mockRejectedValue(
+        new MockApiError(422, 'Unprocessable Entity', {
+          detail: { key, reason: 'invalid language tag' },
+        }),
+      )
+      const wrapper = renderSection(ZZZTEST, true)
+      await accordionTrigger(wrapper, 'Zzztest').trigger('click')
+      await wrapper.find(`[data-testid="setting-${key}"]`).setValue('!!')
+      await accordionTrigger(wrapper, 'Zzztest').trigger('click')
+      expect(reachable(wrapper, `setting-${key}`)).toBe(false)
+
+      await wrapper.find('[data-testid="save-enrichment"]').trigger('click')
+      await flushPromises()
+
+      expect(reachable(wrapper, `setting-${key}`)).toBe(true)
+      expect(document.activeElement).toBe(wrapper.find(`[data-testid="setting-${key}"]`).element)
+    })
+
+    it('announces a reorder through the region the section already mounts for it', async () => {
+      const wrapper = renderSection(
+        {
+          section: 'enrichment',
+          settings: [
+            orderSetting(['tmdb', 'rawg']),
+            boolSetting('enrichment.providers.tmdb.enabled', true),
+            boolSetting('enrichment.providers.rawg.enabled', true),
+          ],
+        },
+        true,
+      )
+
+      await wrapper.get('[data-provider="rawg"] [data-direction="up"]').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.get('p.sr-only[role="status"]').text()).toContain('moved to position 1 of 2')
     })
 
     it('renders an all-advanced section in its panel, with no empty list above it', () => {

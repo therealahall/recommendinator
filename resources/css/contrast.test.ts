@@ -330,6 +330,7 @@ const NON_TEXT = 3
 
 const ACCORDION = 'resources/js/components/atoms/Accordion.vue'
 const DATA_PAGE = 'resources/js/components/pages/DataPage.vue'
+const ENRICHMENT_PROVIDERS = 'resources/js/components/organisms/EnrichmentProviders.vue'
 const NUMBER_STEPPER = 'resources/js/components/atoms/NumberStepper.vue'
 const PREFERENCES_PAGE = 'resources/js/components/pages/PreferencesPage.vue'
 const SEASON_CHECKLIST = 'resources/js/components/molecules/SeasonChecklist.vue'
@@ -524,6 +525,23 @@ const TINTED_TEXT: [string, string, string, string][] = [
   ['a hovered scorer tooltip', BASE, '.scorer-tooltip-wrap:hover .scorer-tooltip-icon', '--bg-card'],
   ['the Trakt activation link', TRAKT_FLOW, '.trakt-flow-link', '--bg-card'],
   ['a Trakt connect failure', TRAKT_FLOW, '.trakt-flow-status--error', '--bg-card'],
+  ['a provider list caption', ENRICHMENT_PROVIDERS, '.provider-list-caption', '--bg-card'],
+  ['an arrow that reorders a provider', ENRICHMENT_PROVIDERS, '.provider-move', '--bg-card'],
+  // The row the arrows sit in fills with --bg-hover under a pointer and under
+  // focus, which is every moment an operator is looking at them.
+  ['the same arrow on the row it hovers', ENRICHMENT_PROVIDERS, '.provider-move', '--bg-hover'],
+  [
+    'the arrow at the end of the order, which stays focusable',
+    ENRICHMENT_PROVIDERS,
+    ".provider-move[aria-disabled='true']",
+    '--bg-card',
+  ],
+  [
+    'that refused arrow on the row its own focus tints',
+    ENRICHMENT_PROVIDERS,
+    ".provider-move[aria-disabled='true']",
+    '--bg-hover',
+  ],
 ]
 
 const SCORE_BUTTON_TEXT = ['.rec-score-caption', '.rec-score-cue']

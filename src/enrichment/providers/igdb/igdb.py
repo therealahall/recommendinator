@@ -172,18 +172,16 @@ class IGDBProvider(EnrichmentProvider):
         return True
 
     @property
+    def precedence(self) -> int:
+        # Last: RAWG keeps owning game metadata.
+        return 60
+
+    @property
     def rate_limit_requests_per_second(self) -> float:
         return 4.0
 
     def get_config_schema(self) -> list[ConfigField]:
         return [
-            ConfigField(
-                name="enabled",
-                field_type=bool,
-                required=False,
-                default=False,
-                description="Enable IGDB enrichment",
-            ),
             ConfigField(
                 name="client_id",
                 field_type=str,

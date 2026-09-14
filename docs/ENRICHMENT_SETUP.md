@@ -69,7 +69,7 @@ Providers are tried in the order `enrichment.provider_order` names, and the firs
 uv run python -m src.cli settings set enrichment.provider_order "openlibrary,hardcover,rawg,tmdb,wikidata,igdb"
 ```
 
-The Settings page offers the same list with a move up and move down button on each entry.
+The Settings page ranks the providers that are on, above the ones that are off, with a move up and move down button on each ranked row. Turning a provider off takes it out of the order without disturbing where the rest sit.
 
 ## Full setup
 

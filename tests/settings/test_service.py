@@ -331,9 +331,10 @@ class TestProviderOrderIsAPermutationOfTheInstalledProviders:
     def installed_providers(self, monkeypatch: pytest.MonkeyPatch) -> None:
         registry = EnrichmentRegistry()
         registry._discovered = True
-        for name in ("alpha", "beta"):
+        for position, name in enumerate(("alpha", "beta")):
             provider = MagicMock(spec=EnrichmentProvider)
             provider.name = name
+            provider.precedence = position
             registry.register(provider)
         monkeypatch.setattr(EnrichmentRegistry, "_instance", registry)
 

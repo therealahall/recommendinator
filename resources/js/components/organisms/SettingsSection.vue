@@ -12,13 +12,14 @@ const CAUTION_BY_SECTION: Record<string, string> = {
 import { computed, nextTick, reactive, ref, watch } from 'vue'
 import Accordion from '@/components/atoms/Accordion.vue'
 import SettingsFieldList from '@/components/molecules/SettingsFieldList.vue'
+import EnrichmentProviders from '@/components/organisms/EnrichmentProviders.vue'
 import { useAnnouncer } from '@/composables/useAnnouncer'
 import { useSectionSave } from '@/composables/useSectionSave'
 import { useSettingsBuffer, type SettingBufferValue } from '@/composables/useSettingsBuffer'
 import { useSettingsStore } from '@/stores/settings'
 import { rescueFocus } from '@/utils/focus'
 import { humanizeSection } from '@/utils/format'
-import { groupSettings } from '@/utils/settingsGroups'
+import { groupSettings, providerGroups } from '@/utils/settingsGroups'
 import type { SettingsSection, SettingViewValue } from '@/types/api'
 
 const props = withDefaults(
@@ -36,11 +37,25 @@ const store = useSettingsStore()
 const valueSettings = computed(() =>
   props.section.settings.filter((setting): setting is SettingViewValue => !setting.sensitive),
 )
+// Providers leave first, then the order they rank: what stays is what a generic
+// control renders, and the two together cover every key in the section.
+const split = computed(() => providerGroups(props.section.settings))
+const orderSetting = computed(
+  () =>
+    split.value.rest.find(
+      (setting): setting is SettingViewValue =>
+        !setting.sensitive && setting.widget === 'provider-order',
+    ) ?? null,
+)
+const plain = computed(() =>
+  split.value.rest.filter((setting) => setting !== orderSetting.value),
+)
+
 // The two halves partition the section: a setting the registry marks advanced
 // is never also offered above, and none can fall out of both and go unrendered.
-const advanced = computed(() => props.section.settings.filter((setting) => setting.advanced))
+const advanced = computed(() => plain.value.filter((setting) => setting.advanced))
 const grouped = computed(() =>
-  groupSettings(props.section.settings.filter((setting) => !setting.advanced)),
+  groupSettings(plain.value.filter((setting) => !setting.advanced)),
 )
 // Advanced settings sit last in the panel: the caution note above covers them,
 // so a disclosure of their own would only add a click.
@@ -54,6 +69,12 @@ const expandedGroups = reactive<Record<string, boolean>>({})
 
 const edits = useSettingsBuffer(() => valueSettings.value)
 const { buffer, dirty } = edits
+
+const providerOrder = computed(() => {
+  const key = orderSetting.value?.key
+  const value = key === undefined ? undefined : buffer[key]
+  return Array.isArray(value) ? value : []
+})
 
 const secretDrafts = reactive<Record<string, boolean>>({})
 const unsaved = computed(() => dirty.value || Object.values(secretDrafts).some(Boolean))
@@ -86,7 +107,7 @@ const locked = edits.writing
 // A refused value inside a collapsed accordion is an error nobody can see.
 function reveal(setting: SettingViewValue): void {
   expanded.value = true
-  const group = grouped.value.groups.find((entry) =>
+  const group = [...grouped.value.groups, ...split.value.providers].find((entry) =>
     entry.settings.some((member) => member.key === setting.key),
   )
   if (group) expandedGroups[group.id] = true
@@ -106,7 +127,9 @@ async function onSave(): Promise<void> {
   // that was rejected rather than on the panel that opened.
   reveal(refused)
   await nextTick()
-  document.getElementById(`setting-${refused.key}`)?.focus()
+  // Save catches it for the order, which the provider list renders rather than a
+  // control, so its key resolves to no field (WCAG 2.4.3).
+  ;(document.getElementById(`setting-${refused.key}`) ?? saveButton.value)?.focus()
 }
 
 async function onReset(key: string): Promise<void> {
@@ -115,10 +138,10 @@ async function onReset(key: string): Promise<void> {
   await report(reset, 'Reset to default.', 'Reset failed.')
   resetting[key] = false
   // Only a landed reset strands anyone: its button unmounts with the override it
-  // removed. A refused one is aria-disabled, so it keeps both its place and the
-  // operator's focus, and the seam declines (WCAG 2.4.3).
+  // removed, and a setting rendered outside a control — the order — has no field
+  // to catch the focus (WCAG 2.4.3).
   await nextTick()
-  rescueFocus(document.getElementById(`setting-${key}`))
+  rescueFocus(document.getElementById(`setting-${key}`) ?? saveButton.value)
 }
 
 async function onSecret(
@@ -146,6 +169,17 @@ function onClearSecret(key: string): Promise<void> {
 
 function onUpdate(key: string, value: SettingBufferValue): void {
   buffer[key] = value
+}
+
+// A buffer edit like any other, so a reorder leaves with the section save
+// rather than racing it through a write of its own.
+function onOrder(order: string[]): void {
+  const key = orderSetting.value?.key
+  if (key !== undefined) buffer[key] = order
+}
+
+function onExpand(id: string, value: boolean): void {
+  expandedGroups[id] = value
 }
 
 function onSecretDraft(key: string, hasDraft: boolean): void {
@@ -193,6 +227,27 @@ function onSecretDraft(key: string, hasDraft: boolean): void {
         @set-secret="onSetSecret"
         @clear-secret="onClearSecret"
         @secret-draft="onSecretDraft"
+      />
+
+      <EnrichmentProviders
+        v-if="split.providers.length > 0"
+        :providers="split.providers"
+        :order="providerOrder"
+        :order-setting="orderSetting"
+        :values="buffer"
+        :disabled="locked"
+        :errors="store.fieldErrors"
+        :resetting="resetting"
+        :secret-busy="secretBusy"
+        :expanded="expandedGroups"
+        @update="onUpdate"
+        @update:order="onOrder"
+        @expand="onExpand"
+        @reset="onReset"
+        @set-secret="onSetSecret"
+        @clear-secret="onClearSecret"
+        @secret-draft="onSecretDraft"
+        @announce="announce"
       />
 
       <Accordion
@@ -252,7 +307,7 @@ function onSecretDraft(key: string, hasDraft: boolean): void {
             :aria-disabled="locked || undefined"
             :aria-describedby="locked && !saving ? saveLockId : undefined"
             @click="onSave"
-          >{{ saving ? 'Saving…' : `Save ${title}` }}</button>
+          >{{ saving ? 'Saving…' : 'Save' }}<span class="sr-only"> {{ title }}</span></button>
           <span v-if="locked && !saving" :id="saveLockId" class="sr-only"
             >Unavailable while this section has a change in flight.</span
           >

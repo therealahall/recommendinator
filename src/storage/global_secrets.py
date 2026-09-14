@@ -1,7 +1,6 @@
-"""Global settings secrets — registry leaves flagged ``sensitive=True`` (today
-the ``api_key`` of the tmdb, rawg and hardcover enrichment providers) — must
-never be persisted in plaintext: not in ``config.yaml`` and not in the
-``settings`` table.
+"""Global settings secrets — registry leaves flagged ``sensitive=True``, which
+today are the credential fields enrichment providers declare — must never be
+persisted in plaintext: not in ``config.yaml`` and not in the ``settings`` table.
 """
 
 from __future__ import annotations

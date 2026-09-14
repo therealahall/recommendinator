@@ -209,21 +209,18 @@ class WikidataProvider(EnrichmentProvider):
         return False
 
     @property
+    def precedence(self) -> int:
+        # Behind the providers that state a match: it only adds a series to one.
+        return 50
+
+    @property
     def rate_limit_requests_per_second(self) -> float:
         # One item is a search, up to three statement reads and a label for each
         # series it states, and Wikidata is donated infrastructure.
         return 1.0
 
     def get_config_schema(self) -> list[ConfigField]:
-        return [
-            ConfigField(
-                name="enabled",
-                field_type=bool,
-                required=False,
-                default=False,
-                description="Enable Wikidata series enrichment",
-            ),
-        ]
+        return []
 
     def validate_config(self, config: dict[str, Any]) -> list[str]:
         return []
