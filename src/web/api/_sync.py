@@ -4,6 +4,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from src.ingestion.source_labels import label_for_source
 from src.ingestion.sync import (
     ALL_SOURCES_KEY,
     ALL_SOURCES_LABEL,
@@ -22,7 +23,7 @@ from src.sources.service import (
     source_plugin_not_loaded,
     unusable_detail,
 )
-from src.utils.text import humanize_source_id, sanitize_for_log
+from src.utils.text import sanitize_for_log
 from src.web.api._shared import PluginImportErrorResponse
 from src.web.guards import RequiredConfig, RequiredStorage
 from src.web.sync_dispatch import build_sync_job
@@ -145,15 +146,19 @@ def _refusal(entry: ResolvedInput, errors: list[str]) -> str:
 def update_data(
     request: UpdateRequest, storage: RequiredStorage, config: RequiredConfig
 ) -> dict[str, Any]:
-    """Different sources can sync concurrently; a duplicate of a running label,
+    """Different sources can sync concurrently; a duplicate of a running source,
     or anything overlapping the all-sources run, is rejected with 409.
     """
     sync_manager = get_sync_manager()
     source = request.source
-    source_label = humanize_source_id(source) if source != "all" else ALL_SOURCES_LABEL
-    job_key = ALL_SOURCES_KEY if source == "all" else source_label
+    source_label = (
+        label_for_source(storage, source) if source != "all" else ALL_SOURCES_LABEL
+    )
+    # The id, never the label: two sources may share a name, and a rename
+    # mid-run would strand the job.
+    job_key = ALL_SOURCES_KEY if source == "all" else source
 
-    # Two POSTs racing on the same label both pass any pre-check here, so that
+    # Two POSTs racing on the same source both pass any pre-check here, so that
     # duplicate is left to ``start_sync``'s atomic check-and-set below.
 
     misconfigured: list[str] = []
@@ -172,7 +177,7 @@ def update_data(
             )
             if validation_errors:
                 misconfigured.append(
-                    f"{humanize_source_id(entry.source_id)}: "
+                    f"{label_for_source(storage, entry.source_id)}: "
                     f"{_refusal(entry, validation_errors)}"
                 )
                 continue
@@ -222,7 +227,9 @@ def update_data(
 
     claimed, refused = claim_sources(storage, [entry.source_id for entry in resolved])
     if not claimed:
-        raise HTTPException(status_code=409, detail=already_syncing_detail(refused))
+        raise HTTPException(
+            status_code=409, detail=already_syncing_detail(storage, refused)
+        )
     resolved = [entry for entry in resolved if entry.source_id in claimed]
 
     sources_to_sync = [entry.source_id for entry in resolved]
@@ -247,8 +254,8 @@ def update_data(
         release_sources(storage, claimed.values())
         raise HTTPException(status_code=409, detail="A sync is already in progress")
 
-    # humanize_source_id title-cases but strips nothing, so the request's own
-    # source id reaches here with its newlines intact.
+    # An id no source carries is labelled from the request's own text, newlines
+    # and all.
     logger.info(
         "[SYNC] Started background sync for: %s", sanitize_for_log(source_label)
     )
@@ -257,7 +264,7 @@ def update_data(
     # the rest; dropping those would read to the operator as "all of them synced".
     details = [*misconfigured]
     if refused:
-        details.append(already_syncing_detail(refused))
+        details.append(already_syncing_detail(storage, refused))
     details.append(started)
     return {"message": " ".join(details), "sources": sources_to_sync}
 

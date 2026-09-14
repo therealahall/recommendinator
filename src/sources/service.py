@@ -19,11 +19,12 @@ from src.ingestion.schedule import (
     next_due,
     resolve_interval,
 )
+from src.ingestion.source_labels import label_for_row
 from src.ingestion.urls import CredentialHost, NoOrigin, UrlOrigin, url_origin
 from src.models.config_field import ConfigField
 from src.models.content import ContentType
 from src.utils.dates import parse_iso_timestamp, utc_now
-from src.utils.text import humanize_source_id, sanitize_for_log
+from src.utils.text import sanitize_for_log
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
@@ -300,7 +301,7 @@ def get_available_sync_sources(
             sources.append(
                 SyncSourceInfo(
                     id=source_id,
-                    display_name=humanize_source_id(source_id),
+                    display_name=label_for_row(source_id, configured_row),
                     # The plugin's own display name died with its module.
                     plugin_display_name=not_loaded.plugin,
                     enabled=False,
@@ -322,7 +323,7 @@ def get_available_sync_sources(
         sources.append(
             SyncSourceInfo(
                 id=source_id,
-                display_name=humanize_source_id(source_id),
+                display_name=label_for_row(source_id, configured_row),
                 plugin_display_name=source.plugin.display_name,
                 enabled=source.enabled,
                 sync_interval=state.interval,
@@ -510,6 +511,7 @@ def build_config_view(
         "source_id": source_id,
         "plugin": plugin.name,
         "plugin_display_name": plugin.display_name,
+        "display_name": label_for_row(source_id, db_row),
         "enabled": source is not None and source.enabled,
         "field_values": {
             name: source_values[name]
@@ -844,6 +846,19 @@ def set_source_schedule(
             "not_found",
             f"Source '{source_id}' does not exist",
         )
+
+
+def set_source_display_name(
+    source_id: str,
+    storage: StorageManager,
+    display_name: str,
+    user_id: int = 1,
+) -> None:
+    """A blank name clears it, so the source is called by its plugin's name."""
+    if not storage.sources.set_display_name(
+        user_id, source_id, display_name.strip() or None
+    ):
+        raise SourceConfigError("not_found", f"Source '{source_id}' does not exist")
 
 
 # Safe as a URL parameter: the trailing hyphen in the class is a literal, not a

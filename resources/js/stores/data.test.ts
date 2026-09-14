@@ -166,6 +166,34 @@ describe('useDataStore', () => {
     expect(job?.items_processed).toBe(4)
   })
 
+  it('finds a run by its source id when two sources share a name', async () => {
+    mockGet.mockResolvedValue({
+      status: 'running',
+      jobs: [
+        {
+          source: 'my_games',
+          status: 'running',
+          items_processed: 1,
+          total_items: 2,
+          errors: [],
+          sources: [],
+        },
+      ],
+    })
+
+    const store = useDataStore()
+    store.$patch({
+      syncSources: [listedSource('my_books', 'Games'), listedSource('my_games', 'Games')],
+    })
+    await store.checkSyncStatus()
+
+    expect(store.jobForSourceId('my_games')?.items_processed).toBe(1)
+    expect(store.jobForSourceId('my_books')).toBeNull()
+    expect(store.isSourceIdSyncing('my_books')).toBe(false)
+
+    store.cleanup()
+  })
+
   it('checkSyncStatus reports completed when no jobs are running', async () => {
     mockGet.mockResolvedValue({
       status: 'idle',
@@ -315,13 +343,13 @@ describe('useDataStore', () => {
             started_at: '2026-08-13T10:05:00',
             items_processed: 20,
             errors: [
-              { source: 'Sonarr', message: 'TLS verification failed' },
-              { source: 'Steam', message: 'Rate limit exceeded' },
+              { source: 'sonarr', message: 'TLS verification failed' },
+              { source: 'steam', message: 'Rate limit exceeded' },
             ],
-            sources: ranSources({ Sonarr: 4800, Steam: 0 }),
+            sources: ranSources({ sonarr: 4800, steam: 0 }),
           },
           {
-            source: 'Steam',
+            source: 'steam',
             status: 'completed',
             started_at: '2026-08-13T10:00:00',
             items_processed: 30,
@@ -351,13 +379,13 @@ describe('useDataStore', () => {
             started_at: '2026-08-13T10:00:00',
             items_processed: 20,
             errors: [
-              { source: 'Sonarr', message: 'TLS verification failed' },
-              { source: 'Steam', message: 'Rate limit exceeded' },
+              { source: 'sonarr', message: 'TLS verification failed' },
+              { source: 'steam', message: 'Rate limit exceeded' },
             ],
-            sources: ranSources({ Sonarr: 0, Steam: 4800 }),
+            sources: ranSources({ sonarr: 0, steam: 4800 }),
           },
           {
-            source: 'Steam',
+            source: 'steam',
             status: 'completed',
             started_at: '2026-08-13T10:05:00',
             items_processed: 30,
@@ -371,7 +399,7 @@ describe('useDataStore', () => {
       store.$patch({ syncSources: [steamSource(), sonarrSource()] })
       await store.checkSyncStatus()
 
-      expect(store.jobForSourceId('steam')?.source).toBe('Steam')
+      expect(store.jobForSourceId('steam')?.source).toBe('steam')
       expect(store.syncMessage).toContain('Sonarr: TLS verification failed')
       expect(store.syncMessage).not.toContain('more')
     })
@@ -846,6 +874,29 @@ describe('useDataStore', () => {
       expect(store.syncSources[0].next_run_at).toBe('2026-08-17T18:00:00+00:00')
     })
 
+    it('setSourceDisplayName PUTs the name and re-reads the listing for it', async () => {
+      mockPut.mockResolvedValueOnce({
+        source_id: 'steam',
+        plugin: 'steam',
+        plugin_display_name: 'Steam',
+        display_name: 'Valve',
+        enabled: true,
+        field_values: {},
+        secret_status: {},
+        sync_interval: 'off',
+      })
+      mockGet.mockResolvedValueOnce([listedSource('steam', 'Valve')])
+
+      const store = useDataStore()
+      store.syncSources = [listedSource('steam', 'Steam')]
+      await store.setSourceDisplayName('steam', 'Valve')
+
+      expect(mockPut).toHaveBeenCalledWith('/sync/sources/steam/display-name', {
+        display_name: 'Valve',
+      })
+      expect(store.syncSources[0].display_name).toBe('Valve')
+    })
+
     it('setSourceSchedule rejects so the caller can report a refusal', async () => {
       mockPut.mockRejectedValueOnce(
         new ApiError(400, 'Bad Request', {
@@ -955,6 +1006,7 @@ describe('useDataStore', () => {
           source_id: 'goner',
           plugin: 'fake_file',
           plugin_display_name: 'Fake File',
+          display_name: 'Goner',
           enabled: true,
           field_values: {},
           secret_status: {},

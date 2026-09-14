@@ -395,7 +395,9 @@ class TestSeasonItemsCarryTheShow:
             date_completed=date(2026, 1, 2),
             cover_url="https://example.test/show.jpg",
             source="trakt",
-            external_ids=[ExternalId(source="trakt", external_id="show1")],
+            external_ids=[
+                ExternalId(source="trakt", external_id="show1", display_name="Trakt")
+            ],
             enriched=True,
             manual_fields=["rating"],
             ignored=False,

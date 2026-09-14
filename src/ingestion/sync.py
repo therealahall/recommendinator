@@ -9,12 +9,13 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from src.ingestion.plugin_base import SourceError, SourcePlugin
+from src.ingestion.source_labels import label_for_source
 from src.models.content import ContentItem, get_enum_value
 from src.storage.manager import SaveCounts
 from src.storage.schema import SyncRunStatus
 from src.storage.sync_runs import HEARTBEAT_EVERY
 from src.utils.dates import utc_now
-from src.utils.text import exception_for_log, humanize_source_id, sanitize_for_log
+from src.utils.text import exception_for_log, sanitize_for_log
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
@@ -72,7 +73,7 @@ SyncResultCallback = Callable[[SyncResult], None]
 #: What both interfaces call a run over every source. One spelling, because
 #: the CLI reports under it and the web serves it as the umbrella job's name.
 ALL_SOURCES_LABEL = "All Sources"
-#: The umbrella's job key. Not the label: ``all_sources`` humanizes to that.
+#: The umbrella's job key. Not ``all``: that is a valid source id.
 ALL_SOURCES_KEY = "*all*"
 
 
@@ -188,8 +189,13 @@ class _ClaimHeartbeat:
             )
 
 
-def already_syncing_detail(source_ids: Sequence[str]) -> str:
-    named = ", ".join(humanize_source_id(source_id) for source_id in source_ids)
+def already_syncing_detail(
+    storage_manager: StorageManager, source_ids: Sequence[str], user_id: int = 1
+) -> str:
+    named = ", ".join(
+        label_for_source(storage_manager, source_id, user_id)
+        for source_id in source_ids
+    )
     return f"A sync is already in progress for {named}."
 
 
@@ -229,15 +235,19 @@ def execute_sync(
 ) -> SyncResult:
     """Fetch one source's items and save each, reporting counts and misses."""
     source_id = _configured_source_id(plugin_config)
-    source_name = humanize_source_id(source_id) if source_id else plugin.display_name
+    source_name = (
+        label_for_source(storage_manager, source_id, user_id)
+        if source_id
+        else plugin.display_name
+    )
     result = SyncResult(source_name=source_name, source_id=source_id)
 
-    # ``_source_id`` is operator-typed, so the logged copy is escaped while
-    # ``SyncResult`` keeps the raw name for the JSON body /api/sync/status serves.
+    # The name is operator-typed, so the logged copy is escaped while
+    # ``SyncResult`` keeps the raw one for the CLI's report.
     safe_source_name = sanitize_for_log(source_name)
 
     if progress_callback:
-        progress_callback(0, None, "Fetching...", source_name)
+        progress_callback(0, None, "Fetching...", source_id)
 
     # One function decides what a source is called, so the token owner, the
     # attribution and the delete key agree for every id.
@@ -269,7 +279,7 @@ def execute_sync(
         items_processed: int, total_items: int | None, current_item: str | None
     ) -> None:
         if progress_callback:
-            progress_callback(items_processed, total_items, current_item, source_name)
+            progress_callback(items_processed, total_items, current_item, source_id)
 
     items: list[ContentItem] = list(
         plugin.fetch(plugin_config, progress_callback=fetch_progress)
@@ -277,7 +287,7 @@ def execute_sync(
 
     result.total_items = len(items)
     if progress_callback:
-        progress_callback(0, result.total_items, None, source_name)
+        progress_callback(0, result.total_items, None, source_id)
 
     logger.info(
         "[SYNC] %s: Found %d items, saving...", safe_source_name, result.total_items
@@ -296,7 +306,7 @@ def execute_sync(
             if progress_callback:
                 # Report ``item_num`` (1-based) so the UI shows the current
                 # item number rather than the count of completed items.
-                progress_callback(item_num, result.total_items, safe_title, source_name)
+                progress_callback(item_num, result.total_items, safe_title, source_id)
 
             logger.debug(
                 "[SYNC] %s: Syncing %s %d/%d - %s",
@@ -328,11 +338,9 @@ def execute_sync(
                     )
 
         except Exception as error:
-            # Don't append the raw exception to ``result.errors`` — that
-            # list is exposed via /api/sync/status and plugin exceptions
-            # can carry credential text (e.g. an HTTP 401 echoing the
-            # Authorization header). Log the full detail server-side and
-            # return only the safe item-identifying summary to clients.
+            # Not the raw exception: ``result.errors`` is served by
+            # /api/sync/status, and a plugin fault can carry credential text,
+            # such as a 401 echoing the Authorization header.
             logger.warning(
                 "[SYNC] %s: Failed to process '%s': %s",
                 safe_source_name,
@@ -368,11 +376,19 @@ def _configured_source_id(plugin_config: dict[str, Any]) -> str:
 
 
 def _error_result(
-    plugin: SourcePlugin, plugin_config: dict[str, Any], message: str
+    storage_manager: StorageManager,
+    user_id: int,
+    plugin: SourcePlugin,
+    plugin_config: dict[str, Any],
+    message: str,
 ) -> SyncResult:
     source_id = _configured_source_id(plugin_config)
     return SyncResult(
-        source_name=humanize_source_id(source_id) if source_id else plugin.display_name,
+        source_name=(
+            label_for_source(storage_manager, source_id, user_id)
+            if source_id
+            else plugin.display_name
+        ),
         source_id=source_id,
         errors=[message],
     )
@@ -427,7 +443,13 @@ def execute_multi_source_sync(
             # The CLI writes ``result.errors`` to a terminal and these quote a
             # ``requests`` fault, so the server's reason phrase could erase the
             # line the operator just read (CWE-117).
-            return _error_result(plugin, plugin_config, sanitize_for_log(error.message))
+            return _error_result(
+                storage_manager,
+                user_id,
+                plugin,
+                plugin_config,
+                sanitize_for_log(error.message),
+            )
         except Exception as error:
             # See sibling note in execute_sync: keep raw exception text
             # out of result.errors. Plugin failures can include
@@ -439,7 +461,11 @@ def execute_multi_source_sync(
                 exception_for_log(error),
             )
             return _error_result(
-                plugin, plugin_config, f"Sync failed for {plugin.name}"
+                storage_manager,
+                user_id,
+                plugin,
+                plugin_config,
+                f"Sync failed for {plugin.name}",
             )
 
     effective_workers = min(max_workers, len(sources)) if sources else 1

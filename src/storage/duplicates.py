@@ -10,10 +10,11 @@ from dataclasses import dataclass
 from enum import Enum
 from itertools import combinations
 
+from src.ingestion.source_labels import label_for_row
 from src.storage.derived import MatchRow, read_live_match_rows, signals_conflict
 from src.storage.item_merges import MergeError, absorbing_merge_id
 from src.storage.merge import bare_title_key
-from src.utils.text import humanize_source_id
+from src.storage.schema import SourceConfigRow, list_source_configs
 
 _DECLINE_SELECT = (
     "SELECT d.lower_item_id, d.higher_item_id, "
@@ -52,12 +53,9 @@ class DuplicateSide:
     db_id: int
     title: str
     source: str | None
+    source_name: str | None
     creator: str | None
     release_year: int | None
-
-    @property
-    def source_name(self) -> str | None:
-        return humanize_source_id(self.source) if self.source else None
 
 
 @dataclass(frozen=True)
@@ -107,6 +105,9 @@ def find_duplicate_suggestions(
         if key:
             groups.setdefault((row.content_type, key), []).append(row)
 
+    configured = {
+        row["source_id"]: row for row in list_source_configs(cursor.connection, user_id)
+    }
     suggestions: list[DuplicateSuggestion] = []
     skipped = 0
     for (member_type, key), members in groups.items():
@@ -114,7 +115,9 @@ def find_duplicate_suggestions(
         if blocks is None:
             skipped += 1
             continue
-        suggestions += [_suggestion(member_type, key, block) for block in blocks]
+        suggestions += [
+            _suggestion(member_type, key, block, configured) for block in blocks
+        ]
 
     return SuggestionPage(
         total=len(suggestions),
@@ -183,11 +186,16 @@ def undecline_duplicate(
     return _pair_from_row(row)
 
 
-def _side(row: MatchRow) -> DuplicateSide:
+def _side(row: MatchRow, configured: dict[str, SourceConfigRow]) -> DuplicateSide:
     return DuplicateSide(
         db_id=row.db_id,
         title=row.title,
         source=row.source,
+        source_name=(
+            label_for_row(row.source, configured.get(row.source))
+            if row.source
+            else None
+        ),
         creator=row.signals.creator,
         release_year=row.signals.release_year.value,
     )
@@ -315,7 +323,10 @@ def _blocks(
 
 
 def _suggestion(
-    content_type: str, key: str, copies: list[MatchRow]
+    content_type: str,
+    key: str,
+    copies: list[MatchRow],
+    configured: dict[str, SourceConfigRow],
 ) -> DuplicateSuggestion:
     titles = {row.normalized_title for row in copies}
     exact = len(titles) == 1 and bool(copies[0].normalized_title)
@@ -328,5 +339,5 @@ def _suggestion(
         ),
         evidence_detail=copies[0].normalized_title if exact else key,
         survivor_id=copies[0].db_id,
-        copies=tuple(_side(row) for row in copies),
+        copies=tuple(_side(row, configured) for row in copies),
     )

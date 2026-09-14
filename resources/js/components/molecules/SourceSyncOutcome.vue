@@ -15,7 +15,7 @@ const props = defineProps<{
 const resultLabel = computed<string>(() => {
   const job = props.job
   if (props.syncing || !job || job.status === 'running') return ''
-  const entry = job.sources.find((slot) => slot.source === props.sourceName)
+  const entry = job.sources.find((slot) => slot.source === props.sourceId)
   if (!entry) return ''
   return (
     `${entry.items_added} added, ${entry.items_updated} updated, ` +
@@ -28,9 +28,9 @@ const resultLabel = computed<string>(() => {
 const bounded = computed(() => {
   if (props.syncing || !props.job) return boundSyncErrors([], 0)
   const messages = props.job.errors
-    .filter((entry) => entry.source === props.sourceName)
+    .filter((entry) => entry.source === props.sourceId)
     .map((entry) => entry.message)
-  const slot = props.job.sources.find((entry) => entry.source === props.sourceName)
+  const slot = props.job.sources.find((entry) => entry.source === props.sourceId)
   return boundSyncErrors(messages, slot?.omitted_errors ?? 0)
 })
 

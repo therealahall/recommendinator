@@ -9,6 +9,7 @@ from src.storage.schema import (
     delete_source_config,
     get_source_config,
     list_source_configs,
+    set_source_config_display_name,
     set_source_config_enabled,
     set_source_config_schedule,
     upsert_source_config,
@@ -23,6 +24,7 @@ def _to_dict(row: SourceConfigRow) -> SourceConfigDict:
         config=json.loads(row["config_json"]),
         enabled=bool(row["enabled"]),
         sync_interval=row["sync_interval"],
+        display_name=row["display_name"],
         migrated_at=row["migrated_at"],
         updated_at=row["updated_at"],
     )
@@ -59,6 +61,14 @@ class SourceConfigStore:
     def set_schedule(self, user_id: int, source_id: str, interval: str) -> bool:
         with self._sqlite_db.connection() as conn:
             return set_source_config_schedule(conn, user_id, source_id, interval)
+
+    def set_display_name(
+        self, user_id: int, source_id: str, display_name: str | None
+    ) -> bool:
+        with self._sqlite_db.connection() as conn:
+            return set_source_config_display_name(
+                conn, user_id, source_id, display_name
+            )
 
     def delete(self, user_id: int, source_id: str) -> bool:
         with self._sqlite_db.connection() as conn:

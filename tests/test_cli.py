@@ -627,6 +627,30 @@ def test_update_records_the_run_it_just_finished(tmp_path: Path) -> None:
     assert storage.sync_runs.claim(1, "steam") is not None
 
 
+def test_update_reports_a_source_by_the_name_it_was_given(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    config = {"storage": {"database_path": str(db_path)}}
+    _steam_source(db_path)
+    StorageManager(sqlite_path=db_path).sources.set_display_name(
+        1, "steam", "Valve Library"
+    )
+    games = [make_item("Game", ContentType.VIDEO_GAME, item_id="g1")]
+
+    with (
+        patch("src.cli.main.load_config", return_value=config),
+        patch(
+            "src.ingestion.sources.steam.SteamPlugin.fetch", return_value=iter(games)
+        ),
+        patch(
+            "src.ingestion.sources.steam.SteamPlugin.validate_config", return_value=[]
+        ),
+    ):
+        result = CliRunner().invoke(cli, ["update", "--source", "steam"])
+
+    assert result.exit_code == 0, result.output
+    assert "Valve Library" in result.output
+
+
 @pytest.mark.parametrize("auto_enrich", [True, False])
 def test_update_enriches_what_it_synced_unless_auto_enrich_is_off(
     tmp_path: Path, auto_enrich: bool
@@ -829,7 +853,7 @@ def test_update_refuses_a_source_another_process_is_already_syncing(
         result = CliRunner().invoke(cli, ["update", "--source", "steam"])
 
     assert result.exit_code != 0
-    assert already_syncing_detail(["steam"]) in result.output
+    assert already_syncing_detail(storage, ["steam"]) in result.output
     assert storage.get_content_items(user_id=1) == []
 
 
@@ -856,7 +880,7 @@ def test_update_json_answers_with_a_document_when_every_source_is_claimed(
 
     assert result.exit_code != 0
     assert json.loads(result.stdout) == {"status": "idle", "jobs": []}
-    assert already_syncing_detail(["steam"]) in result.stderr
+    assert already_syncing_detail(storage, ["steam"]) in result.stderr
 
 
 def test_update_interrupted_by_ctrl_c_leaves_the_source_claimable(
@@ -909,7 +933,7 @@ def test_update_interrupted_by_ctrl_c_releases_only_the_claims_it_took(
     ):
         result = CliRunner().invoke(cli, ["update", "--source", "all"])
 
-    assert already_syncing_detail(["steam_backlog"]) in result.output
+    assert already_syncing_detail(storage, ["steam_backlog"]) in result.output
     assert storage.sync_runs.claim(1, "steam") is not None
     assert storage.sync_runs.claim(1, "steam_backlog") is None
 

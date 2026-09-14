@@ -48,7 +48,7 @@ class SyncJob:
     current_source: str | None = None
     error_message: str | None = None
     errors: list[SyncError] = field(default_factory=list)
-    # Keyed by humanised source name so the UI can render one row per source.
+    # Keyed by source id, not name: a rename mid-run must not strand a row's progress.
     source_progress: dict[str, _SourceProgress] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -101,8 +101,8 @@ class SyncJob:
 
 class SyncManager:
     """Multiple jobs can run at the same time as long as each is keyed by a
-    distinct ``source`` label. ``start_sync`` rejects a duplicate start
-    request for a source whose job is still in ``RUNNING`` state.
+    distinct source id. ``start_sync`` rejects a duplicate start request for a
+    source whose job is still in ``RUNNING`` state.
     """
 
     # Cap on retained completed/failed jobs. Running jobs are never
@@ -195,9 +195,8 @@ class SyncManager:
         if job is None:
             return
 
-        # ``source`` is the humanised source id POST /api/update supplies, and
-        # nothing restricts its characters, so every sink below shares one
-        # escaped copy.
+        # ``source`` is the id POST /api/update supplies, unchecked until the
+        # job exists, so every sink below shares one escaped copy.
         safe_source = sanitize_for_log(job_label(source))
 
         try:

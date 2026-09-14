@@ -15,7 +15,7 @@ from .conftest import _invoke_with_mocks
 
 @pytest.mark.usefixtures("registry_with_source_fakes")
 class TestUpdateProgressIsOffTheDataChannel:
-    def _run(self, tmp_path: Path) -> Any:
+    def _run(self, tmp_path: Path, display_name: str | None = None) -> Any:
         def sync(progress_callback: Any, **_: Any) -> list[SyncResult]:
             progress_callback(10, 100, "Dune", "books")
             return [
@@ -29,6 +29,7 @@ class TestUpdateProgressIsOffTheDataChannel:
 
         storage = StorageManager(sqlite_path=tmp_path / "sources.db")
         storage.sources.upsert(1, "books", "fake_file", {"path": "b.csv"}, enabled=True)
+        storage.sources.set_display_name(1, "books", display_name)
 
         with patch(
             "src.cli.commands._update.execute_multi_source_sync", side_effect=sync
@@ -48,3 +49,10 @@ class TestUpdateProgressIsOffTheDataChannel:
 
         assert "Updating data from books (workers=4)..." in result.stderr
         assert "Processed 10/100..." in result.stderr
+
+    def test_progress_names_a_renamed_source_by_its_name_not_its_id(
+        self, tmp_path: Path
+    ) -> None:
+        result = self._run(tmp_path, display_name="Paperbacks")
+
+        assert "[Paperbacks] Processed 10/100..." in result.stderr

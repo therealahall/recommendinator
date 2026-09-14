@@ -76,6 +76,7 @@ const sourceConfig: SourceConfigResponse = {
   source_id: 'steam',
   plugin: 'steam',
   plugin_display_name: 'Steam',
+  display_name: 'Steam',
   enabled: true,
   field_values: { vanity_url: 'me' },
   secret_status: { api_key: true },
@@ -476,6 +477,23 @@ describe('SyncSourceAccordion', () => {
       expect(wrapper.get('[data-testid="sync-schedule-steam"]').text()).not.toContain(
         'Next run',
       )
+    })
+
+    it('saves the name typed into the panel for this source', async () => {
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: baseSource, syncing: false },
+      })
+      const store = useDataStore()
+      primeStore(store, sourceConfig)
+      const rename = vi.spyOn(store, 'setSourceDisplayName').mockResolvedValue(undefined)
+
+      await wrapper.find('button.accordion-trigger').trigger('click')
+      await flushPromises()
+      await wrapper.get('[data-testid="source-name-input-steam"]').setValue('Valve')
+      await wrapper.get('[data-testid="source-name-form-steam"]').trigger('submit')
+      await flushPromises()
+
+      expect(rename).toHaveBeenCalledWith('steam', 'Valve')
     })
 
     it('offers the schema cadence options and forwards a change', async () => {
@@ -954,14 +972,14 @@ describe('SyncSourceAccordion', () => {
   describe('progress + error rendering driven by the job prop', () => {
     function makeJob(overrides: Record<string, unknown> = {}) {
       return {
-        source: 'Steam',
+        source: 'steam',
         status: 'running' as const,
         started_at: null,
         completed_at: null,
         items_processed: 4,
         total_items: 10,
         current_item: 'Half-Life 2',
-        current_source: 'Steam',
+        current_source: 'steam',
         error_message: null,
         progress_percent: 40,
         items_added: 0,
@@ -1022,7 +1040,7 @@ describe('SyncSourceAccordion', () => {
         current_item: 'Other thing',
         sources: [
           {
-            source: 'Steam',
+            source: 'steam',
             items_processed: 7,
             total_items: 8,
             current_item: 'Portal 2',
@@ -1067,8 +1085,8 @@ describe('SyncSourceAccordion', () => {
       const job = makeJob({
         source: 'All Sources',
         status: 'completed',
-        errors: [...failures('Sonarr'), ...failures('Steam')],
-        sources: [slot('Sonarr'), slot('Steam')],
+        errors: [...failures('sonarr'), ...failures('steam')],
+        sources: [slot('sonarr'), slot('steam')],
       })
       const wrapper = mount(SyncSourceAccordion, {
         props: { source: baseSource, syncing: false, job },
@@ -1077,7 +1095,7 @@ describe('SyncSourceAccordion', () => {
       const items = wrapper.get('[data-testid="source-sync-errors"]').findAll('li')
       expect(items.length).toBeGreaterThan(0)
       expect(items.length).toBeLessThan(reported)
-      expect(items.every((li) => li.text().startsWith('Steam '))).toBe(true)
+      expect(items.every((li) => li.text().startsWith('steam '))).toBe(true)
       const tails = wrapper.findAll('[data-testid="source-sync-errors-more"]')
       expect(tails).toHaveLength(1)
       expect(tails[0].text()).toContain(String(reported + omitted))
@@ -1088,8 +1106,8 @@ describe('SyncSourceAccordion', () => {
         source: 'All Sources',
         status: 'completed',
         errors: [
-          { source: 'Sonarr', message: 'TLS verification failed' },
-          { source: 'Steam', message: 'Rate limit exceeded' },
+          { source: 'sonarr', message: 'TLS verification failed' },
+          { source: 'steam', message: 'Rate limit exceeded' },
         ],
       })
       const wrapper = mount(SyncSourceAccordion, {

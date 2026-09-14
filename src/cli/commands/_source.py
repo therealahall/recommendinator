@@ -31,6 +31,7 @@ from src.sources.service import (
     field_type_name,
     get_available_sync_sources,
     resolve_source_plugin,
+    set_source_display_name,
     set_source_enabled_state,
     set_source_schedule,
     set_source_secret_value,
@@ -156,6 +157,7 @@ def source_show(ctx: click.Context, source_id: str, output_format: str) -> None:
         return
 
     rows: list[list[str]] = [
+        ["display_name", view["display_name"]],
         ["plugin", view["plugin"]],
         ["enabled", str(view["enabled"])],
         ["sync_interval", view["sync_interval"]],
@@ -289,6 +291,39 @@ def source_schedule(
         output_format,
         lambda: _config_view(ctx, source_id, plugin),
         f"Source '{source_id}' now syncs on the '{interval}' cadence.",
+    )
+
+
+@source.command("rename")
+@click.argument("source_id")
+@click.argument("name")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format",
+)
+@click.pass_context
+def source_rename(
+    ctx: click.Context, source_id: str, name: str, output_format: str
+) -> None:
+    """Set the name a source is shown by (mirrors PUT /api/sync/sources/<id>/display-name).
+
+    Its id stays. An empty NAME gives the source back its plugin's name.
+    """
+    plugin = _resolve_cli_plugin(ctx, source_id)
+    storage = require_storage(ctx)
+    try:
+        set_source_display_name(
+            source_id, storage, name, user_id=_SOURCE_DEFAULT_USER_ID
+        )
+    except SourceConfigError as error:
+        abort_with(error.message)
+    emit_view(
+        output_format,
+        lambda: _config_view(ctx, source_id, plugin),
+        f"Renamed source '{source_id}'.",
     )
 
 

@@ -16,6 +16,7 @@ from src.sources.service import (
     create_source,
     delete_source,
     resolve_source_plugin,
+    set_source_display_name,
     set_source_enabled_state,
     set_source_schedule,
     set_source_secret_value,
@@ -60,6 +61,7 @@ class SourceConfigResponse(BaseModel):
     source_id: str
     plugin: str
     plugin_display_name: str
+    display_name: str
     enabled: bool
     field_values: dict[str, Any]
     secret_status: dict[str, bool]
@@ -80,6 +82,10 @@ class SourceEnabledUpdateRequest(BaseModel):
 
 class SourceScheduleUpdateRequest(BaseModel):
     interval: str
+
+
+class SourceDisplayNameUpdateRequest(BaseModel):
+    display_name: str
 
 
 class PluginInfoResponse(BaseModel):
@@ -298,6 +304,22 @@ def set_source_schedule_endpoint(
         )
     try:
         set_source_schedule(source_id, storage, payload.interval)
+    except SourceConfigError as error:
+        raise _config_error_to_http(error) from error
+    return SourceConfigResponse(**build_config_view(source_id, plugin, storage))
+
+
+@router.put(
+    "/sync/sources/{source_id}/display-name", response_model=SourceConfigResponse
+)
+def set_source_display_name_endpoint(
+    source_id: str,
+    payload: SourceDisplayNameUpdateRequest,
+    plugin: ResolvedPlugin,
+    storage: RequiredStorage,
+) -> SourceConfigResponse:
+    try:
+        set_source_display_name(source_id, storage, payload.display_name)
     except SourceConfigError as error:
         raise _config_error_to_http(error) from error
     return SourceConfigResponse(**build_config_view(source_id, plugin, storage))

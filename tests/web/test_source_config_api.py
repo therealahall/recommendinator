@@ -11,8 +11,10 @@ from unittest.mock import Mock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from src.ingestion.registry import PluginRegistry
 from src.ingestion.schedule import SYNC_INTERVAL_KEYS
-from src.ingestion.sync import SyncResult
+from src.ingestion.sync import SyncResult, execute_multi_source_sync
+from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.recommendations.engine import RecommendationEngine
 from src.sources.service import SOURCE_MISCONFIGURED_DETAIL, build_runs_view
 from src.storage.manager import StorageManager
@@ -25,6 +27,7 @@ from tests.fakes.source_plugins import (
     FAILED_PLUGIN_REASON,
     UNLOADED_PLUGIN,
     UNLOADED_PLUGIN_DETAIL,
+    FakeApiPlugin,
 )
 
 
@@ -338,6 +341,136 @@ class TestSourceListingReportsTheSchedule:
 
         entry = _listing_entry(client, "my_books")
         assert entry["last_run_at"] is None
+
+
+class PlayStationPlugin(FakeApiPlugin):
+    @property
+    def name(self) -> str:
+        return "psn"
+
+    @property
+    def display_name(self) -> str:
+        return "PSN"
+
+
+def _save_game(
+    storage: StorageManager, source: str, external_id: str, title: str
+) -> None:
+    storage.save_content_item(
+        ContentItem(
+            id=external_id,
+            source=source,
+            title=title,
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+        ),
+        user_id=1,
+    )
+
+
+def _rename(client: TestClient, source_id: str, name: str) -> Any:
+    return client.put(
+        f"/api/sync/sources/{source_id}/display-name", json={"display_name": name}
+    )
+
+
+class TestASourceIsCalledWhatItWasNamed:
+    def test_a_source_no_table_covers_shows_the_name_it_was_given_on_every_surface(
+        self, client: TestClient, storage: StorageManager
+    ) -> None:
+        storage.sources.upsert(1, "psn", "fake_api", GAMES, enabled=True)
+        _save_game(storage, "psn", "p1", "Hades")
+        _save_game(storage, "my_games", "g1", "Hades (Supergiant)")
+
+        renamed = _rename(client, "psn", "PlayStation")
+
+        assert renamed.status_code == 200, renamed.text
+        assert renamed.json()["display_name"] == "PlayStation"
+        assert _listing_entry(client, "psn")["display_name"] == "PlayStation"
+        (card,) = [
+            item for item in client.get("/api/items").json() if item["title"] == "Hades"
+        ]
+        assert [pair["display_name"] for pair in card["external_ids"]] == [
+            "PlayStation"
+        ]
+        (block,) = client.get("/api/duplicates", params={"type": "video_game"}).json()[
+            "suggestions"
+        ]
+        assert {copy["source_name"] for copy in block["copies"]} == {
+            "PlayStation",
+            "My Games",
+        }
+        done = threading.Event()
+
+        def fake_execute(**_: Any) -> list[SyncResult]:
+            done.set()
+            return []
+
+        with patch("src.web.sync_dispatch.execute_multi_source_sync", fake_execute):
+            sync = client.post("/api/update", json={"source": "psn"})
+            assert done.wait(timeout=5)
+
+        assert "Sync started for PlayStation." in sync.json()["message"]
+
+    def test_an_unnamed_source_takes_its_plugins_name_and_a_cleared_one_returns_to_it(
+        self, client: TestClient, storage: StorageManager
+    ) -> None:
+        PluginRegistry.get_instance().register(PlayStationPlugin())
+        storage.sources.upsert(1, "psn_work", "psn", GAMES, enabled=True)
+
+        assert _listing_entry(client, "psn_work")["display_name"] == "PSN Work"
+
+        _rename(client, "psn_work", "Office")
+        cleared = _rename(client, "psn_work", "  ")
+
+        assert cleared.status_code == 200, cleared.text
+        assert _listing_entry(client, "psn_work")["display_name"] == "PSN Work"
+
+    def test_two_sources_sharing_a_name_sync_side_by_side_each_with_its_own_progress(
+        self, client: TestClient
+    ) -> None:
+        assert _rename(client, "my_books", "My Games").status_code == 200
+        finished = threading.Semaphore(0)
+
+        def execute(**kwargs: Any) -> list[SyncResult]:
+            try:
+                return execute_multi_source_sync(**kwargs)
+            finally:
+                finished.release()
+
+        with patch("src.web.sync_dispatch.execute_multi_source_sync", execute):
+            for source_id in ("my_games", "my_books"):
+                started = client.post("/api/update", json={"source": source_id})
+                assert started.status_code == 200, started.text
+            assert finished.acquire(timeout=5) and finished.acquire(timeout=5)
+
+        jobs = {
+            job["source"]: job for job in client.get("/api/sync/status").json()["jobs"]
+        }
+        assert [slot["source"] for slot in jobs["my_games"]["sources"]] == ["my_games"]
+        assert [slot["source"] for slot in jobs["my_books"]["sources"]] == ["my_books"]
+
+    def test_a_rename_mid_sync_leaves_the_run_under_the_source_it_belongs_to(
+        self, client: TestClient
+    ) -> None:
+        release = threading.Event()
+
+        def running(**_: Any) -> list[SyncResult]:
+            release.wait(timeout=5)
+            return []
+
+        with patch("src.web.sync_dispatch.execute_multi_source_sync", running):
+            try:
+                started = client.post("/api/update", json={"source": "my_games"})
+                assert started.status_code == 200, started.text
+                assert _rename(client, "my_games", "PlayStation").status_code == 200
+                jobs = client.get("/api/sync/status").json()["jobs"]
+            finally:
+                release.set()
+
+        assert [job["source"] for job in jobs if job["status"] == "running"] == [
+            "my_games"
+        ]
 
 
 class TestSyncRunsEndpoint:

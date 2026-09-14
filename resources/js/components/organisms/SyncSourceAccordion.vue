@@ -2,6 +2,7 @@
 import { computed, nextTick, ref } from 'vue'
 import Accordion from '@/components/atoms/Accordion.vue'
 import SourceConnectPanel from '@/components/organisms/SourceConnectPanel.vue'
+import SourceNameField from '@/components/organisms/SourceNameField.vue'
 import SourceScheduleSelect from '@/components/organisms/SourceScheduleSelect.vue'
 import SourceSettingsPanel from '@/components/organisms/SourceSettingsPanel.vue'
 import SourceSyncOutcome from '@/components/molecules/SourceSyncOutcome.vue'
@@ -165,7 +166,11 @@ const intervalLabel = computed(
         :error="runsError"
         @open="onOpenRunHistory"
       />
-      <SourceSyncProgress :source-name="source.display_name" :job="job" />
+      <SourceSyncProgress
+        :source-id="source.id"
+        :source-name="source.display_name"
+        :job="job"
+      />
       <!-- Outside the accordion header, whose slot is the trigger button's
            content: this would otherwise run into the source name in its
            accessible name. -->
@@ -214,6 +219,11 @@ const intervalLabel = computed(
         :disabled="props.syncing"
         :expanded="expanded"
         :gate-revision="gateRevision"
+      />
+
+      <SourceNameField
+        :source-id="source.id"
+        :source-name="source.display_name"
       />
 
       <SourceScheduleSelect

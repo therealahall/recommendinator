@@ -1,8 +1,6 @@
-from typing import cast
-
 import pytest
 
-from src.models.content import ContentType, ExternalId
+from src.models.content import ContentType
 from src.recommendations.record import Recommendation
 from src.storage.duplicates import (
     DeclinedPair,
@@ -31,7 +29,12 @@ from src.web.api._recommendations import RecommendationResponse, RelatedItemResp
 from tests.factories import make_item
 
 _A_SIDE = DuplicateSide(
-    db_id=3, title="Deadhouse Gates", source="calibre", creator=None, release_year=None
+    db_id=3,
+    title="Deadhouse Gates",
+    source="calibre",
+    source_name="Calibre",
+    creator=None,
+    release_year=None,
 )
 
 _A_SUGGESTION = DuplicateSuggestion(
@@ -83,30 +86,6 @@ def test_a_series_the_title_no_longer_states_reaches_both_interfaces(
 
     assert serialized["series"] == "The Murderbot Diaries"
     assert serialized["series_index"] == expected
-
-
-@pytest.mark.parametrize(
-    ("sources", "expected"),
-    [
-        (["gog_work"], ["GOG Work"]),
-        (["goodreads_rss"], ["Goodreads RSS"]),
-        (["gog_work", "calibre_web"], ["GOG Work", "Calibre Web"]),
-    ],
-    ids=["leading-acronym", "trailing-acronym", "merged"],
-)
-def test_each_external_id_names_its_source_the_way_the_rest_of_the_ui_does(
-    sources: list[str], expected: list[str]
-) -> None:
-    item = make_item()
-    item.external_ids = [
-        ExternalId(source=source, external_id=f"id-{index}")
-        for index, source in enumerate(sources)
-    ]
-
-    serialized = cast(list[dict[str, object]], item_to_dict(item)["external_ids"])
-
-    assert [pair["display_name"] for pair in serialized] == expected
-    assert [pair["source"] for pair in serialized] == sources
 
 
 def test_the_cover_reaches_both_interfaces_as_this_apps_own_route() -> None:

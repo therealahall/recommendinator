@@ -183,7 +183,7 @@ def test_update_all_aborts_when_validation_refuses_every_source_regression(
         result = _invoke_with_mocks(cli_runner, ["update", "--source", "all"], storage)
 
     assert result.exit_code != 0
-    for display_name, field in (("Fake File", "'path'"), ("Fake API", "'api_key'")):
+    for display_name, field in (("Books", "'path'"), ("Games", "'api_key'")):
         assert (
             f"{display_name}: Error: Source is not properly configured "
             f"— check its {field} setting." in result.stderr

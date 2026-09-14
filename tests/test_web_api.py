@@ -121,6 +121,7 @@ def configure_source(source_id, plugin, **config):
         "plugin": plugin,
         "config": config,
         "sync_interval": None,
+        "display_name": None,
         "migrated_at": "",
         "updated_at": "",
     }
@@ -710,7 +711,7 @@ def test_update_all_refuses_with_a_4xx_when_every_source_is_misconfigured(
     assert response.status_code == 400
     detail = response.json()["detail"]
     assert (
-        "Goodreads RSS: Source is not properly configured — "
+        "Goodreads (Public Shelves via RSS): Source is not properly configured — "
         "check its 'user_id' setting." in detail
     )
     assert (
@@ -1508,7 +1509,13 @@ def test_list_items_answers_for_a_stored_object_shaped_genre(mock_components, tm
 def test_get_single_item(client, mock_components):
     mock_item = ContentItem(
         id="ext_1",
-        external_ids=[ExternalId(source="goodreads_csv", external_id="ext_1")],
+        external_ids=[
+            ExternalId(
+                source="goodreads_csv",
+                external_id="ext_1",
+                display_name="Goodreads (CSV Export)",
+            )
+        ],
         db_id=42,
         title="Test Book",
         author="Author",
@@ -1527,7 +1534,7 @@ def test_get_single_item(client, mock_components):
         {
             "source": "goodreads_csv",
             "external_id": "ext_1",
-            "display_name": "Goodreads CSV",
+            "display_name": "Goodreads (CSV Export)",
         }
     ]
     assert data["title"] == "Test Book"
@@ -2368,7 +2375,7 @@ class TestUpdateEndpoint409Conflict:
 
             assert response.status_code == 409
             assert response.json()["detail"] == "A sync is already in progress"
-            assert mock_manager.start_sync.call_args.args[0] == "Goodreads RSS"
+            assert mock_manager.start_sync.call_args.args[0] == "goodreads_rss"
 
     def test_update_allows_different_sources_concurrently(
         self, client: TestClient, mock_components: dict
@@ -2387,7 +2394,7 @@ class TestUpdateEndpoint409Conflict:
             with patch(
                 "src.web.sync_dispatch.execute_multi_source_sync",
                 return_value=[
-                    SyncJob(source="Goodreads RSS", status=SyncStatus.RUNNING)
+                    SyncJob(source="goodreads_rss", status=SyncStatus.RUNNING)
                 ],
             ):
                 response = client.post("/api/update", json={"source": "goodreads_rss"})
@@ -2395,7 +2402,7 @@ class TestUpdateEndpoint409Conflict:
         assert response.status_code == 200, response.text
         assert "Sync started" in response.json()["message"]
         assert manager.is_running("Steam") is True
-        assert "Goodreads RSS" in {
+        assert "goodreads_rss" in {
             job["source"] for job in manager.get_status()["jobs"]
         }
 
@@ -2444,7 +2451,9 @@ class TestASourceAnotherProcessHoldsIsRefused:
             response = client.post("/api/update", json={"source": "goodreads_rss"})
 
         assert response.status_code == 409
-        assert response.json()["detail"] == already_syncing_detail(["goodreads_rss"])
+        assert response.json()["detail"] == already_syncing_detail(
+            mock_components["storage"], ["goodreads_rss"]
+        )
 
     def test_a_started_sync_claims_the_source_it_names(
         self, client: TestClient, mock_components: dict
@@ -2483,7 +2492,7 @@ class TestASourceAnotherProcessHoldsIsRefused:
 
         assert response.status_code == 200, response.text
         assert "shelf" not in response.json()["sources"]
-        assert already_syncing_detail(["shelf"]) in response.text
+        assert already_syncing_detail(storage, ["shelf"]) in response.text
 
 
 class TestUpdateEndpointParallelSync:
@@ -2640,7 +2649,11 @@ class TestSyncStatusNamesTheSourceThatFailedRegression:
             *, result_callback: SyncResultCallback, **_kwargs: object
         ) -> list[SyncResult]:
             try:
-                result_callback(SyncResult(source_name="Sonarr", errors=[self.REMEDY]))
+                result_callback(
+                    SyncResult(
+                        source_name="Sonarr", source_id="sonarr", errors=[self.REMEDY]
+                    )
+                )
                 return [SyncResult(source_name="Goodreads Csv", items_synced=3)]
             finally:
                 completion.set()
@@ -2661,7 +2674,7 @@ class TestSyncStatusNamesTheSourceThatFailedRegression:
         assert response.status_code == 200
         job = client.get("/api/sync/status").json()["jobs"][0]
         assert job["status"] == "completed"
-        assert job["errors"] == [{"source": "Sonarr", "message": self.REMEDY}]
+        assert job["errors"] == [{"source": "sonarr", "message": self.REMEDY}]
 
 
 class TestSyncStatusBoundsThePerItemErrorList:
@@ -3597,6 +3610,13 @@ _GUARDED_ENDPOINTS = [
         url="/api/sync/sources/my_books/schedule",
         body={"interval": "daily"},
     ),
+    _Endpoint(
+        "PUT",
+        "/api/sync/sources/{source_id}/display-name",
+        ("storage",),
+        url="/api/sync/sources/my_books/display-name",
+        body={"display_name": "Books"},
+    ),
     _Endpoint("GET", "/api/sync/runs", ("storage",)),
     _Endpoint("GET", "/api/settings", ("config", "storage")),
     _Endpoint("PUT", "/api/settings", ("config", "storage"), body={"updates": {}}),
@@ -3975,6 +3995,7 @@ _PLUGIN_ROUTES_WITH_A_BODY = [
     "/api/sync/sources/no_such_source/secret/api_key",
     "/api/sync/sources/no_such_source/enabled",
     "/api/sync/sources/no_such_source/schedule",
+    "/api/sync/sources/no_such_source/display-name",
 ]
 
 

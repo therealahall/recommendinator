@@ -56,6 +56,7 @@ class SourceConfigRow(TypedDict):
     config_json: str
     enabled: int
     sync_interval: str | None
+    display_name: str | None
     migrated_at: str
     updated_at: str
 
@@ -66,6 +67,7 @@ class SourceConfigDict(TypedDict):
     config: dict[str, Any]
     enabled: bool
     sync_interval: str | None
+    display_name: str | None
     migrated_at: str
     updated_at: str
 
@@ -472,12 +474,15 @@ def create_schema(conn: sqlite3.Connection) -> None:
             -- Automatic-sync cadence. NULL is the plugin's own default;
             -- 'off' is never.
             sync_interval TEXT,
+            -- The name the operator gave it. NULL is the name its plugin gives.
+            display_name TEXT,
             migrated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (user_id, source_id)
         )
         """)
     _add_column_if_not_exists(cursor, "source_configs", "sync_interval", "TEXT")
+    _add_column_if_not_exists(cursor, "source_configs", "display_name", "TEXT")
 
     cursor.execute(_SYNC_RUNS_TABLE)
     if stored_version < 18:
@@ -1651,6 +1656,7 @@ def _row_to_source_config(row: sqlite3.Row) -> SourceConfigRow:
         config_json=row["config_json"],
         enabled=row["enabled"],
         sync_interval=row["sync_interval"],
+        display_name=row["display_name"],
         migrated_at=row["migrated_at"],
         updated_at=row["updated_at"],
     )
@@ -1664,7 +1670,7 @@ def get_source_config(
     cursor = conn.cursor()
     cursor.execute(
         "SELECT source_id, plugin, config_json, enabled, sync_interval, "
-        "migrated_at, updated_at "
+        "display_name, migrated_at, updated_at "
         "FROM source_configs WHERE user_id = ? AND source_id = ?",
         (user_id, source_id),
     )
@@ -1735,6 +1741,23 @@ def set_source_config_schedule(
     return cursor.rowcount > 0
 
 
+def set_source_config_display_name(
+    conn: sqlite3.Connection,
+    user_id: int,
+    source_id: str,
+    display_name: str | None,
+) -> bool:
+    """``False`` when no source carries that id."""
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE source_configs SET display_name = ?, updated_at = CURRENT_TIMESTAMP "
+        "WHERE user_id = ? AND source_id = ?",
+        (display_name, user_id, source_id),
+    )
+    conn.commit()
+    return cursor.rowcount > 0
+
+
 def delete_source_config(
     conn: sqlite3.Connection,
     user_id: int,
@@ -1756,7 +1779,7 @@ def list_source_configs(
     cursor = conn.cursor()
     cursor.execute(
         "SELECT source_id, plugin, config_json, enabled, sync_interval, "
-        "migrated_at, updated_at "
+        "display_name, migrated_at, updated_at "
         "FROM source_configs WHERE user_id = ? ORDER BY source_id",
         (user_id,),
     )

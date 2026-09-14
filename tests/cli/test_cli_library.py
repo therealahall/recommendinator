@@ -57,7 +57,13 @@ def _make_item(
 ) -> ContentItem:
     item = ContentItem(
         id=f"ext-{db_id}",
-        external_ids=[ExternalId(source="goodreads_csv", external_id=f"ext-{db_id}")],
+        external_ids=[
+            ExternalId(
+                source="goodreads_csv",
+                external_id=f"ext-{db_id}",
+                display_name="Goodreads (CSV Export)",
+            )
+        ],
         title=title,
         author=author,
         content_type=content_type,
@@ -359,7 +365,7 @@ class TestLibraryShow:
             {
                 "source": "goodreads_csv",
                 "external_id": "ext-42",
-                "display_name": "Goodreads CSV",
+                "display_name": "Goodreads (CSV Export)",
             }
         ]
 
@@ -367,7 +373,9 @@ class TestLibraryShow:
         self, cli_runner: CliRunner
     ) -> None:
         item = _make_item(db_id=42)
-        item.external_ids.append(ExternalId(source="steam", external_id="440"))
+        item.external_ids.append(
+            ExternalId(source="steam", external_id="440", display_name="Steam")
+        )
         mock_storage = make_storage_mock()
         mock_storage.get_content_item.return_value = item
 
@@ -376,7 +384,7 @@ class TestLibraryShow:
         )
 
         assert result.exit_code == 0
-        assert "Goodreads CSV: ext-42" in result.output
+        assert "Goodreads (CSV Export): ext-42" in result.output
         assert "Steam: 440" in result.output
 
     def test_show_table_states_the_year_a_correction_would_replace(
@@ -1333,8 +1341,9 @@ class TestLibraryDuplicates:
         assert "apart from a qualifier" not in exact
         assert "same title apart from a qualifier" in looser
         assert "Deadhouse Gates (N/A, Calibre)" in looser
-        assert "Deadhouse Gates (Malazan Book 2) (Steven Erikson, Goodreads CSV)" in (
-            looser
+        assert (
+            "Deadhouse Gates (Malazan Book 2) (Steven Erikson, Goodreads (CSV Export))"
+            in (looser)
         )
 
     def test_a_declined_pair_is_listed_and_undeclining_it_offers_it_again(

@@ -69,6 +69,8 @@ Until you pick a cadence, a source runs on its plugin's
 `default_sync_interval`. The web server is what runs them, so nothing syncs on a
 cadence while only the CLI is up.
 
+The panel's **Name** field, the peer of `source rename <id> <name>`, sets what the library, the duplicates page and every sync message call the source. Clear it to go back to the plugin's name.
+
 Full CLI reference: [CLI.md](CLI.md#source-management).
 
 ## Parallel sync

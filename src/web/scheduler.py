@@ -10,7 +10,7 @@ from src.ingestion.schedule import is_due
 from src.ingestion.sync import ALL_SOURCES_KEY, claim_sources, release_sources
 from src.sources.service import resolve_inputs, schedule_state
 from src.utils.dates import utc_now
-from src.utils.text import humanize_source_id, sanitize_for_log
+from src.utils.text import sanitize_for_log
 from src.web.state import get_config, get_storage
 from src.web.sync_dispatch import build_sync_job
 from src.web.sync_manager import get_sync_manager
@@ -27,8 +27,8 @@ def dispatch_due_syncs(
     storage: StorageManager, config: dict[str, Any], user_id: int = 1
 ) -> None:
     sync_manager = get_sync_manager()
-    # ``start_sync``'s per-label refusal cannot see a source syncing under the
-    # umbrella label, so that half of the overlap check is asked here.
+    # ``start_sync``'s per-source refusal cannot see a source syncing under the
+    # umbrella key, so that half of the overlap check is asked here.
     if sync_manager.is_running(ALL_SOURCES_KEY):
         logger.debug("Skipping scheduler tick: a run over every source is in flight")
         return
@@ -54,25 +54,25 @@ def dispatch_due_syncs(
         if not is_due(now, state.last_finished_at, state.interval, state.failures):
             continue
 
-        label = humanize_source_id(entry.source_id)
-        claimed, _refused = claim_sources(storage, [entry.source_id], user_id)
+        job_key = entry.source_id
+        claimed, _refused = claim_sources(storage, [job_key], user_id)
         if not claimed:
             logger.debug(
                 "Scheduled sync skipped: %s is already syncing",
-                sanitize_for_log(label),
+                sanitize_for_log(job_key),
             )
             continue
         claim_ids = list(claimed.values())
         dispatch = build_sync_job(
-            sync_manager, label, [entry], claim_ids, storage, config
+            sync_manager, job_key, [entry], claim_ids, storage, config
         )
         refusal = sync_manager.start_sync(
-            label, dispatch.run, on_complete=dispatch.on_complete
+            job_key, dispatch.run, on_complete=dispatch.on_complete
         )
         # No config validation before dispatch, unlike the single-source POST:
         # nobody is here to read a refusal, and the failed run backs it off.
         if refusal is None:
-            logger.info("Scheduled sync started for %s", sanitize_for_log(label))
+            logger.info("Scheduled sync started for %s", sanitize_for_log(job_key))
             # One start a tick, so the rest stagger over the minutes after it.
             break
         release_sources(storage, claim_ids)
