@@ -6,8 +6,8 @@ Reads a CSV of one content type, which you pick when you upload the file.
 
 - Universal: `title`, `status`, `rating`, `date_completed`, `review`, `notes`,
   `ignored`
-- `book`: `author`, `series`, `series_index`, `isbn`, `pages`, `year_published`,
-  `genre`
+- `book`: `author`, `series`, `series_index`, `series_index_authority`, `isbn`,
+  `pages`, `year_published`, `genre`
 - `movie`: `director`, `year`, `runtime_minutes`, `genre`
 - `tv_show`: `creator`, `seasons_watched`, `seasons_watched_dates`,
   `total_seasons`, `year`, `genre`
@@ -42,6 +42,7 @@ Reported with the file line they were on:
 | `genre` | Additive. An imported genre joins the stored ones. |
 | `seasons_watched`, `seasons_watched_dates` | Additive. An import adds a watched season and its date, never removes one. |
 | `total_seasons` | Monotonic. It only increases. |
+| `series_index`, `series_index_authority` | Ranked. A position replaces the stored one when its authority outranks it (`stated`, `authored`, `library`, `manual`, weakest first), or restates it at `library` or `manual`. A blank authority, or a file without the column, reads as `stated`. |
 | Everything else | Fill-only, including `notes`. |
 
 One exception to forward-only: raising `total_seasons` above a completed show's

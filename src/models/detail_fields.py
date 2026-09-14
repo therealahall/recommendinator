@@ -229,10 +229,17 @@ DETAIL_FIELDS: dict[str, ContentTypeFields] = {
                 template_column="author",
             ),
             # The headers keep the spelling every exported file has used; the
-            # library stores the one pair src/utils/series.py reads.
+            # library stores the keys src/utils/series.py reads.
             DetailField("series_name", FieldKind.FREE_FORM, template_column="series"),
             DetailField(
                 "series_position", FieldKind.FREE_FORM, template_column="series_index"
+            ),
+            # Without it a re-import reads a Calibre index as a title marker,
+            # which the first enrichment run may replace.
+            DetailField(
+                "series_position_authority",
+                FieldKind.FREE_FORM,
+                template_column="series_index_authority",
             ),
             DetailField("isbn", FieldKind.TEXT, column="isbn", template_column="isbn"),
             DetailField(

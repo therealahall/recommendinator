@@ -379,6 +379,38 @@ class TestSeriesSurvivesAnExport:
         assert float(restored.metadata["series_position"]) == 1.0
         assert stored_series_authority(restored.metadata) is SeriesAuthority.STATED
 
+    @pytest.mark.parametrize(
+        ("importer", "export"),
+        [(CsvImporter(), export_items_csv), (JsonImporter(), export_items_json)],
+        ids=["csv", "json"],
+    )
+    def test_a_calibre_series_index_keeps_its_library_rank_through_a_reimport(
+        self,
+        tmp_path: Path,
+        importer: Importer,
+        export: Callable[[list[ContentItem], ContentType | None], str],
+    ) -> None:
+        stored = _store_and_read_back(
+            tmp_path,
+            ContentItem(
+                id="calibre-1",
+                title="Leviathan Wakes",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                metadata={
+                    "series_name": "The Expanse",
+                    "series_position": 1.0,
+                    "series_position_authority": SeriesAuthority.LIBRARY.value,
+                },
+            ),
+        )
+
+        restored = _reimport(
+            importer, export([stored], ContentType.BOOK), ContentType.BOOK
+        )[0]
+
+        assert stored_series_authority(restored.metadata) is SeriesAuthority.LIBRARY
+
     def test_the_exported_file_keeps_the_column_names_it_always_had(self) -> None:
         """The columns are the operator's file format; the keys under them moved."""
         book = ContentItem(

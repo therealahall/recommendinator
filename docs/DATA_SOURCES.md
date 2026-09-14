@@ -104,7 +104,8 @@ change depends on the field, and is usually less than you expect:
 | `genre` | Merge in. An import never removes a genre |
 | `total_seasons` | Raise it. A smaller number is discarded |
 | `seasons_watched` | Merge in. An import adds a season, never removes one. Unticking one in the season checklist or with `library edit --seasons-watched` holds only until a source reports that season again, so to drop it for good remove it at the source (unwatch the season in Trakt, say) |
-| `year_published`, `pages`, `isbn`, `runtime_minutes`, `platform`, `hours_played`, `notes`, `series_name`, `series_position` | Fill an empty value, and nothing else ever. There is no edit surface for these either, so fix them at the source they came from |
+| `year_published`, `pages`, `isbn`, `runtime_minutes`, `platform`, `hours_played`, `notes`, `series_name` | Fill an empty value, and nothing else ever. There is no edit surface for these either, so fix them at the source they came from |
+| `series_position`, `series_position_authority` | Replace a stored position only when the file's authority outranks it (`stated`, `authored`, `library`, `manual`, weakest first), or restates it at `library` or `manual`, which counts as a correction. A blank authority reads as `stated`, and a position naming a different series from the stored one changes nothing |
 | `year` and the creator: `author`, `director`, `creator`, `developer` | Fill an empty value. The edit modal and `library edit --release-year`/`--creator` replace one |
 | `title` | Replace it, since the title is how a re-import finds the row. Renaming in the edit modal or with `library edit --title` holds it against later imports |
 
