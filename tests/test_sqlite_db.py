@@ -3900,6 +3900,8 @@ class TestTheIdTableIsSeekedNotScanned:
 
         assert [step for step in plan if "SCAN x" in step] == []
         assert [step for step in plan if "SCAN owner" in step] == []
+        assert [step for step in plan if "SEARCH x" in step] != []
+        assert [step for step in plan if "SEARCH owner" in step] != []
 
     def test_the_title_path_seeks_the_ids_of_the_group_it_weighs(
         self, temp_db: SQLiteDB

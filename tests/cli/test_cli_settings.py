@@ -276,7 +276,7 @@ class TestSettingsSet:
         )
 
         assert result.exit_code != 0
-        assert "Error" in result.output
+        assert "Unknown setting: web.nonsense" in result.output
 
 
 class TestTheProviderOrderNeedsNoCommandOfItsOwn:

@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from src.web.healthcheck import HEALTHY_STATUS, probe
+from src.web.healthcheck import probe
 
 
 class _QuietHandler(BaseHTTPRequestHandler):
@@ -45,8 +45,7 @@ def _unused_url() -> str:
 
 class TestTheProbeSurvivesTheAuthRequirement:
     def test_a_401_is_healthy(self, answering) -> None:
-        assert HEALTHY_STATUS == 401
-        assert probe(answering(HEALTHY_STATUS)) == 0
+        assert probe(answering(401)) == 0
 
     def test_a_200_is_not(self, answering) -> None:
         assert probe(answering(200)) == 1

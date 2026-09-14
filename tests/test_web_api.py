@@ -1390,7 +1390,9 @@ def test_recommendations_with_user_id(client, mock_components):
     assert len(data) == 1
 
     call_kwargs = mock_components["engine"].generate_recommendations.call_args.kwargs
-    assert call_kwargs["user_preference_config"] is not None
+    assert call_kwargs["user_preference_config"] == UserPreferenceConfig(
+        scorer_weights={"genre_match": 3.0}
+    )
 
 
 def test_ignore_item_success(client, mock_components):
