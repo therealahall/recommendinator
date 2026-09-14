@@ -109,6 +109,20 @@ class MockProvider(EnrichmentProvider):
         )
 
 
+class BlockingProvider(MockProvider):
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = threading.Event()
+        self.release = threading.Event()
+
+    def enrich(
+        self, item: ContentItem, config: dict[str, Any]
+    ) -> EnrichmentResult | None:
+        self.started.set()
+        self.release.wait(timeout=5.0)
+        return super().enrich(item, config)
+
+
 class RawRequestErrorProvider(EnrichmentProvider):
     def __init__(self, error: Exception) -> None:
         self._error = error
@@ -375,17 +389,6 @@ class TestEnrichmentManager:
         mock_registry: EnrichmentRegistry,
         config: dict[str, Any],
     ) -> None:
-        started_enrich = threading.Event()
-        release_enrich = threading.Event()
-
-        class BlockingProvider(MockProvider):
-            def enrich(
-                self, item: ContentItem, config: dict[str, Any]
-            ) -> EnrichmentResult | None:
-                started_enrich.set()
-                release_enrich.wait(timeout=5.0)
-                return super().enrich(item, config)
-
         item = ContentItem(
             id="movie1",
             title="Movie 1",
@@ -394,18 +397,19 @@ class TestEnrichmentManager:
         )
         mock_storage.enrichment.items_needing.side_effect = [[(1, item)], []]
         mock_storage.enrichment.count_needing.return_value = 1
-        mock_registry.register(BlockingProvider())
+        provider = BlockingProvider()
+        mock_registry.register(provider)
 
         manager = EnrichmentManager(mock_storage, config, mock_registry)
         try:
             assert manager.start_enrichment() is EnrichmentStart.STARTED
-            assert started_enrich.wait(timeout=5.0)
+            assert provider.started.wait(timeout=5.0)
 
             result = manager.start_enrichment()
 
             assert result is EnrichmentStart.ALREADY_RUNNING
         finally:
-            release_enrich.set()
+            provider.release.set()
             manager._wait_for_completion()
 
     def test_no_providers_for_content_type(
@@ -815,6 +819,46 @@ class TestEnrichmentProgressRegression:
             user_id=None,
             content_item_id=None,
         )
+
+    def test_the_item_being_enriched_is_visible_before_it_finishes_regression(
+        self,
+        mock_storage: MagicMock,
+        mock_registry: EnrichmentRegistry,
+        config: dict[str, Any],
+    ) -> None:
+        no_provider = ContentItem(
+            id="book",
+            title="Book",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        )
+        slow = ContentItem(
+            id="dune",
+            title="Dune",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+        )
+        mock_storage.enrichment.items_needing.side_effect = [
+            [(1, no_provider), (2, slow)],
+            [],
+        ]
+        mock_storage.enrichment.count_needing.return_value = 2
+        provider = BlockingProvider()
+        mock_registry.register(provider)
+
+        manager = EnrichmentManager(mock_storage, config, mock_registry)
+        try:
+            manager.start_enrichment()
+            assert provider.started.wait(timeout=5.0)
+
+            status = manager.get_status()
+        finally:
+            provider.release.set()
+            manager._wait_for_completion()
+
+        assert status.running is True
+        assert status.current_item == "Dune"
+        assert (status.items_processed, status.total_items) == (1, 2)
 
     def test_total_items_includes_not_found_when_retrying_regression(
         self,

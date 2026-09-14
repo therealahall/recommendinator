@@ -605,13 +605,13 @@ class EnrichmentManager:
             if self._stop_asked():
                 return
             self._process_item(db_id, item)
-            self._publish()
 
     def _process_item(self, db_id: int, item: ContentItem) -> None:
         with self._lock:
             self._status.current_item = item.title
             item_num = self._status.items_processed + 1
             total = self._status.total_items
+        self._publish()
 
         content_type = (
             item.content_type
@@ -671,6 +671,8 @@ class EnrichmentManager:
             )
             return
 
+        # Forced: a provider call or its rate-limit wait can outlast any throttle window.
+        self._publish(force=True)
         matched, failures = self._first_match(
             item, available_providers, content_type_str, safe_title
         )
