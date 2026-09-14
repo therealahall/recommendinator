@@ -109,6 +109,30 @@ def enrichment_providers_to_list() -> list[EnrichmentProviderPayload]:
     ]
 
 
+class UnknownEnrichmentProvider(ValueError):
+    """A reset naming a provider nothing installs, worded here so neither
+    interface answers it by resetting nothing.
+    """
+
+
+def enrichment_provider_filter(named: str | None) -> str | None:
+    """The provider a reset filters on, ``None`` for no filter — which an absent
+    name, an empty one and "all" all mean. Lower-cased because the CLI's
+    ``--provider`` is free text.
+    """
+    if named is None:
+        return None
+    provider = named.strip().lower()
+    if not provider or provider == "all":
+        return None
+    installed = sorted(get_enrichment_registry().get_all_providers())
+    if provider not in installed:
+        raise UnknownEnrichmentProvider(
+            f"Unknown provider '{named}'. Installed: {', '.join(installed)}."
+        )
+    return provider
+
+
 def enrichment_candidates_to_dict(
     db_id: int, offered: list[tuple[str, Candidate]], pinned: dict[str, str]
 ) -> dict[str, object]:

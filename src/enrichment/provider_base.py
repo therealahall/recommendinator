@@ -123,6 +123,17 @@ class ProviderError(Exception):
         super().__init__(f"{provider_name}: {message}")
 
 
+class ProviderRefusedError(ProviderError):
+    """The credential was refused, not the request. Its own type because the
+    refusal can arrive as a 200 with an errors body. Only *codes* is safe to
+    persist; the message may carry the request URL.
+    """
+
+    def __init__(self, provider_name: str, message: str, *, codes: str) -> None:
+        super().__init__(provider_name, message)
+        self.codes = sanitize_for_log(codes)
+
+
 class EnrichmentProvider(ABC):
     @property
     @abstractmethod

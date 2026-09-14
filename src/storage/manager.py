@@ -134,9 +134,13 @@ class StorageManager:
         with self._save_lock:
             return self.sqlite_db.save_content_item_outcome(item, user_id=user_id)
 
-    def save_enrichment_metadata(self, db_id: int, item: ContentItem) -> None:
+    def save_enrichment_metadata(
+        self, db_id: int, item: ContentItem, *, replace_cover: bool = False
+    ) -> None:
         with self._save_lock:
-            self.sqlite_db.save_enrichment_metadata(db_id, item)
+            self.sqlite_db.save_enrichment_metadata(
+                db_id, item, replace_cover=replace_cover
+            )
 
     def clear_cover_url(self, db_id: int) -> bool:
         with self._save_lock:

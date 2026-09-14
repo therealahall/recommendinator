@@ -22,6 +22,7 @@ from src.enrichment.provider_base import (
     EnrichmentProvider,
     EnrichmentResult,
     ProviderError,
+    ProviderRefusedError,
     SeriesOrdinal,
 )
 from src.enrichment.providers.tmdb.tmdb import TMDBProvider
@@ -49,11 +50,13 @@ class MockProvider(EnrichmentProvider):
         content_types: list[ContentType] | None = None,
         should_fail: bool = False,
         should_not_find: bool = False,
+        cover_url: str | None = None,
     ) -> None:
         self._name = name
         self._content_types = content_types or [ContentType.MOVIE]
         self._should_fail = should_fail
         self._should_not_find = should_not_find
+        self._cover_url = cover_url
         self.enrich_calls: list[ContentItem] = []
 
     @property
@@ -100,6 +103,7 @@ class MockProvider(EnrichmentProvider):
             genres=["Action", "Drama"],
             tags=["test-tag"],
             description="A test description.",
+            cover_url=self._cover_url,
             extra_metadata={"source_rating": 8.5},
             match_quality="high",
         )
@@ -141,6 +145,21 @@ class RawRequestErrorProvider(EnrichmentProvider):
     ) -> EnrichmentResult | None:
         self.enrich_calls.append(item)
         raise self._error
+
+
+class VaryingRequestErrorProvider(RawRequestErrorProvider):
+    """A different status per item, so what bounds the recorded list is the cap
+    rather than identical failures counting into one line.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(http_error(500))
+
+    def enrich(
+        self, item: ContentItem, config: dict[str, Any]
+    ) -> EnrichmentResult | None:
+        self.enrich_calls.append(item)
+        raise http_error(500 + len(self.enrich_calls) % 100)
 
 
 class WrappedRequestErrorProvider(EnrichmentProvider):
@@ -509,7 +528,7 @@ class TestEnrichmentStatusApiKeyScrubbingRegression:
         ]
         mock_storage.enrichment.items_needing.side_effect = [items, []]
         mock_storage.enrichment.count_needing.return_value = len(items)
-        mock_registry.register(RawRequestErrorProvider(self._http_error(503)))
+        mock_registry.register(VaryingRequestErrorProvider())
 
         manager = EnrichmentManager(mock_storage, config, mock_registry)
         manager.start_enrichment()
@@ -586,6 +605,43 @@ class TestEnrichmentStatusApiKeyScrubbingRegression:
         assert "wrapped_request" in caplog.text, "expected the error to be logged"
         assert self._API_KEY not in caplog.text
         assert "api_key=" not in caplog.text
+
+
+class FlakyOnceProvider(MockProvider):
+    """Fails its first item and matches every one after: the single failure that
+    has to stay readable beside a provider failing on all of them.
+    """
+
+    def enrich(
+        self, item: ContentItem, config: dict[str, Any]
+    ) -> EnrichmentResult | None:
+        if not self.enrich_calls:
+            self.enrich_calls.append(item)
+            raise ProviderError(self.name, "upstream") from http_error(502)
+        return super().enrich(item, config)
+
+
+class TestRepeatedErrorsAreCounted:
+    def test_a_repeated_failure_is_one_counted_line_beside_a_single_one(
+        self, tmp_path: Path
+    ) -> None:
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        for index in range(3):
+            save_movie(storage_manager, f"Movie {index}")
+        manager = manager_over(
+            storage_manager,
+            RawRequestErrorProvider(http_error(503)),
+            FlakyOnceProvider(),
+            order=["raw_request", "mock"],
+        )
+
+        manager.start_enrichment(content_type=ContentType.MOVIE)
+        assert manager._wait_for_completion()
+
+        assert manager.get_status().errors == [
+            "raw_request: HTTP 503 (x3)",
+            "mock: HTTP 502",
+        ]
 
 
 class TestAFailureCannotCarryTheItemsTitleRegression:
@@ -1162,6 +1218,20 @@ class TestTransientProviderFailureIsRetryable:
         assert job_status.items_failed == 1
 
 
+class RefusingProvider(MockProvider):
+    """Refuses inside a 200, as a revoked Hardcover token does: no transport
+    error anywhere in the chain to read the refusal off.
+    """
+
+    def enrich(
+        self, item: ContentItem, config: dict[str, Any]
+    ) -> EnrichmentResult | None:
+        self.enrich_calls.append(item)
+        raise ProviderRefusedError(
+            self.name, "refused the credential: invalid-jwt", codes="invalid-jwt"
+        )
+
+
 class TestPermanentProviderFailureStopsRetrying:
     @pytest.fixture
     def storage_manager(self, tmp_path: Path) -> StorageManager:
@@ -1297,6 +1367,28 @@ class TestPermanentProviderFailureStopsRetrying:
             "the reason the run stopped must not sit behind the duplicate "
             "rejections that caused it"
         )
+
+    def test_a_refusal_carrying_no_request_error_is_abandoned_too_regression(
+        self,
+        storage_manager: StorageManager,
+        registry: EnrichmentRegistry,
+        config: dict[str, Any],
+    ) -> None:
+        db_ids = [save_movie(storage_manager, f"Movie {index}") for index in range(10)]
+        provider = RefusingProvider()
+        registry.register(provider)
+
+        manager = EnrichmentManager(storage_manager, config, registry)
+        manager.start_enrichment(content_type=ContentType.MOVIE)
+        assert manager._wait_for_completion()
+
+        asked = len(provider.enrich_calls)
+        assert asked == _MAX_CONSECUTIVE_REJECTIONS
+        assert queued_ids(storage_manager) == set(db_ids[asked:])
+        job_status = manager.get_status()
+        assert job_status.items_not_found == asked
+        assert job_status.items_failed == 0
+        assert all("invalid-jwt" in error for error in job_status.errors)
 
     def test_abandoning_one_types_providers_ends_a_run_scoped_to_that_type(
         self,
@@ -1657,6 +1749,9 @@ class SearchingProvider(MockProvider):
 
 
 class TestPinnedProviderRecord:
+    _MERGED_COVER = "https://example.test/absorbed.jpg"
+    _RECORDS_COVER = "https://example.test/pinned-record.jpg"
+
     @pytest.fixture
     def storage_manager(self, tmp_path: Path) -> StorageManager:
         return StorageManager(sqlite_path=tmp_path / "test.db")
@@ -1677,10 +1772,11 @@ class TestPinnedProviderRecord:
         *,
         enabled: bool = True,
         serves: list[ContentType] | None = None,
+        cover_url: str | None = None,
     ) -> EnrichmentManager:
         registry = EnrichmentRegistry()
         registry._discovered = True
-        registry.register(MockProvider(content_types=serves))
+        registry.register(MockProvider(content_types=serves, cover_url=cover_url))
         return EnrichmentManager(
             storage_manager,
             {
@@ -1721,6 +1817,34 @@ class TestPinnedProviderRecord:
         stored = storage_manager.get_content_item(db_id)
         assert stored.metadata["genres"] == ["Action", "Drama"]
         assert stored.metadata["enrichment_ids"] == {"mock": "603"}
+
+    def test_a_pin_replaces_the_cover_a_merge_left_on_the_item_regression(
+        self, storage_manager: StorageManager
+    ) -> None:
+        db_id = storage_manager.save_content_item(
+            self._movie().model_copy(update={"cover_url": self._MERGED_COVER})
+        )
+        manager = self._manager(storage_manager, cover_url=self._RECORDS_COVER)
+
+        manager.pin(
+            db_id, storage_manager.get_content_item(db_id), "mock", "603", user_id=1
+        )
+        manager._wait_for_completion()
+
+        assert storage_manager.get_content_item(db_id).cover_url == self._RECORDS_COVER
+
+    def test_an_unpinned_run_leaves_the_cover_the_item_already_had(
+        self, storage_manager: StorageManager
+    ) -> None:
+        db_id = storage_manager.save_content_item(
+            self._movie().model_copy(update={"cover_url": self._MERGED_COVER})
+        )
+        manager = self._manager(storage_manager, cover_url=self._RECORDS_COVER)
+
+        manager.start_enrichment()
+        manager._wait_for_completion()
+
+        assert storage_manager.get_content_item(db_id).cover_url == self._MERGED_COVER
 
     def test_clearing_a_pin_drops_it_and_re_queues_a_settled_item(
         self, storage_manager: StorageManager
@@ -2432,6 +2556,7 @@ class TestAnUnansweredOrdinalPass:
         assert status is not None
         assert status["enrichment_provider"] == "mock"
         assert status["enrichment_quality"] == "high"
+        assert manager.get_status().items_enriched == 1
 
     def test_every_retryable_failure_is_named_in_the_reason_the_item_requeues(
         self, tmp_path: Path

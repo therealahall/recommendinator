@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-from src.enrichment.provider_base import ProviderError
+from src.enrichment.provider_base import ProviderError, ProviderRefusedError
 from src.enrichment.providers.hardcover.hardcover import HardcoverProvider
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.utils.series import (
@@ -460,12 +460,47 @@ class TestHardcoverFailures:
                     ]
                 }
             )
-            with pytest.raises(ProviderError) as raised:
+            with pytest.raises(ProviderRefusedError) as raised:
                 provider.enrich(_book(), _CONFIG)
 
         assert "invalid-headers" in str(raised.value)
         assert _TOKEN not in str(raised.value)
         assert _TOKEN not in caplog.text
+
+    def test_only_the_auth_codes_the_app_names_are_persisted_with_the_refusal(
+        self, provider: HardcoverProvider
+    ) -> None:
+        with patch(
+            "src.enrichment.providers.hardcover.hardcover.requests.post"
+        ) as mock_post:
+            mock_post.return_value = _response(
+                {
+                    "errors": [
+                        {"extensions": {"code": "invalid-jwt"}},
+                        {"extensions": {"code": 'postgres: relation "books" is gone'}},
+                    ]
+                }
+            )
+            with pytest.raises(ProviderRefusedError) as raised:
+                provider.enrich(_book(), _CONFIG)
+
+        assert raised.value.codes == "invalid-jwt"
+        assert "postgres" in str(raised.value)
+
+    def test_a_backend_error_inside_a_200_is_retried_rather_than_refused_regression(
+        self, provider: HardcoverProvider
+    ) -> None:
+        with patch(
+            "src.enrichment.providers.hardcover.hardcover.requests.post"
+        ) as mock_post:
+            mock_post.return_value = _response(
+                {"errors": [{"message": "boom", "extensions": {"code": "unexpected"}}]}
+            )
+            with pytest.raises(ProviderError) as raised:
+                provider.enrich(_book(), _CONFIG)
+
+        assert not isinstance(raised.value, ProviderRefusedError)
+        assert "unexpected" in str(raised.value)
 
     def test_a_redirect_off_the_api_origin_is_refused_before_it_is_followed(
         self, provider: HardcoverProvider

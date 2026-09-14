@@ -9,6 +9,7 @@ from src.enrichment.provider_base import (
     EnrichmentProvider,
     EnrichmentResult,
     ProviderError,
+    ProviderRefusedError,
     SeriesOrdinal,
     is_numeric_record_id,
     log_search_title,
@@ -201,13 +202,19 @@ def _result(book: dict[str, Any], match_quality: str) -> EnrichmentResult:
     )
 
 
-def _refusals(errors: Any) -> str:
+#: Hardcover's gateway is Hasura, and these are its authentication codes. Every
+#: other code it answers 200-with-errors on — a backend fault, a query it could
+#: not execute — is one more run clears.
+_AUTH_CODES = frozenset({"access-denied", "invalid-headers", "invalid-jwt"})
+
+
+def _refusal_codes(errors: Any) -> set[str]:
     codes = {
         sanitize_for_log(str((error.get("extensions") or {}).get("code") or "unknown"))
         for error in errors
         if isinstance(error, dict)
     }
-    return ", ".join(sorted(codes)) or "unknown"
+    return codes or {"unknown"}
 
 
 class HardcoverProvider(EnrichmentProvider):
@@ -329,9 +336,18 @@ class HardcoverProvider(EnrichmentProvider):
 
         body = response.json()
         if body.get("errors"):
-            raise ProviderError(
-                self.name, f"Hardcover refused the query: {_refusals(body['errors'])}"
-            )
+            codes = _refusal_codes(body["errors"])
+            named = ", ".join(sorted(codes))
+            auth = codes & _AUTH_CODES
+            if auth:
+                # Only the codes this module names are persisted; the rest of
+                # the body is Hardcover's own words and stays in the log.
+                raise ProviderRefusedError(
+                    self.name,
+                    f"Hardcover refused the credential: {named}",
+                    codes=", ".join(sorted(auth)),
+                )
+            raise ProviderError(self.name, f"Hardcover failed the query: {named}")
         books = (body.get("data") or {}).get("books")
         return books if isinstance(books, list) else []
 

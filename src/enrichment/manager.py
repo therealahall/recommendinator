@@ -15,8 +15,10 @@ from src.enrichment.provider_base import (
     EnrichmentProvider,
     EnrichmentResult,
     ProviderError,
+    ProviderRefusedError,
     accepts_a_pin,
     offers_candidates,
+    pinned_record,
     states_a_match,
     states_a_series_ordinal,
     with_pin,
@@ -97,6 +99,13 @@ def _classify_failure(provider_name: str, error: Exception) -> _ProviderFailure:
     all — into its own message, and enrichment errors are written to the
     database, so the description is assembled here instead.
     """
+    if isinstance(error, ProviderRefusedError):
+        # A refusal arriving as a 200 with an errors body leaves nothing for
+        # ``_is_retryable`` to read, and asking again spends the library on a
+        # credential that already answered no.
+        return _ProviderFailure(
+            provider_name, f"refused the credential ({error.codes})", retryable=False
+        )
     request_error = _underlying_request_error(error)
     if request_error is None:
         return _ProviderFailure(provider_name, type(error).__name__, retryable=True)
@@ -200,6 +209,7 @@ class EnrichmentManager:
         # give across two processes.
         self._jobs = storage_manager.enrichment_jobs
         self._status = EnrichmentJobStatus()
+        self._error_counts: dict[str, int] = {}
         self._dropped_errors = 0
         self._published_at = 0.0
         self._stop_checked_at = 0.0
@@ -322,6 +332,8 @@ class EnrichmentManager:
                 running=True,
                 content_type=content_type.value if content_type else None,
             )
+            self._error_counts = {}
+            self._dropped_errors = 0
             self._rejections = {}
             self._abandoned_providers = set()
             self._skipped_for_abandonment = False
@@ -402,17 +414,26 @@ class EnrichmentManager:
         return _to_status(self._jobs.read())
 
     def _record_error(self, rendered: str) -> None:
+        """Counted rather than repeated: one flaky provider used to fill the
+        whole list and hide every other provider's single failure.
+        """
         with self._lock:
-            errors = self._status.errors
-            if len(errors) < MAX_RECORDED_ERRORS:
-                errors.append(rendered)
-                return
-            self._dropped_errors += 1
-            summary = f"… and {self._dropped_errors} more"
-            if len(errors) == MAX_RECORDED_ERRORS:
-                errors.append(summary)
+            counted = self._error_counts.get(rendered)
+            if counted is None and len(self._error_counts) >= MAX_RECORDED_ERRORS:
+                self._dropped_errors += 1
             else:
-                errors[-1] = summary
+                self._error_counts[rendered] = (counted or 0) + 1
+            self._status.errors = self._rendered_errors()
+
+    def _rendered_errors(self) -> list[str]:
+        """Insertion order, so the list does not reshuffle between polls."""
+        lines = [
+            rendered if count == 1 else f"{rendered} (x{count})"
+            for rendered, count in self._error_counts.items()
+        ]
+        if self._dropped_errors:
+            lines.append(f"… and {self._dropped_errors} more")
+        return lines
 
     def _stop_asked(self) -> bool:
         """An item matching no provider never touches the network, so a per-item
@@ -659,7 +680,7 @@ class EnrichmentManager:
         try:
             if matched is not None:
                 provider, result = matched
-                item = self._apply_enrichment(db_id, item, result)
+                item = self._apply_enrichment(db_id, item, provider, result)
                 self.storage_manager.enrichment.mark_complete(
                     db_id, provider.name, result.match_quality
                 )
@@ -885,8 +906,7 @@ class EnrichmentManager:
         )
         self._record_error(
             f"{failure.provider}: abandoned for this run after {count} "
-            f"consecutive rejections ({failure.reason}); "
-            "the items it never reached are left queued"
+            f"consecutive rejections ({failure.reason})"
         )
 
     def _every_provider_abandoned(self, content_type: ContentType | None) -> bool:
@@ -934,15 +954,28 @@ class EnrichmentManager:
         self,
         db_id: int,
         item: ContentItem,
+        provider: EnrichmentProvider,
         result: EnrichmentResult,
     ) -> ContentItem:
+        # Filling only, so a nightly run never churns covers — except behind a
+        # pin, which is the operator correcting the one a merge left wrong.
+        replace_cover = (
+            result.cover_url is not None
+            and pinned_record(item, provider.name) is not None
+        )
         enriched = item.model_copy(
             update={
                 "metadata": merge_enrichment(item.metadata, result),
-                "cover_url": item.cover_url or result.cover_url,
+                "cover_url": (
+                    result.cover_url
+                    if replace_cover
+                    else item.cover_url or result.cover_url
+                ),
             }
         )
-        self.storage_manager.save_enrichment_metadata(db_id, enriched)
+        self.storage_manager.save_enrichment_metadata(
+            db_id, enriched, replace_cover=replace_cover
+        )
         return enriched
 
 

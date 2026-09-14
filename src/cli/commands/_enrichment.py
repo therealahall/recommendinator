@@ -15,14 +15,15 @@ from src.enrichment.manager import (
     job_status,
 )
 from src.enrichment.provider_base import pins_of
-from src.enrichment.registry import get_enrichment_registry
 from src.models.content import ContentItem, ContentType
 from src.storage.manager import StorageManager
 from src.utils.item_serialization import (
     CANDIDATES_UNAVAILABLE,
     ENRICHMENT_UNAVAILABLE,
+    UnknownEnrichmentProvider,
     enrichment_candidates_to_dict,
     enrichment_pin_to_dict,
+    enrichment_provider_filter,
     enrichment_providers_to_list,
     enrichment_reset_to_dict,
 )
@@ -38,18 +39,13 @@ def _echo_errors(errors: list[str], *, err: bool = False) -> None:
 
 
 def _installed_provider_or_abort(named: str) -> str | None:
-    """The names are the discovered providers, and a ``click.Choice`` listing
-    them ran the discovery scan on every CLI invocation, ``--help`` included.
-    "all" is the absence of a filter rather than a provider name.
+    """No ``click.Choice`` listing them: that ran the discovery scan on every CLI
+    invocation, ``--help`` included.
     """
-    provider = named.strip().lower()
-    if provider == "all":
-        return None
-
-    installed = sorted(get_enrichment_registry().get_all_providers())
-    if provider not in installed:
-        abort_with(f"Unknown provider '{named}'. Installed: {', '.join(installed)}.")
-    return provider
+    try:
+        return enrichment_provider_filter(named)
+    except UnknownEnrichmentProvider as error:
+        abort_with(str(error))
 
 
 def _finished_state(status: EnrichmentJobStatus) -> str:
