@@ -432,6 +432,10 @@ function colourIn(value: string): string {
   return (style === -1 ? parts : parts.slice(style + 1)).join(' ')
 }
 
+function styleIn(value: string): string {
+  return value.split(/\s+/).find((part) => BORDER_STYLES.has(part)) ?? 'none'
+}
+
 function borderColour(body: string): string {
   return colourIn(declaration(body, 'border'))
 }
@@ -541,6 +545,13 @@ const TINTED_TEXT: [string, string, string, string][] = [
     ENRICHMENT_PROVIDERS,
     ".provider-move[aria-disabled='true']",
     '--bg-hover',
+  ],
+  ['a stepper button', NUMBER_STEPPER, '.stepper-btn', '--bg-card'],
+  [
+    'the stepper button at its bound, which stays focusable',
+    NUMBER_STEPPER,
+    ".stepper-btn[aria-disabled='true']",
+    '--bg-card',
   ],
 ]
 
@@ -755,6 +766,31 @@ describe.each(THEMES)('edges that say where a control is in %s', (_theme, themeP
         divides(borderColour(refused), toRgba(`var(${surface})`, vars)),
         surface,
       ).toBeGreaterThanOrEqual(NON_TEXT)
+    }
+  })
+
+  it('a stepper at its bound is plated and redraws the edge it owns, not just its glyph', () => {
+    const component = read(NUMBER_STEPPER)
+    const bound = ruleBody(component, ".stepper-btn[aria-disabled='true']")
+    const plate = toRgba(declaration(bound, 'background'), vars)
+
+    expect(plate).not.toEqual(
+      toRgba(declaration(ruleBody(component, '.stepper-btn'), 'background'), vars),
+    )
+    expect(divides(borderColour(ruleBody(read(BASE), '.field')), plate)).toBeGreaterThanOrEqual(
+      NON_TEXT,
+    )
+    for (const [cell, side] of [
+      ['.stepper-decrement', 'border-right'],
+      ['.stepper-increment', 'border-left'],
+    ] as const) {
+      const divider = declaration(ruleBody(component, cell), side)
+
+      expect(divides(colourIn(divider), plate), cell).toBeGreaterThanOrEqual(NON_TEXT)
+      expect(
+        declaration(ruleBody(component, `${cell}[aria-disabled='true']`), `${side}-style`),
+        cell,
+      ).not.toEqual(styleIn(divider))
     }
   })
 

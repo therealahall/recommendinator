@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
 import Accordion from '@/components/atoms/Accordion.vue'
+import AppIcon from '@/components/atoms/AppIcon.vue'
 import SettingMetaRow from '@/components/molecules/SettingMetaRow.vue'
 import SettingsFieldList from '@/components/molecules/SettingsFieldList.vue'
 import type { SettingBufferValue } from '@/composables/useSettingsBuffer'
@@ -181,7 +182,7 @@ async function onUpdate(key: string, value: SettingBufferValue): Promise<void> {
                 :aria-disabled="refuses(index, -1)"
                 :aria-describedby="disabled ? MOVE_LOCK : undefined"
                 @click="move(index, -1)"
-              >↑</button>
+              ><AppIcon name="arrow-up" /></button>
               <button
                 type="button"
                 class="provider-move"
@@ -190,7 +191,7 @@ async function onUpdate(key: string, value: SettingBufferValue): Promise<void> {
                 :aria-disabled="refuses(index, 1)"
                 :aria-describedby="disabled ? MOVE_LOCK : undefined"
                 @click="move(index, 1)"
-              >↓</button>
+              ><AppIcon name="arrow-down" /></button>
             </template>
 
             <SettingsFieldList
@@ -319,9 +320,7 @@ async function onUpdate(key: string, value: SettingBufferValue): Promise<void> {
   color: var(--text-primary);
   cursor: pointer;
   display: inline-flex;
-  font-size: var(--text-md);
   justify-content: center;
-  line-height: 1;
   min-height: 32px;
   min-width: 32px;
   padding: 0;

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import AppIcon from '@/components/atoms/AppIcon.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -38,7 +39,7 @@ function toggle(): void {
           @click="toggle"
         >
           <slot name="header" />
-          <span class="accordion-chevron" aria-hidden="true">▾</span>
+          <AppIcon name="chevron" class="accordion-chevron" />
         </button>
       </component>
       <div v-if="$slots['header-actions']" class="accordion-header-actions">
