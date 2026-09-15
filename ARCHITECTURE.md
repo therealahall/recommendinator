@@ -314,28 +314,20 @@ fired after a sync.
 | Hardcover | Books | `books.featured_book_series` |
 | IGDB | Video games | `collections`, else `franchise`, never a position |
 
-TMDB stores `series_name` and no position: its endpoint returns an unordered set, so any rank read off one is invented. RAWG stores neither — it states which games share a series without naming it, and an unnamed series can only be grouped on, which merged any two sharing a member.
+TMDB stores `series_name` and no position: its endpoint returns an unordered set. RAWG stores neither: it states which games share a series without naming it, and grouping on that merged any two sharing a member.
 
-Wikidata and Hardcover state a position, at `authored` authority; IGDB a name alone. Wikidata implements `fetch_series_ordinal` alone, never settling a match. Hardcover's and IGDB's ordinals ride theirs.
+Wikidata and Hardcover state a position, at `authored` authority. Wikidata implements `fetch_series_ordinal` alone, never settling a match. Hardcover's and IGDB's ordinals ride theirs.
 
 Rules:
 
-- The merge is gap-filling. An edited field is the exception: it
-  overwrites the detail table and is recorded in `content_item_manual_fields`,
-  which keeps a later sync or enrichment run off that column until
-  `library clear-manual` releases it.
-- **A settled miss is not a failure.** Every provider answering "not this one"
-  retires the item through `mark_enrichment_complete(..., "not_found")`. Reaching
-  it again takes `--retry-not-found`.
+- **Every enabled provider is asked**, in `enrichment.provider_order`. Genres and tags are combined, the rest gap-filled in rank order, and the top-ranked match is credited on `enrichment_status`. A retryable failure beside a match keeps the item queued with that credit. An edited field overwrites its detail column and is recorded in `content_item_manual_fields`, keeping sync and enrichment off it until `library clear-manual`.
+- **A settled miss is not a failure.** Every provider answering "not this one" retires the item through `mark_enrichment_complete(..., "not_found")`, which only `--retry-not-found` requeues.
 - **A failure is classified before it is acted on** (`_classify_failure`,
   `_is_retryable`). Transport errors, 5xx, 408 and 429 are retryable, so
   `mark_enrichment_failed` records the error and leaves `needs_enrichment=1`. Any
   other 4xx is not, being rejected identically every run.
-- **A provider that keeps rejecting is abandoned for the run.** Five consecutive
-  non-retryable rejections (`_MAX_CONSECUTIVE_REJECTIONS`) drop it, and the run
-  ends once nothing unabandoned is left for its content type.
-- **A failed save is ours, not a miss.** `mark_enrichment_settled_failure` takes
-  the item out of the queue with the error on the row.
+- **A provider that keeps rejecting is abandoned for the run.** Five consecutive non-retryable rejections (`_MAX_CONSECUTIVE_REJECTIONS`) drop it, ending the run once none is left for its content type.
+- **A failed save is ours, not a miss.** `mark_enrichment_settled_failure` dequeues the item with the error on the row.
 - An item counts as enriched only with a real provider, no error, not
   `not_found`, and `needs_enrichment=0`. `get_content_items(enrichment=...)` and
   the per-row `enriched` flag share that predicate (`_ENRICHED_PREDICATE`).

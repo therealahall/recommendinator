@@ -373,9 +373,10 @@ def _provider_entries() -> tuple[SettingMetadata, ...]:
             PROVIDER_ORDER_KEY,
             label="Provider precedence",
             help=(
-                "Providers are tried in this order and the first one to match an "
-                "item enriches it. Set from the CLI, it must name every installed "
-                "provider exactly once."
+                "Every provider is asked, in this order. Genres and tags from each "
+                "match are combined, and the highest-ranked match fills everything "
+                "else first and is credited with the item. Set from the CLI, it "
+                "must name every installed provider exactly once."
             ),
             type="list",
             default=tuple(provider.name for provider in installed),

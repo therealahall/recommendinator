@@ -53,17 +53,19 @@ says nothing about series — Wikidata, Hardcover and IGDB state those. Get a ke
 from [rawg.io/apidocs](https://rawg.io/apidocs).
 
 **Wikidata** fills nothing but the series a work belongs to, and its position
-where the statement carries one. It never matches an item, so the provider
-credited with a book or a game is still OpenLibrary or RAWG. A work it cannot
+where the statement carries one. It never matches an item, so it is never the
+provider credited with one. A work it cannot
 identify beyond doubt, by type and release year, is left alone.
 
-**Hardcover** fills genres, description, cover, publish year and where in its series a book sits. It matches on an ISBN where your source supplies one, otherwise on title and author, and refuses a title that matches two books rather than guess. Books it refuses fall through to OpenLibrary, so enabling both is worthwhile. Create a free account at [hardcover.app](https://hardcover.app/) and copy the token from **Account > API**.
+**Hardcover** fills genres, description, cover, publish year and where in its series a book sits. It matches on an ISBN where your source supplies one, otherwise on title and author, and refuses a title that matches two books rather than guess. OpenLibrary fills what Hardcover leaves or refuses, so enabling both is worthwhile. Create a free account at [hardcover.app](https://hardcover.app/) and copy the token from **Account > API**.
 
-**IGDB** fills genres, tags from its themes, the summary, a cover and the release year, and names a game's series — its collection, else its franchise, never a position. It ships last, reaching the games RAWG missed. Register an application at [dev.twitch.tv/console/apps](https://dev.twitch.tv/console/apps), then copy its client ID and secret.
+**IGDB** fills genres, tags from its themes, the summary, a cover and the release year, and names a game's series — its collection, else its franchise, never a position. It ships last, filling what RAWG leaves. Register an application at [dev.twitch.tv/console/apps](https://dev.twitch.tv/console/apps), then copy its client ID and secret.
 
-### Which provider wins
+### How providers combine
 
-Providers are tried in the order `enrichment.provider_order` names, and the first one to match an item enriches it. Every installed provider must be named exactly once, so an order that misspells or omits one is refused.
+Every enabled provider for an item's type is asked in the order `enrichment.provider_order` names, whether or not one above it matched. Genres and tags from every match are combined. Every other field comes from the highest-ranked provider stating it, and that top match is credited with the item. Every installed provider must be named exactly once, so an order that misspells or omits one is refused.
+
+Items enriched before every provider was asked hold only what their first match stated. `enrichment reset` queues them again, or `enrichment start --retry-not-found` for items no provider found, and the next run adds and fills from every provider without removing anything.
 
 ```bash
 uv run python -m src.cli settings set enrichment.provider_order "openlibrary,hardcover,rawg,tmdb,wikidata,igdb"
@@ -175,6 +177,8 @@ reset --id <id>` or **Enrich this again** in the edit dialog, which enrich it
 now where enrichment is on with a provider for its type. `enrichment status`
 counts each item once, so a failed item reports under **Failed**, not
 **Pending**, though queued.
+
+An item one provider matched while another failed is saved and still reports under **Failed**, credited to the provider that matched, until a run hears from the one that failed.
 
 **Keeping a failure queued is new.** Before, *any* provider error settled the
 item as "not found", so a library enriched under an older version can hold items
