@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.63.1 (2026-09-15)
+
+### Bug Fixes
+
+- **enrichment**: Ask every provider instead of stopping at the first match
+  ([`d29de09`](https://github.com/therealahall/recommendinator/commit/d29de098cdecd34d66980f8a5f2676765b7c0059))
+
+
 ## v0.63.0 (2026-09-15)
 
 ### Bug Fixes
