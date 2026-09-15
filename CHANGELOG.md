@@ -1,6 +1,30 @@
 # CHANGELOG
 
 
+## v0.63.0 (2026-09-15)
+
+### Bug Fixes
+
+- **enrichment**: Show the item being enriched while it runs
+  ([`82966a0`](https://github.com/therealahall/recommendinator/commit/82966a0db6e44746f343487707894b880ebdfeed))
+
+- **storage**: Treat a film as one work whatever year a source gives it
+  ([`425dd9d`](https://github.com/therealahall/recommendinator/commit/425dd9d6ffcaca8a273d5f73dbce7e18f9b6384b))
+
+### Features
+
+- **auth**: Let a source plugin supply its own OAuth flow
+  ([`8ff4b61`](https://github.com/therealahall/recommendinator/commit/8ff4b61130d13ba16b2fa7f415fbdce4a426d25b))
+
+- **sources**: Name a source instead of guessing its label
+  ([`89b54f5`](https://github.com/therealahall/recommendinator/commit/89b54f5a457015cc0d4b7ff0c1ba42ef6895199c))
+
+### Testing
+
+- Delete tests that prove nothing and tighten the vacuous ones
+  ([`a2bb97f`](https://github.com/therealahall/recommendinator/commit/a2bb97ff9f13ff73e9b71d8913843ceca81c4dc4))
+
+
 ## v0.62.2 (2026-09-14)
 
 ### Bug Fixes
