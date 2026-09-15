@@ -4,7 +4,7 @@ import json
 import logging
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any
@@ -53,7 +53,7 @@ _RETRYABLE_HTTP_STATUSES = frozenset({408, 429})
 
 _MAX_CONSECUTIVE_REJECTIONS = 5
 
-#: The provider the first-success loop settled an item on, and what it said.
+#: A provider that matched an item, and what it said.
 _Match = tuple[EnrichmentProvider, EnrichmentResult]
 
 
@@ -673,20 +673,38 @@ class EnrichmentManager:
 
         # Forced: a provider call or its rate-limit wait can outlast any throttle window.
         self._publish(force=True)
-        matched, failures = self._first_match(
-            item, available_providers, content_type_str, safe_title
-        )
-
+        matched: _Match | None = None
+        failures: list[_ProviderFailure] = []
         committed = False
         # One try over every write the item makes, the ordinal pass included: a
         # save is ours to settle, and one escaping here ends the whole run.
         try:
+            # Each match is saved as it arrives, so a failed save ends the walk
+            # before it spends another provider's quota.
+            for answer in self._ask_every_matcher(
+                item, available_providers, content_type_str, safe_title
+            ):
+                if isinstance(answer, _ProviderFailure):
+                    failures.append(answer)
+                    continue
+                provider, result = answer
+                item = self._apply_enrichment(db_id, item, provider, result)
+                matched = matched or answer
+            retryable = any(failure.retryable for failure in failures)
+            reported = "; ".join(str(failure) for failure in failures)
             if matched is not None:
                 provider, result = matched
-                item = self._apply_enrichment(db_id, item, provider, result)
-                self.storage_manager.enrichment.mark_complete(
-                    db_id, provider.name, result.match_quality
-                )
+                if retryable:
+                    self.storage_manager.enrichment.mark_failed(
+                        db_id,
+                        reported,
+                        provider=provider.name,
+                        quality=result.match_quality,
+                    )
+                else:
+                    self.storage_manager.enrichment.mark_complete(
+                        db_id, provider.name, result.match_quality
+                    )
                 committed = True
             unanswered = self._settle_series_ordinal(db_id, item, matching_providers)
         except Exception as error:
@@ -705,7 +723,7 @@ class EnrichmentManager:
                 self._status.items_failed += 1
             return
 
-        if matched is not None:
+        if matched is not None and not retryable:
             provider, result = matched
             logger.info(
                 "[ENRICHMENT] Enriched %s via %s (quality=%s): %s",
@@ -719,23 +737,23 @@ class EnrichmentManager:
                 self._status.items_enriched += 1
             return
 
-        if failures:
-            reported = "; ".join(str(failure) for failure in failures)
-            if any(failure.retryable for failure in failures):
-                # A provider that blew up, timed out or could not be reached
-                # never said whether it has this item, so "no match" is an
-                # unknown rather than a settled miss.
-                logger.info(
-                    "[ENRICHMENT] Enrichment of %s failed, will retry: %s",
-                    content_type_str,
-                    safe_title,
-                )
+        if retryable:
+            # A provider that blew up, timed out or could not be reached never
+            # said whether it has this item, so whatever the others answered is
+            # not yet the whole of it.
+            logger.info(
+                "[ENRICHMENT] A provider failed on %s, will retry: %s",
+                content_type_str,
+                safe_title,
+            )
+            if matched is None:
                 self.storage_manager.enrichment.mark_failed(db_id, reported)
-                with self._lock:
-                    self._status.items_processed += 1
-                    self._status.items_failed += 1
-                return
+            with self._lock:
+                self._status.items_processed += 1
+                self._status.items_failed += 1
+            return
 
+        if failures:
             # Every provider rejected the request itself, so the next run would
             # be rejected the same way. Settle the item rather than queue the
             # whole library against a provider that answers none of it.
@@ -754,15 +772,13 @@ class EnrichmentManager:
             self._status.items_processed += 1
             self._status.items_not_found += 1
 
-    def _first_match(
+    def _ask_every_matcher(
         self,
         item: ContentItem,
         providers: list[EnrichmentProvider],
         content_type_str: str,
         safe_title: str,
-    ) -> tuple[_Match | None, list[_ProviderFailure]]:
-        failures: list[_ProviderFailure] = []
-
+    ) -> Iterator[_Match | _ProviderFailure]:
         for provider in providers:
             if not states_a_match(provider):
                 continue
@@ -791,22 +807,21 @@ class EnrichmentManager:
                 logger.warning(
                     "[ENRICHMENT] Provider %s failed: %s", provider.name, failure.reason
                 )
-                failures.append(failure)
                 self._note_failure(failure)
+                yield failure
                 continue
 
             self._rejections.pop(provider.name, None)
 
             if result and result.match_quality != "not_found":
-                return (provider, result), failures
+                yield provider, result
+                continue
 
             logger.debug(
                 "[ENRICHMENT] %s returned not_found: %s",
                 provider.name,
                 safe_title,
             )
-
-        return None, failures
 
     def _settle_series_ordinal(
         self,

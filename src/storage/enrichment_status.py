@@ -73,12 +73,21 @@ class EnrichmentStore:
         with self._sqlite_db.connection() as conn:
             mark_enrichment_complete(conn, content_item_id, provider, quality)
 
-    def mark_failed(self, content_item_id: int, error: str) -> None:
+    def mark_failed(
+        self,
+        content_item_id: int,
+        error: str,
+        *,
+        provider: str | None = None,
+        quality: str | None = None,
+    ) -> None:
         """A failure is an unknown outcome, not a settled miss, so the next run
         tries the item again.
         """
         with self._sqlite_db.connection() as conn:
-            mark_enrichment_failed(conn, content_item_id, error)
+            mark_enrichment_failed(
+                conn, content_item_id, error, provider=provider, quality=quality
+            )
 
     def mark_settled_failure(self, content_item_id: int, error: str) -> None:
         with self._sqlite_db.connection() as conn:

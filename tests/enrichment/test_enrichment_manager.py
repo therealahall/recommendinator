@@ -1105,35 +1105,54 @@ class TestTransientProviderFailureIsRetryable:
         assert job_status.items_processed == 5
         assert job_status.total_items == 5
 
-    def test_error_from_one_provider_does_not_block_a_later_match(
+    def test_a_match_is_saved_but_stays_queued_until_the_provider_that_errored_answers(
         self,
         storage_manager: StorageManager,
         registry: EnrichmentRegistry,
         config: dict[str, Any],
     ) -> None:
         db_id = save_movie(storage_manager)
-        config["enrichment"]["provider_order"] = ["raw_request", "mock"]
-        registry.register(
-            RawRequestErrorProvider(requests.ConnectionError("network is unreachable"))
+        config["enrichment"]["provider_order"] = ["mock", "raw_request"]
+        failing = RawRequestErrorProvider(
+            requests.ConnectionError("network is unreachable")
         )
         registry.register(MockProvider())
+        registry.register(failing)
 
         manager = EnrichmentManager(storage_manager, config, registry)
+        manager.start_enrichment(content_type=ContentType.MOVIE)
+        assert manager._wait_for_completion()
+
+        assert (
+            len(failing.enrich_calls) == 1
+        ), "a provider ranked below a match is asked"
+        item = storage_manager.get_content_item(db_id)
+        assert item.metadata.get("genres") == ["Action", "Drama"]
+        assert item.enriched is False
+        status = storage_manager.enrichment.status(db_id)
+        assert status is not None
+        assert status["enrichment_provider"] == "mock"
+        assert status["enrichment_quality"] == "high"
+        assert status["enrichment_error"] == "raw_request: ConnectionError"
+        assert queued_ids(storage_manager) == {db_id}
+        job_status = manager.get_status()
+        assert job_status.items_enriched == 0
+        assert job_status.items_failed == 1
+
+        recovered_registry = EnrichmentRegistry()
+        recovered_registry._discovered = True
+        recovered_registry.register(MockProvider())
+        recovered_registry.register(MockProvider(name="raw_request"))
+        manager = EnrichmentManager(storage_manager, config, recovered_registry)
         manager.start_enrichment(content_type=ContentType.MOVIE)
         assert manager._wait_for_completion()
 
         status = storage_manager.enrichment.status(db_id)
         assert status is not None
         assert status["enrichment_provider"] == "mock"
-        assert status["enrichment_quality"] == "high"
         assert status["enrichment_error"] is None
         assert storage_manager.get_content_item(db_id).enriched is True
-        assert queued_ids(storage_manager) == set()
-
-        job_status = manager.get_status()
-        assert job_status.items_enriched == 1
-        assert job_status.items_failed == 0
-        assert any("raw_request" in error for error in job_status.errors)
+        assert manager.get_status().items_enriched == 1
 
     def test_retry_not_found_run_records_a_failure_as_retryable(
         self,
@@ -2183,27 +2202,67 @@ class OrdinalOnlyProvider(EnrichmentProvider):
         return SeriesOrdinal(position=3.0, series_name="The Matrix")
 
 
+class StatedResultProvider(MockProvider):
+    def __init__(self, name: str, result: EnrichmentResult) -> None:
+        super().__init__(name=name, content_types=[ContentType.BOOK])
+        self._result = result
+
+    def enrich(
+        self, item: ContentItem, config: dict[str, Any]
+    ) -> EnrichmentResult | None:
+        self.enrich_calls.append(item)
+        return self._result
+
+
 class TestTwoProvidersThatBothMatch:
-    @pytest.mark.parametrize("first", ["alpha", "zulu"])
-    def test_the_one_ranked_first_enriches_the_item(
-        self, tmp_path: Path, first: str
+    def test_every_match_contributes_and_the_one_ranked_first_is_credited(
+        self, tmp_path: Path
     ) -> None:
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
-        db_id = save_movie(storage_manager)
-        second = "zulu" if first == "alpha" else "alpha"
+        db_id = storage_manager.save_content_item(
+            ContentItem(
+                id="the-name-of-the-wind",
+                title="The Name of the Wind",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            )
+        )
+        cover = "https://covers.openlibrary.org/b/id/2.jpg"
         manager = manager_over(
             storage_manager,
-            MockProvider(name="zulu"),
-            MockProvider(name="alpha"),
-            order=[first, second],
+            StatedResultProvider(
+                "openlibrary",
+                EnrichmentResult(
+                    genres=["fantasy", "Epic"],
+                    description="D2",
+                    cover_url=cover,
+                    extra_metadata={"pages": 400},
+                    match_quality="medium",
+                ),
+            ),
+            StatedResultProvider(
+                "hardcover",
+                EnrichmentResult(
+                    genres=["Fantasy"], description="D1", match_quality="high"
+                ),
+            ),
+            order=["hardcover", "openlibrary"],
         )
 
-        manager.start_enrichment(content_type=ContentType.MOVIE)
+        manager.start_enrichment(content_type=ContentType.BOOK)
         assert manager._wait_for_completion()
 
+        item = storage_manager.get_content_item(db_id)
+        assert item is not None
+        assert item.metadata["genres"] == ["Fantasy", "Epic"]
+        assert item.metadata["description"] == "D1"
+        assert item.cover_url == cover
+        assert item.metadata["pages"] == 400
         status = storage_manager.enrichment.status(db_id)
         assert status is not None
-        assert status["enrichment_provider"] == first
+        assert status["enrichment_provider"] == "hardcover"
+        assert status["enrichment_quality"] == "high"
+        assert status["needs_enrichment"] is False
 
 
 class TestTheOrdinalPass:

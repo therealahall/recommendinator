@@ -23,8 +23,7 @@ uv run python -m src.cli settings set enrichment.providers.wikidata.enabled true
 
 ## Behavior
 - Supplies a series only, at `authored` authority, and never an item's match: it
-  implements `fetch_series_ordinal` and not `enrich`, so the provider credited
-  with an item stays the one that found its genres and description.
+  implements `fetch_series_ordinal` and not `enrich`, so the provider credited with an item is always one that matched it.
 - Names the series from the English label of the `P179` entity, and positions the
   work in it from that statement's `P1545` qualifier. A statement carrying no
   readable ordinal still names the series, unpositioned, and `SeriesOrder` then
