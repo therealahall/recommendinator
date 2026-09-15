@@ -35,7 +35,7 @@ function toggleSetting(name: string, label: string): SettingView {
 const ORDER_SETTING = setting('enrichment.provider_order', 'Provider precedence', {
   type: 'list',
   widget: 'provider-order',
-  help: 'Providers are tried in this order and the first one to match an item enriches it.',
+  help: 'Every provider is asked, in this order. Genres and tags from each match are combined, and the highest-ranked match fills everything else first and is credited with the item.',
   value: [],
 }) as SettingViewValue
 

@@ -1357,19 +1357,21 @@ def mark_enrichment_failed(
     conn: sqlite3.Connection,
     content_item_id: int,
     error: str,
+    *,
+    provider: str | None = None,
+    quality: str | None = None,
 ) -> None:
-    """A failure means no provider ever said whether it has this item, so the
-    outcome is unknown rather than settled: ``needs_enrichment`` stays 1 so the
-    next enrichment run retries the item.
+    """A failed provider never said whether it has this item, so it stays queued.
+    *provider* credits a match that did answer, which a reset by provider must find.
     """
     cursor = conn.cursor()
     cursor.execute(
         "INSERT OR REPLACE INTO enrichment_status "
         "(content_item_id, last_enriched_at, enrichment_provider, "
         "enrichment_quality, needs_enrichment, enrichment_error) "
-        "SELECT id, CURRENT_TIMESTAMP, NULL, NULL, 1, ? FROM content_items "
+        "SELECT id, CURRENT_TIMESTAMP, ?, ?, 1, ? FROM content_items "
         "WHERE id = ? AND merged_into IS NULL",
-        (error, content_item_id),
+        (provider, quality, error, content_item_id),
     )
     conn.commit()
 
