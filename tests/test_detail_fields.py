@@ -17,6 +17,7 @@ from src.models.detail_fields import (
     DETAIL_FIELDS,
     DetailField,
     FieldKind,
+    FieldOwner,
 )
 from src.storage import sqlite_db
 from src.storage.schema import create_schema
@@ -137,6 +138,7 @@ class TestDeclaringOneFieldIsEnough:
                 DetailField(
                     "translator",
                     FieldKind.TEXT,
+                    FieldOwner.WRITER,
                     column="translator",
                     select_alias="book_translator",
                 ),

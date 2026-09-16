@@ -5,7 +5,7 @@ every later import for that column.
 
 import json
 import sqlite3
-from collections.abc import Generator, Sequence
+from collections.abc import Generator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -27,8 +27,10 @@ from src.models.detail_fields import (
     DETAIL_FIELDS,
     PIN_KEY,
     RELEASE_YEAR_FIELDS,
+    WRITER_STATED_BASE_FIELDS,
     ContentTypeFields,
     FieldKind,
+    FieldOwner,
     to_int,
 )
 from src.storage.derived import (
@@ -51,6 +53,12 @@ from src.storage.field_provenance import (
     parse_manual_fields,
     read_holds,
     record_hold,
+)
+from src.storage.field_writes import (
+    FieldWrite,
+    FieldWriter,
+    WriterBand,
+    record_field_writes,
 )
 from src.storage.item_merges import (
     MergeEvidence,
@@ -76,11 +84,14 @@ from src.storage.schema import create_schema, get_default_user_id
 from src.utils.dates import local_today, merge_seasons_watched_dates, utc_now
 from src.utils.list_merge import merge_string_lists
 from src.utils.series import (
+    SERIES_AUTHORITY_KEY,
+    SERIES_POSITION_KEY,
     all_seasons_watched,
     reconcile_seasons,
     reconcile_series,
     seasons_watched_for_completed,
     status_for_seasons_watched,
+    stored_series_authority,
 )
 from src.utils.sorting import (
     SearchMatchTier,
@@ -317,6 +328,39 @@ def _incoming_signals(item: ContentItem, content_type_value: str) -> MatchSignal
 
 def _spelling(title: str | None) -> str:
     return " ".join((title or "").split()).casefold()
+
+
+def _stated_base_writes(item: ContentItem, cover_url: str | None) -> list[FieldWrite]:
+    stated: dict[str, Any] = {"title": item.title, "cover_url": cover_url}
+    return [
+        FieldWrite(field, value)
+        for field in WRITER_STATED_BASE_FIELDS
+        if (value := stated[field]) is not None
+    ]
+
+
+def _stated_free_form_writes(
+    spec: ContentTypeFields, metadata: Mapping[str, Any]
+) -> list[FieldWrite]:
+    """The series authority is no row of its own: it rides the ordinal it grades."""
+    authority = stored_series_authority(metadata)
+    writes: list[FieldWrite] = []
+    for detail_field in spec.fields:
+        key = detail_field.metadata_key
+        if (
+            detail_field.column is not None
+            or detail_field.owner is not FieldOwner.WRITER
+            or key == SERIES_AUTHORITY_KEY
+        ):
+            continue
+        value = detail_field.canonical(detail_field.value_from(metadata))
+        if value is None:
+            continue
+        ordinal_authority = (
+            authority.value if authority and key == SERIES_POSITION_KEY else None
+        )
+        writes.append(FieldWrite(key, value, ordinal_authority))
+    return writes
 
 
 def _metadata_blob(raw: str | None) -> dict[str, Any]:
@@ -751,6 +795,12 @@ class SQLiteDB:
             db_id = lastrowid
             row_changed = True
 
+        writer = FieldWriter(WriterBand.SOURCE, item.source) if item.source else None
+        if writer is not None:
+            record_field_writes(
+                cursor, db_id, writer, _stated_base_writes(item, incoming_cover)
+            )
+
         # On both paths: a source that lost the dedup race would otherwise never
         # attach its id, and take the title path again on every later sync.
         row_changed |= self._record_external_id(
@@ -758,7 +808,7 @@ class SQLiteDB:
         )
 
         detail_changed = self._save_detail_table(
-            cursor, db_id, item, content_type_value
+            cursor, db_id, item, content_type_value, writer=writer
         )
 
         # After the detail write, so the derived columns read the creator that
@@ -803,6 +853,7 @@ class SQLiteDB:
         item: ContentItem,
         content_type: str,
         replaceable_metadata_keys: frozenset[str] = frozenset(),
+        writer: FieldWriter | None = None,
     ) -> bool:
         """For existing rows, enrichment is the source of truth: genres and tags
         merge additively, every other column is fill-only, and the metadata blob
@@ -834,6 +885,7 @@ class SQLiteDB:
 
         col_names = ["content_item_id"]
         values: list[Any] = [db_id]
+        writes: list[FieldWrite] = []
 
         # Only an existing row can be held: a hold is an edit to a stored item.
         held = read_holds(cursor, db_id) if existing_data else set()
@@ -850,6 +902,13 @@ class SQLiteDB:
                 new_value = stated_creator(detail_field.store(item.author or raw))
             else:
                 new_value = detail_field.store(raw)
+
+            if new_value is not None and detail_field.owner is FieldOwner.WRITER:
+                writes.append(
+                    FieldWrite(
+                        detail_field.metadata_key, detail_field.codec.load(new_value)
+                    )
+                )
 
             if col_name in held_columns:
                 values.append(existing_data.get(col_name))
@@ -874,6 +933,11 @@ class SQLiteDB:
                 values.append(new_value)
 
             col_names.append(col_name)
+
+        # Ahead of the no-change return: a refused correction moves no column.
+        if writer is not None:
+            writes.extend(_stated_free_form_writes(spec, metadata))
+            record_field_writes(cursor, db_id, writer, writes)
 
         remaining_metadata = {
             key: val for key, val in metadata.items() if key not in known_keys
