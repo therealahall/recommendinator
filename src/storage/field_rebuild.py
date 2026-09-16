@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -131,6 +131,18 @@ def _first_live_cover(
     return {}
 
 
+def _founded_authority(
+    write: StoredFieldWrite, stated: Mapping[str, Any]
+) -> SeriesAuthority | None:
+    """The operator's hand is the ladder's own top rung: the manual band records
+    the ordinal and no authority beside it, so reading the row alone lost a
+    hand-set position to any source that founded its own.
+    """
+    if write.writer_kind is WriterBand.MANUAL:
+        return SeriesAuthority.MANUAL
+    return stored_series_authority(stated)
+
+
 def _best_founded_ordinal(writes: list[StoredFieldWrite]) -> dict[str, Any]:
     best: tuple[float, SeriesAuthority] | None = None
     for write in writes:
@@ -138,7 +150,7 @@ def _best_founded_ordinal(writes: list[StoredFieldWrite]) -> dict[str, Any]:
             SERIES_POSITION_KEY: write.value,
             SERIES_AUTHORITY_KEY: write.authority,
         }
-        authority = stored_series_authority(stated)
+        authority = _founded_authority(write, stated)
         position = get_series_position_from_metadata(stated)
         if authority is None or position is None:
             continue
