@@ -67,25 +67,25 @@ SQLite holds everything.
 | `date_completed` | Later date wins |
 | `ignored` | Only a stated `True` or `False` wins, in either direction. `None` leaves the stored flag alone |
 
-`seasons_watched` is the one metadata key the sync door unions: a sync adds a
-season, never removes one.
+`seasons_watched` is the one metadata key the sync door unions.
 
 The series name and position are the one family it re-decides:
 `reconcile_series` gives them to the better-founded source, recorded in
-`series_position_authority`. Two outside sources of one standing keep the first
-answer; the operator's own catalogue restating a position corrects it.
+`series_position_authority`. Equal standing keeps the first answer; the
+operator's own catalogue corrects a position.
 
-One exception to forward-only comes after the upsert:
-`_handle_tv_season_change` regresses a completed TV show to
+After the upsert, `_handle_tv_season_change` regresses a completed TV show to
 `currently_consuming` when the season count rises above the seasons the user
 checked off. It needs an existing `seasons_watched` list, and it skips ignored
 items.
 
-The enrichment door runs that same pass:
+The enrichment door runs that same pass when it saves:
 
 - **`save_enrichment_metadata`** writes a provider's metadata to the detail
   table and the derived columns. Of the user-owned fields it writes only
   `status`.
+- **`record_stated_fields`** records a provider's statement without saving, so a
+  refused offer moves no column.
 
 The three user-action doors overwrite freely and write only what the caller
 supplied:

@@ -3,9 +3,10 @@ from __future__ import annotations
 import functools
 import sqlite3
 import threading
-from collections.abc import Callable, Generator, Sequence
+from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 from src.models.content import (
     ConsumptionStatus,
@@ -28,6 +29,7 @@ from src.storage.duplicates import SuggestionPage as SuggestionPage
 from src.storage.enrichment_jobs import EnrichmentJobStore
 from src.storage.enrichment_status import EnrichmentStore
 from src.storage.field_provenance import MANUAL_FIELDS as MANUAL_FIELDS
+from src.storage.field_writes import FieldWriter
 from src.storage.global_secrets import SecretStore
 from src.storage.item_merges import MergeError as MergeError
 from src.storage.item_merges import MergeEvidence as MergeEvidence
@@ -135,12 +137,28 @@ class StorageManager:
             return self.sqlite_db.save_content_item_outcome(item, user_id=user_id)
 
     def save_enrichment_metadata(
-        self, db_id: int, item: ContentItem, *, replace_cover: bool = False
+        self,
+        db_id: int,
+        item: ContentItem,
+        *,
+        replace_cover: bool = False,
+        writer: FieldWriter | None = None,
+        stated: Mapping[str, Any] | None = None,
     ) -> None:
         with self._save_lock:
             self.sqlite_db.save_enrichment_metadata(
-                db_id, item, replace_cover=replace_cover
+                db_id,
+                item,
+                replace_cover=replace_cover,
+                writer=writer,
+                stated=stated,
             )
+
+    def record_stated_fields(
+        self, db_id: int, writer: FieldWriter, stated: Mapping[str, Any]
+    ) -> None:
+        with self._save_lock:
+            self.sqlite_db.record_stated_fields(db_id, writer, stated)
 
     def clear_cover_url(self, db_id: int) -> bool:
         with self._save_lock:

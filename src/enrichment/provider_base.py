@@ -82,6 +82,18 @@ class EnrichmentResult:
     # "not_found" = no match found
     match_quality: str = "high"
 
+    def as_metadata(self) -> dict[str, Any]:
+        stated = dict(self.extra_metadata)
+        for key, value in (
+            ("genres", self.genres),
+            ("tags", self.tags),
+            ("description", self.description),
+            ("cover_url", self.cover_url),
+        ):
+            if value:
+                stated[key] = value
+        return stated
+
 
 @dataclass(frozen=True)
 class SeriesOrdinal:

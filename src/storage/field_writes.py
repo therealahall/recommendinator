@@ -19,7 +19,8 @@ _TABLE = "content_item_field_writes"
 
 class WriterBand(str, Enum):
     """The rank a writer's word carries, weakest first as ``SeriesAuthority``
-    is. Only ``SOURCE`` is recorded so far.
+    is. ``PINNED`` is a rank the rebuild assigns a pinned provider's rows, never
+    a band a door writes: a pin is a preference, not a statement.
     """
 
     #: A value already in a column when the ledger arrived, claimed by nobody.
@@ -67,8 +68,9 @@ def record_field_writes(
     writer: FieldWriter,
     writes: Iterable[FieldWrite],
 ) -> None:
-    """Runs on the caller's cursor and does not commit. Restating a value is not
-    a write: ``written_at`` moves only where the value or its authority changed.
+    """Runs on the caller's cursor, no commit. Nothing is deleted implicitly: a
+    door short-circuits on its own terms, so "did not state it" cannot be told
+    apart from "was never asked".
     """
     # Fixed width, for the reason sync_runs stamps its runs that way: the column
     # sorts as text, and a short stamp sorts out of order.

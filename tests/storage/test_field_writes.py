@@ -8,7 +8,12 @@ import pytest
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.detail_fields import DETAIL_FIELDS, ContentTypeFields, FieldKind
-from src.storage.field_writes import StoredFieldWrite, WriterBand, read_field_writes
+from src.storage.field_writes import (
+    FieldWriter,
+    StoredFieldWrite,
+    WriterBand,
+    read_field_writes,
+)
 from src.storage.sqlite_db import SaveOutcome, SQLiteDB
 from src.utils.series import SeriesAuthority
 
@@ -278,6 +283,45 @@ def test_the_fill_only_rules_still_decide_what_the_column_holds(
         ("calibre_web", "A desert planet."),
         ("storygraph_csv", "Arrakis, desert planet."),
     }
+
+
+def test_a_source_that_stops_stating_a_field_keeps_the_row_it_stated(
+    tmp_path: Path,
+) -> None:
+    db = SQLiteDB(tmp_path / "persisted.db")
+    db_id = db.save_content_item(_calibre_book())
+
+    db.save_content_item(_book("calibre_web", "cw-1", description="A desert planet."))
+    fields = {write.field for write in _writes(db, db_id)}
+
+    assert fields == {
+        "title",
+        "author",
+        "description",
+        "series_name",
+        "series_position",
+    }
+
+
+def test_a_provider_correcting_its_answer_keeps_one_row_holding_the_new_value(
+    tmp_path: Path,
+) -> None:
+    db = SQLiteDB(tmp_path / "corrected_provider.db")
+    db_id = db.save_content_item(_book("calibre_web", "cw-1"))
+    writer = FieldWriter(WriterBand.PROVIDER, "openlibrary")
+
+    for pages in (400, 420):
+        db.save_enrichment_metadata(
+            db_id,
+            _book("calibre_web", "cw-1", pages=pages),
+            writer=writer,
+            stated={"pages": pages},
+        )
+    stated = _for_field(_writes(db, db_id), "pages")
+
+    assert [(write.writer_kind, write.writer, write.value) for write in stated] == [
+        (WriterBand.PROVIDER, "openlibrary", 420)
+    ]
 
 
 def test_an_enrichment_write_is_not_recorded_as_a_source(tmp_path: Path) -> None:
