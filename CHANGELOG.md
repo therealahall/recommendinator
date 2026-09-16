@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.64.0 (2026-09-16)
+
+### Features
+
+- **storage**: Add the field-write ledger table
+  ([`39432d6`](https://github.com/therealahall/recommendinator/commit/39432d63ed8eecf01a2cd0ddf443f8244ee81180))
+
+
 ## v0.63.1 (2026-09-15)
 
 ### Bug Fixes
