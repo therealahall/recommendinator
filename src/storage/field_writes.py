@@ -7,12 +7,24 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from src.models.detail_fields import (
+    WRITER_STATED_BASE_FIELDS,
+    ContentTypeFields,
+    FieldKind,
+    FieldOwner,
+)
+from src.storage.merge import stated_creator
 from src.utils.dates import utc_now
+from src.utils.series import (
+    SERIES_AUTHORITY_KEY,
+    SERIES_POSITION_KEY,
+    stored_series_authority,
+)
 
 _TABLE = "content_item_field_writes"
 
@@ -48,6 +60,10 @@ class FieldWriter:
 #: is the same hand, so a second edit replaces the first rather than joining it.
 MANUAL_WRITER = FieldWriter(WriterBand.MANUAL, "operator")
 
+#: The one identity in the legacy band, nameless because the band exists for
+#: values whose writer nobody recorded.
+LEGACY_WRITER = FieldWriter(WriterBand.LEGACY, "")
+
 
 @dataclass(frozen=True)
 class FieldWrite:
@@ -67,6 +83,69 @@ class StoredFieldWrite:
     value: Any
     authority: str | None
     written_at: str
+
+
+def _stated_base_writes(stated: Mapping[str, Any]) -> list[FieldWrite]:
+    return [
+        FieldWrite(field, value)
+        for field in WRITER_STATED_BASE_FIELDS
+        if (value := stated.get(field)) is not None
+    ]
+
+
+def _stated_column_writes(
+    spec: ContentTypeFields, stated: Mapping[str, Any], author: str | None
+) -> list[FieldWrite]:
+    writes: list[FieldWrite] = []
+    for detail_field in spec.fields:
+        if detail_field.column is None or detail_field.owner is not FieldOwner.WRITER:
+            continue
+        raw = detail_field.value_from(stated)
+        if detail_field.kind is FieldKind.CREATOR:
+            value = stated_creator(detail_field.store(author or raw))
+        else:
+            value = detail_field.store(raw)
+        if value is not None:
+            writes.append(
+                FieldWrite(detail_field.metadata_key, detail_field.codec.load(value))
+            )
+    return writes
+
+
+def _stated_free_form_writes(
+    spec: ContentTypeFields, metadata: Mapping[str, Any]
+) -> list[FieldWrite]:
+    """The series authority is no row of its own: it rides the ordinal it grades."""
+    authority = stored_series_authority(metadata)
+    writes: list[FieldWrite] = []
+    for detail_field in spec.fields:
+        key = detail_field.metadata_key
+        if (
+            detail_field.column is not None
+            or detail_field.owner is not FieldOwner.WRITER
+            or key == SERIES_AUTHORITY_KEY
+        ):
+            continue
+        value = detail_field.canonical(detail_field.value_from(metadata))
+        if value is None:
+            continue
+        ordinal_authority = (
+            authority.value if authority and key == SERIES_POSITION_KEY else None
+        )
+        writes.append(FieldWrite(key, value, ordinal_authority))
+    return writes
+
+
+def stated_writes(
+    spec: ContentTypeFields, stated: Mapping[str, Any], author: str | None = None
+) -> list[FieldWrite]:
+    """The writer-owned fields a mapping states, which is every band's field set:
+    a user-owned field reaches the ledger only as a manual row.
+    """
+    writes = _stated_base_writes(stated)
+    writes.extend(_stated_column_writes(spec, stated, author))
+    writes.extend(_stated_free_form_writes(spec, stated))
+    return writes
 
 
 def record_field_writes(
