@@ -8,6 +8,8 @@ from typing import Any, Literal, TypedDict
 
 from src.models.detail_fields import (
     DETAIL_FIELDS,
+    ContentTypeFields,
+    DetailField,
     FieldKind,
     detail_field_for,
     text_names,
@@ -15,7 +17,13 @@ from src.models.detail_fields import (
     to_text,
 )
 from src.storage.derived import backfill_derived_columns
-from src.storage.field_writes import MANUAL_WRITER, FieldWrite, record_field_writes
+from src.storage.field_writes import (
+    LEGACY_WRITER,
+    MANUAL_WRITER,
+    FieldWrite,
+    record_field_writes,
+    stated_writes,
+)
 from src.storage.merge import (
     normalize_creator_for_matching,
     normalize_title_for_matching,
@@ -96,7 +104,7 @@ class SyncRunDict(TypedDict):
 # Changing ``normalize_title_for_matching``, ``get_sort_title`` or
 # ``build_search_text`` needs a bump and a step to rewrite what the old one
 # stored, or dedup lookups stop matching and duplicates accumulate in silence.
-_SCHEMA_VERSION = 27
+_SCHEMA_VERSION = 28
 
 # Rows for these keys are unreachable from the app but would still
 # be overlaid onto config, so they are pruned once on upgrade.
@@ -448,6 +456,10 @@ def create_schema(conn: sqlite3.Connection) -> None:
         # After the repairs above: the value it records is the one the field
         # holds once they have rewritten what they rewrite.
         _carry_holds_into_the_ledger(cursor)
+    if stored_version < 28:
+        # After the carry above, so a held field's manual row is already there
+        # to outrank the legacy one this records beside it.
+        _record_the_library_as_legacy(cursor)
 
     # Filled after the repair, which recovers a creator that existed only in a
     # blob. Unguarded because the fill selects the rows that need it rather
@@ -1060,6 +1072,85 @@ def _held_value(cursor: sqlite3.Cursor, db_id: int, field: str) -> Any:
     )
     stored = cursor.fetchone()
     return detail.codec.load(stored[detail.column]) if stored else None
+
+
+def _record_the_library_as_legacy(cursor: sqlite3.Cursor) -> None:
+    """What a library held before anything recorded a writer, so the ledger can
+    explain a value whose writer nobody knows. A held field gains one too: manual
+    outranks it, and it records what the value was first.
+    """
+    for content_type, spec in DETAIL_FIELDS.items():
+        columns = ", ".join(f"d.{column}" for column in spec.columns)
+        # Streamed on a second cursor of the same transaction: draining the read
+        # to free this one for the writes would hold every metadata blob in the
+        # library in memory at once.
+        read = cursor.connection.cursor()
+        read.execute(
+            f"SELECT ci.id, ci.title, ci.cover_url, d.metadata, {columns}"
+            f" FROM content_items ci LEFT JOIN {spec.table} d"
+            " ON d.content_item_id = ci.id WHERE ci.content_type = ?",
+            (content_type,),
+        )
+        for row in read:
+            stated = _stored_metadata(spec, row)
+            record_field_writes(
+                cursor, row["id"], LEGACY_WRITER, stated_writes(spec, stated)
+            )
+
+
+def _stored_metadata(spec: ContentTypeFields, row: sqlite3.Row) -> dict[str, Any]:
+    """Read as the library reads it: the blob last, so a key it repeats wins over
+    the column that claims it.
+    """
+    stated: dict[str, Any] = {"title": row["title"], "cover_url": row["cover_url"]}
+    for field in spec.fields:
+        if field.column is None:
+            continue
+        if value := field.codec.load(row[field.column]):
+            stated[field.metadata_key] = value
+    try:
+        blob = json.loads(row["metadata"] or "{}")
+    except (json.JSONDecodeError, TypeError):
+        return stated
+    if isinstance(blob, dict):
+        stated.update(_storable_blob_keys(spec, blob))
+    return stated
+
+
+def _storable_blob_keys(
+    spec: ContentTypeFields, blob: dict[str, Any]
+) -> dict[str, Any]:
+    """A blob written before the codecs refused an object still holds one, and
+    this is the first path that converts a stored blob rather than reading it. A
+    nameless value is left to the column.
+    """
+    storable: dict[str, Any] = {}
+    for key, value in blob.items():
+        field = _column_field(spec, key)
+        if field is None or _column_can_hold(field, value):
+            storable[key] = value
+        elif names := text_names(value):
+            storable[key] = names
+    return storable
+
+
+def _column_field(spec: ContentTypeFields, key: str) -> DetailField | None:
+    return next(
+        (
+            field
+            for field in spec.fields
+            if field.column is not None and key in field.metadata_keys
+        ),
+        None,
+    )
+
+
+def _column_can_hold(field: DetailField, value: Any) -> bool:
+    try:
+        field.store(value)
+    except TypeError:
+        return False
+    return True
 
 
 def _migrate_stranded_detail_shapes(cursor: sqlite3.Cursor) -> None:

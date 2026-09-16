@@ -385,6 +385,186 @@ class TestTheFieldWriteLedger:
         ]
 
 
+class TestTheLegacyBand:
+    @staticmethod
+    def _legacy_writes(db_path: Path) -> dict[str, Any]:
+        conn = sqlite3.connect(db_path)
+        try:
+            return {
+                field: json.loads(value)
+                for field, value in conn.execute(
+                    "SELECT field, value_json FROM content_item_field_writes"
+                    " WHERE writer_kind = 'legacy'"
+                ).fetchall()
+            }
+        finally:
+            conn.close()
+
+    @staticmethod
+    def _a_library_nobody_recorded(db_path: Path) -> int:
+        """A book stored before any band recorded a writer. Left at the current
+        version, so each test rewinds for itself.
+        """
+        db_id = SQLiteDB(db_path).save_content_item(
+            ContentItem(
+                id="c:1",
+                source="calibre_web",
+                title="Deadhouse Gates",
+                author="Steven Erikson",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+                metadata={
+                    "description": "A desert crossing.",
+                    "publisher": "Bantam",
+                    "genres": ["Fantasy"],
+                },
+            )
+        )
+        conn = sqlite3.connect(db_path)
+        try:
+            conn.execute("DELETE FROM content_item_field_writes")
+            conn.commit()
+        finally:
+            conn.close()
+        return db_id
+
+    @staticmethod
+    def _rewrite_the_description(db_path: Path, db_id: int, description: str) -> None:
+        conn = sqlite3.connect(db_path)
+        try:
+            conn.execute(
+                "UPDATE book_details SET description = ? WHERE content_item_id = ?",
+                (description, db_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def test_every_field_the_library_held_gains_a_row_and_an_empty_field_none(
+        self, tmp_path: Path
+    ) -> None:
+        db_path = tmp_path / "legacy-band.db"
+        self._a_library_nobody_recorded(db_path)
+        _rewind_to(db_path, 27)
+
+        _open(db_path)
+
+        assert self._legacy_writes(db_path) == {
+            "title": "Deadhouse Gates",
+            "author": "Steven Erikson",
+            "description": "A desert crossing.",
+            "publisher": "Bantam",
+            "genres": ["Fantasy"],
+        }
+
+    def test_an_upgraded_item_reads_exactly_as_it_did_before(
+        self, tmp_path: Path
+    ) -> None:
+        db_path = tmp_path / "legacy-unchanged.db"
+        db_id = self._a_library_nobody_recorded(db_path)
+        before = SQLiteDB(db_path).get_content_item(db_id)
+        _rewind_to(db_path, 27)
+
+        _open(db_path)
+
+        assert SQLiteDB(db_path).get_content_item(db_id) == before
+
+    def test_a_fresh_database_records_no_legacy_row(self, tmp_path: Path) -> None:
+        db_path = tmp_path / "fresh.db"
+
+        SQLiteDB(db_path).save_content_item(
+            _a_book("calibre_web", "c:1", "Deadhouse Gates")
+        )
+
+        assert self._legacy_writes(db_path) == {}
+
+    def test_re_opening_a_migrated_library_leaves_the_row_at_what_it_first_held(
+        self, tmp_path: Path
+    ) -> None:
+        """Recorded again, the band would claim a later edit as what the field
+        held before anyone touched it.
+        """
+        db_path = tmp_path / "reopened.db"
+        db_id = self._a_library_nobody_recorded(db_path)
+        _rewind_to(db_path, 27)
+        _open(db_path)
+
+        self._rewrite_the_description(db_path, db_id, "A later correction.")
+        _open(db_path)
+
+        assert self._legacy_writes(db_path)["description"] == "A desert crossing."
+
+    @staticmethod
+    def _cram_the_series_into_the_title(db_path: Path, db_id: int, title: str) -> None:
+        conn = sqlite3.connect(db_path)
+        try:
+            conn.execute(
+                "UPDATE content_items SET title = ? WHERE id = ?", (title, db_id)
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    @staticmethod
+    def _state_in_the_blob(db_path: Path, db_id: int, blob: dict[str, Any]) -> None:
+        conn = sqlite3.connect(db_path)
+        try:
+            conn.execute(
+                "UPDATE book_details SET metadata = ? WHERE content_item_id = ?",
+                (json.dumps(blob), db_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def test_the_row_carries_the_title_the_older_repairs_left_not_the_one_they_found(
+        self, tmp_path: Path
+    ) -> None:
+        db_path = tmp_path / "repaired-title.db"
+        db_id = self._a_library_nobody_recorded(db_path)
+        self._cram_the_series_into_the_title(
+            db_path, db_id, "Deadhouse Gates (Malazan, #2)"
+        )
+        _rewind_to(db_path, 16)
+
+        _open(db_path)
+
+        recorded = self._legacy_writes(db_path)
+        assert recorded["title"] == "Deadhouse Gates"
+        assert recorded["series_name"] == "Malazan"
+
+    def test_a_key_in_both_the_blob_and_a_column_records_the_value_the_item_reads(
+        self, tmp_path: Path
+    ) -> None:
+        db_path = tmp_path / "blob-over-column.db"
+        db_id = self._a_library_nobody_recorded(db_path)
+        self._state_in_the_blob(db_path, db_id, {"description": "What the blob holds."})
+        _rewind_to(db_path, 27)
+
+        _open(db_path)
+
+        item = SQLiteDB(db_path).get_content_item(db_id)
+        assert item is not None
+        assert item.metadata["description"] == "What the blob holds."
+        assert self._legacy_writes(db_path)["description"] == "What the blob holds."
+
+    def test_a_blob_shape_no_column_can_hold_records_the_names_it_states(
+        self, tmp_path: Path
+    ) -> None:
+        """No write path leaves an object under a column-backed key, but every
+        sibling repair tolerates one, so this step does too.
+        """
+        db_path = tmp_path / "blob-objects.db"
+        db_id = self._a_library_nobody_recorded(db_path)
+        self._state_in_the_blob(db_path, db_id, {"genres": [{"name": "Fantasy"}]})
+        _rewind_to(db_path, 27)
+
+        _open(db_path)
+
+        assert self._legacy_writes(db_path)["genres"] == ["Fantasy"]
+        assert _user_version(db_path) == _SCHEMA_VERSION
+
+
 class TestWhatAnOpenThatRaisedLeavesBehind:
     @staticmethod
     def _fail_the_last_pass(db_path: Path) -> None:

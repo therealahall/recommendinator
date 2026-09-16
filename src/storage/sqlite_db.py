@@ -27,10 +27,8 @@ from src.models.detail_fields import (
     DETAIL_FIELDS,
     PIN_KEY,
     RELEASE_YEAR_FIELDS,
-    WRITER_STATED_BASE_FIELDS,
     ContentTypeFields,
     FieldKind,
-    FieldOwner,
     detail_field_for,
     to_int,
 )
@@ -57,6 +55,7 @@ from src.storage.field_writes import (
     parse_manual_fields,
     read_manual_fields,
     record_field_writes,
+    stated_writes,
 )
 from src.storage.item_merges import (
     MergeEvidence,
@@ -82,14 +81,11 @@ from src.storage.schema import create_schema, get_default_user_id
 from src.utils.dates import local_today, merge_seasons_watched_dates, utc_now
 from src.utils.list_merge import merge_string_lists
 from src.utils.series import (
-    SERIES_AUTHORITY_KEY,
-    SERIES_POSITION_KEY,
     all_seasons_watched,
     reconcile_seasons,
     reconcile_series,
     seasons_watched_for_completed,
     status_for_seasons_watched,
-    stored_series_authority,
 )
 from src.utils.sorting import (
     SearchMatchTier,
@@ -329,66 +325,6 @@ def _spelling(title: str | None) -> str:
     return " ".join((title or "").split()).casefold()
 
 
-def _stated_base_writes(stated: Mapping[str, Any]) -> list[FieldWrite]:
-    return [
-        FieldWrite(field, value)
-        for field in WRITER_STATED_BASE_FIELDS
-        if (value := stated.get(field)) is not None
-    ]
-
-
-def _stated_column_writes(
-    spec: ContentTypeFields, stated: Mapping[str, Any], author: str | None
-) -> list[FieldWrite]:
-    writes: list[FieldWrite] = []
-    for detail_field in spec.fields:
-        if detail_field.column is None or detail_field.owner is not FieldOwner.WRITER:
-            continue
-        raw = detail_field.value_from(stated)
-        if detail_field.kind is FieldKind.CREATOR:
-            value = stated_creator(detail_field.store(author or raw))
-        else:
-            value = detail_field.store(raw)
-        if value is not None:
-            writes.append(
-                FieldWrite(detail_field.metadata_key, detail_field.codec.load(value))
-            )
-    return writes
-
-
-def _stated_writes(
-    spec: ContentTypeFields, stated: Mapping[str, Any], author: str | None = None
-) -> list[FieldWrite]:
-    writes = _stated_base_writes(stated)
-    writes.extend(_stated_column_writes(spec, stated, author))
-    writes.extend(_stated_free_form_writes(spec, stated))
-    return writes
-
-
-def _stated_free_form_writes(
-    spec: ContentTypeFields, metadata: Mapping[str, Any]
-) -> list[FieldWrite]:
-    """The series authority is no row of its own: it rides the ordinal it grades."""
-    authority = stored_series_authority(metadata)
-    writes: list[FieldWrite] = []
-    for detail_field in spec.fields:
-        key = detail_field.metadata_key
-        if (
-            detail_field.column is not None
-            or detail_field.owner is not FieldOwner.WRITER
-            or key == SERIES_AUTHORITY_KEY
-        ):
-            continue
-        value = detail_field.canonical(detail_field.value_from(metadata))
-        if value is None:
-            continue
-        ordinal_authority = (
-            authority.value if authority and key == SERIES_POSITION_KEY else None
-        )
-        writes.append(FieldWrite(key, value, ordinal_authority))
-    return writes
-
-
 def _metadata_blob(raw: str | None) -> dict[str, Any]:
     if not raw:
         return {}
@@ -598,7 +534,7 @@ class SQLiteDB:
                     cursor,
                     db_id,
                     writer,
-                    _stated_writes(DETAIL_FIELDS[content_type], stated or {}),
+                    stated_writes(DETAIL_FIELDS[content_type], stated or {}),
                 )
             # Both read what was stored: a creator this filled belongs in the
             # search text, and a season count it raised unfinishes the show.
@@ -627,7 +563,7 @@ class SQLiteDB:
                 cursor,
                 db_id,
                 writer,
-                _stated_writes(DETAIL_FIELDS[row["content_type"]], stated),
+                stated_writes(DETAIL_FIELDS[row["content_type"]], stated),
             )
             conn.commit()
 
@@ -881,7 +817,7 @@ class SQLiteDB:
                 cursor,
                 db_id,
                 FieldWriter(WriterBand.SOURCE, item.source),
-                _stated_writes(DETAIL_FIELDS[content_type_value], stated, item.author),
+                stated_writes(DETAIL_FIELDS[content_type_value], stated, item.author),
             )
 
         # On both paths: a source that lost the dedup race would otherwise never

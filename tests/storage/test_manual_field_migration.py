@@ -18,16 +18,18 @@ _HOLDS_TABLE = """
 """
 
 
-def _manual_writes(path: Path, db_id: int) -> list[tuple[str, Any]]:
+def _writes_in_band(
+    path: Path, db_id: int, band: str = "manual"
+) -> list[tuple[str, Any]]:
     conn = sqlite3.connect(path)
     try:
         return [
             (field, json.loads(value))
             for field, value in conn.execute(
                 "SELECT field, value_json FROM content_item_field_writes"
-                " WHERE content_item_id = ? AND writer_kind = 'manual'"
+                " WHERE content_item_id = ? AND writer_kind = ?"
                 " ORDER BY field",
-                (db_id,),
+                (db_id, band),
             ).fetchall()
         ]
     finally:
@@ -101,8 +103,28 @@ def test_a_hold_becomes_a_manual_row_carrying_what_the_field_holds_now(
 
     assert item is not None
     assert item.manual_fields == ["genres"]
-    assert _manual_writes(db_path, db_id) == [("genres", ["Sci-Fi", "Drama"])]
+    assert _writes_in_band(db_path, db_id) == [("genres", ["Sci-Fi", "Drama"])]
     assert not _holds_table_exists(db_path)
+
+
+def test_a_held_field_gains_a_legacy_row_beside_the_manual_one(
+    tmp_path: Path,
+) -> None:
+    """Suppressing it would lose what the field held before the operator held it."""
+    db_path = tmp_path / "held-and-legacy.db"
+    db_id = _seed_a_library_holding(
+        db_path, held=["genres"], genres=["Sci-Fi", "Drama"]
+    )
+
+    item = StorageManager(sqlite_path=db_path).get_content_item(db_id, user_id=1)
+
+    assert item is not None
+    assert item.manual_fields == ["genres"]
+    assert _writes_in_band(db_path, db_id) == [("genres", ["Sci-Fi", "Drama"])]
+    assert _writes_in_band(db_path, db_id, "legacy") == [
+        ("genres", ["Sci-Fi", "Drama"]),
+        ("title", "Arrival"),
+    ]
 
 
 def test_a_hold_on_an_empty_field_survives_rather_than_being_dropped(
@@ -116,7 +138,7 @@ def test_a_hold_on_an_empty_field_survives_rather_than_being_dropped(
 
     assert item is not None
     assert item.manual_fields == ["genres"]
-    assert _manual_writes(db_path, db_id) == [("genres", None)]
+    assert _writes_in_band(db_path, db_id) == [("genres", None)]
 
 
 def test_the_upgrade_records_the_value_the_repairs_left_not_the_one_they_found(
@@ -137,7 +159,7 @@ def test_the_upgrade_records_the_value_the_repairs_left_not_the_one_they_found(
 
     assert item is not None
     assert item.metadata["genres"] == ["Sci-Fi"]
-    assert _manual_writes(db_path, db_id) == [("genres", ["Sci-Fi"])]
+    assert _writes_in_band(db_path, db_id) == [("genres", ["Sci-Fi"])]
 
 
 def test_a_held_status_still_refuses_the_next_sync_after_the_upgrade(
