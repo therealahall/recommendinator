@@ -546,6 +546,9 @@ WRITER_STATED_BASE_FIELDS: tuple[str, ...] = ("title", COVER_FIELD)
 #: screenshot for a game Steam supplies portrait library art for.
 SOURCE_FIRST_FIELDS: frozenset[str] = frozenset({COVER_FIELD})
 
+#: What both interfaces call the creator, whatever the type names it.
+CREATOR_FIELD = "creator"
+
 #: The field each type carries its creator in, where ``author`` is not set.
 CREATOR_FIELDS: dict[str, DetailField] = {
     content_type: field
@@ -569,7 +572,7 @@ def detail_field_for(content_type: str, field: str) -> DetailField | None:
     """``None`` for a field this content type does not state — a book declares
     no release year, so it has none to hold.
     """
-    if field == "creator":
+    if field == CREATOR_FIELD:
         return CREATOR_FIELDS.get(content_type)
     if field == "release_year":
         return RELEASE_YEAR_FIELDS.get(content_type)
@@ -584,6 +587,25 @@ def detail_field_for(content_type: str, field: str) -> DetailField | None:
         ),
         None,
     )
+
+
+def ledger_field(content_type: str, field: str) -> str:
+    """The name a field write is recorded under. Only the creator diverges: an
+    edit stating ``creator`` and a source stating ``author`` are one field, and
+    a band of its own would let the source outrank the operator.
+    """
+    creator = CREATOR_FIELDS.get(content_type)
+    if field == CREATOR_FIELD and creator is not None:
+        return creator.metadata_key
+    return field
+
+
+def interface_field(content_type: str, field: str) -> str:
+    """The inverse: what the CLI and the web call a recorded field."""
+    creator = CREATOR_FIELDS.get(content_type)
+    if creator is not None and field == creator.metadata_key:
+        return CREATOR_FIELD
+    return field
 
 
 #: The record each provider is bound to, keyed by provider name. The operator

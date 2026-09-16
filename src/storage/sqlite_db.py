@@ -30,6 +30,7 @@ from src.models.detail_fields import (
     ContentTypeFields,
     FieldKind,
     detail_field_for,
+    ledger_field,
     to_int,
 )
 from src.storage.derived import (
@@ -1382,7 +1383,7 @@ class SQLiteDB:
             source=row["source"],
             ignored=bool(row["ignored"]),
             enriched=self._row_is_enriched(row),
-            manual_fields=parse_manual_fields(row["manual_fields"]),
+            manual_fields=parse_manual_fields(row["manual_fields"], content_type.value),
             metadata=metadata,
         )
 
@@ -1537,7 +1538,10 @@ class SQLiteDB:
                 cursor,
                 db_id,
                 MANUAL_WRITER,
-                [FieldWrite(field, value) for field, value in corrected.items()],
+                [
+                    FieldWrite(ledger_field(content_type, field), value)
+                    for field, value in corrected.items()
+                ],
             )
 
             conn.commit()
@@ -1551,9 +1555,11 @@ class SQLiteDB:
         """
         with self.connection() as conn:
             cursor = conn.cursor()
-            if self._item_on_cursor(cursor, db_id, user_id) is None:
+            item = self._item_on_cursor(cursor, db_id, user_id)
+            if item is None:
                 return False
-            if not drop_manual_field(cursor, db_id, field):
+            recorded = ledger_field(get_enum_value(item.content_type), field)
+            if not drop_manual_field(cursor, db_id, recorded):
                 return False
             conn.commit()
             return True

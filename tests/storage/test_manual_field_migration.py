@@ -55,6 +55,7 @@ def _seed_a_library_holding(
     held: list[str],
     genres: list[str] | None = None,
     raw_genres: str | None = None,
+    creator: str | None = None,
     stored_version: int = 26,
 ) -> int:
     """A library on an earlier version, whose holds live in the table this
@@ -66,6 +67,7 @@ def _seed_a_library_holding(
             title="Arrival",
             content_type=ContentType.MOVIE,
             status=ConsumptionStatus.UNREAD,
+            author=creator,
             metadata={} if genres is None else {"genres": genres},
         ),
         user_id=1,
@@ -160,6 +162,66 @@ def test_the_upgrade_records_the_value_the_repairs_left_not_the_one_they_found(
     assert item is not None
     assert item.metadata["genres"] == ["Sci-Fi"]
     assert _writes_in_band(db_path, db_id) == [("genres", ["Sci-Fi"])]
+
+
+def test_a_held_creator_is_carried_under_the_key_its_type_states_it_in(
+    tmp_path: Path,
+) -> None:
+    """Carried under the name the dialog says, it is a field of its own: the
+    source's own director row neither outranks it nor is ranked against it."""
+    db_path = tmp_path / "held-creator.db"
+    db_id = _seed_a_library_holding(
+        db_path, held=["creator"], creator="Denis Villeneuve"
+    )
+
+    item = StorageManager(sqlite_path=db_path).get_content_item(db_id, user_id=1)
+
+    assert item is not None
+    assert item.manual_fields == ["creator"]
+    assert _writes_in_band(db_path, db_id) == [("director", "Denis Villeneuve")]
+
+
+def _spell_a_carried_hold_as_the_dialog_does(path: Path) -> None:
+    """A library whose creator hold was recorded before the ledger took the
+    type's own key for it."""
+    conn = sqlite3.connect(path)
+    try:
+        conn.execute(
+            "UPDATE content_item_field_writes SET field = 'creator'"
+            " WHERE writer_kind = 'manual' AND field = 'director'"
+        )
+        conn.execute("PRAGMA user_version = 28")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_a_creator_hold_already_carried_is_renamed_on_the_next_upgrade(
+    tmp_path: Path,
+) -> None:
+    """Left as it was, it names a field no writer states and the release door
+    can no longer find."""
+    db_path = tmp_path / "carried-creator.db"
+    storage = StorageManager(sqlite_path=db_path)
+    db_id = storage.save_content_item(
+        ContentItem(
+            id="movie-1",
+            title="Arrival",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+        ),
+        user_id=1,
+    )
+    storage.update_item_from_ui(db_id=db_id, creator="Denis Villeneuve", user_id=1)
+    _spell_a_carried_hold_as_the_dialog_does(db_path)
+
+    upgraded = StorageManager(sqlite_path=db_path)
+    item = upgraded.get_content_item(db_id, user_id=1)
+
+    assert item is not None
+    assert item.manual_fields == ["creator"]
+    assert _writes_in_band(db_path, db_id) == [("director", "Denis Villeneuve")]
+    assert upgraded.clear_manual_field(db_id, "creator", user_id=1) is True
 
 
 def test_a_held_status_still_refuses_the_next_sync_after_the_upgrade(

@@ -7,11 +7,14 @@ from contextlib import contextmanager
 from typing import Any, Literal, TypedDict
 
 from src.models.detail_fields import (
+    CREATOR_FIELD,
+    CREATOR_FIELDS,
     DETAIL_FIELDS,
     ContentTypeFields,
     DetailField,
     FieldKind,
     detail_field_for,
+    ledger_field,
     text_names,
     to_json_array,
     to_text,
@@ -21,6 +24,7 @@ from src.storage.field_writes import (
     LEGACY_WRITER,
     MANUAL_WRITER,
     FieldWrite,
+    WriterBand,
     record_field_writes,
     stated_writes,
 )
@@ -104,7 +108,7 @@ class SyncRunDict(TypedDict):
 # Changing ``normalize_title_for_matching``, ``get_sort_title`` or
 # ``build_search_text`` needs a bump and a step to rewrite what the old one
 # stored, or dedup lookups stop matching and duplicates accumulate in silence.
-_SCHEMA_VERSION = 28
+_SCHEMA_VERSION = 29
 
 # Rows for these keys are unreachable from the app but would still
 # be overlaid onto config, so they are pruned once on upgrade.
@@ -460,6 +464,8 @@ def create_schema(conn: sqlite3.Connection) -> None:
         # After the carry above, so a held field's manual row is already there
         # to outrank the legacy one this records beside it.
         _record_the_library_as_legacy(cursor)
+    if stored_version < 29:
+        _name_a_held_creator_as_its_type_does(cursor)
 
     # Filled after the repair, which recovers a creator that existed only in a
     # blob. Unguarded because the fill selects the rows that need it rather
@@ -1046,12 +1052,15 @@ def _carry_holds_into_the_ledger(cursor: sqlite3.Cursor) -> None:
             cursor,
             db_id,
             MANUAL_WRITER,
-            [FieldWrite(field, _held_value(cursor, db_id, field)) for field in fields],
+            [_held_write(cursor, db_id, field) for field in fields],
         )
     cursor.execute(f"DROP TABLE {_RETIRED_HOLDS_TABLE}")
 
 
-def _held_value(cursor: sqlite3.Cursor, db_id: int, field: str) -> Any:
+def _held_write(cursor: sqlite3.Cursor, db_id: int, field: str) -> FieldWrite:
+    """Named as the ledger names it: a hold the retired table spelled ``creator``
+    is a hold on the key its type states the creator in.
+    """
     cursor.execute(
         "SELECT content_type, title, status, rating, review FROM content_items"
         " WHERE id = ?",
@@ -1059,19 +1068,36 @@ def _held_value(cursor: sqlite3.Cursor, db_id: int, field: str) -> Any:
     )
     row = cursor.fetchone()
     if row is None:
-        return None
+        return FieldWrite(field, None)
+    content_type = row["content_type"]
+    recorded = ledger_field(content_type, field)
     if field in _HELD_BASE_COLUMNS:
-        return row[field]
-    spec = DETAIL_FIELDS.get(row["content_type"])
-    detail = detail_field_for(row["content_type"], field)
+        return FieldWrite(recorded, row[field])
+    spec = DETAIL_FIELDS.get(content_type)
+    detail = detail_field_for(content_type, field)
     if spec is None or detail is None or detail.column is None:
-        return None
+        return FieldWrite(recorded, None)
     cursor.execute(
         f"SELECT {detail.column} FROM {spec.table} WHERE content_item_id = ?",
         (db_id,),
     )
     stored = cursor.fetchone()
-    return detail.codec.load(stored[detail.column]) if stored else None
+    value = detail.codec.load(stored[detail.column]) if stored else None
+    return FieldWrite(recorded, value)
+
+
+def _name_a_held_creator_as_its_type_does(cursor: sqlite3.Cursor) -> None:
+    """A creator hold recorded before the ledger took the type's own key names a
+    field no writer states: the release door cannot find it and no source is
+    ever ranked against it.
+    """
+    for content_type, field in CREATOR_FIELDS.items():
+        cursor.execute(
+            "UPDATE OR REPLACE content_item_field_writes SET field = ?"
+            " WHERE field = ? AND writer_kind = ? AND content_item_id IN"
+            " (SELECT id FROM content_items WHERE content_type = ?)",
+            (field.metadata_key, CREATOR_FIELD, WriterBand.MANUAL.value, content_type),
+        )
 
 
 def _record_the_library_as_legacy(cursor: sqlite3.Cursor) -> None:

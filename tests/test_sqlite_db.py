@@ -4580,6 +4580,17 @@ class TestManualFieldHolds:
         )
 
     @staticmethod
+    def _sourced_item(content_type: ContentType, creator: str) -> ContentItem:
+        return ContentItem(
+            id=f"{content_type.value}-1",
+            title="Arrival",
+            content_type=content_type,
+            status=ConsumptionStatus.UNREAD,
+            source="test",
+            author=creator,
+        )
+
+    @staticmethod
     def _manual_writes(temp_db: SQLiteDB, db_id: int) -> list[tuple[str, Any]]:
         with temp_db.connection() as conn:
             return [
@@ -4671,6 +4682,22 @@ class TestManualFieldHolds:
         assert stored.author == "Capcom"
         assert stored.manual_fields == []
         assert self._manual_writes(temp_db, db_id) == []
+
+    @pytest.mark.parametrize("content_type", list(ContentType))
+    def test_a_corrected_creator_is_held_and_released_by_the_interface_name(
+        self, temp_db: SQLiteDB, content_type: ContentType
+    ) -> None:
+        item = self._sourced_item(content_type, "Villeneuve")
+        db_id = temp_db.save_content_item(item)
+        temp_db.update_item_from_ui(db_id=db_id, creator="Ted Chiang")
+
+        temp_db.save_content_item(item)
+
+        stored = temp_db.get_content_item(db_id)
+        assert stored is not None
+        assert stored.author == "Ted Chiang"
+        assert stored.manual_fields == ["creator"]
+        assert temp_db.clear_manual_field(db_id, "creator") is True
 
     def test_completing_an_item_keeps_its_status_held(self, temp_db: SQLiteDB) -> None:
         """The completion door is the operator's own, so the status it writes

@@ -17,6 +17,7 @@ from src.models.detail_fields import (
     ContentTypeFields,
     FieldKind,
     FieldOwner,
+    interface_field,
 )
 from src.storage.merge import stated_creator
 from src.utils.dates import utc_now
@@ -206,10 +207,12 @@ def drop_manual_field(cursor: sqlite3.Cursor, db_id: int, field: str) -> bool:
     return cursor.rowcount > 0
 
 
-def parse_manual_fields(payload: str | None) -> list[str]:
-    """Ordered by name, so the report reads the same twice."""
+def parse_manual_fields(payload: str | None, content_type: str) -> list[str]:
+    """Ordered by name, so the report reads the same twice, and in the names both
+    interfaces speak rather than the ones the ledger files them under.
+    """
     fields: list[str] = json.loads(payload) if payload else []
-    return sorted(fields)
+    return sorted(interface_field(content_type, field) for field in fields)
 
 
 def read_field_writes(cursor: sqlite3.Cursor, db_id: int) -> list[StoredFieldWrite]:

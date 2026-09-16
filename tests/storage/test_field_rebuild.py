@@ -6,9 +6,15 @@ from typing import Any
 import pytest
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
-from src.models.detail_fields import DETAIL_FIELDS, FieldKind, FieldOwner
+from src.models.detail_fields import (
+    CREATOR_FIELDS,
+    DETAIL_FIELDS,
+    FieldKind,
+    FieldOwner,
+)
 from src.storage.field_rebuild import WriterRanks, rebuild_item_fields
 from src.storage.field_writes import (
+    MANUAL_WRITER,
     FieldWrite,
     FieldWriter,
     WriterBand,
@@ -271,6 +277,75 @@ def test_an_ordinal_past_the_bounds_check_loses_to_one_inside_it(
 
     assert resolved["series_position"] == 3.0
     assert resolved["series_position_authority"] == SeriesAuthority.AUTHORED.value
+
+
+@pytest.mark.parametrize("content_type", sorted(DETAIL_FIELDS))
+def test_a_hand_corrected_creator_and_a_stated_one_are_the_same_field(
+    tmp_path: Path, content_type: str
+) -> None:
+    db = SQLiteDB(tmp_path / f"creator-{content_type}.db")
+    db_id = db.save_content_item(_stating_every_writer_field(content_type))
+
+    assert db.update_item_from_ui(db_id=db_id, creator="Dan Simmons") is True
+
+    resolved = _rebuild(db, db_id)
+    stored = db.get_content_item(db_id)
+    assert resolved[CREATOR_FIELDS[content_type].metadata_key] == "Dan Simmons"
+    assert "creator" not in resolved
+    assert stored is not None
+    assert stored.manual_fields == ["creator"]
+
+
+def test_a_hand_set_ordinal_outranks_the_library_stating_its_own(
+    tmp_path: Path,
+) -> None:
+    db = SQLiteDB(tmp_path / "manual_ordinal.db")
+    db_id = db.save_content_item(
+        _book(
+            "calibre_web",
+            series_name="Dune",
+            series_position=1.0,
+            series_position_authority=SeriesAuthority.LIBRARY.value,
+        )
+    )
+    _states(db, db_id, MANUAL_WRITER, FieldWrite("series_position", 2.0))
+
+    resolved = _rebuild(db, db_id)
+
+    assert resolved["series_position"] == 2.0
+    assert resolved["series_position_authority"] == SeriesAuthority.MANUAL.value
+
+
+def test_a_hand_set_ordinal_past_the_bounds_check_settles_nothing(
+    tmp_path: Path,
+) -> None:
+    db = SQLiteDB(tmp_path / "manual_bounds.db")
+    db_id = db.save_content_item(
+        _book(
+            "calibre_web",
+            series_name="Dune",
+            series_position=3.0,
+            series_position_authority=SeriesAuthority.LIBRARY.value,
+        )
+    )
+    _states(db, db_id, MANUAL_WRITER, FieldWrite("series_position", 99999))
+
+    resolved = _rebuild(db, db_id)
+
+    assert resolved["series_position"] == 3.0
+    assert resolved["series_position_authority"] == SeriesAuthority.LIBRARY.value
+
+
+def test_a_held_title_outranks_the_source_that_keeps_restating_its_own(
+    tmp_path: Path,
+) -> None:
+    db = SQLiteDB(tmp_path / "held_title.db")
+    db_id = db.save_content_item(_book("calibre_web"))
+
+    assert db.update_item_from_ui(db_id=db_id, title="Dune: Book One") is True
+    db.save_content_item(_book("calibre_web"))
+
+    assert _rebuild(db, db_id)["title"] == "Dune: Book One"
 
 
 def test_seasons_and_episodes_take_the_higher_count_of_the_two_writers(
