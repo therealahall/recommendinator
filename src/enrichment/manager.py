@@ -4,7 +4,7 @@ import json
 import logging
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any
@@ -29,6 +29,7 @@ from src.enrichment.registry import EnrichmentRegistry, get_enrichment_registry
 from src.models.content import ContentItem, ContentType, get_enum_value
 from src.models.detail_fields import PIN_KEY
 from src.storage.enrichment_jobs import EnrichmentJobRecord
+from src.storage.field_writes import FieldWriter, WriterBand
 from src.storage.global_secrets import read_secret
 from src.utils.matching import Candidate
 from src.utils.request_errors import scrub_request_error
@@ -869,15 +870,21 @@ class EnrichmentManager:
 
             if ordinal is None:
                 continue
-            fields = reconcile_series(item.metadata, ordinal.as_metadata())
+            stated = ordinal.as_metadata()
+            fields = reconcile_series(item.metadata, stated)
             if not fields:
+                # The ledger holds an offer precisely because the merge rules
+                # discarded it, and recording one is no reason to save the item.
+                self.storage_manager.record_stated_fields(
+                    db_id, FieldWriter(WriterBand.PROVIDER, provider.name), stated
+                )
                 continue
             settled = True
             item = item.model_copy(update={"metadata": {**item.metadata, **fields}})
+            self._save_stated(db_id, item, provider.name, stated)
 
         if not settled:
             return "; ".join(unanswered) or None
-        self.storage_manager.save_enrichment_metadata(db_id, item)
         return None
 
     def _settle_storage_failure(
@@ -968,6 +975,23 @@ class EnrichmentManager:
             self._secret_cache[key] = read_secret(self.storage_manager, key)
         return self._secret_cache[key]
 
+    def _save_stated(
+        self,
+        db_id: int,
+        item: ContentItem,
+        provider_name: str,
+        stated: Mapping[str, Any],
+        *,
+        replace_cover: bool = False,
+    ) -> None:
+        self.storage_manager.save_enrichment_metadata(
+            db_id,
+            item,
+            replace_cover=replace_cover,
+            writer=FieldWriter(WriterBand.PROVIDER, provider_name),
+            stated=stated,
+        )
+
     def _apply_enrichment(
         self,
         db_id: int,
@@ -991,8 +1015,12 @@ class EnrichmentManager:
                 ),
             }
         )
-        self.storage_manager.save_enrichment_metadata(
-            db_id, enriched, replace_cover=replace_cover
+        self._save_stated(
+            db_id,
+            enriched,
+            provider.name,
+            result.as_metadata(),
+            replace_cover=replace_cover,
         )
         return enriched
 

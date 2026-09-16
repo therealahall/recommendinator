@@ -330,13 +330,40 @@ def _spelling(title: str | None) -> str:
     return " ".join((title or "").split()).casefold()
 
 
-def _stated_base_writes(item: ContentItem, cover_url: str | None) -> list[FieldWrite]:
-    stated: dict[str, Any] = {"title": item.title, "cover_url": cover_url}
+def _stated_base_writes(stated: Mapping[str, Any]) -> list[FieldWrite]:
     return [
         FieldWrite(field, value)
         for field in WRITER_STATED_BASE_FIELDS
-        if (value := stated[field]) is not None
+        if (value := stated.get(field)) is not None
     ]
+
+
+def _stated_column_writes(
+    spec: ContentTypeFields, stated: Mapping[str, Any], author: str | None
+) -> list[FieldWrite]:
+    writes: list[FieldWrite] = []
+    for detail_field in spec.fields:
+        if detail_field.column is None or detail_field.owner is not FieldOwner.WRITER:
+            continue
+        raw = detail_field.value_from(stated)
+        if detail_field.kind is FieldKind.CREATOR:
+            value = stated_creator(detail_field.store(author or raw))
+        else:
+            value = detail_field.store(raw)
+        if value is not None:
+            writes.append(
+                FieldWrite(detail_field.metadata_key, detail_field.codec.load(value))
+            )
+    return writes
+
+
+def _stated_writes(
+    spec: ContentTypeFields, stated: Mapping[str, Any], author: str | None = None
+) -> list[FieldWrite]:
+    writes = _stated_base_writes(stated)
+    writes.extend(_stated_column_writes(spec, stated, author))
+    writes.extend(_stated_free_form_writes(spec, stated))
+    return writes
 
 
 def _stated_free_form_writes(
@@ -510,7 +537,13 @@ class SQLiteDB:
             return saved
 
     def save_enrichment_metadata(
-        self, db_id: int, item: ContentItem, *, replace_cover: bool = False
+        self,
+        db_id: int,
+        item: ContentItem,
+        *,
+        replace_cover: bool = False,
+        writer: FieldWriter | None = None,
+        stated: Mapping[str, Any] | None = None,
     ) -> None:
         """A row absorbed since the batch read it is refused rather
         than redirected: the survivor is enriched on its own turn.
@@ -546,11 +579,42 @@ class SQLiteDB:
                 # would discard.
                 replaceable_metadata_keys=frozenset({PIN_KEY}),
             )
+            if writer is not None:
+                record_field_writes(
+                    cursor,
+                    db_id,
+                    writer,
+                    _stated_writes(DETAIL_FIELDS[content_type], stated or {}),
+                )
             # Both read what was stored: a creator this filled belongs in the
             # search text, and a season count it raised unfinishes the show.
             write_derived_columns(cursor, db_id)
             if content_type == "tv_show":
                 self._handle_tv_season_change(cursor, db_id)
+            conn.commit()
+
+    def record_stated_fields(
+        self, db_id: int, writer: FieldWriter, stated: Mapping[str, Any]
+    ) -> None:
+        """Recording what a writer said, touching no column. Saving the item to
+        record a refused offer moved the status a season list decides.
+        """
+        with self.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT content_type FROM content_items"
+                " WHERE id = ? AND merged_into IS NULL",
+                (db_id,),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return
+            record_field_writes(
+                cursor,
+                db_id,
+                writer,
+                _stated_writes(DETAIL_FIELDS[row["content_type"]], stated),
+            )
             conn.commit()
 
     def clear_cover_url(self, db_id: int) -> bool:
@@ -795,10 +859,15 @@ class SQLiteDB:
             db_id = lastrowid
             row_changed = True
 
-        writer = FieldWriter(WriterBand.SOURCE, item.source) if item.source else None
-        if writer is not None:
+        if item.source:
+            stated = dict(item.metadata or {})
+            stated["title"] = item.title
+            stated["cover_url"] = incoming_cover
             record_field_writes(
-                cursor, db_id, writer, _stated_base_writes(item, incoming_cover)
+                cursor,
+                db_id,
+                FieldWriter(WriterBand.SOURCE, item.source),
+                _stated_writes(DETAIL_FIELDS[content_type_value], stated, item.author),
             )
 
         # On both paths: a source that lost the dedup race would otherwise never
@@ -808,7 +877,7 @@ class SQLiteDB:
         )
 
         detail_changed = self._save_detail_table(
-            cursor, db_id, item, content_type_value, writer=writer
+            cursor, db_id, item, content_type_value
         )
 
         # After the detail write, so the derived columns read the creator that
@@ -853,7 +922,6 @@ class SQLiteDB:
         item: ContentItem,
         content_type: str,
         replaceable_metadata_keys: frozenset[str] = frozenset(),
-        writer: FieldWriter | None = None,
     ) -> bool:
         """For existing rows, enrichment is the source of truth: genres and tags
         merge additively, every other column is fill-only, and the metadata blob
@@ -885,7 +953,6 @@ class SQLiteDB:
 
         col_names = ["content_item_id"]
         values: list[Any] = [db_id]
-        writes: list[FieldWrite] = []
 
         # Only an existing row can be held: a hold is an edit to a stored item.
         held = read_holds(cursor, db_id) if existing_data else set()
@@ -902,13 +969,6 @@ class SQLiteDB:
                 new_value = stated_creator(detail_field.store(item.author or raw))
             else:
                 new_value = detail_field.store(raw)
-
-            if new_value is not None and detail_field.owner is FieldOwner.WRITER:
-                writes.append(
-                    FieldWrite(
-                        detail_field.metadata_key, detail_field.codec.load(new_value)
-                    )
-                )
 
             if col_name in held_columns:
                 values.append(existing_data.get(col_name))
@@ -933,11 +993,6 @@ class SQLiteDB:
                 values.append(new_value)
 
             col_names.append(col_name)
-
-        # Ahead of the no-change return: a refused correction moves no column.
-        if writer is not None:
-            writes.extend(_stated_free_form_writes(spec, metadata))
-            record_field_writes(cursor, db_id, writer, writes)
 
         remaining_metadata = {
             key: val for key, val in metadata.items() if key not in known_keys

@@ -30,6 +30,12 @@ from src.enrichment.providers.wikidata.wikidata import WikidataProvider
 from src.enrichment.registry import EnrichmentRegistry
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.enrichment_status import EnrichmentStore
+from src.storage.field_rebuild import WriterRanks, rebuild_item_fields
+from src.storage.field_writes import (
+    StoredFieldWrite,
+    WriterBand,
+    read_field_writes,
+)
 from src.storage.manager import StorageManager
 from src.storage.schema import _LEGACY_EXTERNAL_ID_SOURCE
 from src.utils.matching import Candidate
@@ -266,6 +272,25 @@ def save_movie(
     )
 
 
+def save_book(
+    storage_manager: StorageManager,
+    source: str = "",
+    metadata: dict[str, Any] | None = None,
+    cover_url: str | None = None,
+) -> int:
+    return storage_manager.save_content_item(
+        ContentItem(
+            id="dune",
+            title="Dune",
+            source=source,
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            cover_url=cover_url,
+            metadata=metadata or {},
+        )
+    )
+
+
 def queued_ids(storage_manager: StorageManager) -> set[int]:
     return {
         db_id
@@ -273,6 +298,19 @@ def queued_ids(storage_manager: StorageManager) -> set[int]:
             content_type=ContentType.MOVIE
         )
     }
+
+
+def field_writes(storage_manager: StorageManager, db_id: int) -> list[StoredFieldWrite]:
+    with storage_manager.connection() as conn:
+        return read_field_writes(conn.cursor(), db_id)
+
+
+def status_and_stamp(storage_manager: StorageManager, db_id: int) -> tuple[str, str]:
+    with storage_manager.connection() as conn:
+        row = conn.execute(
+            "SELECT status, updated_at FROM content_items WHERE id = ?", (db_id,)
+        ).fetchone()
+    return row["status"], row["updated_at"]
 
 
 def manager_over(
@@ -1896,6 +1934,26 @@ class TestPinnedProviderRecord:
 
         assert storage_manager.get_content_item(db_id).cover_url == self._RECORDS_COVER
 
+    def test_a_pinned_run_records_its_provider_in_the_provider_band(
+        self, storage_manager: StorageManager
+    ) -> None:
+        db_id = storage_manager.save_content_item(self._movie())
+        manager = self._manager(storage_manager, cover_url=self._RECORDS_COVER)
+
+        manager.pin(
+            db_id, storage_manager.get_content_item(db_id), "mock", "603", user_id=1
+        )
+        manager._wait_for_completion()
+
+        writes = field_writes(storage_manager, db_id)
+        stated = {(write.writer_kind, write.writer, write.field) for write in writes}
+
+        assert (WriterBand.PROVIDER, "mock", "cover_url") in stated
+        assert {write.writer_kind for write in writes} == {
+            WriterBand.SOURCE,
+            WriterBand.PROVIDER,
+        }
+
     def test_an_unpinned_run_leaves_the_cover_the_item_already_had(
         self, storage_manager: StorageManager
     ) -> None:
@@ -2202,6 +2260,36 @@ class OrdinalOnlyProvider(EnrichmentProvider):
         return SeriesOrdinal(position=3.0, series_name="The Matrix")
 
 
+class MatchingOrdinalProvider(MockProvider):
+    def __init__(self) -> None:
+        super().__init__(name="hardcover", content_types=[ContentType.BOOK])
+
+    def enrich(
+        self, item: ContentItem, config: dict[str, Any]
+    ) -> EnrichmentResult | None:
+        self.enrich_calls.append(item)
+        return EnrichmentResult(description="A desert planet.", match_quality="high")
+
+    def fetch_series_ordinal(
+        self, item: ContentItem, config: dict[str, Any]
+    ) -> SeriesOrdinal | None:
+        return SeriesOrdinal(position=1.0, series_name="Dune")
+
+
+class ShowOrdinalProvider(OrdinalOnlyProvider):
+    """Wikidata counts a show within a franchise the library files it outside of."""
+
+    @property
+    def content_types(self) -> list[ContentType]:
+        return [ContentType.TV_SHOW]
+
+    def fetch_series_ordinal(
+        self, item: ContentItem, config: dict[str, Any]
+    ) -> SeriesOrdinal | None:
+        self.ordinal_calls.append(item)
+        return SeriesOrdinal(position=1.0, series_name="Star Trek")
+
+
 class StatedResultProvider(MockProvider):
     def __init__(self, name: str, result: EnrichmentResult) -> None:
         super().__init__(name=name, content_types=[ContentType.BOOK])
@@ -2264,6 +2352,90 @@ class TestTwoProvidersThatBothMatch:
         assert status["enrichment_quality"] == "high"
         assert status["needs_enrichment"] is False
 
+    def test_each_match_records_its_own_statement_under_its_own_name(
+        self, tmp_path: Path
+    ) -> None:
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        db_id = storage_manager.save_content_item(
+            ContentItem(
+                id="the-name-of-the-wind",
+                title="The Name of the Wind",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            )
+        )
+        manager = manager_over(
+            storage_manager,
+            StatedResultProvider(
+                "openlibrary",
+                EnrichmentResult(description="D2", match_quality="medium"),
+            ),
+            StatedResultProvider(
+                "hardcover", EnrichmentResult(description="D1", match_quality="high")
+            ),
+            order=["hardcover", "openlibrary"],
+        )
+
+        manager.start_enrichment(content_type=ContentType.BOOK)
+        assert manager._wait_for_completion()
+
+        described = [
+            (write.writer_kind, write.writer, write.value)
+            for write in field_writes(storage_manager, db_id)
+            if write.field == "description"
+        ]
+        assert set(described) == {
+            (WriterBand.PROVIDER, "hardcover", "D1"),
+            (WriterBand.PROVIDER, "openlibrary", "D2"),
+        }
+        assert storage_manager.get_content_item(db_id).metadata["description"] == "D1"
+
+
+class TestTheShadowRebuildOverARecordedRun:
+    _SOURCE_COVER = "https://calibre.test/dune.jpg"
+    _PROVIDER_COVER = "https://covers.openlibrary.org/b/id/1.jpg"
+
+    def test_the_rebuild_reads_a_real_run_as_provider_over_source_per_field(
+        self, tmp_path: Path
+    ) -> None:
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        db_id = save_book(
+            storage_manager,
+            source="calibre_web",
+            cover_url=self._SOURCE_COVER,
+            metadata={"genres": ["Science Fiction"], "description": "A feed blurb."},
+        )
+        manager = manager_over(
+            storage_manager,
+            StatedResultProvider(
+                "openlibrary",
+                EnrichmentResult(
+                    genres=["Adventure"],
+                    description="Set on Arrakis.",
+                    cover_url=self._PROVIDER_COVER,
+                    extra_metadata={"pages": 722},
+                ),
+            ),
+        )
+
+        manager.start_enrichment(content_type=ContentType.BOOK)
+        assert manager._wait_for_completion()
+
+        with storage_manager.connection() as conn:
+            resolved = rebuild_item_fields(
+                conn.cursor(), db_id, WriterRanks(providers=("openlibrary",))
+            )
+        stored = storage_manager.get_content_item(db_id)
+
+        assert resolved["description"] == "Set on Arrakis."
+        assert resolved["pages"] == 722
+        assert resolved["genres"] == ["Adventure", "Science Fiction"]
+        assert resolved["cover_url"] == self._SOURCE_COVER
+        # The fill-only column still decides what is served, so the provider's
+        # answer lives only in the ledger until the rebuild becomes the write path.
+        assert stored.metadata["description"] == "A feed blurb."
+        assert stored.cover_url == self._SOURCE_COVER
+
 
 class TestTheOrdinalPass:
     def _run(self, storage_manager: StorageManager) -> OrdinalOnlyProvider:
@@ -2286,6 +2458,83 @@ class TestTheOrdinalPass:
         assert item.metadata["series_position_authority"] == "authored"
         assert queued_ids(storage_manager) == set()
         assert enrichment_buckets(storage_manager)["not_found"] == 1
+
+    def test_the_ordinal_pass_records_its_authority_without_dropping_the_match(
+        self, tmp_path: Path
+    ) -> None:
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        db_id = storage_manager.save_content_item(
+            ContentItem(
+                id="dune",
+                title="Dune",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            )
+        )
+        manager = manager_over(storage_manager, MatchingOrdinalProvider())
+
+        manager.start_enrichment(content_type=ContentType.BOOK)
+        assert manager._wait_for_completion()
+
+        stated = {
+            (write.writer_kind, write.writer, write.field, write.value, write.authority)
+            for write in field_writes(storage_manager, db_id)
+        }
+        band = (WriterBand.PROVIDER, "hardcover")
+        assert band + ("series_position", 1.0, "authored") in stated
+        assert band + ("description", "A desert planet.", None) in stated
+
+    def test_an_ordinal_the_merge_rules_refuse_is_still_recorded_as_stated(
+        self, tmp_path: Path
+    ) -> None:
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        db_id = save_book(storage_manager, metadata={"series_name": "Dune Chronicles"})
+        manager = manager_over(storage_manager, MatchingOrdinalProvider())
+
+        manager.start_enrichment(content_type=ContentType.BOOK)
+        assert manager._wait_for_completion()
+
+        stated = {
+            (write.writer_kind, write.writer, write.field, write.value, write.authority)
+            for write in field_writes(storage_manager, db_id)
+        }
+        band = (WriterBand.PROVIDER, "hardcover")
+        assert band + ("series_position", 1.0, "authored") in stated
+        assert band + ("series_name", "Dune", None) in stated
+        item = storage_manager.get_content_item(db_id)
+        assert item.metadata["series_name"] == "Dune Chronicles"
+        assert "series_position" not in item.metadata
+
+    def test_a_refused_ordinal_leaves_a_hand_set_show_status_alone_regression(
+        self, tmp_path: Path
+    ) -> None:
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        db_id = storage_manager.save_content_item(
+            ContentItem(
+                id="tng",
+                title="Star Trek: The Next Generation",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.CURRENTLY_CONSUMING,
+                metadata={
+                    "series_name": "Star Trek: The Next Generation",
+                    "seasons": 7,
+                    "seasons_watched": [1],
+                },
+            )
+        )
+        storage_manager.update_item_from_ui(
+            db_id, status="completed", seasons_watched=[1]
+        )
+        hand_set = status_and_stamp(storage_manager, db_id)
+        provider = ShowOrdinalProvider("wikidata")
+        manager = manager_over(storage_manager, provider)
+
+        manager.start_enrichment(content_type=ContentType.TV_SHOW)
+        assert manager._wait_for_completion()
+
+        assert [item.db_id for item in provider.ordinal_calls] == [db_id]
+        assert hand_set[0] == "completed"
+        assert status_and_stamp(storage_manager, db_id) == hand_set
 
     def test_an_ordinal_a_title_marker_stated_is_asked_about_and_replaced(
         self, tmp_path: Path
