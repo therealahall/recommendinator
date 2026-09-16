@@ -536,9 +536,15 @@ DETAIL_FIELDS: dict[str, ContentTypeFields] = {
 }
 
 
+COVER_FIELD = "cover_url"
+
 #: The ``content_items`` columns a writer states. Status, rating, review,
 #: ignored and date_completed are the person's own door, so they are not here.
-WRITER_STATED_BASE_FIELDS: tuple[str, ...] = ("title", "cover_url")
+WRITER_STATED_BASE_FIELDS: tuple[str, ...] = ("title", COVER_FIELD)
+
+#: Where a source's word beats a provider's: RAWG offers a landscape
+#: screenshot for a game Steam supplies portrait library art for.
+SOURCE_FIRST_FIELDS: frozenset[str] = frozenset({COVER_FIELD})
 
 #: The field each type carries its creator in, where ``author`` is not set.
 CREATOR_FIELDS: dict[str, DetailField] = {

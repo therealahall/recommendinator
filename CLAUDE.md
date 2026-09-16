@@ -102,7 +102,8 @@ src/
 │                     # for the per-user UI theme), plus field_provenance.py:
 │                     # the fields an operator holds against their source, and
 │                     # field_writes.py: what each writer stated for a field,
-│                     # recorded whether or not the column took it
+│                     # recorded whether or not the column took it, and
+│                     # field_rebuild.py: the value those writes rank to
 ├── settings/         # Global-config registry (metadata.py) + service (list/get/set/reset/secrets)
 ├── recommendations/  # Recommendation engine (scorers, scoring_pipeline, variety, genre_clusters,
 │                     # identity.py for candidate keys, record.py for the emitted Recommendation)
