@@ -1,6 +1,25 @@
 # CHANGELOG
 
 
+## v0.65.0 (2026-09-16)
+
+### Chores
+
+- **enrichment**: Record what each provider states into the ledger
+  ([`d8d2738`](https://github.com/therealahall/recommendinator/commit/d8d2738674f98fc6ba261d25eb0c27e7a7088291))
+
+- **storage**: Record what each source states into the ledger
+  ([`d52989e`](https://github.com/therealahall/recommendinator/commit/d52989e1aabe1cbbff2473c07436fd9e6a53a63f))
+
+- **storage**: Resolve an item's fields from the ledger by writer rank
+  ([`e2403f5`](https://github.com/therealahall/recommendinator/commit/e2403f537e9912cdbdc3916e28fbfdbb9920b406))
+
+### Features
+
+- **storage**: Hold a field with the value the operator typed
+  ([`95d81fe`](https://github.com/therealahall/recommendinator/commit/95d81fea999e9a9a2fbb1662177a38fdbf58863a))
+
+
 ## v0.64.0 (2026-09-16)
 
 ### Features
