@@ -181,6 +181,15 @@ def _drop_the_declines_table(db_path: Path) -> None:
         conn.close()
 
 
+def _drop_the_ledger_table(db_path: Path) -> None:
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("DROP TABLE content_item_field_writes")
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def _a_book(source: str, external_id: str, title: str) -> ContentItem:
     return ContentItem(
         id=external_id,
@@ -301,6 +310,80 @@ class TestATableThatArrivedWithoutAVersionBump:
         ] == [[kept, refused]]
         assert db.decline_duplicate_suggestion(kept, [refused]) != []
         assert db.list_duplicate_suggestions().suggestions == []
+
+
+class TestTheFieldWriteLedger:
+    @staticmethod
+    def _writes(db: SQLiteDB, db_id: int) -> list[tuple[Any, ...]]:
+        with db.connection() as conn:
+            return [
+                tuple(row)
+                for row in conn.execute(
+                    "SELECT writer_kind, writer, value_json"
+                    " FROM content_item_field_writes WHERE content_item_id = ?",
+                    (db_id,),
+                ).fetchall()
+            ]
+
+    @staticmethod
+    def _state_title(
+        db: SQLiteDB, db_id: int, kind: str, writer: str, title: str
+    ) -> None:
+        with db.connection() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO content_item_field_writes (content_item_id,"
+                " field, writer_kind, writer, value_json, written_at)"
+                " VALUES (?, 'title', ?, ?, ?, '2026-01-01T00:00:00+00:00')",
+                (db_id, kind, writer, json.dumps(title)),
+            )
+            conn.commit()
+
+    @pytest.mark.parametrize("stored_version", list(range(9, _SCHEMA_VERSION + 1)))
+    def test_a_library_stamped_before_the_ledger_can_record_a_write(
+        self, tmp_path: Path, stored_version: int
+    ) -> None:
+        db_path = tmp_path / f"ledger-at-{stored_version}.db"
+        _open(db_path)
+        _drop_the_ledger_table(db_path)
+        _rewind_to(db_path, stored_version)
+
+        db = SQLiteDB(db_path)
+        db_id = db.save_content_item(_a_book("calibre_web", "c:1", "Deadhouse Gates"))
+        self._state_title(db, db_id, "source", "calibre_web", "Deadhouse Gates")
+
+        assert self._writes(db, db_id) == [
+            ("source", "calibre_web", '"Deadhouse Gates"')
+        ]
+
+    def test_a_recorded_write_does_not_outlive_the_item_it_describes(
+        self, tmp_path: Path
+    ) -> None:
+        db = SQLiteDB(tmp_path / "ledger-cascade.db")
+        db_id = db.save_content_item(_a_book("calibre_web", "c:1", "Deadhouse Gates"))
+        self._state_title(db, db_id, "source", "calibre_web", "Deadhouse Gates")
+
+        with db.connection() as conn:
+            conn.execute("DELETE FROM content_items WHERE id = ?", (db_id,))
+            conn.commit()
+
+        assert self._writes(db, db_id) == []
+
+    def test_one_writer_per_kind_states_a_field_and_restating_replaces_its_own_row(
+        self, tmp_path: Path
+    ) -> None:
+        db = SQLiteDB(tmp_path / "ledger-writers.db")
+        db_id = db.save_content_item(_a_book("calibre_web", "c:1", "Deadhouse Gates"))
+
+        self._state_title(db, db_id, "source", "calibre_web", "Deadhouse Gates")
+        self._state_title(
+            db, db_id, "enrichment", "calibre_web", "Deadhouse Gates (Malazan 2)"
+        )
+        self._state_title(db, db_id, "source", "calibre_web", "Deadhouse Gates, Book 2")
+
+        assert sorted(self._writes(db, db_id)) == [
+            ("enrichment", "calibre_web", '"Deadhouse Gates (Malazan 2)"'),
+            ("source", "calibre_web", '"Deadhouse Gates, Book 2"'),
+        ]
 
 
 class TestWhatAnOpenThatRaisedLeavesBehind:

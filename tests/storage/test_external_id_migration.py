@@ -201,7 +201,7 @@ def test_a_rebuild_whose_children_followed_the_rename_raises_before_committing(
     conn = _connect(db_path)
     try:
         conn.execute("BEGIN")
-        with pytest.raises(RuntimeError):
+        with pytest.raises(RuntimeError, match="content_item_field_writes"):
             _rebuild_content_items(conn.cursor())
         conn.rollback()
     finally:
