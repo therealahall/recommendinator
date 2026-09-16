@@ -258,6 +258,29 @@ _CONTENT_ITEM_CHILDREN: dict[str, str] = {
             PRIMARY KEY (content_item_id, field)
         )
     """,
+    "content_item_field_writes": """
+        CREATE TABLE IF NOT EXISTS content_item_field_writes (
+            -- No user_id: the writer order deciding which of these wins is one
+            -- global setting, so the row keys on the item it describes alone.
+            content_item_id INTEGER NOT NULL
+                REFERENCES content_items(id) ON DELETE CASCADE,
+            field TEXT NOT NULL,
+            -- The rank band, then the identity inside it: one row per writer
+            -- per field, so restating a field replaces what that writer said.
+            writer_kind TEXT NOT NULL,
+            writer TEXT NOT NULL,
+            -- What this writer stated, not what the field holds now, JSON so a
+            -- scalar and a list share the column.
+            value_json TEXT NOT NULL,
+            -- The SeriesAuthority ladder, which only a series ordinal carries.
+            -- Its own string, not a rung number: the ladder is a str Enum every
+            -- other site stores by value, and an index would be the declaration
+            -- order, so inserting a rung would reinterpret every stored row.
+            authority TEXT,
+            written_at TEXT NOT NULL,
+            PRIMARY KEY (content_item_id, field, writer_kind, writer)
+        )
+    """,
     "enrichment_status": """
         CREATE TABLE IF NOT EXISTS enrichment_status (
             content_item_id INTEGER PRIMARY KEY
