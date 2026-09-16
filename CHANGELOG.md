@@ -1,6 +1,28 @@
 # CHANGELOG
 
 
+## v0.66.0 (2026-09-16)
+
+### Chores
+
+- Bump astral-sh/setup-uv in the actions group
+  ([`d9217b5`](https://github.com/therealahall/recommendinator/commit/d9217b5255da706d9f2897d57f155c30703bcf89))
+
+- Bump node from `c075312` to `14bf3ea` in the base-images group
+  ([`eb73bd3`](https://github.com/therealahall/recommendinator/commit/eb73bd38d37bab46cf4100492fff012e649c86e2))
+
+- Bump the frontend group with 2 updates
+  ([`1bb1716`](https://github.com/therealahall/recommendinator/commit/1bb1716ac43e23e2166b537dc563ba3412c1adb9))
+
+- Bump the python group with 2 updates
+  ([`13cdf9d`](https://github.com/therealahall/recommendinator/commit/13cdf9d198cea4a92564204f7d3ce77cb2c97b91))
+
+### Features
+
+- **storage**: Record what the library already held as legacy
+  ([`81d5b6a`](https://github.com/therealahall/recommendinator/commit/81d5b6a864ee59a41f347f4017400d48fbcde6c9))
+
+
 ## v0.65.0 (2026-09-16)
 
 ### Chores
