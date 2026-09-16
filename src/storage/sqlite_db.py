@@ -31,6 +31,7 @@ from src.models.detail_fields import (
     ContentTypeFields,
     FieldKind,
     FieldOwner,
+    detail_field_for,
     to_int,
 )
 from src.storage.derived import (
@@ -47,17 +48,14 @@ from src.storage.duplicates import (
     list_declines,
     undecline_duplicate,
 )
-from src.storage.field_provenance import (
-    drop_hold,
-    held_detail_columns,
-    parse_manual_fields,
-    read_holds,
-    record_hold,
-)
 from src.storage.field_writes import (
+    MANUAL_WRITER,
     FieldWrite,
     FieldWriter,
     WriterBand,
+    drop_manual_field,
+    parse_manual_fields,
+    read_manual_fields,
     record_field_writes,
 )
 from src.storage.item_merges import (
@@ -217,9 +215,10 @@ _SORT_ORDER_BY: dict[str, str] = {
 VALID_SORT_OPTIONS: frozenset[str] = frozenset(_SORT_ORDER_BY)
 
 _MANUAL_FIELDS_TERM = (
-    "(SELECT json_group_array(m.field)"
-    " FROM content_item_manual_fields m"
-    " WHERE m.content_item_id = ci.id) as manual_fields"
+    "(SELECT json_group_array(w.field)"
+    " FROM content_item_field_writes w"
+    " WHERE w.content_item_id = ci.id"
+    f" AND w.writer_kind = '{WriterBand.MANUAL.value}') as manual_fields"
 )
 
 # Columns the enrichment join contributes, read back by _row_is_enriched.
@@ -411,9 +410,10 @@ def _corrected_fields(
     description: str | None,
     release_year: int | None,
     creator: str | None,
-) -> set[str]:
-    """The fields an edit actually stated. A supplied ``None`` clears the value
-    and is still a correction, so the two sentinels cannot be read as one.
+) -> dict[str, Any]:
+    """What an edit stated, field by field, as the column stores it. A supplied
+    ``None`` clears the value and is still a correction, so the two sentinels
+    cannot be read as one.
     """
     unsent: dict[str, Any] = {
         "title": title,
@@ -428,8 +428,22 @@ def _corrected_fields(
         "release_year": release_year,
         "creator": creator,
     }
-    return {field for field, value in unsent.items() if value is not UNSET} | {
-        field for field, value in absent.items() if value is not None
+    stated = {field: value for field, value in unsent.items() if value is not UNSET}
+    stated.update(
+        {field: value for field, value in absent.items() if value is not None}
+    )
+    if "review" in stated:
+        stated["review"] = (stated["review"] or "").strip() or None
+    return stated
+
+
+def _held_detail_columns(content_type: str, held: set[str]) -> set[str]:
+    """The columns this type keeps the held fields in."""
+    fields = (detail_field_for(content_type, field) for field in held)
+    return {
+        field.column
+        for field in fields
+        if field is not None and field.column is not None
     }
 
 
@@ -810,7 +824,7 @@ class SQLiteDB:
             # A held field is the operator's, so the sync withdraws the offer.
             # normalized_title tracks the title that stays, not the one being
             # refused.
-            held = read_holds(cursor, existing_id)
+            held = read_manual_fields(cursor, existing_id)
             for field in held:
                 offered.pop(field, None)
             if "title" in held:
@@ -955,8 +969,8 @@ class SQLiteDB:
         values: list[Any] = [db_id]
 
         # Only an existing row can be held: a hold is an edit to a stored item.
-        held = read_holds(cursor, db_id) if existing_data else set()
-        held_columns = held_detail_columns(content_type, held)
+        held = read_manual_fields(cursor, db_id) if existing_data else set()
+        held_columns = _held_detail_columns(content_type, held)
 
         for detail_field in spec.fields:
             col_name = detail_field.column
@@ -1099,8 +1113,8 @@ class SQLiteDB:
             return False
 
         # The one write a status hold does not refuse: the season list deciding
-        # it is deliberately outside MANUAL_FIELDS, so a season the operator has
-        # not seen makes the status they set stale rather than a correction.
+        # it is held by nobody, so a season the operator has not seen makes the
+        # status they set stale rather than a correction.
         cursor.execute(
             "UPDATE content_items SET status = ?,"
             " updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -1470,6 +1484,11 @@ class SQLiteDB:
         """No status empties the list: the dialog hides the checklist for a show
         whose total never synced. Every field supplied is held from here on.
         """
+        if description is not None:
+            # Whitespace is not a description: a blank normalises to the clear,
+            # in the column and in the row holding it alike.
+            description = description.strip()
+
         with self.connection() as conn:
             cursor = conn.cursor()
 
@@ -1529,7 +1548,7 @@ class SQLiteDB:
                         ).value
                         # Held like a stated one: unheld, the next sync
                         # forward-resolves it back to what it was.
-                        corrected.add("status")
+                        corrected["status"] = resolved_status
 
                 if tv_row and seasons_watched is not None:
                     now_iso = utc_now().isoformat()
@@ -1563,7 +1582,7 @@ class SQLiteDB:
                 params.append(rating)
             if review is not UNSET:
                 set_parts.append("review = ?")
-                params.append(review if review and review.strip() else None)
+                params.append(corrected["review"])
             if resolved_status == "completed" and existing_status != "completed":
                 set_parts.append("date_completed = COALESCE(date_completed, ?)")
                 params.append(local_today().isoformat())
@@ -1578,8 +1597,12 @@ class SQLiteDB:
                     cursor, db_id, content_type, genres, tags, description
                 )
 
-            for field in corrected:
-                record_hold(cursor, db_id, field)
+            record_field_writes(
+                cursor,
+                db_id,
+                MANUAL_WRITER,
+                [FieldWrite(field, value) for field, value in corrected.items()],
+            )
 
             conn.commit()
             return True
@@ -1587,14 +1610,14 @@ class SQLiteDB:
     def clear_manual_field(
         self, db_id: int, field: str, user_id: int | None = None
     ) -> bool:
-        """The field keeps the value it has and stops being protected: the hold
-        was never a copy of anything to hand back.
+        """The field keeps the value it has and stops being protected: what the
+        operator stated decides the column only once the rebuild writes it.
         """
         with self.connection() as conn:
             cursor = conn.cursor()
             if self._item_on_cursor(cursor, db_id, user_id) is None:
                 return False
-            if not drop_hold(cursor, db_id, field):
+            if not drop_manual_field(cursor, db_id, field):
                 return False
             conn.commit()
             return True
@@ -1614,8 +1637,7 @@ class SQLiteDB:
         if tags is not None:
             updates["tags"] = json.dumps(tags)
         if description is not None:
-            # Whitespace is not a description: a blank normalises to the clear.
-            updates["description"] = description.strip()
+            updates["description"] = description
         self._write_detail_columns(cursor, db_id, content_type, updates)
 
     def _write_corrections(

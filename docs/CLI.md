@@ -195,8 +195,8 @@ uv run python -m src.cli library clear-manual --id 42 --field genres --format js
 ```
 
 Stops holding one field, leaving the stored value as it is, so the next sync or
-enrichment run may state it again. `--field` takes `title`, `status`, `rating`,
-`review`, `genres`, `tags`, `description`, `release_year` or `creator`.
+enrichment run may state it again. `--field` takes any field the item holds, and
+refuses a name it does not.
 `--format json` emits what `DELETE /api/items/<id>/manual-fields/<field>`
 answers.
 

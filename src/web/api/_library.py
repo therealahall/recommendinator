@@ -24,7 +24,6 @@ from src.models.content import (
     get_enum_value,
 )
 from src.storage.manager import (
-    MANUAL_FIELDS,
     UNSET,
     VALID_SORT_OPTIONS,
     UncorrectableFieldError,
@@ -431,12 +430,6 @@ def clear_manual_field(
     user_id: int = Query(1, ge=1, description="User ID for authorization"),
 ) -> ContentItemResponse:
     """Stop holding one field, leaving what it says alone."""
-    if field not in MANUAL_FIELDS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unknown field. Valid options: {', '.join(sorted(MANUAL_FIELDS))}",
-        )
-
     if not storage.clear_manual_field(db_id, field, user_id=user_id):
         raise HTTPException(
             status_code=404, detail=f"Item {db_id} holds no manual {field}."

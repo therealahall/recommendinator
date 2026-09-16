@@ -1963,7 +1963,8 @@ def test_clearing_a_field_nobody_holds_is_a_404(mock_components, tmp_path):
     unknown = client.delete(f"/api/items/{db_id}/manual-fields/cover_url?user_id=1")
 
     assert unheld.status_code == 404
-    assert unknown.status_code == 400
+    # No allow-list refuses a name any more: nothing holds it, so it is a 404.
+    assert unknown.status_code == 404
 
 
 def test_edit_rejects_oversized_manual_metadata(client, mock_components):

@@ -28,6 +28,8 @@ class WriterBand(str, Enum):
     SOURCE = "source"
     PROVIDER = "provider"
     PINNED = "pinned"
+    #: The operator's own word, and the only band a user-owned field reaches:
+    #: the sync door reads these rows to leave what they state alone.
     MANUAL = "manual"
 
 
@@ -40,6 +42,11 @@ class FieldWriter:
 
     kind: WriterBand
     name: str
+
+
+#: The one identity in the manual band: every door the operator edits through
+#: is the same hand, so a second edit replaces the first rather than joining it.
+MANUAL_WRITER = FieldWriter(WriterBand.MANUAL, "operator")
 
 
 @dataclass(frozen=True)
@@ -98,6 +105,32 @@ def record_field_writes(
             for write in writes
         ],
     )
+
+
+def read_manual_fields(cursor: sqlite3.Cursor, db_id: int) -> set[str]:
+    cursor.execute(
+        f"SELECT field FROM {_TABLE} WHERE content_item_id = ? AND writer_kind = ?",
+        (db_id, WriterBand.MANUAL.value),
+    )
+    return {row["field"] for row in cursor.fetchall()}
+
+
+def drop_manual_field(cursor: sqlite3.Cursor, db_id: int, field: str) -> bool:
+    """The operator releasing a field, which is the one deletion this table
+    takes: every other row persists until its writer states something else.
+    """
+    cursor.execute(
+        f"DELETE FROM {_TABLE} WHERE content_item_id = ? AND field = ?"
+        " AND writer_kind = ?",
+        (db_id, field, WriterBand.MANUAL.value),
+    )
+    return cursor.rowcount > 0
+
+
+def parse_manual_fields(payload: str | None) -> list[str]:
+    """Ordered by name, so the report reads the same twice."""
+    fields: list[str] = json.loads(payload) if payload else []
+    return sorted(fields)
 
 
 def read_field_writes(cursor: sqlite3.Cursor, db_id: int) -> list[StoredFieldWrite]:

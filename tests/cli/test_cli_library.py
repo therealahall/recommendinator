@@ -2077,3 +2077,18 @@ class TestLibraryClearManual:
 
         assert result.exit_code != 0
         assert "Item 1 holds no manual creator." in result.output
+
+    def test_clear_manual_reaches_a_field_the_retired_allow_list_never_had(
+        self, cli_runner: CliRunner
+    ) -> None:
+        mock_storage = make_storage_mock()
+        mock_storage.clear_manual_field.return_value = False
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["library", "clear-manual", "--id", "1", "--field", "publisher"],
+            mock_storage,
+        )
+
+        assert result.exit_code != 0
+        assert "Item 1 holds no manual publisher." in result.output
