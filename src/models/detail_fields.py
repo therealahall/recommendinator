@@ -55,6 +55,15 @@ def to_int(value: Any) -> int | None:
         return None
 
 
+def to_float(value: Any) -> float | None:
+    if value is None or isinstance(value, float):
+        return value
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return None
+
+
 def to_json_array(value: Any) -> str | None:
     """A bare string is wrapped: ``"Drama"`` alone reads back as a string
     nothing parses.
@@ -92,6 +101,16 @@ class FieldKind(Enum):
     FREE_FORM = "free_form"
 
 
+class FieldOwner(Enum):
+    """Who states a field. A writer's word is ranked against other writers' in
+    the field-write ledger; the person's is theirs, and a recorded row would let
+    writer rank overrule them once the rebuild becomes the write path.
+    """
+
+    WRITER = "writer"
+    USER = "user"
+
+
 @dataclass(frozen=True)
 class FieldCodec:
     store: Callable[[Any], Any]
@@ -110,10 +129,12 @@ _CODECS: dict[FieldKind, FieldCodec] = {
 class DetailField:
     metadata_key: str
     kind: FieldKind
+    owner: FieldOwner
     column: str | None = None
     select_alias: str | None = None
     aliases: tuple[str, ...] = ()
     template_column: str | None = None
+    numeric: bool = False
 
     def __post_init__(self) -> None:
         if self.column is None:
@@ -129,6 +150,11 @@ class DetailField:
                 )
         elif self.kind not in _CODECS:
             raise ValueError(f"{self.kind} cannot be stored in a column")
+        elif self.numeric:
+            raise ValueError(
+                f"{self.metadata_key!r} has a column, whose codec already says"
+                " what it holds"
+            )
 
     @property
     def codec(self) -> FieldCodec:
@@ -146,6 +172,16 @@ class DetailField:
             return self.codec.store(value)
         except TypeError as error:
             raise TypeError(f"{self.metadata_key!r}: {error}") from error
+
+    def canonical(self, value: Any) -> Any:
+        """One reading of a value no column canonicalises, so two writers
+        stating this field state comparable things.
+        """
+        if self.numeric:
+            return to_float(value)
+        if isinstance(value, str):
+            return value.strip() or None
+        return value
 
     def value_from(self, metadata: Mapping[str, Any]) -> Any:
         value = None
@@ -224,30 +260,52 @@ DETAIL_FIELDS: dict[str, ContentTypeFields] = {
             DetailField(
                 "author",
                 FieldKind.CREATOR,
+                FieldOwner.WRITER,
                 column="author",
                 select_alias="book_author",
                 template_column="author",
             ),
             # The headers keep the spelling every exported file has used; the
             # library stores the keys src/utils/series.py reads.
-            DetailField("series_name", FieldKind.FREE_FORM, template_column="series"),
             DetailField(
-                "series_position", FieldKind.FREE_FORM, template_column="series_index"
+                "series_name",
+                FieldKind.FREE_FORM,
+                FieldOwner.WRITER,
+                template_column="series",
+            ),
+            DetailField(
+                "series_position",
+                FieldKind.FREE_FORM,
+                FieldOwner.WRITER,
+                template_column="series_index",
+                numeric=True,
             ),
             # Without it a re-import reads a Calibre index as a title marker,
             # which the first enrichment run may replace.
             DetailField(
                 "series_position_authority",
                 FieldKind.FREE_FORM,
+                FieldOwner.WRITER,
                 template_column="series_index_authority",
             ),
-            DetailField("isbn", FieldKind.TEXT, column="isbn", template_column="isbn"),
             DetailField(
-                "pages", FieldKind.INTEGER, column="pages", template_column="pages"
+                "isbn",
+                FieldKind.TEXT,
+                FieldOwner.WRITER,
+                column="isbn",
+                template_column="isbn",
+            ),
+            DetailField(
+                "pages",
+                FieldKind.INTEGER,
+                FieldOwner.WRITER,
+                column="pages",
+                template_column="pages",
             ),
             DetailField(
                 "year_published",
                 FieldKind.INTEGER,
+                FieldOwner.WRITER,
                 column="year_published",
                 select_alias="book_year",
                 template_column="year_published",
@@ -255,19 +313,27 @@ DETAIL_FIELDS: dict[str, ContentTypeFields] = {
             DetailField(
                 "genres",
                 FieldKind.STRING_LIST,
+                FieldOwner.WRITER,
                 column="genres",
                 select_alias="book_genres",
                 aliases=("genre",),
                 template_column="genre",
             ),
-            DetailField("isbn13", FieldKind.TEXT, column="isbn13"),
-            DetailField("publisher", FieldKind.TEXT, column="publisher"),
+            DetailField("isbn13", FieldKind.TEXT, FieldOwner.WRITER, column="isbn13"),
             DetailField(
-                "tags", FieldKind.STRING_LIST, column="tags", select_alias="book_tags"
+                "publisher", FieldKind.TEXT, FieldOwner.WRITER, column="publisher"
+            ),
+            DetailField(
+                "tags",
+                FieldKind.STRING_LIST,
+                FieldOwner.WRITER,
+                column="tags",
+                select_alias="book_tags",
             ),
             DetailField(
                 "description",
                 FieldKind.TEXT,
+                FieldOwner.WRITER,
                 column="description",
                 select_alias="book_description",
             ),
@@ -281,12 +347,14 @@ DETAIL_FIELDS: dict[str, ContentTypeFields] = {
             DetailField(
                 "director",
                 FieldKind.CREATOR,
+                FieldOwner.WRITER,
                 column="director",
                 template_column="director",
             ),
             DetailField(
                 "release_year",
                 FieldKind.INTEGER,
+                FieldOwner.WRITER,
                 column="release_year",
                 select_alias="movie_year",
                 aliases=("year",),
@@ -295,6 +363,7 @@ DETAIL_FIELDS: dict[str, ContentTypeFields] = {
             DetailField(
                 "runtime",
                 FieldKind.INTEGER,
+                FieldOwner.WRITER,
                 column="runtime",
                 aliases=("runtime_minutes",),
                 template_column="runtime_minutes",
@@ -302,18 +371,24 @@ DETAIL_FIELDS: dict[str, ContentTypeFields] = {
             DetailField(
                 "genres",
                 FieldKind.STRING_LIST,
+                FieldOwner.WRITER,
                 column="genres",
                 select_alias="movie_genres",
                 aliases=("genre",),
                 template_column="genre",
             ),
-            DetailField("studio", FieldKind.TEXT, column="studio"),
+            DetailField("studio", FieldKind.TEXT, FieldOwner.WRITER, column="studio"),
             DetailField(
-                "tags", FieldKind.STRING_LIST, column="tags", select_alias="movie_tags"
+                "tags",
+                FieldKind.STRING_LIST,
+                FieldOwner.WRITER,
+                column="tags",
+                select_alias="movie_tags",
             ),
             DetailField(
                 "description",
                 FieldKind.TEXT,
+                FieldOwner.WRITER,
                 column="description",
                 select_alias="movie_description",
             ),
@@ -328,23 +403,28 @@ DETAIL_FIELDS: dict[str, ContentTypeFields] = {
             DetailField(
                 "creators",
                 FieldKind.CREATOR,
+                FieldOwner.WRITER,
                 column="creators",
                 aliases=("creator",),
                 template_column="creator",
             ),
+            # The person's own watching, and the season list decides status.
             DetailField(
                 "seasons_watched",
                 FieldKind.FREE_FORM,
+                FieldOwner.USER,
                 template_column="seasons_watched",
             ),
             DetailField(
                 "seasons_watched_dates",
                 FieldKind.FREE_FORM,
+                FieldOwner.USER,
                 template_column="seasons_watched_dates",
             ),
             DetailField(
                 "seasons",
                 FieldKind.INTEGER,
+                FieldOwner.WRITER,
                 column="seasons",
                 aliases=("total_seasons",),
                 template_column="total_seasons",
@@ -352,6 +432,7 @@ DETAIL_FIELDS: dict[str, ContentTypeFields] = {
             DetailField(
                 "release_year",
                 FieldKind.INTEGER,
+                FieldOwner.WRITER,
                 column="release_year",
                 select_alias="tv_year",
                 aliases=("year",),
@@ -360,19 +441,27 @@ DETAIL_FIELDS: dict[str, ContentTypeFields] = {
             DetailField(
                 "genres",
                 FieldKind.STRING_LIST,
+                FieldOwner.WRITER,
                 column="genres",
                 select_alias="tv_genres",
                 aliases=("genre",),
                 template_column="genre",
             ),
-            DetailField("episodes", FieldKind.INTEGER, column="episodes"),
-            DetailField("network", FieldKind.TEXT, column="network"),
             DetailField(
-                "tags", FieldKind.STRING_LIST, column="tags", select_alias="tv_tags"
+                "episodes", FieldKind.INTEGER, FieldOwner.WRITER, column="episodes"
+            ),
+            DetailField("network", FieldKind.TEXT, FieldOwner.WRITER, column="network"),
+            DetailField(
+                "tags",
+                FieldKind.STRING_LIST,
+                FieldOwner.WRITER,
+                column="tags",
+                select_alias="tv_tags",
             ),
             DetailField(
                 "description",
                 FieldKind.TEXT,
+                FieldOwner.WRITER,
                 column="description",
                 select_alias="tv_description",
             ),
@@ -386,12 +475,14 @@ DETAIL_FIELDS: dict[str, ContentTypeFields] = {
             DetailField(
                 "developer",
                 FieldKind.CREATOR,
+                FieldOwner.WRITER,
                 column="developer",
                 template_column="developer",
             ),
             DetailField(
                 "platforms",
                 FieldKind.STRING_LIST,
+                FieldOwner.WRITER,
                 column="platforms",
                 aliases=("platform",),
                 template_column="platform",
@@ -399,6 +490,7 @@ DETAIL_FIELDS: dict[str, ContentTypeFields] = {
             DetailField(
                 "genres",
                 FieldKind.STRING_LIST,
+                FieldOwner.WRITER,
                 column="genres",
                 select_alias="game_genres",
                 aliases=("genre",),
@@ -407,26 +499,35 @@ DETAIL_FIELDS: dict[str, ContentTypeFields] = {
             DetailField(
                 "playtime_hours",
                 FieldKind.FREE_FORM,
+                FieldOwner.WRITER,
                 template_column="hours_played",
+                numeric=True,
             ),
             DetailField(
                 "publisher",
                 FieldKind.TEXT,
+                FieldOwner.WRITER,
                 column="publisher",
                 select_alias="game_publisher",
             ),
             DetailField(
                 "release_year",
                 FieldKind.INTEGER,
+                FieldOwner.WRITER,
                 column="release_year",
                 select_alias="game_year",
             ),
             DetailField(
-                "tags", FieldKind.STRING_LIST, column="tags", select_alias="game_tags"
+                "tags",
+                FieldKind.STRING_LIST,
+                FieldOwner.WRITER,
+                column="tags",
+                select_alias="game_tags",
             ),
             DetailField(
                 "description",
                 FieldKind.TEXT,
+                FieldOwner.WRITER,
                 column="description",
                 select_alias="game_description",
             ),
@@ -434,6 +535,10 @@ DETAIL_FIELDS: dict[str, ContentTypeFields] = {
     ),
 }
 
+
+#: The ``content_items`` columns a writer states. Status, rating, review,
+#: ignored and date_completed are the person's own door, so they are not here.
+WRITER_STATED_BASE_FIELDS: tuple[str, ...] = ("title", "cover_url")
 
 #: The field each type carries its creator in, where ``author`` is not set.
 CREATOR_FIELDS: dict[str, DetailField] = {

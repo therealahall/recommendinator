@@ -320,7 +320,8 @@ class TestTheFieldWriteLedger:
                 tuple(row)
                 for row in conn.execute(
                     "SELECT writer_kind, writer, value_json"
-                    " FROM content_item_field_writes WHERE content_item_id = ?",
+                    " FROM content_item_field_writes"
+                    " WHERE content_item_id = ? AND field = 'title'",
                     (db_id,),
                 ).fetchall()
             ]
@@ -349,7 +350,6 @@ class TestTheFieldWriteLedger:
 
         db = SQLiteDB(db_path)
         db_id = db.save_content_item(_a_book("calibre_web", "c:1", "Deadhouse Gates"))
-        self._state_title(db, db_id, "source", "calibre_web", "Deadhouse Gates")
 
         assert self._writes(db, db_id) == [
             ("source", "calibre_web", '"Deadhouse Gates"')
@@ -360,7 +360,6 @@ class TestTheFieldWriteLedger:
     ) -> None:
         db = SQLiteDB(tmp_path / "ledger-cascade.db")
         db_id = db.save_content_item(_a_book("calibre_web", "c:1", "Deadhouse Gates"))
-        self._state_title(db, db_id, "source", "calibre_web", "Deadhouse Gates")
 
         with db.connection() as conn:
             conn.execute("DELETE FROM content_items WHERE id = ?", (db_id,))
@@ -376,12 +375,12 @@ class TestTheFieldWriteLedger:
 
         self._state_title(db, db_id, "source", "calibre_web", "Deadhouse Gates")
         self._state_title(
-            db, db_id, "enrichment", "calibre_web", "Deadhouse Gates (Malazan 2)"
+            db, db_id, "provider", "calibre_web", "Deadhouse Gates (Malazan 2)"
         )
         self._state_title(db, db_id, "source", "calibre_web", "Deadhouse Gates, Book 2")
 
         assert sorted(self._writes(db, db_id)) == [
-            ("enrichment", "calibre_web", '"Deadhouse Gates (Malazan 2)"'),
+            ("provider", "calibre_web", '"Deadhouse Gates (Malazan 2)"'),
             ("source", "calibre_web", '"Deadhouse Gates, Book 2"'),
         ]
 
