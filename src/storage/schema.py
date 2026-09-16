@@ -1,6 +1,7 @@
 import json
 import re
 import sqlite3
+from collections import defaultdict
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any, Literal, TypedDict
@@ -8,11 +9,13 @@ from typing import Any, Literal, TypedDict
 from src.models.detail_fields import (
     DETAIL_FIELDS,
     FieldKind,
+    detail_field_for,
     text_names,
     to_json_array,
     to_text,
 )
 from src.storage.derived import backfill_derived_columns
+from src.storage.field_writes import MANUAL_WRITER, FieldWrite, record_field_writes
 from src.storage.merge import (
     normalize_creator_for_matching,
     normalize_title_for_matching,
@@ -93,7 +96,7 @@ class SyncRunDict(TypedDict):
 # Changing ``normalize_title_for_matching``, ``get_sort_title`` or
 # ``build_search_text`` needs a bump and a step to rewrite what the old one
 # stored, or dedup lookups stop matching and duplicates accumulate in silence.
-_SCHEMA_VERSION = 26
+_SCHEMA_VERSION = 27
 
 # Rows for these keys are unreachable from the app but would still
 # be overlaid onto config, so they are pruned once on upgrade.
@@ -246,16 +249,6 @@ _CONTENT_ITEM_CHILDREN: dict[str, str] = {
             higher_item_id INTEGER NOT NULL
                 REFERENCES content_items(id) ON DELETE CASCADE,
             PRIMARY KEY (lower_item_id, higher_item_id)
-        )
-    """,
-    "content_item_manual_fields": """
-        CREATE TABLE IF NOT EXISTS content_item_manual_fields (
-            content_item_id INTEGER NOT NULL
-                REFERENCES content_items(id) ON DELETE CASCADE,
-            field TEXT NOT NULL,
-            -- The row is the whole fact. Storing what the field said would be a
-            -- copy every door writing that column had to keep in step.
-            PRIMARY KEY (content_item_id, field)
         )
     """,
     "content_item_field_writes": """
@@ -451,6 +444,10 @@ def create_schema(conn: sqlite3.Connection) -> None:
         _clear_derived_columns(cursor)
     if stored_version < 26:
         _drop_the_year_from_tautulli_film_ids(cursor)
+    if stored_version < 27:
+        # After the repairs above: the value it records is the one the field
+        # holds once they have rewritten what they rewrite.
+        _carry_holds_into_the_ledger(cursor)
 
     # Filled after the repair, which recovers a creator that existed only in a
     # blob. Unguarded because the fill selects the rows that need it rather
@@ -645,7 +642,7 @@ def _hold_manually_enriched_metadata(cursor: sqlite3.Cursor) -> None:
     """That flag said one of three fields was hand written, never which, so all
     three are held and the item rejoins the queue the flag kept it out of.
     """
-    holds: list[tuple[int, str]] = []
+    held: defaultdict[int, list[FieldWrite]] = defaultdict(list)
     for content_type, spec in DETAIL_FIELDS.items():
         fields = [
             field
@@ -664,14 +661,14 @@ def _hold_manually_enriched_metadata(cursor: sqlite3.Cursor) -> None:
             for field in fields:
                 # Not truthiness: a stored ``[]`` or ``""`` is a field the
                 # operator emptied, which enrichment refills unless it is held.
-                if field.codec.load(row[field.column]) is not None:
-                    holds.append((row["content_item_id"], field.metadata_key))
+                value = field.codec.load(row[field.column])
+                if value is not None:
+                    held[row["content_item_id"]].append(
+                        FieldWrite(field.metadata_key, value)
+                    )
 
-    cursor.executemany(
-        "INSERT OR IGNORE INTO content_item_manual_fields"
-        " (content_item_id, field) VALUES (?, ?)",
-        holds,
-    )
+    for db_id, writes in held.items():
+        record_field_writes(cursor, db_id, MANUAL_WRITER, writes)
     cursor.execute(
         "UPDATE enrichment_status SET enrichment_provider = NULL,"
         " enrichment_quality = NULL, needs_enrichment = 1"
@@ -1012,6 +1009,59 @@ def _drop_the_year_from_tautulli_film_ids(cursor: sqlite3.Cursor) -> None:
         )
 
 
+#: Where a per-field hold lived before the ledger's manual band. A row named a
+#: field and no value, so the upgrade reads the value off the item itself.
+_RETIRED_HOLDS_TABLE = "content_item_manual_fields"
+
+#: The held fields ``content_items`` carries; every other one is a detail column.
+_HELD_BASE_COLUMNS: frozenset[str] = frozenset({"title", "status", "rating", "review"})
+
+
+def _carry_holds_into_the_ledger(cursor: sqlite3.Cursor) -> None:
+    """Destructive: the dropped table is the only record of which fields the
+    operator holds, so every row becomes a manual write before it goes.
+    """
+    if not _has_table(cursor, _RETIRED_HOLDS_TABLE):
+        return
+    cursor.execute(f"SELECT content_item_id, field FROM {_RETIRED_HOLDS_TABLE}")
+    held: defaultdict[int, list[str]] = defaultdict(list)
+    for row in cursor.fetchall():
+        held[row["content_item_id"]].append(row["field"])
+    for db_id, fields in held.items():
+        # A hold whose field stands empty records that emptiness rather than
+        # being dropped: the hold is what keeps the next sync out of it.
+        record_field_writes(
+            cursor,
+            db_id,
+            MANUAL_WRITER,
+            [FieldWrite(field, _held_value(cursor, db_id, field)) for field in fields],
+        )
+    cursor.execute(f"DROP TABLE {_RETIRED_HOLDS_TABLE}")
+
+
+def _held_value(cursor: sqlite3.Cursor, db_id: int, field: str) -> Any:
+    cursor.execute(
+        "SELECT content_type, title, status, rating, review FROM content_items"
+        " WHERE id = ?",
+        (db_id,),
+    )
+    row = cursor.fetchone()
+    if row is None:
+        return None
+    if field in _HELD_BASE_COLUMNS:
+        return row[field]
+    spec = DETAIL_FIELDS.get(row["content_type"])
+    detail = detail_field_for(row["content_type"], field)
+    if spec is None or detail is None or detail.column is None:
+        return None
+    cursor.execute(
+        f"SELECT {detail.column} FROM {spec.table} WHERE content_item_id = ?",
+        (db_id,),
+    )
+    stored = cursor.fetchone()
+    return detail.codec.load(stored[detail.column]) if stored else None
+
+
 def _migrate_stranded_detail_shapes(cursor: sqlite3.Cursor) -> None:
     """No shape self-repairs on a re-sync — the metadata blob merge lets
     existing keys win, and ``platforms``, ``developer`` and ``publisher`` are
@@ -1191,6 +1241,13 @@ def _column_names(cursor: sqlite3.Cursor, table: str) -> list[str]:
 
 def _has_column(cursor: sqlite3.Cursor, table: str, column: str) -> bool:
     return column in _column_names(cursor, table)
+
+
+def _has_table(cursor: sqlite3.Cursor, table: str) -> bool:
+    cursor.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
+    )
+    return cursor.fetchone() is not None
 
 
 def _add_column_if_not_exists(

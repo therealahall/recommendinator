@@ -28,7 +28,6 @@ from src.storage.duplicates import SuggestionEvidence as SuggestionEvidence
 from src.storage.duplicates import SuggestionPage as SuggestionPage
 from src.storage.enrichment_jobs import EnrichmentJobStore
 from src.storage.enrichment_status import EnrichmentStore
-from src.storage.field_provenance import MANUAL_FIELDS as MANUAL_FIELDS
 from src.storage.field_writes import FieldWriter
 from src.storage.global_secrets import SecretStore
 from src.storage.item_merges import MergeError as MergeError

@@ -13,6 +13,7 @@ from src.ingestion.sources.radarr.radarr import RadarrPlugin
 from src.ingestion.sources.sonarr.sonarr import SonarrPlugin
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage import sqlite_db
+from src.storage.field_writes import WriterBand, read_field_writes
 from src.storage.item_merges import MergeEvidence
 from src.storage.merge import (
     creators_conflict,
@@ -4578,6 +4579,70 @@ class TestManualFieldHolds:
             )
         )
 
+    @staticmethod
+    def _manual_writes(temp_db: SQLiteDB, db_id: int) -> list[tuple[str, Any]]:
+        with temp_db.connection() as conn:
+            return [
+                (write.field, write.value)
+                for write in read_field_writes(conn.cursor(), db_id)
+                if write.writer_kind is WriterBand.MANUAL
+            ]
+
+    def test_an_edit_records_the_value_the_operator_entered(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        db_id = self._steam_game(temp_db, "Valve")
+
+        temp_db.update_item_from_ui(db_id=db_id, description="A test chamber comedy.")
+
+        assert self._manual_writes(temp_db, db_id) == [
+            ("description", "A test chamber comedy.")
+        ]
+
+    def test_a_status_set_back_to_unwatched_is_not_restored_by_the_next_sync(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """Recording nothing for a user-owned field would let the forward
+        resolution hand the old status straight back."""
+        watched = ContentItem(
+            id="1399",
+            title="Severance",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            source="trakt",
+        )
+        db_id = temp_db.save_content_item(watched)
+        temp_db.update_item_from_ui(db_id=db_id, status="unread")
+
+        temp_db.save_content_item(watched)
+
+        stored = temp_db.get_content_item(db_id)
+        assert stored is not None
+        assert stored.status == ConsumptionStatus.UNREAD
+        assert self._manual_writes(temp_db, db_id) == [("status", "unread")]
+
+    def test_a_cleared_rating_is_not_refilled_by_the_next_sync(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """A clear leaves the NULL that the fill-only rule offers against."""
+        graded = ContentItem(
+            id="620",
+            title="Portal 2",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+            source="steam",
+            rating=4,
+        )
+        db_id = temp_db.save_content_item(graded)
+        temp_db.update_item_from_ui(db_id=db_id, rating=None)
+
+        temp_db.save_content_item(graded)
+
+        stored = temp_db.get_content_item(db_id)
+        assert stored is not None
+        assert stored.rating is None
+        assert self._manual_writes(temp_db, db_id) == [("rating", None)]
+
     def test_sync_keeps_a_corrected_creator_and_still_reports_it_held(
         self, temp_db: SQLiteDB
     ) -> None:
@@ -4605,6 +4670,7 @@ class TestManualFieldHolds:
         assert stored is not None
         assert stored.author == "Capcom"
         assert stored.manual_fields == []
+        assert self._manual_writes(temp_db, db_id) == []
 
     def test_completing_an_item_keeps_its_status_held(self, temp_db: SQLiteDB) -> None:
         """The completion door is the operator's own, so the status it writes

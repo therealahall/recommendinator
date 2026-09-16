@@ -34,7 +34,6 @@ from src.models.content import (
 )
 from src.models.detail_fields import DETAIL_FIELDS
 from src.storage.manager import (
-    MANUAL_FIELDS,
     MAX_DECLINE_OTHERS,
     SUGGESTION_PAGE_DEFAULT,
     SUGGESTION_PAGE_MAX,
@@ -625,7 +624,6 @@ def library_edit(
 @click.option("--id", "item_id", type=int, required=True, help="Item database ID")
 @click.option(
     "--field",
-    type=click.Choice(sorted(MANUAL_FIELDS), case_sensitive=False),
     required=True,
     help="Field to stop holding against its source",
 )

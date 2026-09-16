@@ -320,7 +320,7 @@ Wikidata and Hardcover state a position, at `authored` authority. Wikidata imple
 
 Rules:
 
-- **Every enabled provider is asked**, in `enrichment.provider_order`. Genres and tags are combined, the rest gap-filled in rank order, and the top-ranked match is credited on `enrichment_status`. A retryable failure beside a match keeps the item queued with that credit. An edited field overwrites its detail column and is recorded in `content_item_manual_fields`, keeping sync and enrichment off it until `library clear-manual`.
+- **Every enabled provider is asked**, in `enrichment.provider_order`. Genres and tags are combined, the rest gap-filled in rank order, and the top-ranked match is credited on `enrichment_status`. A retryable failure beside a match keeps the item queued with that credit. An edited field overwrites its detail column and a manual row holds it against sync and enrichment until `library clear-manual`.
 - **A settled miss is not a failure.** Every provider answering "not this one" retires the item through `mark_enrichment_complete(..., "not_found")`, which only `--retry-not-found` requeues.
 - **A failure is classified before it is acted on** (`_classify_failure`,
   `_is_retryable`). Transport errors, 5xx, 408 and 429 are retryable, so

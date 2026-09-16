@@ -565,6 +565,27 @@ RELEASE_YEAR_FIELDS: dict[str, DetailField] = {
 }
 
 
+def detail_field_for(content_type: str, field: str) -> DetailField | None:
+    """``None`` for a field this content type does not state — a book declares
+    no release year, so it has none to hold.
+    """
+    if field == "creator":
+        return CREATOR_FIELDS.get(content_type)
+    if field == "release_year":
+        return RELEASE_YEAR_FIELDS.get(content_type)
+    spec = DETAIL_FIELDS.get(content_type)
+    if spec is None:
+        return None
+    return next(
+        (
+            candidate
+            for candidate in spec.fields
+            if candidate.metadata_key == field and candidate.column is not None
+        ),
+        None,
+    )
+
+
 #: The record each provider is bound to, keyed by provider name. The operator
 #: is its only writer: a run recording its own match would make a wrong one
 #: permanent, which is what a pin exists to correct.
