@@ -558,4 +558,193 @@ describe('EditModal', () => {
     wrapper.unmount()
   })
 
+  it('offers every writer\'s value for a field, and announces the one the host came back with', async () => {
+    const wrapper = mount(EditModal, {
+      props: {
+        item: defaultItem,
+        saving: false,
+        saveError: '',
+        fieldWriters: [
+          {
+            field: 'creator',
+            chosen: null,
+            note: '',
+            writers: [
+              { writer: 'steam', band: 'source', value: 'Valve' },
+              { writer: 'rawg', band: 'provider', value: 'Valve Corporation' },
+            ],
+          },
+        ],
+      },
+      attachTo: document.body,
+    })
+
+    expect(wrapper.get('label[for="edit-writer-creator"]').text()).toBe('Creator')
+    const picker = wrapper.get('#edit-writer-creator')
+    expect(picker.findAll('option').map((option) => option.text())).toEqual([
+      'Default order',
+      'steam — Valve',
+      'rawg — Valve Corporation',
+    ])
+
+    await picker.setValue('steam')
+
+    expect(wrapper.emitted('chooseWriter')).toEqual([[1, 'creator', 'steam']])
+
+    await wrapper.setProps({
+      fieldWriters: [
+        {
+          field: 'creator',
+          chosen: 'steam',
+          note: '',
+          writers: [
+            { writer: 'steam', band: 'source', value: 'Valve' },
+            { writer: 'rawg', band: 'provider', value: 'Valve Corporation' },
+          ],
+        },
+      ],
+    })
+
+    expect(wrapper.get('#edit-writer-note').text()).toBe('Creator now follows steam.')
+    wrapper.unmount()
+  })
+
+  it('reads a held field as the operator\'s own entry rather than a writer to follow', async () => {
+    const wrapper = mount(EditModal, {
+      props: {
+        item: defaultItem,
+        saving: false,
+        saveError: '',
+        fieldWriters: [
+          {
+            field: 'creator',
+            chosen: null,
+            note: '',
+            writers: [
+              { writer: 'operator', band: 'manual', value: 'Valve Software' },
+              { writer: 'steam', band: 'source', value: 'Valve' },
+            ],
+          },
+        ],
+      },
+      attachTo: document.body,
+    })
+
+    const picker = wrapper.get('#edit-writer-creator')
+    expect((picker.element as HTMLSelectElement).value).toBe('operator')
+    expect(picker.findAll('option').map((option) => option.text())).toContain(
+      'Your own entry — Valve Software',
+    )
+
+    await picker.setValue('operator')
+
+    expect(wrapper.emitted('chooseWriter')).toBeFalsy()
+    wrapper.unmount()
+  })
+
+  it('shows the writer a field already follows as the picked option', () => {
+    const wrapper = mount(EditModal, {
+      props: {
+        item: defaultItem,
+        saving: false,
+        saveError: '',
+        fieldWriters: [
+          {
+            field: 'creator',
+            chosen: 'rawg',
+            note: '',
+            writers: [
+              { writer: 'steam', band: 'source', value: 'Valve' },
+              { writer: 'rawg', band: 'provider', value: 'Valve Corporation' },
+            ],
+          },
+        ],
+      },
+      attachTo: document.body,
+    })
+
+    const picker = wrapper.get('#edit-writer-creator')
+    expect((picker.element as HTMLSelectElement).value).toBe('rawg')
+    wrapper.unmount()
+  })
+
+  it('offers no clear on a field nothing is chosen for, and announces no pick the host has not answered', async () => {
+    const wrapper = mount(EditModal, {
+      props: {
+        item: defaultItem,
+        saving: false,
+        saveError: '',
+        fieldWriters: [
+          {
+            field: 'creator',
+            chosen: null,
+            note: '',
+            writers: [
+              { writer: 'operator', band: 'manual', value: 'Valve Software' },
+              { writer: 'steam', band: 'source', value: 'Valve' },
+            ],
+          },
+        ],
+      },
+      attachTo: document.body,
+    })
+
+    const picker = wrapper.get('#edit-writer-creator')
+    expect(picker.findAll('option').map((option) => option.text())).not.toContain('Default order')
+
+    await picker.setValue('steam')
+
+    expect(wrapper.get('#edit-writer-note').text()).toBe('')
+    wrapper.unmount()
+  })
+
+  it('says a field no choice can move is settled, not that nobody stated it', () => {
+    const settled = 'Genres is not decided by rank, so no choice can move it.'
+    const wrapper = mount(EditModal, {
+      props: {
+        item: defaultItem,
+        saving: false,
+        saveError: '',
+        fieldWriters: [{ field: 'genres', chosen: null, note: settled, writers: [] }],
+      },
+      attachTo: document.body,
+    })
+
+    expect(wrapper.get('.edit-manual-list').text()).toContain(settled)
+    expect(wrapper.text()).not.toContain('No writer has stated')
+    expect(wrapper.find('#edit-writer-genres').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('mounts the writer note region while it has nothing to announce', () => {
+    const wrapper = mount(EditModal, {
+      props: { item: defaultItem, saving: false, saveError: '', fieldWriters: [] },
+      attachTo: document.body,
+    })
+
+    const note = wrapper.get('#edit-writer-note')
+    expect(note.attributes('aria-live')).toBe('polite')
+    expect(note.text()).toBe('')
+    wrapper.unmount()
+  })
+
+  it('re-adding the same genres in another order is not an edit', async () => {
+    const wrapper = mount(EditModal, {
+      props: {
+        item: { ...defaultItem, genres: ['Sci-Fi', 'Fantasy'] },
+        saving: false,
+        saveError: '',
+      },
+      attachTo: document.body,
+    })
+
+    await wrapper.get('[aria-label="Remove Sci-Fi"]').trigger('click')
+    await wrapper.find('#edit-genres').setValue('Sci-Fi')
+    await wrapper.find('#edit-genres').trigger('keypress', { key: 'Enter' })
+    await wrapper.findAll('.btn-primary').find(b => b.text().includes('Save'))!.trigger('click')
+
+    expect(wrapper.emitted('save')![0][1]).not.toHaveProperty('genres')
+    wrapper.unmount()
+  })
+
 })

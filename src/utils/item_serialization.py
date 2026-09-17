@@ -2,6 +2,7 @@
 model without a line here is a field the CLI stops emitting.
 """
 
+from collections.abc import Iterable, Mapping
 from typing import TypedDict
 
 from src.covers import cover_payload_url
@@ -9,8 +10,11 @@ from src.enrichment.manager import EnrichmentStart
 from src.enrichment.provider_base import pins_of
 from src.enrichment.registry import get_enrichment_registry
 from src.models.content import ContentItem, get_enum_value
-from src.models.detail_fields import to_int
+from src.models.detail_fields import text_names, to_int
 from src.storage.enrichment_status import ResetCounts
+from src.storage.field_rebuild import RANK_FREE_FIELDS
+from src.storage.field_writes import StoredFieldWrite, WriterBand
+from src.storage.merge import MERGEABLE_DETAIL_COLUMNS
 from src.utils.matching import Candidate
 from src.utils.series import (
     get_series_name_from_metadata,
@@ -88,6 +92,88 @@ def item_to_dict(item: ContentItem) -> dict[str, object]:
         "genres": metadata.get("genres") or [],
         "tags": metadata.get("tags") or [],
         "description": metadata.get("description"),
+    }
+
+
+class FieldWriterPayload(TypedDict):
+    """One writer's word on one field, rendered as both interfaces show it."""
+
+    writer: str
+    band: str
+    value: str
+
+
+class FieldOfferPayload(TypedDict):
+    field: str
+    chosen: str | None
+    #: Why this field offers no writer, '' where it offers some.
+    note: str
+    writers: list[FieldWriterPayload]
+
+
+#: Fields listed with no writer to follow: their value is not decided by rank,
+#: so a choice on one could move nothing.
+SETTLED_FIELDS: frozenset[str] = RANK_FREE_FIELDS | MERGEABLE_DETAIL_COLUMNS
+
+
+def _settled_note(field: str) -> str:
+    """One sentence for both interfaces, so neither reads a settled field back
+    as one nobody has stated.
+    """
+    return (
+        f"{field.replace('_', ' ').capitalize()} is not decided by rank,"
+        " so no choice can move it."
+    )
+
+
+def _offer_order(write: StoredFieldWrite) -> tuple[str, bool, bool, str]:
+    """The operator's own entry heads a field, then the item's own rows."""
+    return (
+        write.field,
+        write.writer_kind is not WriterBand.MANUAL,
+        write.absorbed,
+        write.writer,
+    )
+
+
+def field_writers_to_dict(
+    db_id: int,
+    writes: Iterable[StoredFieldWrite],
+    choices: Mapping[str, str],
+) -> dict[str, object]:
+    """What every writer says about each field, the operator's own entry among
+    them. A legacy row is left out: nobody claimed those values. A settled field
+    is listed with no writer, keeping it apart from one nobody has stated.
+    """
+    offered: dict[str, list[FieldWriterPayload]] = {}
+    for write in sorted(writes, key=_offer_order):
+        if write.writer_kind is WriterBand.LEGACY:
+            continue
+        if write.field in SETTLED_FIELDS:
+            offered.setdefault(write.field, [])
+            continue
+        value = ", ".join(text_names(write.value))
+        if not value:
+            continue
+        stated = offered.setdefault(write.field, [])
+        # A merged group holds one row per writer per row it absorbed, and a
+        # choice names the writer rather than any one of those rows.
+        if any(row["writer"] == write.writer for row in stated):
+            continue
+        stated.append(
+            {"writer": write.writer, "band": write.writer_kind.value, "value": value}
+        )
+    return {
+        "item_id": db_id,
+        "fields": [
+            {
+                "field": name,
+                "chosen": choices.get(name),
+                "note": _settled_note(name) if name in SETTLED_FIELDS else "",
+                "writers": writers,
+            }
+            for name, writers in sorted(offered.items())
+        ],
     }
 
 

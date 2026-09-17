@@ -1915,6 +1915,13 @@ button.rec-score {
   padding: 0;
 }
 
+/* The picker sits beside the field it names, so it takes the row's free space
+   rather than the full width every other box in the dialog takes. */
+.edit-field .edit-writer-pick {
+  width: auto;
+  max-width: 60%;
+}
+
 .edit-manual-held {
   display: flex;
   align-items: center;

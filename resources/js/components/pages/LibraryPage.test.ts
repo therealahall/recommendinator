@@ -163,6 +163,22 @@ describe('LibraryPage search behaviour', () => {
     expect(lib.editError).toBe('still down')
   })
 
+  it('hands a chosen writer to the store, and says a refusal in the dialog', async () => {
+    const { wrapper, lib } = mountPage({
+      editingItem: { db_id: 1, title: 'Dune', content_type: 'book', status: 'unread' },
+      editError: 'Failed to choose a writer',
+    })
+    vi.mocked(lib.chooseFieldWriter).mockRejectedValue(new Error('Item 1 not found'))
+    await wrapper.vm.$nextTick()
+
+    wrapper.findComponent(EditModal).vm.$emit('chooseWriter', 1, 'creator', 'steam')
+
+    expect(lib.editError).toBe('')
+    await flushPromises()
+    expect(lib.chooseFieldWriter).toHaveBeenCalledWith(1, 'creator', 'steam')
+    expect(lib.editError).toBe('Item 1 not found')
+  })
+
   it('renders the generic empty state when there is no search query', async () => {
     const { wrapper } = mountPage({ items: [], loading: false, searchQuery: '' })
     await wrapper.vm.$nextTick()

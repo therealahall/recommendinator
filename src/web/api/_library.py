@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import AfterValidator, BaseModel, Field, StringConstraints
 
+from src.library.field_choice import UnfollowableWriterError, follow_writer
 from src.library.rebuild import start_library_rebuild
 from src.models.content import (
     MAX_CREATOR_LENGTH,
@@ -27,6 +28,7 @@ from src.models.content import (
 from src.storage.manager import (
     UNSET,
     VALID_SORT_OPTIONS,
+    StorageManager,
     UncorrectableFieldError,
     Unset,
     unset_if_none,
@@ -34,6 +36,7 @@ from src.storage.manager import (
 from src.utils.export import export_items_csv, export_items_json
 from src.utils.item_serialization import (
     completion_to_dict,
+    field_writers_to_dict,
     ignore_result_to_dict,
     item_to_dict,
 )
@@ -129,6 +132,34 @@ class ContentItemResponse(BaseModel):
     description: str | None = None
 
 
+class FieldWriterView(BaseModel):
+    writer: str
+    band: str
+    value: str
+
+
+class FieldOfferView(BaseModel):
+    field: str
+    #: The writer this field follows, null while it follows the default order.
+    chosen: str | None = None
+    #: Why this field offers no writer, '' where it offers some.
+    note: str = ""
+    writers: list[FieldWriterView] = Field(default_factory=list)
+
+
+class ItemFieldWritersResponse(BaseModel):
+    item_id: int
+    fields: list[FieldOfferView] = Field(default_factory=list)
+
+
+class FieldChoiceRequest(BaseModel):
+    writer: str | None = Field(
+        None,
+        description="Writer the field follows; null returns it to the default order",
+    )
+    user_id: int = Field(1, ge=1, description="User ID for authorization")
+
+
 class IgnoreItemRequest(BaseModel):
     ignored: bool = Field(..., description="Whether to ignore the item")
 
@@ -180,6 +211,13 @@ class ItemEditRequest(BaseModel):
 
 def _item_to_response(item: "ContentItem") -> ContentItemResponse:
     return ContentItemResponse.model_validate(item_to_dict(item))
+
+
+def _item_or_404(storage: StorageManager, db_id: int, user_id: int) -> ContentItem:
+    item = storage.get_content_item(db_id, user_id=user_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return item
 
 
 class LibraryRebuildResponse(BaseModel):
@@ -465,7 +503,7 @@ def clear_manual_field(
     user_id: int = Query(1, ge=1, description="User ID for authorization"),
 ) -> ContentItemResponse:
     """Stop holding one field, leaving what it says alone."""
-    if not storage.clear_manual_field(db_id, field, user_id=user_id):
+    if not storage.clear_manual_field(db_id, field.lower(), user_id=user_id):
         raise HTTPException(
             status_code=404, detail=f"Item {db_id} holds no manual {field}."
         )
@@ -475,6 +513,50 @@ def clear_manual_field(
         raise HTTPException(status_code=404, detail="Item not found after update")
 
     return _item_to_response(updated_item)
+
+
+@router.get("/items/{db_id}/field-writers", response_model=ItemFieldWritersResponse)
+def get_field_writers(
+    db_id: int,
+    storage: RequiredStorage,
+    field: str | None = Query(
+        None, description="One field's writers; omit for every field"
+    ),
+    user_id: int = Query(1, ge=1, description="User ID for authorization"),
+) -> ItemFieldWritersResponse:
+    """What every writer says about this item's fields, and which one each follows."""
+    _item_or_404(storage, db_id, user_id)
+
+    return ItemFieldWritersResponse.model_validate(
+        field_writers_to_dict(
+            db_id,
+            storage.field_writers(db_id, field.lower() if field else None, user_id),
+            storage.field_choices(db_id, user_id=user_id),
+        )
+    )
+
+
+@router.put("/items/{db_id}/field-writers/{field}", response_model=ContentItemResponse)
+def choose_field_writer(
+    db_id: int,
+    field: str,
+    request: FieldChoiceRequest,
+    storage: RequiredStorage,
+) -> ContentItemResponse:
+    """Follow one writer for one field, or return it to the default order."""
+    _item_or_404(storage, db_id, request.user_id)
+
+    try:
+        followed = follow_writer(storage, db_id, field, request.writer, request.user_id)
+    except UnfollowableWriterError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    if not followed:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Item {db_id} follows no chosen writer for {field}.",
+        )
+
+    return _item_to_response(_item_or_404(storage, db_id, request.user_id))
 
 
 @router.post("/complete", response_model=CompletionResponse)
