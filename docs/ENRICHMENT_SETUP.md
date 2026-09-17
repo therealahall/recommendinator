@@ -65,7 +65,7 @@ identify beyond doubt, by type and release year, is left alone.
 
 Every enabled provider for an item's type is asked in the order `enrichment.provider_order` names, whether or not one above it matched. Genres and tags from every match are combined. Every other field comes from the highest-ranked provider stating it, and that top match is credited with the item. Every installed provider must be named exactly once, so an order that misspells or omits one is refused.
 
-Items enriched before every provider was asked hold only what their first match stated. `enrichment reset` queues them again, or `enrichment start --retry-not-found` for items no provider found, and the next run adds and fills from every provider without removing anything.
+Items enriched before every provider was asked hold only what their first match stated. `enrichment requeue --id` puts one back in front of every provider with what it holds standing, and `enrichment start --retry-not-found` re-asks for items no provider found: either way the next run adds and fills without removing anything. `enrichment reset` reaches them in bulk, at the cost of dropping what the providers stated first.
 
 ```bash
 uv run python -m src.cli settings set enrichment.provider_order "openlibrary,hardcover,rawg,tmdb,wikidata,igdb"
@@ -170,13 +170,9 @@ once the data may have been added upstream, with
 
 ### Items showing as "failed"
 
-Different from "not found". The provider never answered, having timed out, been
-unreachable, throttled or returned an error. Failed items stay queued: run
-enrichment again once the provider is healthy — or, for one item, `enrichment
-reset --id <id>` or **Enrich this again** in the edit dialog, which enrich it
-now where enrichment is on with a provider for its type. `enrichment status`
-counts each item once, so a failed item reports under **Failed**, not
-**Pending**, though queued.
+Different from "not found". The provider never answered, having timed out, been unreachable, throttled or returned an error. Failed items stay queued: run enrichment again once the provider is healthy, or for one item `enrichment requeue --id <id>` — **Enrich this again** in the edit dialog — which enriches it now with every value it holds standing. `enrichment status` counts each item once, so a failed item reports under **Failed**, not **Pending**, though queued.
+
+`enrichment reset --id <id>` is the heavier door: it drops what the providers stated about the item before re-enriching, so a field only a provider ever filled is emptied. Reach for it when the stored values are wrong, not when a provider failed.
 
 An item one provider matched while another failed is saved and still reports under **Failed**, credited to the provider that matched, until a run hears from the one that failed.
 

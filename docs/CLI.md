@@ -442,8 +442,9 @@ re-queued for enrichment so the next source or provider can name another.
 
 `backfill` only fetches covers the library already holds a URL for. An item
 whose enrichment settled before providers were asked for art has no URL, so
-`backfill` counts it and leaves it: reaching it means a full re-enrichment pass,
-which is yours to start with `enrichment reset` then `enrichment start`.
+`backfill` counts it and leaves it: reaching it means asking the providers
+again, which is yours to start with `enrichment requeue --id`, every value the
+item holds standing.
 
 Not counted: an item settled `not_found`, whose door is `enrichment start
 --retry-not-found`, and one whose URL is recorded dead, which clearing already
@@ -465,8 +466,9 @@ uv run python -m src.cli enrichment start --retry-not-found   # providers drift 
 uv run python -m src.cli enrichment status                    # library counts by provider
 uv run python -m src.cli enrichment job                       # the live run, if there is one
 uv run python -m src.cli enrichment stop
-uv run python -m src.cli enrichment reset                     # re-process on the next run
-uv run python -m src.cli enrichment reset --id 42             # retry one item
+uv run python -m src.cli enrichment reset                     # drop every provider's values, then re-enrich
+uv run python -m src.cli enrichment reset --id 42             # drop one item's provider values, then re-enrich
+uv run python -m src.cli enrichment requeue --id 42           # enrich one item again, keeping what it holds
 uv run python -m src.cli enrichment candidates --id 42        # what each provider offers
 uv run python -m src.cli enrichment pin --id 42 --provider rawg --record 41494
 uv run python -m src.cli enrichment pin --id 42 --provider rawg --clear
@@ -482,11 +484,15 @@ for the run; a clear rebuilds it at once and leaves it queued.
 Only a provider that reads a pin can be pinned, and only to an id it can look
 up; the refusal names the ones that can.
 
-`reset --id` re-queues one item and enriches it on the same terms, waiting the
-same way, without re-fetching a whole provider or content type, which is the
-door for an item a run left on a timeout or a 503, and the one **Enrich this
-again** opens in the library's edit dialog. It takes no `--provider` or `--type`
-beside it.
+`reset` deletes what the providers in scope stated from the ledger — across a merge group, so a survivor and the rows merged into it go together — and rebuilds each item on what is left standing: what its sources said, your own edits and its pins. A field only a provider ever filled is emptied, and the item is queued for the run that refills it.
+
+`--provider` reaches every item that provider wrote a ledger row for, not only the ones credited to it for the match, so resetting one provider takes back its word everywhere it spoke.
+
+Nothing else drops a row: `requeue`, pinning an item, clearing that pin and a cover found permanently gone each re-queue the item with every ledger row standing.
+
+`reset --id` does all of that for one item — dropping what every provider stated about it, rebuilding it, re-queuing it — and then enriches it, waiting for the run. It takes no `--provider` or `--type` beside it.
+
+`requeue --id` is the door for an item a run left on a timeout or a 503: it puts the item back in front of the providers with every value it holds standing, then enriches it. It is what **Enrich this again** opens in the library's edit dialog, mirroring `POST /api/enrichment/requeue`.
 
 `enrichment job` and `enrichment stop` reach the run whatever started it — the
 Data tab, another terminal, a backgrounded process — because the job lives in
