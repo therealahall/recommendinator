@@ -405,6 +405,22 @@ class TestHardReset:
         assert rebuilt is not None
         assert rebuilt.metadata.get("description") is None
 
+    def test_legacy_count_counts_an_item_whose_only_other_word_is_a_choice(
+        self, storage_manager: StorageManager
+    ) -> None:
+        db_id = save_unenriched(storage_manager, "item22", source="radarr")
+        library_holds(storage_manager, db_id, description="From before the ledger")
+        provider_enriches(storage_manager, db_id, "tmdb", description="What tmdb says")
+        assert storage_manager.set_field_choice(db_id, "description", "tmdb") is True
+
+        assert storage_manager.enrichment.legacy_count() == 1
+
+        storage_manager.enrichment.reset(hard=True)
+
+        rebuilt = storage_manager.get_content_item(db_id)
+        assert rebuilt is not None
+        assert rebuilt.metadata.get("description") is None
+
     def test_a_reset_counts_what_it_stripped_apart_from_what_it_re_queued(
         self, storage_manager: StorageManager
     ) -> None:
