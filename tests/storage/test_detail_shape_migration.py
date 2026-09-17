@@ -15,6 +15,7 @@ from src.utils.export import export_items_csv
 from src.utils.item_serialization import item_to_dict
 from src.utils.series import expand_tv_shows_to_seasons
 from src.utils.sorting import build_search_text
+from tests.factories import drop_the_ledger_write_guard
 
 _FLAGS_WINDOWS_AND_LINUX = json.dumps([{"windows": True, "mac": False, "linux": True}])
 _FLAGS_NOTHING_SUPPORTED = json.dumps(
@@ -39,6 +40,9 @@ def _needs_enrichment(db: SQLiteDB, db_id: int) -> int:
 def _mark_written_before_the_repair(
     handle: sqlite3.Connection | sqlite3.Cursor,
 ) -> None:
+    # A build of that vintage had no ledger triggers, and the repairs the next
+    # open runs rewrite the very columns they refuse.
+    drop_the_ledger_write_guard(handle)
     handle.execute("PRAGMA user_version = 2")
 
 
@@ -74,12 +78,12 @@ def _write_show_metadata(
     db: SQLiteDB, db_id: int, *, seasons: int | None, metadata: str | None
 ) -> None:
     with db.connection() as conn:
+        _mark_written_before_the_repair(conn)
         conn.execute(
             "UPDATE tv_show_details SET seasons = ?, metadata = ?"
             " WHERE content_item_id = ?",
             (seasons, metadata, db_id),
         )
-        _mark_written_before_the_repair(conn)
         conn.commit()
 
 
@@ -100,11 +104,11 @@ def _seed_game(
         )
     )
     with db.connection() as conn:
+        _mark_written_before_the_repair(conn)
         conn.execute(
             "UPDATE video_game_details SET platforms = ? WHERE content_item_id = ?",
             (platforms, db_id),
         )
-        _mark_written_before_the_repair(conn)
         conn.commit()
     return db_id
 
@@ -128,12 +132,12 @@ def _seed_stranded_companies(
         )
     )
     with db.connection() as conn:
+        _mark_written_before_the_repair(conn)
         conn.execute(
             "UPDATE video_game_details SET developer = ?, publisher = ?, metadata = ?"
             " WHERE content_item_id = ?",
             (developer, publisher, metadata, db_id),
         )
-        _mark_written_before_the_repair(conn)
         conn.commit()
     return db_id
 
@@ -169,13 +173,13 @@ def _insert_legacy_game_row(
         )
         db_id = cursor.lastrowid
         assert db_id is not None
+        _mark_written_before_the_repair(conn)
         cursor.execute(
             "INSERT INTO video_game_details"
             " (content_item_id, developer, publisher, platforms, metadata)"
             " VALUES (?, ?, ?, ?, ?)",
             (db_id, developer, publisher, platforms, metadata),
         )
-        _mark_written_before_the_repair(conn)
         conn.commit()
     finally:
         conn.close()

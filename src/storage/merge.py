@@ -8,7 +8,7 @@ from typing import Any
 
 from src.models.detail_fields import ContentTypeFields
 from src.utils.dates import merge_seasons_watched_dates
-from src.utils.series import reconcile_seasons, reconcile_series
+from src.utils.series import reconcile_seasons
 from src.utils.sorting import FUZZY_MATCH_THRESHOLD
 
 __all__ = [
@@ -17,11 +17,10 @@ __all__ = [
     "MONOTONIC_DETAIL_COLUMNS",
     "assert_known_detail_table",
     "bare_title_key",
+    "carry_detail_metadata",
     "cover_url_is_dead",
     "creators_conflict",
-    "detail_columns",
     "detail_join",
-    "merge_detail_tables",
     "merge_enrichment_status",
     "merge_scalar_columns",
     "normalize_creator_for_matching",
@@ -92,12 +91,6 @@ _DETAIL_TABLE_COLUMNS: dict[str, tuple[str, ...]] = {
 # sync. Guards every table name a caller takes from the field declaration in
 # src/models/detail_fields.py, before it reaches SQL identifier interpolation.
 ALLOWED_DETAIL_TABLES: frozenset[str] = frozenset(_DETAIL_TABLE_COLUMNS.keys())
-
-
-def detail_columns(table: str) -> tuple[str, ...]:
-    if table not in _DETAIL_TABLE_COLUMNS:
-        raise ValueError(f"Unknown detail table: {table!r}")
-    return (*_DETAIL_TABLE_COLUMNS[table], "metadata")
 
 
 def assert_known_detail_table(spec: ContentTypeFields) -> None:
@@ -340,16 +333,14 @@ def creators_conflict(one: str | None, other: str | None) -> bool:
 
 
 def merge_scalar_columns(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -> None:
-    """Every other user-owned column is carried across, the duplicate row being
-    hidden. ``ignored`` is not read here at all: each row keeps its own, because
-    carrying it hides the survivor behind the duplicate's ignore. Requires
-    ``row_factory = sqlite3.Row``.
+    """The person's own columns only: a writer states the cover, so the rebuild
+    resolves it. ``ignored`` is not carried either, because it would hide the
+    survivor behind the duplicate's ignore. Requires ``row_factory = Row``.
     """
     # Skipped entirely when no column moves, so a merge that changes nothing
     # leaves updated_at — a user-facing sort key — alone.
     select_sql = (
-        "SELECT status, rating, review, date_completed, cover_url"
-        " FROM content_items WHERE id = ?"
+        "SELECT status, rating, review, date_completed FROM content_items WHERE id = ?"
     )
     cursor.execute(select_sql, (keep_id,))
     keep_row = cursor.fetchone()
@@ -366,16 +357,10 @@ def merge_scalar_columns(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -
         keep_row["date_completed"] is None
         or dup_row["date_completed"] > keep_row["date_completed"]
     )
-    will_change_cover = (
-        keep_row["cover_url"] is None
-        and dup_row["cover_url"] is not None
-        and not cover_url_is_dead(cursor, keep_id, dup_row["cover_url"])
-    )
     if not (
         will_change_rating
         or will_change_review
         or will_change_date
-        or will_change_cover
         or merged_status != keep_row["status"]
     ):
         return
@@ -390,11 +375,6 @@ def merge_scalar_columns(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -
         " WHEN date_completed IS NULL THEN ?"
         " WHEN ? IS NOT NULL AND ? > date_completed THEN ?"
         " ELSE date_completed END,"
-        " cover_url = CASE"
-        " WHEN cover_url IS NULL AND NOT EXISTS ("
-        " SELECT 1 FROM content_item_dead_covers"
-        " WHERE content_item_id = ? AND cover_url = ?"
-        " ) THEN ? ELSE cover_url END,"
         " status = ?,"
         " updated_at = CURRENT_TIMESTAMP"
         " WHERE id = ?",
@@ -405,9 +385,6 @@ def merge_scalar_columns(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -
             dup_row["date_completed"],
             dup_row["date_completed"],
             dup_row["date_completed"],
-            keep_id,
-            dup_row["cover_url"],
-            dup_row["cover_url"],
             merged_status,
             keep_id,
         ),
@@ -447,45 +424,36 @@ def merge_enrichment_status(
     )
 
 
-def _merge_detail_metadata(
-    keep_detail: sqlite3.Row | None, dup_detail: sqlite3.Row | None
-) -> str | None:
-    # merge_detail_tables already guards both rows, so this only fires if that
-    # guard regresses. Skipping matches every other degenerate case here: dedup
-    # leaves the kept row alone rather than aborting the whole merge.
-    if keep_detail is None or dup_detail is None:
-        return None
-
-    dup_meta_raw = dup_detail["metadata"]
-    if dup_meta_raw is None:
-        return None
+def _parsed_blob(raw: Any) -> dict[str, Any] | None:
+    """``None`` where it cannot be read, which the caller leaves alone rather
+    than overwrites.
+    """
+    if raw is None:
+        return {}
     try:
-        dup_meta = json.loads(dup_meta_raw)
+        parsed = json.loads(raw)
     except (json.JSONDecodeError, TypeError):
         return None
-    if not isinstance(dup_meta, dict) or not dup_meta:
-        return None
+    return parsed if isinstance(parsed, dict) else None
 
-    keep_meta: dict[str, Any] = {}
-    keep_meta_raw = keep_detail["metadata"]
-    if keep_meta_raw is not None:
-        try:
-            parsed = json.loads(keep_meta_raw)
-        except (json.JSONDecodeError, TypeError):
-            return None  # Kept metadata unparseable — skip to avoid data loss
-        if not isinstance(parsed, dict):
-            return None  # Kept metadata non-dict — skip to preserve it
-        keep_meta = parsed
+
+def _carried_metadata(keep_raw: Any, dup_raw: Any) -> str | None:
+    """The absorbed row's keys the survivor states none of: the ledger holds no
+    row for a pin, a provider's id or the person's own watching. What the
+    rebuild resolves it writes over this.
+    """
+    dup_meta = _parsed_blob(dup_raw)
+    if not dup_meta:
+        return None
+    keep_meta = _parsed_blob(keep_raw)
+    if keep_meta is None:
+        return None
 
     merged = {**dup_meta, **keep_meta}
 
     # Exception: the season fields, reconciled as the save path reconciles them,
     # so the absorbed row's larger season size is not dropped for the kept one.
     merged.update(reconcile_seasons(keep_meta, dup_meta))
-
-    # Exception: the series fields, on the same terms — the absorbed row's
-    # better-founded ordinal is not dropped for the kept row's guess.
-    merged.update(reconcile_series(keep_meta, dup_meta))
 
     # Exception: seasons_watched_dates keeps the later date per season, so an
     # earlier duplicate never overwrites the kept row's. A None result — both
@@ -499,50 +467,23 @@ def _merge_detail_metadata(
     return json.dumps(merged)
 
 
-def merge_detail_tables(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -> None:
-    """The survivor's empty columns and its blob only: every writer-owned field
-    is the ledger's to resolve. Leaves ``updated_at`` alone, and requires
+def carry_detail_metadata(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -> None:
+    """The blob alone: a detail column is writer-stated, so the rebuild decides
+    it on both legs of a merge. Leaves ``updated_at`` alone, and requires
     ``row_factory = sqlite3.Row``.
     """
-    for table, columns in _DETAIL_TABLE_COLUMNS.items():
-        cursor.execute(
-            f"SELECT * FROM {table} WHERE content_item_id = ?",
-            (keep_id,),
-        )
+    for table in _DETAIL_TABLE_COLUMNS:
+        select_sql = f"SELECT metadata FROM {table} WHERE content_item_id = ?"
+        cursor.execute(select_sql, (keep_id,))
         keep_detail = cursor.fetchone()
-        cursor.execute(
-            f"SELECT * FROM {table} WHERE content_item_id = ?",
-            (delete_id,),
-        )
+        cursor.execute(select_sql, (delete_id,))
         dup_detail = cursor.fetchone()
-        if dup_detail is None:
-            continue
-        if keep_detail is None:
-            copied = ", ".join(detail_columns(table))
-            cursor.execute(
-                f"INSERT INTO {table} (content_item_id, {copied})"
-                f" SELECT ?, {copied} FROM {table} WHERE content_item_id = ?",
-                (keep_id, delete_id),
-            )
+        if keep_detail is None or dup_detail is None:
             continue
 
-        detail_updates: list[str] = []
-        detail_params: list[Any] = []
-
-        for col in columns:
-            if keep_detail[col] is None and dup_detail[col] is not None:
-                detail_updates.append(f"{col} = ?")
-                detail_params.append(dup_detail[col])
-
-        merged_meta_json = _merge_detail_metadata(keep_detail, dup_detail)
-        if merged_meta_json is not None:
-            detail_updates.append("metadata = ?")
-            detail_params.append(merged_meta_json)
-
-        if detail_updates:
-            detail_clause = ", ".join(detail_updates)
-            detail_params.append(keep_id)
+        carried = _carried_metadata(keep_detail["metadata"], dup_detail["metadata"])
+        if carried is not None and carried != keep_detail["metadata"]:
             cursor.execute(
-                f"UPDATE {table} SET {detail_clause} WHERE content_item_id = ?",
-                detail_params,
+                f"UPDATE {table} SET metadata = ? WHERE content_item_id = ?",
+                (carried, keep_id),
             )

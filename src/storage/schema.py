@@ -29,6 +29,7 @@ from src.storage.field_writes import (
     stated_writes,
 )
 from src.storage.merge import (
+    assert_known_detail_table,
     normalize_creator_for_matching,
     normalize_title_for_matching,
 )
@@ -336,6 +337,10 @@ _CONTENT_ITEM_INDEXES = (
     "CREATE INDEX IF NOT EXISTS idx_ci_merged_into ON content_items(merged_into)",
 )
 
+#: Answered only by the connection ``SQLiteDB`` hands out: a caller that cannot
+#: answer it cannot write a resolved column at all, which is the guard working.
+REBUILD_FUNCTION = "rebuilding_item_fields"
+
 
 def create_schema(conn: sqlite3.Connection) -> None:
     """Sets ``conn.row_factory`` on the caller's connection unconditionally."""
@@ -611,6 +616,11 @@ def create_schema(conn: sqlite3.Connection) -> None:
 
     _migrate_settings_table(cursor, stored_version)
 
+    # Last of all: every repair above rewrites the detail rows these refuse.
+    # Unguarded, because a fresh database reports the current version and a
+    # guarded step would never reach one.
+    _create_ledger_write_guard(cursor)
+
     # Written inside the same transaction as the steps themselves: an
     # open that raises advances nothing and the next one retries the lot.
     #
@@ -621,6 +631,40 @@ def create_schema(conn: sqlite3.Connection) -> None:
         cursor.execute(f"PRAGMA user_version = {int(_SCHEMA_VERSION)}")
 
     conn.commit()
+
+
+def _create_ledger_write_guard(cursor: sqlite3.Cursor) -> None:
+    """Refuse a resolved column written outside the rebuild, so a later door
+    cannot quietly restore the fill-only write path the ledger replaced. The
+    blob stays open: a merge carries keys the ledger holds no row for.
+    """
+    refusal = "is resolved from the field-write ledger, so only the rebuild writes it"
+    cursor.execute(
+        "CREATE TRIGGER IF NOT EXISTS content_items_cover_ledger_only"
+        " BEFORE UPDATE OF cover_url ON content_items"
+        # A cleared cover states nothing: that door buries a dead url and leaves
+        # the next rebuild to resolve what replaces it.
+        f" WHEN NEW.cover_url IS NOT NULL AND NOT {REBUILD_FUNCTION}()"
+        f" BEGIN SELECT RAISE(ABORT, 'content_items.cover_url {refusal}'); END"
+    )
+    for spec in DETAIL_FIELDS.values():
+        assert_known_detail_table(spec)
+        message = f"{spec.table} {refusal}"
+        stated = " OR ".join(f"NEW.{column} IS NOT NULL" for column in spec.columns)
+        cursor.execute(
+            f"CREATE TRIGGER IF NOT EXISTS {spec.table}_insert_ledger_only"
+            f" BEFORE INSERT ON {spec.table}"
+            # A row carrying the blob alone is the pin door's, which states no
+            # column and so needs no rebuild to decide one.
+            f" WHEN ({stated}) AND NOT {REBUILD_FUNCTION}()"
+            f" BEGIN SELECT RAISE(ABORT, '{message}'); END"
+        )
+        cursor.execute(
+            f"CREATE TRIGGER IF NOT EXISTS {spec.table}_update_ledger_only"
+            f" BEFORE UPDATE OF {', '.join(spec.columns)} ON {spec.table}"
+            f" WHEN NOT {REBUILD_FUNCTION}()"
+            f" BEGIN SELECT RAISE(ABORT, '{message}'); END"
+        )
 
 
 def _like_prefix(prefix: str) -> str:

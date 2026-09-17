@@ -5,6 +5,7 @@ every later import for that column.
 
 import json
 import sqlite3
+import threading
 from collections.abc import Generator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -48,7 +49,11 @@ from src.storage.duplicates import (
     list_declines,
     undecline_duplicate,
 )
-from src.storage.field_rebuild import item_writer_ranks, rebuild_item_fields
+from src.storage.field_rebuild import (
+    fields_leaving_the_group,
+    item_writer_ranks,
+    rebuild_item_fields,
+)
 from src.storage.field_writes import (
     LEGACY_WRITER,
     MANUAL_WRITER,
@@ -76,7 +81,7 @@ from src.storage.merge import (
     resolve_status_forward,
     stated_region,
 )
-from src.storage.schema import create_schema, get_default_user_id
+from src.storage.schema import REBUILD_FUNCTION, create_schema, get_default_user_id
 from src.utils.dates import local_today, merge_seasons_watched_dates, utc_now
 from src.utils.series import (
     all_seasons_watched,
@@ -447,6 +452,7 @@ _ENRICHED_PREDICATE = (
 class SQLiteDB:
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
+        self._local = threading.local()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         init_conn = sqlite3.connect(self.db_path)
         try:
@@ -463,7 +469,18 @@ class SQLiteDB:
         # the lock — required for parallel multi-source sync where two
         # workers may attempt BEGIN IMMEDIATE concurrently.
         conn.execute("PRAGMA busy_timeout = 5000")
+        # What the schema's triggers ask before allowing a write to a resolved
+        # column. Only _write_ledger_fields switches it on, and only for its own
+        # thread, so no other door can answer yes.
+        conn.create_function(REBUILD_FUNCTION, 0, self._rebuilding_fields)
         return conn
+
+    def _rebuilding_fields(self) -> int:
+        """Thread-scoped, not instance-scoped: sync, enrichment and the cover
+        backfill are daemon threads on one manager, and one clearing the flag
+        between another's set and its guarded write reopens the guard.
+        """
+        return int(getattr(self._local, "rebuilding", False))
 
     @contextmanager
     def connection(self) -> Generator[sqlite3.Connection, None, None]:
@@ -879,6 +896,7 @@ class SQLiteDB:
         db_id: int,
         content_type: str,
         stated_metadata: Mapping[str, Any],
+        clear_fields: frozenset[str] = frozenset(),
     ) -> bool:
         """Record first, then rebuild: every writer-owned column holds what the
         ledger says by rank, and only one whose value moves is written.
@@ -890,10 +908,23 @@ class SQLiteDB:
         resolved = rebuild_item_fields(
             cursor, db_id, item_writer_ranks(cursor, frozenset(pins_of(stored_blob)))
         )
-        base_changed = self._write_base_columns(cursor, db_id, resolved)
-        detail_changed = self._write_detail_row(
-            cursor, spec, db_id, existing, stored_blob, stated_metadata, resolved
-        )
+        self._local.rebuilding = True
+        try:
+            base_changed = self._write_base_columns(
+                cursor, db_id, resolved, clear_fields
+            )
+            detail_changed = self._write_detail_row(
+                cursor,
+                spec,
+                db_id,
+                existing,
+                stored_blob,
+                stated_metadata,
+                resolved,
+                clear_fields,
+            )
+        finally:
+            self._local.rebuilding = False
         return base_changed or detail_changed
 
     @staticmethod
@@ -908,7 +939,10 @@ class SQLiteDB:
 
     @staticmethod
     def _write_base_columns(
-        cursor: sqlite3.Cursor, db_id: int, resolved: Mapping[str, Any]
+        cursor: sqlite3.Cursor,
+        db_id: int,
+        resolved: Mapping[str, Any],
+        clear_fields: frozenset[str] = frozenset(),
     ) -> bool:
         """Title and the cover are the only ``content_items`` columns a writer
         states; status, rating, review and the rest are the person's own.
@@ -919,6 +953,10 @@ class SQLiteDB:
             offered["normalized_title"] = normalize_title_for_matching(str(title))
         if (cover := resolved.get(COVER_FIELD)) is not None:
             offered[COVER_FIELD] = cover
+        elif COVER_FIELD in clear_fields:
+            # Never the title beside it: a row that lost its own would be
+            # unfindable in every list this library offers.
+            offered[COVER_FIELD] = None
         if not offered:
             return False
 
@@ -949,20 +987,21 @@ class SQLiteDB:
         stored_blob: Mapping[str, Any],
         stated_metadata: Mapping[str, Any],
         resolved: Mapping[str, Any],
+        clear_fields: frozenset[str] = frozenset(),
     ) -> bool:
         """A field no writer states is left as it stands: saying nothing is not
-        a claim that the column is empty.
+        a claim that the column is empty. A field in *clear_fields* is one: its
+        only writers left with the row an undo sent back.
         """
         values: dict[str, Any] = {}
         for detail_field in spec.fields:
             column = detail_field.column
-            if (
-                column is None
-                or detail_field.owner is not FieldOwner.WRITER
-                or detail_field.metadata_key not in resolved
-            ):
+            if column is None or detail_field.owner is not FieldOwner.WRITER:
                 continue
-            values[column] = detail_field.store(resolved[detail_field.metadata_key])
+            if detail_field.metadata_key in resolved:
+                values[column] = detail_field.store(resolved[detail_field.metadata_key])
+            elif detail_field.metadata_key in clear_fields:
+                values[column] = None
         values["metadata"] = self._merged_blob(
             spec, stored_blob, stated_metadata, resolved
         )
@@ -1625,11 +1664,22 @@ class SQLiteDB:
             cursor = conn.cursor()
             record = unmerge_item(cursor, merge_id, user_id=user_id)
             if record is not None:
-                self._rebuild_merge_group(cursor, record.survivor_id)
+                self._rebuild_merge_group(
+                    cursor,
+                    record.survivor_id,
+                    clear_fields=fields_leaving_the_group(
+                        cursor, record.survivor_id, record.absorbed_id
+                    ),
+                )
             conn.commit()
             return record
 
-    def _rebuild_merge_group(self, cursor: sqlite3.Cursor, survivor_id: int) -> None:
+    def _rebuild_merge_group(
+        self,
+        cursor: sqlite3.Cursor,
+        survivor_id: int,
+        clear_fields: frozenset[str] = frozenset(),
+    ) -> None:
         """The group the ledger resolves over just changed, so the survivor is
         rebuilt here: a one-off import may never save this item again. The undo
         leg runs it too, which is what takes these writes back.
@@ -1638,8 +1688,14 @@ class SQLiteDB:
             "SELECT content_type FROM content_items WHERE id = ?", (survivor_id,)
         )
         content_type = cursor.fetchone()["content_type"]
-        self._write_ledger_fields(cursor, survivor_id, content_type, {})
+        self._write_ledger_fields(
+            cursor, survivor_id, content_type, {}, clear_fields=clear_fields
+        )
         write_derived_columns(cursor, survivor_id)
+        if content_type == "tv_show":
+            # The group's highest season count is the survivor's now, so a show
+            # completed at the old total has an unwatched season again.
+            self._handle_tv_season_change(cursor, survivor_id)
 
     def list_content_item_merges(self, user_id: int | None = None) -> list[MergeRecord]:
         effective_user_id = user_id if user_id is not None else get_default_user_id()

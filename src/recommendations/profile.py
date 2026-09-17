@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, TypedDict
 
 from src.models.content import ContentItem, ContentType
 from src.recommendations.scorers import extract_genres
-from src.storage.schema import PreferenceProfileRow
+from src.storage.schema import PreferenceProfileRow, get_default_user_id
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
@@ -102,10 +102,17 @@ def profile_payload(
     }
 
 
+def refresh_profile(storage: "StorageManager", user_id: int | None = None) -> None:
+    """Once at the end of a bulk operation, and after each user-owned write: it
+    reads the whole library, so a per-item call would run one pass per item.
+    """
+    ProfileGenerator(storage).regenerate_and_save(user_id or get_default_user_id())
+
+
 def regenerated_payload(storage: "StorageManager", user_id: int) -> ProfilePayload:
     """Serialise what was stored: a body built from the in-memory profile drifts
     from what the next read answers."""
-    ProfileGenerator(storage).regenerate_and_save(user_id)
+    refresh_profile(storage, user_id)
     return profile_payload(user_id, storage.profiles.get(user_id))
 
 

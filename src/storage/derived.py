@@ -157,8 +157,10 @@ def backfill_derived_columns(cursor: sqlite3.Cursor) -> None:
     because a build older than they are can insert a row into a database this
     build already stamped, and no version guard would ever revisit it.
     """
+    # fetchall() required: _write_row updates the table this select scans, and
+    # SQLite leaves a result set undefined when its own table is written
+    # mid-step. A row skipped that way keeps its NULL columns.
     cursor.execute(_BACKFILL_SELECT)
-    # fetchall() required: the cursor is reused for the UPDATEs in the loop
     for row in cursor.fetchall():
         _write_row(cursor, row)
 

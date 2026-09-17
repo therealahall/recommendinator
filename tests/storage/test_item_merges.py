@@ -6,7 +6,12 @@ from typing import Any
 
 import pytest
 
-from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.models.content import (
+    ConsumptionStatus,
+    ContentItem,
+    ContentType,
+    get_enum_value,
+)
 from src.storage.field_writes import FieldWriter, WriterBand
 from src.storage.item_merges import MergeError, MergeEvidence
 from src.storage.schema import (
@@ -16,6 +21,7 @@ from src.storage.schema import (
     mark_item_needs_enrichment,
     reset_enrichment_status,
 )
+from src.storage.settings_store import SettingsStore
 from src.storage.sqlite_db import SQLiteDB
 from src.utils.series import get_series_name, get_series_position_from_metadata
 
@@ -108,6 +114,23 @@ def _forget_the_carry(db: SQLiteDB, merge_id: int) -> None:
         ).fetchone()
         state = json.loads(row["restore_json"])
         state.pop("repointed")
+        conn.execute(
+            "UPDATE content_item_merges SET restore_json = ? WHERE id = ?",
+            (json.dumps(state), merge_id),
+        )
+        conn.commit()
+
+
+def _as_the_old_snapshot_wrote_it(db: SQLiteDB, merge_id: int) -> None:
+    """Restore state from a build whose snapshot was every detail column: the
+    merge filled one from the absorbed row and left the blob alone, so the entry
+    holds no ``metadata`` key at all."""
+    with db.connection() as conn:
+        row = conn.execute(
+            "SELECT restore_json FROM content_item_merges WHERE id = ?", (merge_id,)
+        ).fetchone()
+        state = json.loads(row["restore_json"])
+        state["children"]["video_game_details"] = {"developer": None}
         conn.execute(
             "UPDATE content_item_merges SET restore_json = ? WHERE id = ?",
             (json.dumps(state), merge_id),
@@ -324,6 +347,37 @@ def test_a_merge_combines_the_genres_and_takes_the_higher_count_of_both_rows(
     assert survivor is not None
     assert survivor.metadata["genres"] == ["Drama", "Thriller"]
     assert survivor.metadata["seasons"] == 2
+
+
+def test_a_merge_raising_the_season_count_unfinishes_a_completed_show(
+    db: SQLiteDB,
+) -> None:
+    """The operator completed it at one season and the absorbed row knows of two,
+    so the survivor has an unwatched season the moment the merge returns."""
+    survivor_id = _save(
+        db,
+        "plex",
+        "1",
+        title="Severance",
+        content_type=ContentType.TV_SHOW,
+        status=ConsumptionStatus.COMPLETED,
+        metadata={"seasons": 1, "seasons_watched": [1]},
+    )
+    absorbed_id = _save(
+        db,
+        "trakt",
+        "2",
+        title="Severance: The Lumon Cut",
+        content_type=ContentType.TV_SHOW,
+        metadata={"seasons": 2},
+    )
+
+    db.merge_content_items(survivor_id, absorbed_id, MergeEvidence.MANUAL)
+
+    survivor = db.get_content_item(survivor_id)
+    assert survivor is not None
+    assert survivor.metadata["seasons"] == 2
+    assert get_enum_value(survivor.status) == "currently_consuming"
 
 
 def _legacy_show(title: str, genres: list[str], seasons: int) -> ContentItem:
@@ -582,6 +636,24 @@ def test_a_merge_recorded_before_the_carry_existed_still_undoes(db: SQLiteDB) ->
     assert {db_id: _snapshot(db, db_id) for db_id in pair} == before
 
 
+def test_a_merge_recorded_when_the_snapshot_held_detail_columns_still_undoes(
+    db: SQLiteDB,
+) -> None:
+    survivor_id = _save(
+        db, "steam", "620", title="Portal 2", metadata={"genres": ["Puzzle"]}
+    )
+    absorbed_id = _save(
+        db, "gog", "1207658961", title="Portal Two", metadata={"developer": "Valve"}
+    )
+
+    record = db.merge_content_items(survivor_id, absorbed_id, MergeEvidence.MANUAL)
+    _as_the_old_snapshot_wrote_it(db, record.id)
+
+    assert db.unmerge_content_items(record.id) == record
+    assert db.list_content_item_merges() == []
+    assert _merged_into(db, absorbed_id) is None
+
+
 def test_undoing_two_merges_into_one_survivor_newest_first_leaves_it_as_it_began(
     db: SQLiteDB,
 ) -> None:
@@ -693,6 +765,34 @@ def test_an_undo_keeps_the_enrichment_that_landed_after_the_merge(
     assert _enrichment_provider(db, survivor_id) == "giantbomb"
 
 
+def test_an_undo_keeps_a_column_whose_only_writer_is_a_switched_off_provider(
+    db: SQLiteDB,
+) -> None:
+    """Switching a provider off stops its rows being resolved, which is not the
+    same claim as the writer having left the group."""
+    survivor_id = _save(db, "steam", "620", title="Portal 2")
+    absorbed_id = _save(db, "gog", "1207658961", title="Portal Two")
+    db.save_enrichment_metadata(
+        survivor_id,
+        ContentItem(
+            title="Portal 2",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"description": "Aperture Science"},
+        ),
+        FieldWriter(WriterBand.PROVIDER, "igdb"),
+        {"description": "Aperture Science"},
+    )
+    record = db.merge_content_items(survivor_id, absorbed_id, MergeEvidence.MANUAL)
+    SettingsStore(db).set("enrichment.providers.igdb.enabled", False)
+
+    db.unmerge_content_items(record.id)
+
+    survivor = db.get_content_item(survivor_id)
+    assert survivor is not None
+    assert survivor.metadata.get("description") == "Aperture Science"
+
+
 def test_a_reset_neither_requeues_nor_counts_the_row_behind_a_merge(
     db: SQLiteDB,
 ) -> None:
@@ -757,7 +857,9 @@ def test_no_door_in_src_deletes_a_content_row() -> None:
     assert offenders == []
 
 
-def test_a_survivor_gains_the_series_the_absorbed_row_states(db: SQLiteDB) -> None:
+def test_a_survivor_gains_the_series_the_absorbed_row_states_and_undoes_out_of_it(
+    db: SQLiteDB,
+) -> None:
     survivor_id = _save(
         db,
         "generic_csv",
@@ -774,11 +876,17 @@ def test_a_survivor_gains_the_series_the_absorbed_row_states(db: SQLiteDB) -> No
         metadata={"series_name": "The Murderbot Diaries", "series_position": 1},
     )
 
-    db.merge_content_items(survivor_id, absorbed_id, MergeEvidence.MANUAL)
+    record = db.merge_content_items(survivor_id, absorbed_id, MergeEvidence.MANUAL)
 
     survivor = db.get_content_item(survivor_id)
     assert get_series_name(survivor) == "The Murderbot Diaries"
     assert get_series_position_from_metadata(survivor.metadata) == 1.0
+
+    db.unmerge_content_items(record.id)
+
+    unmerged = db.get_content_item(survivor_id)
+    assert get_series_name(unmerged) is None
+    assert get_series_position_from_metadata(unmerged.metadata) is None
 
 
 def test_a_survivor_keeps_the_better_founded_of_two_ordinals(db: SQLiteDB) -> None:

@@ -1,5 +1,6 @@
 import json
 import sqlite3
+import threading
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,7 @@ from src.ingestion.importers.goodreads_csv.goodreads_csv import GoodreadsCsvImpo
 from src.ingestion.sources.radarr.radarr import RadarrPlugin
 from src.ingestion.sources.sonarr.sonarr import SonarrPlugin
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.models.detail_fields import DETAIL_FIELDS
 from src.storage import sqlite_db
 from src.storage.field_writes import FieldWriter, WriterBand, read_field_writes
 from src.storage.item_merges import MergeEvidence
@@ -25,6 +27,11 @@ from src.storage.schema import write_enrichment_complete
 from src.storage.sqlite_db import SaveOutcome, SQLiteDB
 from src.utils.item_serialization import item_to_dict
 from src.utils.sorting import build_search_text, get_sort_title
+from tests.factories import drop_the_ledger_write_guard
+
+#: The wording every ledger-only trigger refuses with, matched rather than the
+#: table name, which a constraint message would carry too.
+_LEDGER_ONLY_REFUSAL = "only the rebuild writes it"
 
 FROZEN_NOW = datetime(2026, 3, 15, 12, 0, tzinfo=UTC)
 FROZEN_TODAY = date(2026, 3, 15)
@@ -106,6 +113,7 @@ def _insert_raw_show(
     temp_db: SQLiteDB, source: str, external_id: str, season_counts: dict[str, int]
 ) -> int:
     with temp_db.connection() as conn:
+        drop_the_ledger_write_guard(conn)
         cursor = conn.cursor()
         cursor.execute(
             "INSERT INTO content_items"
@@ -131,6 +139,7 @@ def _insert_raw_book(
     """Built behind ``save_content_item``'s back, and carrying neither derived
     column, which is what a row written before those columns existed looks like."""
     with temp_db.connection() as conn:
+        drop_the_ledger_write_guard(conn)
         cursor = conn.cursor()
         cursor.execute(
             """INSERT INTO content_items
@@ -146,6 +155,123 @@ def _insert_raw_book(
             (db_id, author),
         )
         conn.commit()
+
+
+class TestWritingAResolvedColumnOutsideTheRebuild:
+    """Every writer-stated column is the rebuild's, so a door reaching one
+    directly would restore the fill-only write path the ledger replaced."""
+
+    @pytest.mark.parametrize("content_type", sorted(DETAIL_FIELDS))
+    def test_a_detail_column_written_directly_is_refused(
+        self, temp_db: SQLiteDB, content_type: str
+    ) -> None:
+        spec = DETAIL_FIELDS[content_type]
+        column = spec.columns[0]
+        db_id = temp_db.save_content_item(
+            ContentItem(
+                id=f"guarded-{content_type}",
+                title="Guarded",
+                content_type=ContentType(content_type),
+                status=ConsumptionStatus.UNREAD,
+            )
+        )
+
+        with temp_db.connection() as conn:
+            with pytest.raises(sqlite3.IntegrityError, match=_LEDGER_ONLY_REFUSAL):
+                conn.execute(
+                    f"UPDATE {spec.table} SET {column} = 'stated'"
+                    " WHERE content_item_id = ?",
+                    (db_id,),
+                )
+            # Its own row, so the refusal cannot be the primary key's.
+            unwritten = conn.execute(
+                "INSERT INTO content_items (user_id, title, content_type, status)"
+                " VALUES (1, 'Unwritten', ?, 'unread')",
+                (content_type,),
+            ).lastrowid
+            with pytest.raises(sqlite3.IntegrityError, match=_LEDGER_ONLY_REFUSAL):
+                conn.execute(
+                    f"INSERT INTO {spec.table} (content_item_id, {column})"
+                    " VALUES (?, 'stated')",
+                    (unwritten,),
+                )
+
+    def test_a_cover_url_written_directly_is_refused(self, temp_db: SQLiteDB) -> None:
+        db_id = temp_db.save_content_item(
+            ContentItem(
+                id="guarded-cover",
+                title="Guarded",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            )
+        )
+
+        with temp_db.connection() as conn:
+            with pytest.raises(sqlite3.IntegrityError, match=_LEDGER_ONLY_REFUSAL):
+                conn.execute(
+                    "UPDATE content_items SET cover_url = ? WHERE id = ?",
+                    ("https://example.test/cover.jpg", db_id),
+                )
+
+    def test_a_write_from_another_thread_is_refused_mid_rebuild(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """The flag the triggers ask is one thread's own: shared across the
+        instance, a background enrichment run holds the guard open for the web
+        edit committing beside it.
+        """
+        db_id = temp_db.save_content_item(
+            ContentItem(
+                id="guarded-concurrent",
+                title="Guarded",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            )
+        )
+        refusals: list[str] = []
+
+        def edit_from_another_thread() -> None:
+            def attempt() -> None:
+                with temp_db.connection() as beside:
+                    try:
+                        beside.execute(
+                            "UPDATE book_details SET author = 'Sneaked'"
+                            " WHERE content_item_id = ?",
+                            (db_id,),
+                        )
+                    except sqlite3.IntegrityError as refused:
+                        refusals.append(str(refused))
+
+            thread = threading.Thread(target=attempt)
+            thread.start()
+            thread.join()
+
+        rebuilding = SQLiteDB._write_detail_row
+
+        def rebuild_with_a_thread_beside_it(
+            self: SQLiteDB, *args: Any, **kwargs: Any
+        ) -> bool:
+            # Inside the rebuild's try/finally but before it takes SQLite's write
+            # lock, so the thread beside it runs rather than blocking on one.
+            edit_from_another_thread()
+            return rebuilding(self, *args, **kwargs)
+
+        with patch.object(
+            SQLiteDB, "_write_detail_row", rebuild_with_a_thread_beside_it
+        ):
+            temp_db.save_enrichment_metadata(
+                db_id,
+                ContentItem(
+                    id="guarded-concurrent",
+                    title="Guarded",
+                    content_type=ContentType.BOOK,
+                    status=ConsumptionStatus.UNREAD,
+                ),
+                FieldWriter(WriterBand.PROVIDER, "openlibrary"),
+                {},
+            )
+
+        assert [_LEDGER_ONLY_REFUSAL in refusal for refusal in refusals] == [True]
 
 
 def test_save_and_get_content_item(temp_db: SQLiteDB) -> None:
@@ -1603,6 +1729,7 @@ class TestTheDerivedSearchColumns:
         )
         db_id = temp_db.save_content_item(book)
         with temp_db.connection() as conn:
+            drop_the_ledger_write_guard(conn)
             conn.execute(
                 "INSERT INTO movie_details (content_item_id, director) VALUES (?, ?)",
                 (db_id, "Ridley Scott"),
@@ -1840,6 +1967,22 @@ class TestEveryWriteDoorLeavesTheDerivedColumnsCurrent:
 
         self._assert_columns_describe_the_library(temp_db)
 
+    def test_the_enrichment_door_replacing_the_creator(self, temp_db: SQLiteDB) -> None:
+        """A provider outranks the source that first spelled the author, and the
+        column the library searches is rebuilt from what was stored, not offered."""
+        db_id = temp_db.save_content_item(self._book("dune", "Dune", "F. Herbert"))
+
+        temp_db.save_enrichment_metadata(
+            db_id,
+            self._book("dune", "Dune", "Frank Herbert"),
+            FieldWriter(WriterBand.PROVIDER, "openlibrary"),
+            {"author": "Frank Herbert"},
+        )
+
+        self._assert_columns_describe_the_library(temp_db)
+        found = temp_db.get_content_items(search="Frank Herbert")
+        assert [item.title for item in found] == ["Dune"]
+
     def test_every_content_type_derives_from_its_own_creator_column(
         self, temp_db: SQLiteDB
     ) -> None:
@@ -1887,6 +2030,7 @@ class TestTheUpgradeThatFillsTheDerivedColumns:
         db_path = tmp_path / "downgraded.db"
         db = SQLiteDB(db_path)
         with db.connection() as conn:
+            drop_the_ledger_write_guard(conn)
             cursor = conn.cursor()
             cursor.execute("""INSERT INTO content_items
                    (user_id, title, normalized_title, content_type, status)
@@ -4000,11 +4144,11 @@ class TestCrossSourceDuplicateDetectionRegression:
         assert len(all_games) == 1
         assert all_games[0].date_completed == date(2024, 6, 20)
 
-    def test_the_survivor_carries_what_only_the_absorbed_row_held(
+    def test_the_survivor_carries_what_only_the_absorbed_row_stated(
         self, temp_db: SQLiteDB
     ) -> None:
-        """A rating the survivor lacks, its detail row when the survivor has none,
-        and the id the absorbed row's own source re-attaches by."""
+        """A rating the survivor lacks, the fields only the absorbed row's writer
+        stated, and the id that row's own source re-attaches by."""
         keep_id = _insert_raw_item(
             temp_db,
             external_id="steam-hollow",
@@ -4020,13 +4164,19 @@ class TestCrossSourceDuplicateDetectionRegression:
             rating=5,
             source="personal_site",
         )
-        with temp_db.connection() as conn:
-            conn.execute(
-                "INSERT INTO video_game_details (content_item_id, developer, genres)"
-                " VALUES (?, ?, ?)",
-                (dup_id, "Team Cherry", '["Metroidvania"]'),
-            )
-            conn.commit()
+        stated = {"developer": "Team Cherry", "genres": ["Metroidvania"]}
+        temp_db.save_enrichment_metadata(
+            dup_id,
+            ContentItem(
+                id="blog-hollow",
+                title="Hollow Knight",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.UNREAD,
+                metadata=stated,
+            ),
+            FieldWriter(WriterBand.PROVIDER, "igdb"),
+            stated,
+        )
 
         _merged(temp_db, keep_id, dup_id)
 

@@ -26,6 +26,7 @@ from src.enrichment.provider_base import (
 from src.enrichment.rate_limiter import RateLimiter
 from src.enrichment.registry import EnrichmentRegistry, get_enrichment_registry
 from src.models.content import ContentItem, ContentType, get_enum_value
+from src.recommendations.profile import refresh_profile
 from src.storage.enrichment_jobs import EnrichmentJobRecord
 from src.storage.field_writes import FieldWriter, WriterBand
 from src.storage.global_secrets import read_secret
@@ -552,6 +553,8 @@ class EnrichmentManager:
                     break
 
                 self._process_batch(items)
+
+            refresh_profile(self.storage_manager, user_id)
 
             # Uncached, unlike the loop's check: this one decides what the run
             # is recorded as.

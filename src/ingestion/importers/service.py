@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 from src.ingestion.importers.base import Importer, ImporterError, SkippedRow
 from src.models.content import ContentType
+from src.recommendations.profile import refresh_profile
 from src.storage.manager import SaveCounts
 from src.utils.text import exception_for_log, sanitize_for_log
 
@@ -160,4 +161,5 @@ def import_file(
         result.skipped,
         result.failed,
     )
+    refresh_profile(storage, user_id)
     return result

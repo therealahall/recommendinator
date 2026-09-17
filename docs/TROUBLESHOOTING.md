@@ -26,6 +26,12 @@ rm data/recommendations.db
 
 Then re-import.
 
+### `no such function: rebuilding_item_fields`
+
+A build older than the field-write ledger cannot answer what this database's
+triggers ask, so every write to a resolved column fails. Drop each trigger whose
+name ends `_ledger_only`; the next upgrade recreates them.
+
 ### `Renaming content_items rewrote the foreign keys of ...`
 
 The upgrade that moves external ids off `content_items` refused to finish, so the
