@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.69.0 (2026-09-17)
+
+### Features
+
+- **storage**: Make the ledger the only writer and keep derived state current
+  ([`bfd7fae`](https://github.com/therealahall/recommendinator/commit/bfd7fae5faf2f38cbf4372068f4cc779ea743391))
+
+
 ## v0.68.0 (2026-09-17)
 
 ### Features
