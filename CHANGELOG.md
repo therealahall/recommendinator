@@ -1,6 +1,25 @@
 # CHANGELOG
 
 
+## v0.70.0 (2026-09-17)
+
+### Documentation
+
+- Describe the rebuild pass and what a reset now drops
+  ([`a5e00d0`](https://github.com/therealahall/recommendinator/commit/a5e00d04f2e81b72ad90a422b563de0df3753c75))
+
+### Features
+
+- **enrichment**: Add a hard reset that drops what nobody claimed
+  ([`43d184f`](https://github.com/therealahall/recommendinator/commit/43d184f0c7d25d42e051ca4f1df2d8b29007bff3))
+
+- **enrichment**: Split re-queuing an item from dropping what providers said
+  ([`0392aa1`](https://github.com/therealahall/recommendinator/commit/0392aa10840c26801ca803c5e2ee0cdb9015e724))
+
+- **library**: Rebuild stored fields from the ledger when precedence changes
+  ([`91c5a37`](https://github.com/therealahall/recommendinator/commit/91c5a37f599d5bb77daa0ee5352eff808f7155e3))
+
+
 ## v0.69.0 (2026-09-17)
 
 ### Features
