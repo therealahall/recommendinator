@@ -39,19 +39,20 @@ Reported with the file line they were on:
 | `rating`, `review` | Fill-only. Written while the stored value is empty, never overwritten. |
 | `status` | Forward-only: unread → consuming → completed. A file can advance a status, never revert a completion. |
 | `date_completed` | Replaced only by a later date. |
-| `genre` | Additive. An imported genre joins the stored ones. |
+| `genre` | Combines with other writers' genres; a re-import replaces what this file stated before. |
 | `seasons_watched`, `seasons_watched_dates` | Additive. An import adds a watched season and its date, never removes one. |
 | `total_seasons` | Monotonic. It only increases. |
-| `series_index`, `series_index_authority` | Ranked. A position replaces the stored one when its authority outranks it (`stated`, `authored`, `library`, `manual`, weakest first), or restates it at `library` or `manual`. A blank authority, or a file without the column, reads as `stated`. |
-| Everything else | Fill-only, including `notes`. |
+| `series_index`, `series_index_authority` | Ranked. A position outranks another writer's when its authority is higher (`stated`, `authored`, `library`, `manual`, weakest first), and a re-import always replaces what this file stated before. A blank authority, or a file without the column, reads as `stated`. A position in a file that leaves `series` blank does not renumber an item another writer already placed. |
+| Everything else | Ranked. The import wins over a weaker writer and replaces what this file stated before. `notes` is not ranked: the stored one keeps. |
 
 One exception to forward-only: raising `total_seasons` above a completed show's
 watched-season list sends it back to in-progress. That is a season rule, not a
 status one.
 
-Fill-only means editing the value in an export and re-importing does nothing. Use
-the edit modal or `library edit --seasons-watched` to untick a season, which an
-import only ever adds.
+Editing a ranked value in an export and re-importing it does land, because the
+file restates what it said before. Use the edit modal or
+`library edit --seasons-watched` to untick a season, which an import only ever
+adds.
 `notes` is the one that surprises people: a stored note always wins, and no
 surface in the app edits one, so the first import of a note is the last word.
 

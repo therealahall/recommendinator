@@ -488,7 +488,7 @@ def _resolve_feed_url(
 ) -> str | None:
     """An off-origin href is refused whatever it is for: the next page is fetched
     with the user's basic-auth credentials (SSRF onto cloud metadata, localhost),
-    and a cover lands on a fill-only column no later source can replace.
+    and a cover it names is one the library may serve.
     """
     if not href:
         return None

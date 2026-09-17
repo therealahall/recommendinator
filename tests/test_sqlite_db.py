@@ -13,7 +13,7 @@ from src.ingestion.sources.radarr.radarr import RadarrPlugin
 from src.ingestion.sources.sonarr.sonarr import SonarrPlugin
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage import sqlite_db
-from src.storage.field_writes import WriterBand, read_field_writes
+from src.storage.field_writes import FieldWriter, WriterBand, read_field_writes
 from src.storage.item_merges import MergeEvidence
 from src.storage.merge import (
     creators_conflict,
@@ -824,6 +824,8 @@ class TestWhatTheSaveDoorMatchesOnTitle:
         temp_db.save_enrichment_metadata(
             steam,
             self._game("steam", "203160", "Tomb Raider", developer="Crystal Dynamics"),
+            FieldWriter(WriterBand.PROVIDER, "igdb"),
+            {"developer": "Crystal Dynamics"},
         )
 
         gog = temp_db.save_content_item(
@@ -1907,11 +1909,14 @@ class TestTheUpgradeThatFillsTheDerivedColumns:
         assert [item.title for item in found] == ["Neuromancer"]
 
 
-class TestAdditiveGenreSaves:
+class TestGenresCombineAcrossWriters:
     """Bug reported: Re-importing items from a source would overwrite genres and
-    tags that had been added by enrichment, destroying richer data."""
+    tags another writer had added, destroying richer data. Each writer's own
+    list is still its own to restate."""
 
-    def test_reimport_merges_genres(self, temp_db: SQLiteDB) -> None:
+    def test_a_writer_restating_its_genres_replaces_its_own_list(
+        self, temp_db: SQLiteDB
+    ) -> None:
         item_v1 = ContentItem(
             id="tv_1",
             title="Firefly",
@@ -1933,12 +1938,9 @@ class TestAdditiveGenreSaves:
         retrieved = temp_db.get_content_item(db_id)
         assert retrieved is not None
         assert retrieved.metadata is not None
-        genres = retrieved.metadata.get("genres", [])
-        assert "Drama" in genres
-        assert "Comedy" in genres
-        assert "Action" in genres
+        assert retrieved.metadata["genres"] == ["Comedy", "Action"]
 
-    def test_reimport_merges_an_object_shaped_genre_as_its_name(
+    def test_another_writers_genres_combine_and_an_object_reads_as_its_name(
         self, temp_db: SQLiteDB
     ) -> None:
         legacy = ContentItem(
@@ -1956,6 +1958,7 @@ class TestAdditiveGenreSaves:
                 title="Fargo",
                 content_type=ContentType.MOVIE,
                 status=ConsumptionStatus.COMPLETED,
+                source="radarr",
                 metadata={"genres": ["Drama"]},
             )
         )
@@ -1963,7 +1966,7 @@ class TestAdditiveGenreSaves:
         retrieved = temp_db.get_content_item(db_id)
         assert retrieved is not None
         assert retrieved.metadata is not None
-        assert retrieved.metadata["genres"] == ["Crime", "Drama"]
+        assert retrieved.metadata["genres"] == ["Drama", "Crime"]
 
 
 class TestRatingSetOnce:
@@ -2146,10 +2149,13 @@ class TestDateCompletedProtection:
         assert retrieved.date_completed == date(2025, 3, 10)
 
 
-class TestDetailTableFillOnly:
-    """Enrichment is the source of truth for detail fields."""
+class TestDetailTableWritesFollowTheLedger:
+    """What is served is what the ledger says by rank, not whichever write
+    reached an empty column first."""
 
-    def test_description_not_overwritten(self, temp_db: SQLiteDB) -> None:
+    def test_a_writer_restating_a_description_replaces_its_own(
+        self, temp_db: SQLiteDB
+    ) -> None:
         item_v1 = ContentItem(
             id="detail_1",
             title="Dune",
@@ -2164,7 +2170,7 @@ class TestDetailTableFillOnly:
             title="Dune",
             content_type=ContentType.BOOK,
             status=ConsumptionStatus.COMPLETED,
-            metadata={"description": "Different description from another source."},
+            metadata={"description": "The one the same writer states now."},
         )
         temp_db.save_content_item(item_v2)
 
@@ -2172,7 +2178,7 @@ class TestDetailTableFillOnly:
         assert retrieved is not None
         assert retrieved.metadata is not None
         assert retrieved.metadata.get("description") == (
-            "A classic sci-fi novel about Arrakis."
+            "The one the same writer states now."
         )
 
     def test_an_empty_text_value_leaves_the_column_open(
@@ -2258,17 +2264,16 @@ class TestDetailTableFillOnly:
         )
         db_id = temp_db.save_content_item(stored)
 
+        authored = {
+            "series_name": "The Expanse",
+            "series_position": 7.0,
+            "series_position_authority": "authored",
+        }
         temp_db.save_enrichment_metadata(
             db_id,
-            stored.model_copy(
-                update={
-                    "metadata": {
-                        "series_name": "The Expanse",
-                        "series_position": 7.0,
-                        "series_position_authority": "authored",
-                    }
-                }
-            ),
+            stored.model_copy(update={"metadata": authored}),
+            FieldWriter(WriterBand.PROVIDER, "openlibrary"),
+            authored,
         )
 
         retrieved = temp_db.get_content_item(db_id)
@@ -3263,6 +3268,18 @@ class TestSeasonCompletionFromTheLargestCount:
         assert retrieved.metadata["seasons_watched"] == [1, 2]
         assert retrieved.status == ConsumptionStatus.COMPLETED
 
+    def test_a_season_the_operator_unticks_stays_unticked(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        db_id = temp_db.save_content_item(_tautulli_show({"1": 9}, {"1": 9}))
+
+        temp_db.update_item_from_ui(db_id, seasons_watched=[])
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.metadata["seasons_watched"] == []
+        assert retrieved.status == ConsumptionStatus.UNREAD
+
     def test_a_show_no_source_states_a_season_total_for_never_completes(
         self, temp_db: SQLiteDB
     ) -> None:
@@ -3310,7 +3327,10 @@ class TestSeasonCompletionFromTheLargestCount:
         self, temp_db: SQLiteDB
     ) -> None:
         db_id = temp_db.save_content_item(_tautulli_show({"1": 3}))
-        temp_db.save_enrichment_metadata(db_id, _tmdb_enrichment({1: 22}))
+        counted = _tmdb_enrichment({1: 22})
+        temp_db.save_enrichment_metadata(
+            db_id, counted, FieldWriter(WriterBand.PROVIDER, "tmdb"), counted.metadata
+        )
 
         temp_db.save_content_item(_sonarr_show({1: 3}))
 
@@ -3630,27 +3650,27 @@ class TestCreatorColumnEdges:
         assert retrieved.author is None
         assert "developer" not in retrieved.metadata
 
-    def test_a_later_sync_does_not_overwrite_a_stored_creator(
+    def test_a_later_sync_lands_the_creator_the_same_source_corrected(
         self, temp_db: SQLiteDB
     ) -> None:
         first = temp_db.save_content_item(
             ContentItem(
-                id="movie-fill-only",
-                title="Arrival",
-                content_type=ContentType.MOVIE,
-                status=ConsumptionStatus.UNREAD,
-                source="radarr",
-                author="Denis Villeneuve",
-            )
-        )
-        second = temp_db.save_content_item(
-            ContentItem(
-                id="movie-fill-only",
+                id="movie-corrected",
                 title="Arrival",
                 content_type=ContentType.MOVIE,
                 status=ConsumptionStatus.UNREAD,
                 source="radarr",
                 author="Wrong Person",
+            )
+        )
+        second = temp_db.save_content_item(
+            ContentItem(
+                id="movie-corrected",
+                title="Arrival",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.UNREAD,
+                source="radarr",
+                author="Denis Villeneuve",
             )
         )
 
@@ -4042,54 +4062,6 @@ class TestCrossSourceDuplicateDetectionRegression:
         assert db_id2 > 0
         assert db_id1 != db_id2
 
-    def test_merge_monotonic_columns_keeps_higher_value(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """TV show seasons/episodes use monotonic merge: the higher value wins."""
-        with temp_db.connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """INSERT INTO content_items
-                   (user_id, title, normalized_title, content_type,
-                    status, source)
-                   VALUES (1, 'Breaking Bad', 'breaking bad',
-                           'tv_show', 'completed', 'sonarr')""",
-            )
-            keep_id = cursor.lastrowid
-            assert keep_id is not None
-            _record_raw_external_id(cursor, keep_id, "sonarr", "sonarr-bb")
-            cursor.execute(
-                """INSERT INTO tv_show_details
-                   (content_item_id, seasons, episodes)
-                   VALUES (?, 2, 20)""",
-                (keep_id,),
-            )
-            cursor.execute(
-                """INSERT INTO content_items
-                   (user_id, title, normalized_title, content_type,
-                    status, source)
-                   VALUES (1, 'Breaking Bad', 'breaking bad',
-                           'tv_show', 'completed', 'blog')""",
-            )
-            dup_id = cursor.lastrowid
-            assert dup_id is not None
-            _record_raw_external_id(cursor, dup_id, "blog", "blog-bb")
-            cursor.execute(
-                """INSERT INTO tv_show_details
-                   (content_item_id, seasons, episodes)
-                   VALUES (?, 4, 15)""",
-                (dup_id,),
-            )
-            conn.commit()
-
-        _merged(temp_db, keep_id, dup_id)
-
-        retrieved = temp_db.get_content_item(keep_id)
-        assert retrieved is not None
-        assert retrieved.metadata is not None
-        assert retrieved.metadata.get("seasons") == 4
-        assert retrieved.metadata.get("episodes") == 20
-
     def test_merge_keeps_the_larger_season_size_the_absorbed_row_held(
         self, temp_db: SQLiteDB
     ) -> None:
@@ -4105,103 +4077,57 @@ class TestCrossSourceDuplicateDetectionRegression:
         assert retrieved.metadata.get("seasons_watched") is None
 
     def test_a_merge_carries_the_detail_tables_onto_the_survivor(
-        self, tmp_path: Path
+        self, temp_db: SQLiteDB
     ) -> None:
-        """That row leaves every read, so anything the detail merge drops here is
-        what the library stops showing."""
-        db_path = tmp_path / "migration_detail_test.db"
-        db = SQLiteDB(db_path)
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-
-        cursor = conn.cursor()
-
-        cursor.execute("""INSERT INTO content_items
-               (user_id, title, normalized_title, content_type,
-                status, rating, source)
-               VALUES (1, 'Dishonored',
-                       'dishonored', 'video_game', 'completed', 5, 'steam')""")
-        keep_id = cursor.lastrowid
-        assert keep_id is not None
-        _record_raw_external_id(cursor, keep_id, "steam", "steam-dishonored")
-        cursor.execute(
-            """INSERT INTO video_game_details
-               (content_item_id, developer, genres, tags, metadata)
-               VALUES (?, 'Arkane Studios', '["Stealth", "Action"]',
-                       '["immersive-sim"]', ?)""",
-            (keep_id, json.dumps({"playtime_hours": 40})),
+        """That row leaves every read, so anything the merge drops here is what
+        the library stops showing."""
+        keep_id = temp_db.save_content_item(
+            ContentItem(
+                id="steam-dishonored",
+                source="steam",
+                title="Dishonored",
+                author="Arkane Studios",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+                metadata={
+                    "genres": ["Stealth", "Action"],
+                    "tags": ["immersive-sim"],
+                    "playtime_hours": 40,
+                },
+            )
+        )
+        dup_id = temp_db.save_content_item(
+            ContentItem(
+                id="blog-dishonored",
+                source="blog",
+                title="Dishonored: Death of the Outsider",
+                author="Arkane Lyon",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.COMPLETED,
+                review="Masterpiece of level design",
+                metadata={
+                    "publisher": "Bethesda",
+                    "genres": ["Action", "RPG"],
+                    "tags": ["steampunk", "immersive-sim"],
+                    "playtime_hours": 30,
+                    "award": "GOTY",
+                },
+            )
         )
 
-        cursor.execute("""INSERT INTO content_items
-               (user_id, title, normalized_title, content_type,
-                status, review, source)
-               VALUES (1, 'Dishonored',
-                       'dishonored', 'video_game', 'completed',
-                       'Masterpiece of level design', 'blog')""")
-        dup_id = cursor.lastrowid
-        assert dup_id is not None
-        _record_raw_external_id(cursor, dup_id, "blog", "blog-dishonored")
-        cursor.execute(
-            """INSERT INTO video_game_details
-               (content_item_id, developer, publisher, genres, tags, metadata)
-               VALUES (?, 'Arkane Lyon', 'Bethesda', '["Action", "RPG"]',
-                       '["steampunk", "immersive-sim"]', ?)""",
-            (dup_id, json.dumps({"award": "GOTY", "playtime_hours": 30})),
-        )
-        conn.commit()
+        _merged(temp_db, keep_id, dup_id)
 
-        cursor.execute("SELECT COUNT(*) FROM content_items")
-        assert cursor.fetchone()[0] == 2
-
-        _merged(db, keep_id, dup_id)
-
-        cursor.execute("SELECT COUNT(*) FROM content_items WHERE merged_into IS NULL")
-        assert cursor.fetchone()[0] == 1
-
-        cursor.execute(
-            "SELECT rating, review FROM content_items WHERE id = ?",
-            (keep_id,),
-        )
-        row = cursor.fetchone()
-        assert row is not None
-        assert row["rating"] == 5
-        assert row["review"] == "Masterpiece of level design"
-
-        cursor.execute(
-            "SELECT * FROM video_game_details WHERE content_item_id = ?",
-            (keep_id,),
-        )
-        detail = cursor.fetchone()
-        assert detail is not None
-
-        assert detail["developer"] == "Arkane Studios"
-        assert detail["publisher"] == "Bethesda"
-
-        genres = json.loads(detail["genres"])
-        assert "Stealth" in genres
-        assert "Action" in genres
-        assert "RPG" in genres
-
-        tags = json.loads(detail["tags"])
-        assert "immersive-sim" in tags
-        assert "steampunk" in tags
-
-        meta = json.loads(detail["metadata"])
-        assert meta["playtime_hours"] == 40
-        assert meta["award"] == "GOTY"
-
-        cursor.execute(
-            "SELECT merged_into FROM content_items WHERE id = ?",
-            (dup_id,),
-        )
-        assert cursor.fetchone()["merged_into"] == keep_id
-
-        cursor.execute(
-            "SELECT publisher FROM video_game_details WHERE content_item_id = ?",
-            (dup_id,),
-        )
-        assert cursor.fetchone()["publisher"] == "Bethesda"
+        survivor = temp_db.get_content_item(keep_id)
+        assert survivor is not None
+        assert (survivor.rating, survivor.review) == (5, "Masterpiece of level design")
+        assert survivor.author == "Arkane Studios"
+        assert survivor.metadata["publisher"] == "Bethesda"
+        assert survivor.metadata["genres"] == ["Stealth", "Action", "RPG"]
+        assert survivor.metadata["tags"] == ["immersive-sim", "steampunk"]
+        assert survivor.metadata["playtime_hours"] == 40
+        assert survivor.metadata["award"] == "GOTY"
+        assert temp_db.get_content_item(dup_id) is None
 
 
 class TestDuplicateMergePreservesState:
@@ -4493,7 +4419,7 @@ class TestCoverArtOnAnItem:
         assert stored is not None
         assert stored.cover_url is None
 
-    def test_a_later_sync_fills_a_missing_cover_and_keeps_the_stored_one(
+    def test_a_later_sync_lands_the_cover_the_same_source_names_now(
         self, temp_db: SQLiteDB
     ) -> None:
         db_id = temp_db.save_content_item(self._portal(None))
@@ -4503,12 +4429,17 @@ class TestCoverArtOnAnItem:
 
         stored = temp_db.get_content_item(db_id)
         assert stored is not None
-        assert stored.cover_url == "https://steam/620.jpg"
+        assert stored.cover_url == "https://later/620.jpg"
 
     def test_enrichment_fills_a_cover_no_source_named(self, temp_db: SQLiteDB) -> None:
         db_id = temp_db.save_content_item(self._portal(None))
 
-        temp_db.save_enrichment_metadata(db_id, self._portal("https://rawg/620.jpg"))
+        temp_db.save_enrichment_metadata(
+            db_id,
+            self._portal("https://rawg/620.jpg"),
+            FieldWriter(WriterBand.PROVIDER, "rawg"),
+            {"cover_url": "https://rawg/620.jpg"},
+        )
 
         stored = temp_db.get_content_item(db_id)
         assert stored is not None
@@ -4519,7 +4450,12 @@ class TestCoverArtOnAnItem:
     ) -> None:
         db_id = temp_db.save_content_item(self._portal("https://steam/620.jpg"))
 
-        temp_db.save_enrichment_metadata(db_id, self._portal("https://rawg/620.jpg"))
+        temp_db.save_enrichment_metadata(
+            db_id,
+            self._portal("https://rawg/620.jpg"),
+            FieldWriter(WriterBand.PROVIDER, "rawg"),
+            {"cover_url": "https://rawg/620.jpg"},
+        )
 
         stored = temp_db.get_content_item(db_id)
         assert stored is not None
@@ -4543,7 +4479,12 @@ class TestCoverArtOnAnItem:
         db_id = temp_db.save_content_item(self._portal("https://rawg/620.jpg"))
         temp_db.clear_cover_url(db_id)
 
-        temp_db.save_enrichment_metadata(db_id, self._portal("https://rawg/620.jpg"))
+        temp_db.save_enrichment_metadata(
+            db_id,
+            self._portal("https://rawg/620.jpg"),
+            FieldWriter(WriterBand.PROVIDER, "rawg"),
+            {"cover_url": "https://rawg/620.jpg"},
+        )
 
         stored = temp_db.get_content_item(db_id)
         assert stored is not None
@@ -4555,7 +4496,12 @@ class TestCoverArtOnAnItem:
         db_id = temp_db.save_content_item(self._portal("https://steam/620.jpg"))
         temp_db.clear_cover_url(db_id)
 
-        temp_db.save_enrichment_metadata(db_id, self._portal("https://rawg/620.jpg"))
+        temp_db.save_enrichment_metadata(
+            db_id,
+            self._portal("https://rawg/620.jpg"),
+            FieldWriter(WriterBand.PROVIDER, "rawg"),
+            {"cover_url": "https://rawg/620.jpg"},
+        )
 
         stored = temp_db.get_content_item(db_id)
         assert stored is not None

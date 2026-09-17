@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.storage.field_writes import FieldWriter, WriterBand
 from src.storage.manager import StorageManager
 
 _HOLDS_TABLE = """
@@ -332,6 +333,8 @@ def test_a_list_the_operator_emptied_is_held_at_empty_not_refilled(
             status=ConsumptionStatus.UNREAD,
             metadata={"genres": ["Sci-Fi"]},
         ),
+        FieldWriter(WriterBand.PROVIDER, "tmdb"),
+        {"genres": ["Sci-Fi"]},
     )
 
     enriched = storage.get_content_item(db_id, user_id=1)

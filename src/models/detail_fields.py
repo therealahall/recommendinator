@@ -24,9 +24,8 @@ _TEXT_SCALARS: tuple[type, ...] = (str, int, float)
 
 
 def to_text(value: Any) -> str | None:
-    """Every text column is fill-only in ``SQLiteDB._save_detail_table``, which
-    tests ``is not None``, so an empty string written once would lock the column
-    against every later sync.
+    """An empty string states nothing: recorded as a value it would outrank
+    every later writer that has one.
     """
     if value is None:
         return None
@@ -351,6 +350,16 @@ DETAIL_FIELDS: dict[str, ContentTypeFields] = {
                 column="director",
                 template_column="director",
             ),
+            # No template column, unlike the book's: the ledger ranks an ordinal
+            # only once every type records one, and the exported film columns are
+            # the ones every exported file has carried.
+            DetailField("series_name", FieldKind.FREE_FORM, FieldOwner.WRITER),
+            DetailField(
+                "series_position", FieldKind.FREE_FORM, FieldOwner.WRITER, numeric=True
+            ),
+            DetailField(
+                "series_position_authority", FieldKind.FREE_FORM, FieldOwner.WRITER
+            ),
             DetailField(
                 "release_year",
                 FieldKind.INTEGER,
@@ -407,6 +416,13 @@ DETAIL_FIELDS: dict[str, ContentTypeFields] = {
                 column="creators",
                 aliases=("creator",),
                 template_column="creator",
+            ),
+            DetailField("series_name", FieldKind.FREE_FORM, FieldOwner.WRITER),
+            DetailField(
+                "series_position", FieldKind.FREE_FORM, FieldOwner.WRITER, numeric=True
+            ),
+            DetailField(
+                "series_position_authority", FieldKind.FREE_FORM, FieldOwner.WRITER
             ),
             # The person's own watching, and the season list decides status.
             DetailField(
@@ -479,6 +495,13 @@ DETAIL_FIELDS: dict[str, ContentTypeFields] = {
                 column="developer",
                 template_column="developer",
             ),
+            DetailField("series_name", FieldKind.FREE_FORM, FieldOwner.WRITER),
+            DetailField(
+                "series_position", FieldKind.FREE_FORM, FieldOwner.WRITER, numeric=True
+            ),
+            DetailField(
+                "series_position_authority", FieldKind.FREE_FORM, FieldOwner.WRITER
+            ),
             DetailField(
                 "platforms",
                 FieldKind.STRING_LIST,
@@ -545,6 +568,15 @@ WRITER_STATED_BASE_FIELDS: tuple[str, ...] = ("title", COVER_FIELD)
 #: Where a source's word beats a provider's: RAWG offers a landscape
 #: screenshot for a game Steam supplies portrait library art for.
 SOURCE_FIRST_FIELDS: frozenset[str] = frozenset({COVER_FIELD})
+
+#: Every field a writer states. One absent here is the person's own, so no
+#: writer's rank applies to it.
+WRITER_STATED_FIELDS: frozenset[str] = frozenset(WRITER_STATED_BASE_FIELDS) | {
+    field.metadata_key
+    for spec in DETAIL_FIELDS.values()
+    for field in spec.fields
+    if field.owner is FieldOwner.WRITER
+}
 
 #: What both interfaces call the creator, whatever the type names it.
 CREATOR_FIELD = "creator"

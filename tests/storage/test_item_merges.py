@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.storage.field_writes import FieldWriter, WriterBand
 from src.storage.item_merges import MergeError, MergeEvidence
 from src.storage.schema import (
     get_enrichment_stats,
@@ -27,6 +28,7 @@ _ROW_TABLES = (
     ("enrichment_status", "content_item_id"),
     ("content_item_external_ids", "content_item_id"),
     ("content_item_dead_covers", "content_item_id"),
+    ("content_item_field_writes", "content_item_id"),
 )
 
 
@@ -294,6 +296,147 @@ def test_a_resync_of_either_source_lands_on_the_survivor(db: SQLiteDB) -> None:
     assert survivor.rating == 4
 
 
+def test_a_merge_combines_the_genres_and_takes_the_higher_count_of_both_rows(
+    db: SQLiteDB,
+) -> None:
+    """With no save in between: a library imported from a one-off file never
+    syncs again, so a merge that only records is a merge that does nothing."""
+    survivor_id = _save(
+        db,
+        "plex",
+        "1",
+        title="Severance",
+        content_type=ContentType.TV_SHOW,
+        metadata={"genres": ["Drama"], "seasons": 1},
+    )
+    absorbed_id = _save(
+        db,
+        "trakt",
+        "2",
+        title="Severance: The Lumon Cut",
+        content_type=ContentType.TV_SHOW,
+        metadata={"genres": ["Thriller"], "seasons": 2},
+    )
+
+    db.merge_content_items(survivor_id, absorbed_id, MergeEvidence.MANUAL)
+
+    survivor = db.get_content_item(survivor_id)
+    assert survivor is not None
+    assert survivor.metadata["genres"] == ["Drama", "Thriller"]
+    assert survivor.metadata["seasons"] == 2
+
+
+def _legacy_show(title: str, genres: list[str], seasons: int) -> ContentItem:
+    """Sourceless, so its fields are recorded in the band a migrated library's
+    are: one writer identity, which the ledger holds one word from."""
+    return ContentItem(
+        title=title,
+        content_type=ContentType.TV_SHOW,
+        status=ConsumptionStatus.UNREAD,
+        metadata={"genres": genres, "seasons": seasons},
+    )
+
+
+def test_a_resync_after_merging_two_rows_of_one_writer_keeps_both_their_words(
+    db: SQLiteDB,
+) -> None:
+    survivor_id = db.save_content_item(_legacy_show("Severance", ["Drama"], 1))
+    absorbed_id = db.save_content_item(
+        _legacy_show("Severance: The Lumon Cut", ["Thriller"], 2)
+    )
+    db.merge_content_items(survivor_id, absorbed_id, MergeEvidence.MANUAL)
+
+    db.save_content_item(_legacy_show("Severance", ["Drama"], 1))
+
+    survivor = db.get_content_item(survivor_id)
+    assert survivor is not None
+    assert survivor.metadata["genres"] == ["Drama", "Thriller"]
+    assert survivor.metadata["seasons"] == 2
+
+
+def test_a_resync_leaves_the_survivors_title_alone_when_it_absorbed_an_older_row(
+    db: SQLiteDB,
+) -> None:
+    absorbed_id = _save(db, "gog", "1207658961", title="Portal Two")
+    survivor_id = _save(db, "steam", "620", title="Portal 2")
+    db.merge_content_items(survivor_id, absorbed_id, MergeEvidence.MANUAL)
+
+    _save(db, "steam", "620", title="Portal 2")
+
+    survivor = db.get_content_item(survivor_id)
+    assert survivor is not None
+    assert survivor.title == "Portal 2"
+
+
+def test_a_merged_row_never_renames_the_survivor_however_its_writers_rank(
+    db: SQLiteDB,
+) -> None:
+    survivor_id = _save(db, "steam", "620", title="Portal 2")
+    absorbed_id = _save(db, "gog", "1207658961", title="Portal Two")
+    db.save_enrichment_metadata(
+        absorbed_id,
+        ContentItem(
+            title="Portal 2: Collector's Edition",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+        ),
+        FieldWriter(WriterBand.PROVIDER, "igdb"),
+        {"title": "Portal 2: Collector's Edition"},
+    )
+
+    db.merge_content_items(survivor_id, absorbed_id, MergeEvidence.MANUAL)
+    _save(db, "steam", "620", title="Portal 2")
+
+    survivor = db.get_content_item(survivor_id)
+    assert survivor is not None
+    assert survivor.title == "Portal 2"
+
+
+def test_a_resync_after_a_merge_keeps_the_better_founded_of_the_two_ordinals(
+    db: SQLiteDB,
+) -> None:
+    stated = {
+        "series_name": "The Expanse",
+        "series_position": 5,
+        "series_position_authority": "stated",
+    }
+    survivor_id = _save(
+        db,
+        "generic_csv",
+        "1",
+        title="Persepolis Rising",
+        content_type=ContentType.BOOK,
+        metadata=stated,
+    )
+    absorbed_id = _save(
+        db,
+        "goodreads_rss",
+        "2",
+        title="Persepolis Rising: An Expanse Novel",
+        content_type=ContentType.BOOK,
+        metadata={
+            "series_name": "The Expanse",
+            "series_position": 7,
+            "series_position_authority": "authored",
+        },
+    )
+    db.merge_content_items(survivor_id, absorbed_id, MergeEvidence.MANUAL)
+
+    _save(
+        db,
+        "generic_csv",
+        "1",
+        title="Persepolis Rising",
+        content_type=ContentType.BOOK,
+        metadata=stated,
+    )
+
+    survivor = db.get_content_item(survivor_id)
+    assert survivor is not None
+    assert get_series_position_from_metadata(survivor.metadata) == 7.0
+    assert survivor.metadata["series_position_authority"] == "authored"
+
+
 def test_the_survivor_reports_both_rows_ids_and_hands_them_back_on_unmerge(
     db: SQLiteDB,
 ) -> None:
@@ -536,6 +679,8 @@ def test_an_undo_keeps_the_enrichment_that_landed_after_the_merge(
             status=ConsumptionStatus.UNREAD,
             metadata={"description": "Aperture Science", "genres": ["Puzzle"]},
         ),
+        FieldWriter(WriterBand.PROVIDER, "giantbomb"),
+        {"description": "Aperture Science", "genres": ["Puzzle"]},
     )
     with db.connection() as conn:
         mark_enrichment_complete(conn, survivor_id, "giantbomb", "high")
@@ -586,6 +731,8 @@ def test_no_write_door_reaches_the_row_behind_a_merge(db: SQLiteDB) -> None:
             status=ConsumptionStatus.UNREAD,
             metadata={"developer": "Valve", "genres": ["Puzzle"]},
         ),
+        FieldWriter(WriterBand.PROVIDER, "igdb"),
+        {"developer": "Valve", "genres": ["Puzzle"]},
     )
     with db.connection() as conn:
         mark_enrichment_complete(conn, absorbed_id, "igdb", "high")
@@ -667,3 +814,103 @@ def test_a_survivor_keeps_the_better_founded_of_two_ordinals(db: SQLiteDB) -> No
     assert get_series_position_from_metadata(survivor.metadata) == 5.0
     assert survivor.metadata["series_position_authority"] == "library"
     assert 7 not in survivor.metadata.values()
+
+
+def test_a_resync_after_a_merge_of_two_series_keeps_the_survivor_in_its_own(
+    db: SQLiteDB,
+) -> None:
+    """The absorbed row is saved first, so its name would be the earliest stated
+    and would count the survivor's own ordinal out of its series."""
+    absorbed_id = _save(
+        db,
+        "goodreads_rss",
+        "2",
+        title="Persepolis Rising: An Expanse Novel",
+        content_type=ContentType.BOOK,
+        metadata={
+            "series_name": "The Expanse Novellas",
+            "series_position": 1,
+            "series_position_authority": "authored",
+        },
+    )
+    stated = {
+        "series_name": "The Expanse",
+        "series_position": 5,
+        "series_position_authority": "library",
+    }
+    survivor_id = _save(
+        db,
+        "calibre_web",
+        "1",
+        title="Persepolis Rising",
+        content_type=ContentType.BOOK,
+        metadata=stated,
+    )
+    db.merge_content_items(survivor_id, absorbed_id, MergeEvidence.MANUAL)
+
+    _save(
+        db,
+        "calibre_web",
+        "1",
+        title="Persepolis Rising",
+        content_type=ContentType.BOOK,
+        metadata=stated,
+    )
+
+    survivor = db.get_content_item(survivor_id)
+    assert get_series_name(survivor) == "The Expanse"
+    assert get_series_position_from_metadata(survivor.metadata) == 5.0
+
+
+def test_a_genre_held_on_the_absorbed_row_neither_decides_nor_holds_the_survivor(
+    db: SQLiteDB,
+) -> None:
+    """The survivor is where a hold is read, released and reported, so one
+    reaching it from a row behind the merge could never be taken back."""
+    survivor_id = _save(
+        db, "steam", "620", title="Portal 2", metadata={"genres": ["Puzzle"]}
+    )
+    absorbed_id = _save(
+        db,
+        "gog",
+        "1207658961",
+        title="Portal Two",
+        metadata={"genres": ["Adventure"]},
+    )
+    assert db.update_item_from_ui(db_id=absorbed_id, genres=["Co-op"]) is True
+
+    db.merge_content_items(survivor_id, absorbed_id, MergeEvidence.MANUAL)
+
+    survivor = db.get_content_item(survivor_id)
+    assert survivor is not None
+    assert survivor.metadata["genres"] == ["Puzzle", "Adventure"]
+    assert survivor.manual_fields == []
+
+
+def test_the_operators_genres_stand_over_the_merged_rows_and_outlive_an_undo(
+    db: SQLiteDB,
+) -> None:
+    survivor_id = _save(
+        db, "steam", "620", title="Portal 2", metadata={"genres": ["Puzzle"]}
+    )
+    absorbed_id = _save(
+        db,
+        "gog",
+        "1207658961",
+        title="Portal Two",
+        metadata={"genres": ["Adventure"]},
+    )
+    assert db.update_item_from_ui(db_id=absorbed_id, genres=["Co-op"]) is True
+
+    record = db.merge_content_items(survivor_id, absorbed_id, MergeEvidence.MANUAL)
+    assert db.update_item_from_ui(db_id=survivor_id, genres=["Platformer"]) is True
+    merged = db.get_content_item(survivor_id)
+    assert merged is not None
+    assert merged.metadata["genres"] == ["Platformer"]
+
+    db.unmerge_content_items(record.id)
+    _save(db, "steam", "620", title="Portal 2", metadata={"genres": ["Puzzle"]})
+
+    survivor = db.get_content_item(survivor_id)
+    assert survivor is not None
+    assert survivor.metadata["genres"] == ["Platformer"]

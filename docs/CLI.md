@@ -160,12 +160,11 @@ uv run python -m src.cli library edit --id 42 --title "The Hobbit"
 
 A TV show status fills in a season list you did not pass only where that adds
 one: `--status completed` ticks every season. Nothing else infers seasons from a
-status, and nothing but `--clear-seasons` empties the list, because a sync only
-ever adds a watched season. Pass both and both are written as given.
+status, and nothing but `--clear-seasons` empties the list. Pass both and both
+are written as given.
 
-`--clear-rating`, `--clear-review`,
-`--clear-seasons`, `--clear-genres` and `--clear-tags` are the only way to store
-nothing there, and none may be combined with its value flag. `--review ""` is
+The `--clear-*` flags are the only way to store nothing there, and none may be
+combined with its value flag. `--review ""` is
 refused, pointing you at `--clear-review`, because an empty string is far more
 often a shell accident than an intention. A description is the exception:
 `--description ""` is its clear, whitespace included, matching the emptied box
@@ -175,9 +174,10 @@ the web sends.
 `--genre` and `--tag` replace the existing lists rather than appending.
 
 Every field an edit writes is held against its source: a later sync and every
-enrichment run leave it alone, and `library show` lists what is held. The one
-exception is a TV show whose source reports a season past the ones you ticked,
-which goes back to in-progress, still held.
+enrichment run leave it alone, and `library show` lists what is held. Two
+exceptions on TV shows: a season past the ones you ticked sends it back to
+in-progress, still held, and a sync carrying episode counts re-derives watched
+seasons, so an untick can return.
 
 `--creator` corrects the field a title match is vetoed on, so a row with a wrong creator takes the next source stating the true one instead of growing the library another row. `--release-year` corrects the year shown. A year runs 1800-2200 and a creator 500 characters; a book takes no `--release-year`, because `year_published` dates the edition rather than the work.
 
@@ -477,7 +477,7 @@ by hand: `candidates` searches every enabled provider (add `--query` to search
 under a different title), `pin` binds the item to one of them, and `--clear`
 hands it back to title matching. `candidates` needs enrichment on with a
 provider that searches the item's type. A pin then enriches the item and waits
-for the run; a clear leaves it queued.
+for the run; a clear rebuilds it at once and leaves it queued.
 
 Only a provider that reads a pin can be pinned, and only to an id it can look
 up; the refusal names the ones that can.
