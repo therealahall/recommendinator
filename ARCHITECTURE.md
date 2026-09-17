@@ -205,8 +205,7 @@ The rules every merge follows:
 - `date_completed` keeps the later date
 - `status` takes the further-advanced under the sync ordering
 - `ignored` moves nowhere: each row keeps its own
-- A detail column the survivor left empty fills from the duplicate, and detail
-  metadata merges existing-wins
+- The detail metadata blob merges existing-wins; the columns are the rebuild's
 - `seasons_watched` is the exception, unioned across both rows, and
   `seasons_watched_dates` merged per season keeping the later watch date
 

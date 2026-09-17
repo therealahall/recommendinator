@@ -3059,3 +3059,35 @@ class TestARunReachesTMDBThroughTheGlobalRegistry:
         assert enriched.cover_url == "https://image.tmdb.org/t/p/w500/matrix.jpg"
         assert manager.get_status().items_enriched == 1
         assert queued_ids(storage_manager) == set()
+
+
+class TestARunEndsWithTheProfileItsGenresImply:
+    @pytest.fixture
+    def storage_manager(self, tmp_path: Path) -> StorageManager:
+        return StorageManager(sqlite_path=tmp_path / "test.db")
+
+    def test_the_genres_a_run_wrote_reach_the_stored_profile(
+        self, storage_manager: StorageManager
+    ) -> None:
+        """The stored profile is rebuilt after the run, so it names the genres
+        the run wrote rather than the ones its items started with."""
+        for title in ("The Matrix", "Heat"):
+            storage_manager.save_content_item(
+                ContentItem(
+                    id=title.lower(),
+                    title=title,
+                    content_type=ContentType.MOVIE,
+                    status=ConsumptionStatus.COMPLETED,
+                    rating=5,
+                )
+            )
+        manager = manager_over(storage_manager, MockProvider())
+
+        manager.start_enrichment(content_type=ContentType.MOVIE)
+        assert manager._wait_for_completion()
+
+        record = storage_manager.profiles.get(1)
+        assert record is not None
+        affinities = record["profile"]["genre_affinities"]
+        assert {genre.lower() for genre in affinities} == {"action", "drama"}
+        assert set(affinities.values()) == {5.0}

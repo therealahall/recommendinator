@@ -347,6 +347,24 @@ class TestARestoreLandsOnTheShowItNames:
         assert latest_season_watched_date(stored["Severance"]) == date(2026, 2, 14)
 
 
+def test_an_import_ends_by_refreshing_the_profile(storage: StorageManager) -> None:
+    """A one-off file may be the whole library, and nothing else will save these
+    rows again, so the taste they state reaches the recommendations here or never."""
+    import_file(
+        storage,
+        1,
+        "title,author,status,rating\n"
+        "Dune,Frank Herbert,read,5\n"
+        "Dune Messiah,Frank Herbert,read,5\n",
+        CsvImporter(),
+        ContentType.BOOK,
+    )
+
+    record = storage.profiles.get(1)
+    assert record is not None
+    assert record["profile"]["author_affinities"] == {"Frank Herbert": 5.0}
+
+
 @pytest.mark.parametrize("mark_for_enrichment", [True, False])
 def test_enrichment_is_queued_only_when_the_caller_opens_the_gate(
     storage: StorageManager, mark_for_enrichment: bool

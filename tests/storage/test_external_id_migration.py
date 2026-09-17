@@ -10,6 +10,7 @@ from src.storage.manager import MergeEvidence, StorageManager
 from src.storage.merge import normalize_title_for_matching
 from src.storage.schema import _LEGACY_EXTERNAL_ID_SOURCE, _rebuild_content_items
 from src.storage.sqlite_db import SQLiteDB
+from tests.factories import drop_the_ledger_write_guard
 
 _CONTENT_ITEMS_AT_VERSION_SEVEN = """
     CREATE TABLE content_items (
@@ -59,6 +60,7 @@ def _stand_up_a_version_seven_library(db_path: Path) -> None:
     SQLiteDB(db_path)
     conn = _connect(db_path)
     try:
+        drop_the_ledger_write_guard(conn)
         conn.execute("DROP TABLE content_items")
         conn.execute(_CONTENT_ITEMS_AT_VERSION_SEVEN)
         conn.execute("ALTER TABLE content_items ADD COLUMN ignored BOOLEAN DEFAULT 0")

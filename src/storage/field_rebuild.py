@@ -130,6 +130,39 @@ def rebuild_item_fields(
     return resolved
 
 
+def _counts_for_the_group(field: str, writer_kind: WriterBand, absorbed: bool) -> bool:
+    """A hold belongs to the row it was made against: the manual_fields read and
+    the release door are both survivor-only, so an absorbed row's hold entering
+    the group would decide a field nobody can see or release.
+    """
+    return not absorbed or (
+        writer_kind is not WriterBand.MANUAL and field in _ABSORBED_ROW_STATES
+    )
+
+
+def fields_leaving_the_group(
+    cursor: sqlite3.Cursor, survivor_id: int, departed_id: int
+) -> frozenset[str]:
+    """The columns an undo empties: a field whose only word came from the rows
+    that just left. Not one the rebuild leaves unresolved — a provider switched
+    off still has its word on file.
+    """
+    departed = {
+        write.field
+        for write in read_field_writes(cursor, departed_id)
+        # Read as the absorbed rows they were in the group they are leaving.
+        if _counts_for_the_group(write.field, write.writer_kind, True)
+    }
+    return frozenset(
+        departed
+        - {
+            write.field
+            for write in read_field_writes(cursor, survivor_id)
+            if _counts_for_the_group(write.field, write.writer_kind, write.absorbed)
+        }
+    )
+
+
 def _strength(band: WriterBand, field: str) -> int:
     if field in SOURCE_FIRST_FIELDS:
         band = _SOURCE_FIRST_TRADE.get(band, band)
@@ -143,13 +176,7 @@ def _ranked(
         list
     )
     for write in writes:
-        # A hold belongs to the row it was made against: the manual_fields read
-        # and the release door are both survivor-only, so an absorbed row's hold
-        # entering the group would decide a field nobody can see or release.
-        if write.absorbed and (
-            write.writer_kind is WriterBand.MANUAL
-            or write.field not in _ABSORBED_ROW_STATES
-        ):
+        if not _counts_for_the_group(write.field, write.writer_kind, write.absorbed):
             continue
         band = ranks.band_of(write)
         if band is None:

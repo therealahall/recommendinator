@@ -15,6 +15,7 @@ from src.models.content import (
     EnrichmentFilter,
 )
 from src.models.user_preferences import UserPreferenceConfig
+from src.recommendations.profile import refresh_profile
 from src.storage.accounts import AccountStore, normalize_account_name
 from src.storage.cover_jobs import CoverBackfillStore
 from src.storage.credentials import CredentialStore
@@ -146,8 +147,11 @@ class StorageManager:
             self.sqlite_db.save_enrichment_metadata(db_id, item, writer, stated)
 
     def set_enrichment_pins(self, db_id: int, pins: Mapping[str, str]) -> None:
+        """Rebuilds the item's resolved columns, so the profile is regenerated
+        here: clearing a pin starts no run to do it afterwards."""
         with self._save_lock:
             self.sqlite_db.set_enrichment_pins(db_id, pins)
+        refresh_profile(self)
 
     def record_stated_fields(
         self, db_id: int, writer: FieldWriter, stated: Mapping[str, Any]
@@ -166,7 +170,9 @@ class StorageManager:
         date nobody has lived yet.
         """
         with self._save_lock:
-            return self.sqlite_db.complete_content_item(item, user_id=user_id)
+            db_id = self.sqlite_db.complete_content_item(item, user_id=user_id)
+        refresh_profile(self, user_id)
+        return db_id
 
     def get_content_item(
         self, db_id: int, user_id: int | None = None
@@ -282,13 +288,15 @@ class StorageManager:
         user_id: int | None = None,
     ) -> MergeRecord:
         with self._save_lock:
-            return self.sqlite_db.merge_content_items(
+            record = self.sqlite_db.merge_content_items(
                 survivor_id,
                 absorbed_id,
                 evidence,
                 evidence_detail=evidence_detail,
                 user_id=user_id,
             )
+        refresh_profile(self, user_id)
+        return record
 
     def unmerge_content_items(
         self, merge_id: int, user_id: int | None = None
@@ -296,7 +304,10 @@ class StorageManager:
         """Undo one merge, newest into its survivor first; raises ``MergeError``
         for any other order, and returns ``None`` when there is no such merge."""
         with self._save_lock:
-            return self.sqlite_db.unmerge_content_items(merge_id, user_id=user_id)
+            record = self.sqlite_db.unmerge_content_items(merge_id, user_id=user_id)
+        if record is not None:
+            refresh_profile(self, user_id)
+        return record
 
     def list_content_item_merges(self, user_id: int | None = None) -> list[MergeRecord]:
         return self.sqlite_db.list_content_item_merges(user_id=user_id)
@@ -335,7 +346,10 @@ class StorageManager:
     def set_item_ignored(
         self, db_id: int, ignored: bool, user_id: int | None = None
     ) -> bool:
-        return self.sqlite_db.set_item_ignored(db_id, ignored, user_id=user_id)
+        changed = self.sqlite_db.set_item_ignored(db_id, ignored, user_id=user_id)
+        if changed:
+            refresh_profile(self, user_id)
+        return changed
 
     def update_item_from_ui(
         self,
@@ -355,7 +369,7 @@ class StorageManager:
         """The explicit-user-action door: it writes only the fields supplied,
         overwrites them freely, and holds each one against its source.
         """
-        return self.sqlite_db.update_item_from_ui(
+        updated = self.sqlite_db.update_item_from_ui(
             db_id=db_id,
             title=title,
             status=status,
@@ -369,6 +383,9 @@ class StorageManager:
             creator=creator,
             user_id=user_id,
         )
+        if updated:
+            refresh_profile(self, user_id)
+        return updated
 
     def clear_manual_field(
         self, db_id: int, field: str, user_id: int | None = None

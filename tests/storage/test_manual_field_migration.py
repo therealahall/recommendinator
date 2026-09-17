@@ -8,6 +8,7 @@ from typing import Any
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.field_writes import FieldWriter, WriterBand
 from src.storage.manager import StorageManager
+from tests.factories import drop_the_ledger_write_guard
 
 _HOLDS_TABLE = """
     CREATE TABLE content_item_manual_fields (
@@ -82,6 +83,7 @@ def _seed_a_library_holding(
             " VALUES (?, ?)",
             [(db_id, field) for field in held],
         )
+        drop_the_ledger_write_guard(conn)
         if raw_genres is not None:
             conn.execute(
                 "UPDATE movie_details SET genres = ? WHERE content_item_id = ?",

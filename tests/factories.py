@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import sqlite3
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import fields
@@ -30,6 +31,23 @@ SESSION_USER: UserDict = {
 }
 
 MALFORMED_IDS = ["Not An Id", "gog\n", "1gog", "../gog", "gog work", "gög", ""]
+
+
+def drop_the_ledger_write_guard(
+    handle: sqlite3.Connection | sqlite3.Cursor,
+) -> None:
+    """Shape this database like one a build before the guard wrote. Not an
+    escape hatch — no door has one — and the next open puts the triggers back.
+    """
+    refusing = [
+        row[0]
+        for row in handle.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'trigger'"
+            " AND name LIKE '%_ledger_only'"
+        ).fetchall()
+    ]
+    for name in refusing:
+        handle.execute(f"DROP TRIGGER {name}")
 
 
 def sub_store_specs() -> dict[str, type]:

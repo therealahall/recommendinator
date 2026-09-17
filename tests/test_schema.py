@@ -15,6 +15,7 @@ from src.storage.schema import (
     update_user_settings,
 )
 from src.utils.sorting import build_search_text, get_sort_title
+from tests.factories import drop_the_ledger_write_guard
 
 
 @pytest.fixture
@@ -205,6 +206,7 @@ def _seed_a_row_missing_the_derived_columns(conn: sqlite3.Connection) -> None:
     """What every row looked like until the columns were added, and what a build
     that predates them still writes into a database that already has them."""
     cursor = conn.cursor()
+    drop_the_ledger_write_guard(conn)
     cursor.execute("""INSERT INTO content_items
            (user_id, title, normalized_title, content_type, status)
            VALUES (1, 'The Witcher 3', 'witcher 3', 'video_game', 'completed')""")
@@ -260,6 +262,7 @@ class TestTheDerivedColumnBackfill:
     @classmethod
     def _seed_every_content_type(cls, conn: sqlite3.Connection) -> None:
         cursor = conn.cursor()
+        drop_the_ledger_write_guard(conn)
         for (
             title,
             content_type,

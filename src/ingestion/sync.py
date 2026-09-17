@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 from src.ingestion.plugin_base import SourceError, SourcePlugin
 from src.ingestion.source_labels import label_for_source
 from src.models.content import ContentItem, get_enum_value
+from src.recommendations.profile import refresh_profile
 from src.storage.manager import SaveCounts
 from src.storage.schema import SyncRunStatus
 from src.storage.sync_runs import HEARTBEAT_EVERY
@@ -487,6 +488,8 @@ def execute_multi_source_sync(
                 results = [future.result() for future in futures]
         else:
             results = [_run_one(plugin, cfg) for plugin, cfg in sources]
+
+    refresh_profile(storage_manager, user_id)
 
     total_synced = sum(result.items_synced for result in results)
     logger.info("[SYNC] === Completed. Total items processed: %d ===", total_synced)

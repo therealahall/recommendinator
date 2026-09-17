@@ -14,8 +14,7 @@ from typing import Any
 from src.storage.derived import write_derived_columns
 from src.storage.merge import (
     ALLOWED_DETAIL_TABLES,
-    detail_columns,
-    merge_detail_tables,
+    carry_detail_metadata,
     merge_enrichment_status,
     merge_scalar_columns,
 )
@@ -42,14 +41,13 @@ class MergeRecord:
 
 
 # The columns a merge can write, and so the ones compared either side of one.
-# ``ignored`` is absent because no merge writes it: restoring it could only take
-# back an ignore made since.
+# ``cover_url`` is the rebuild's, and ``ignored`` is nobody's: restoring one
+# could only take back an ignore made since.
 _SURVIVOR_COLUMNS = (
     "status",
     "rating",
     "review",
     "date_completed",
-    "cover_url",
     "updated_at",
 )
 
@@ -61,8 +59,10 @@ _ENRICHMENT_COLUMNS = (
     "enrichment_error",
 )
 
+# Of each detail table only the blob, which is what a merge writes there: its
+# columns are writer-stated, and the undo leg's rebuild unstates them.
 _SNAPSHOT_COLUMNS: dict[str, tuple[str, ...]] = {
-    **{table: detail_columns(table) for table in ALLOWED_DETAIL_TABLES},
+    **dict.fromkeys(ALLOWED_DETAIL_TABLES, ("metadata",)),
     "enrichment_status": _ENRICHMENT_COLUMNS,
 }
 
@@ -101,7 +101,7 @@ def absorb_item(
     cursor.execute("BEGIN IMMEDIATE")
     before = _survivor_state(cursor, survivor_id)
     merge_scalar_columns(cursor, survivor_id, absorbed_id)
-    merge_detail_tables(cursor, survivor_id, absorbed_id)
+    carry_detail_metadata(cursor, survivor_id, absorbed_id)
     merge_enrichment_status(cursor, survivor_id, absorbed_id)
     write_derived_columns(cursor, survivor_id)
     restore = _what_this_merge_wrote(before, _survivor_state(cursor, survivor_id))
@@ -369,7 +369,11 @@ def _restore_child(
     if row is None:
         cursor.execute(f"DELETE FROM {table} WHERE content_item_id = ?", (survivor_id,))
         return
+    # A record written before the snapshot narrowed to the blob names columns
+    # this build no longer restores, leaving nothing to assign.
     written = [column for column in columns if column in row]
+    if not written:
+        return
     assignments = ", ".join(f"{column} = ?" for column in written)
     cursor.execute(
         f"UPDATE {table} SET {assignments} WHERE content_item_id = ?",

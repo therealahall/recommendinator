@@ -17,6 +17,7 @@ from src.utils.sorting import (
     normalize_for_search,
     search_text_match_tier,
 )
+from tests.factories import drop_the_ledger_write_guard
 
 _THE_DUPLICATE_PAIR = (
     (
@@ -91,8 +92,12 @@ def _user_version(db_path: Path) -> int:
 
 
 def _rewind_to(db_path: Path, version: int) -> None:
+    """The ledger triggers go with the version: a build of that vintage had
+    none, and the repairs the next open runs rewrite the columns they refuse.
+    """
     conn = sqlite3.connect(db_path)
     try:
+        drop_the_ledger_write_guard(conn)
         conn.execute(f"PRAGMA user_version = {int(version)}")
         conn.commit()
     finally:
@@ -153,6 +158,9 @@ def _record_external_id(
 def _drop_the_cover_url_column(db_path: Path) -> None:
     conn = sqlite3.connect(db_path)
     try:
+        # SQLite refuses to drop a column a trigger names, and a build from
+        # before the column had neither.
+        drop_the_ledger_write_guard(conn)
         conn.execute("ALTER TABLE content_items DROP COLUMN cover_url")
         conn.commit()
     finally:
@@ -432,6 +440,7 @@ class TestTheLegacyBand:
     def _rewrite_the_description(db_path: Path, db_id: int, description: str) -> None:
         conn = sqlite3.connect(db_path)
         try:
+            drop_the_ledger_write_guard(conn)
             conn.execute(
                 "UPDATE book_details SET description = ? WHERE content_item_id = ?",
                 (description, db_id),
@@ -743,6 +752,7 @@ class TestUpgradingALibraryWrittenUnderTheOldTitleRules:
                        VALUES (?, 1, ?, ?, 'book')""",
                     (cursor.lastrowid, source, external_id),
                 )
+                drop_the_ledger_write_guard(conn)
                 conn.execute(
                     "INSERT INTO book_details (content_item_id, author)"
                     " VALUES (?, ?)",
@@ -1046,3 +1056,30 @@ class TestWhatTheRenormalizationRewrites:
             ("disc", "æon flux", None, None),
             ("stream", "æon flux", None, None),
         ]
+
+
+class TestTheLedgerWriteGuardOnAnUpgrade:
+    """The triggers are created after every repair, because the repairs rewrite
+    the very columns they refuse."""
+
+    def test_an_upgraded_library_refuses_a_detail_column_written_directly(
+        self, tmp_path: Path
+    ) -> None:
+        db_path = tmp_path / "upgraded-guard.db"
+        db_id = SQLiteDB(db_path).save_content_item(
+            _a_book("calibre_web", "c:1", "Deadhouse Gates")
+        )
+        _rewind_to(db_path, 9)
+
+        _open(db_path)
+
+        assert _user_version(db_path) == _SCHEMA_VERSION
+        with SQLiteDB(db_path).connection() as upgraded:
+            with pytest.raises(
+                sqlite3.IntegrityError, match="only the rebuild writes it"
+            ):
+                upgraded.execute(
+                    "UPDATE book_details SET author = 'Nobody'"
+                    " WHERE content_item_id = ?",
+                    (db_id,),
+                )

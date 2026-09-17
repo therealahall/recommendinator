@@ -1,11 +1,14 @@
 import threading
+from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.user_preferences import UserPreferenceConfig
-from src.storage.manager import StorageManager
+from src.recommendations.profile import ProfileGenerator
+from src.storage.manager import MergeEvidence, StorageManager
 from src.storage.schema import get_user_by_id, update_user_settings
 
 
@@ -15,7 +18,11 @@ def temp_storage_manager(tmp_path: Path) -> StorageManager:
 
 
 def _book(
-    item_id: str, title: str, status: ConsumptionStatus, rating: int | None
+    item_id: str,
+    title: str,
+    status: ConsumptionStatus,
+    rating: int | None,
+    metadata: dict[str, Any] | None = None,
 ) -> ContentItem:
     return ContentItem(
         id=item_id,
@@ -23,6 +30,7 @@ def _book(
         content_type=ContentType.BOOK,
         status=status,
         rating=rating,
+        metadata=metadata or {},
     )
 
 
@@ -187,6 +195,94 @@ class TestGetSignalItemsRegression:
         dismissed = temp_storage_manager.get_content_items(ignored_only=True)
 
         assert [item.title for item in dismissed] == ["Dismissed Book"]
+
+
+class TestEveryUserOwnedWriteLeavesTheProfileCurrent:
+    """The stored profile is what the recommendations score against, so a door
+    that writes without regenerating scores the taste the library had before."""
+
+    @staticmethod
+    def _stored(manager: StorageManager) -> dict[str, Any]:
+        record = manager.profiles.get(1)
+        assert record is not None, "the door stored no profile"
+        return dict(record["profile"])
+
+    @staticmethod
+    def _implied_now(manager: StorageManager) -> dict[str, Any]:
+        return asdict(ProfileGenerator(manager).generate_profile(1))
+
+    def test_a_rating_lands_in_the_profile_the_recommendations_read(
+        self, temp_storage_manager: StorageManager
+    ) -> None:
+        for key in ("one", "two"):
+            db_id = temp_storage_manager.save_content_item(
+                _book(
+                    key,
+                    f"Book {key}",
+                    ConsumptionStatus.COMPLETED,
+                    None,
+                    {"genres": ["sci-fi"]},
+                )
+            )
+            temp_storage_manager.update_item_from_ui(db_id=db_id, rating=5)
+
+        assert self._stored(temp_storage_manager)["genre_affinities"] == {
+            "science fiction": 5.0
+        }
+
+    def test_completing_merging_and_ignoring_each_regenerate_it(
+        self, temp_storage_manager: StorageManager
+    ) -> None:
+        """Each stamp is a regeneration; the sync door in between is not one,
+        because a per-item pass would read the library once per synced item."""
+        survivor = temp_storage_manager.complete_content_item(
+            _book("done", "Finished Book", ConsumptionStatus.COMPLETED, 5)
+        )
+        completed_at = self._stored(temp_storage_manager)["generated_at"]
+
+        absorbed = temp_storage_manager.save_content_item(
+            _book("reissue", "Finished Book Reissue", ConsumptionStatus.UNREAD, None)
+        )
+        assert self._stored(temp_storage_manager)["generated_at"] == completed_at
+
+        temp_storage_manager.merge_content_items(
+            survivor, absorbed, MergeEvidence.MANUAL
+        )
+        merged_at = self._stored(temp_storage_manager)["generated_at"]
+
+        temp_storage_manager.set_item_ignored(survivor, True)
+        ignored_at = self._stored(temp_storage_manager)["generated_at"]
+
+        assert completed_at < merged_at < ignored_at
+        stored = self._stored(temp_storage_manager)
+        implied = self._implied_now(temp_storage_manager)
+        del stored["generated_at"], implied["generated_at"]
+        assert stored == implied
+
+    def test_clearing_a_pin_regenerates_it_though_no_enrichment_run_follows(
+        self, temp_storage_manager: StorageManager
+    ) -> None:
+        """A bound pin refreshes through the run it starts; clearing one starts
+        nothing, so the resolved genres it changes are nobody else's to publish."""
+        db_id = temp_storage_manager.save_content_item(
+            _book(
+                "pinned",
+                "Pinned Book",
+                ConsumptionStatus.COMPLETED,
+                5,
+                {"genres": ["sci-fi"]},
+            )
+        )
+        temp_storage_manager.set_enrichment_pins(db_id, {"openlibrary": "OL1W"})
+        pinned_at = self._stored(temp_storage_manager)["generated_at"]
+
+        temp_storage_manager.set_enrichment_pins(db_id, {})
+
+        stored = self._stored(temp_storage_manager)
+        implied = self._implied_now(temp_storage_manager)
+        assert stored["generated_at"] > pinned_at
+        del stored["generated_at"], implied["generated_at"]
+        assert stored == implied
 
 
 class TestGetConsumptionItemsRegression:

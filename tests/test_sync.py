@@ -243,6 +243,25 @@ class TestExecuteMultiSourceSync:
         assert failure.exc_info is not None
         assert "Traceback (most recent call last)" in caplog.text
 
+    def test_a_run_regenerates_the_profile_once_and_not_per_item(self) -> None:
+        """A regeneration reads the whole library, so a call from the save door
+        would run one full pass for every item of every source."""
+        storage = make_storage_mock()
+        sources = []
+        for index in range(2):
+            plugin = MagicMock(spec=SourcePlugin)
+            plugin.name = f"src_{index}"
+            plugin.display_name = f"Src {index}"
+            plugin.fetch.return_value = iter(
+                [make_item(f"Item {index}-{number}") for number in range(3)]
+            )
+            sources.append((plugin, {}))
+
+        execute_multi_source_sync(sources=sources, storage_manager=storage)
+
+        assert storage.save_content_item_outcome.call_count == 6
+        assert storage.profiles.save.call_count == 1
+
     def test_max_workers_runs_sources_concurrently(self) -> None:
         thread_count = 3
         barrier = threading.Barrier(thread_count, timeout=5.0)
