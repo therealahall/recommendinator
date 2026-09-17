@@ -248,8 +248,8 @@ correction on its next run.
 
 **`genres` and `tags` combine across writers, and `seasons` and `episodes` only
 ever increase.** Every other detail column is decided by rank: the user's own
-edit first, then a pinned provider, the providers in precedence order, then
-sources and imports. Covers invert it — a source outranks a provider, because a
+edit first, then a chosen writer, then a pinned provider, the providers in
+precedence order, then sources and imports. Covers invert it — a source outranks a provider, because a
 store's own art beats a database's screenshot. The
 [full rules](../ARCHITECTURE.md#user-owned-fields) for the fields the user owns
 cover every case.

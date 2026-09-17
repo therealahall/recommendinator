@@ -9,7 +9,9 @@ import type {
   EnrichmentCandidatesResponse,
   EnrichmentPinResponse,
   EnrichmentRequeueResponse,
+  FieldWriters,
   ItemEditRequest,
+  ItemFieldWritersResponse,
   MergeRecord,
 } from '@/types/api'
 
@@ -52,6 +54,10 @@ export const useLibraryStore = defineStore('library', () => {
   const pinned = ref<Record<string, string>>({})
   const pinSearching = ref(false)
   const pinMessage = ref('')
+
+  // What every writer says about the fields of the item being edited, which is
+  // what the switcher offers. Read with the item: a choice is made from it.
+  const fieldWriters = ref<FieldWriters[]>([])
 
   // The item a merge is picked from. Its content type scopes the candidate
   // search, which is what puts a cross-type merge out of the picker's reach.
@@ -219,6 +225,7 @@ export const useLibraryStore = defineStore('library', () => {
       editingItem.value = item
       pinned.value = item.pinned ?? {}
       syncRow(dbId, item)
+      await loadFieldWriters(dbId)
     } catch (err) {
       error.value = err instanceof Error ? err.message : 'Failed to load item'
     }
@@ -231,6 +238,31 @@ export const useLibraryStore = defineStore('library', () => {
     pinCandidates.value = []
     pinned.value = {}
     pinMessage.value = ''
+    fieldWriters.value = []
+  }
+
+  async function loadFieldWriters(dbId: number) {
+    try {
+      const found = await api.get<ItemFieldWritersResponse>(`/items/${dbId}/field-writers`, {
+        user_id: useAppStore().currentUserId,
+      })
+      fieldWriters.value = found.fields
+    } catch (err) {
+      editError.value = err instanceof Error ? err.message : 'Failed to read the writers'
+      fieldWriters.value = []
+    }
+  }
+
+  // Throws, like the manual release the switcher sits beside: the dialog that
+  // asked is the only surface that can say the refusal where the click happened.
+  async function chooseFieldWriter(dbId: number, field: string, writer: string | null) {
+    const updated = await api.put<ContentItemResponse>(`/items/${dbId}/field-writers/${field}`, {
+      writer,
+      user_id: useAppStore().currentUserId,
+    })
+    editingItem.value = updated
+    syncRow(dbId, updated)
+    await loadFieldWriters(dbId)
   }
 
   async function findPinCandidates(dbId: number, query: string) {
@@ -433,6 +465,7 @@ export const useLibraryStore = defineStore('library', () => {
     pinned,
     pinSearching,
     pinMessage,
+    fieldWriters,
     mergeAnchor,
     mergeQuery,
     mergeCandidates,
@@ -453,6 +486,8 @@ export const useLibraryStore = defineStore('library', () => {
     findPinCandidates,
     pinEnrichment,
     retryEnrichment,
+    loadFieldWriters,
+    chooseFieldWriter,
     openMerge,
     closeMerge,
     setMergeQuery,

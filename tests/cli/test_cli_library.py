@@ -25,6 +25,7 @@ from src.models.content import (
     ExternalId,
 )
 from src.storage.duplicates import GROUP_MEMBER_MAX, MAX_DECLINE_OTHERS
+from src.storage.field_writes import FieldWriter, WriterBand
 from src.storage.manager import (
     SUGGESTION_PAGE_DEFAULT,
     StorageManager,
@@ -2166,3 +2167,390 @@ class TestLibraryClearManual:
 
         assert result.exit_code != 0
         assert "Item 1 holds no manual publisher." in result.output
+
+    def test_clear_manual_folds_the_case_of_the_field_name(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """The retired Click choice folded it; storage files fields lower-cased."""
+        storage = StorageManager(sqlite_path=tmp_path / "case.db")
+        db_id = storage.save_content_item(
+            ContentItem(
+                id="movie-1",
+                title="Arrival",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.UNREAD,
+                metadata={"description": "A linguist."},
+            ),
+            user_id=1,
+        )
+        storage.update_item_from_ui(db_id=db_id, description="Hers.", user_id=1)
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            [
+                "library",
+                "clear-manual",
+                "--id",
+                str(db_id),
+                "--field",
+                "Description",
+                "--format",
+                "json",
+            ],
+            storage,
+        )
+
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.output)["manual_fields"] == []
+
+
+class TestLibraryFieldSwitcher:
+    def _two_writers(self, tmp_path: Path) -> tuple[StorageManager, int]:
+        """A source and a provider both naming the creator and the genres. The
+        provider leads the default order, so a choice of the source shows."""
+        storage = StorageManager(sqlite_path=tmp_path / "writers.db")
+        item = ContentItem(
+            id="620",
+            title="Portal 2",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+            source="steam",
+            author="Valve",
+            metadata={"genres": ["Puzzle"]},
+        )
+        db_id = storage.save_content_item(item, user_id=1)
+        storage.save_enrichment_metadata(
+            db_id,
+            item,
+            FieldWriter(WriterBand.PROVIDER, "rawg"),
+            {"developer": "Valve Corporation", "genres": ["Platformer"]},
+        )
+        return storage, db_id
+
+    def test_field_writers_lists_every_writer_under_the_field_name_both_speak(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        storage, db_id = self._two_writers(tmp_path)
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            [
+                "library",
+                "field-writers",
+                "--id",
+                str(db_id),
+                "--field",
+                "Creator",
+                "--format",
+                "json",
+            ],
+            storage,
+        )
+
+        assert result.exit_code == 0, result.output
+        parsed = json.loads(result.output)
+        assert parsed["item_id"] == db_id
+        [offered] = parsed["fields"]
+        assert offered["field"] == "creator"
+        assert offered["chosen"] is None
+        assert {row["writer"]: row["value"] for row in offered["writers"]} == {
+            "steam": "Valve",
+            "rawg": "Valve Corporation",
+        }
+
+    def test_choosing_a_writer_outranks_the_default_order_and_releases_the_hold(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        storage, db_id = self._two_writers(tmp_path)
+        storage.update_item_from_ui(db_id=db_id, creator="Valve Software", user_id=1)
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            [
+                "library",
+                "choose-writer",
+                "--id",
+                str(db_id),
+                "--field",
+                "creator",
+                "--writer",
+                "steam",
+                "--format",
+                "json",
+            ],
+            storage,
+        )
+
+        assert result.exit_code == 0, result.output
+        parsed = json.loads(result.output)
+        assert parsed["author"] == "Valve"
+        assert parsed["manual_fields"] == []
+
+    def test_clearing_the_choice_returns_the_field_to_the_default_order(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        storage, db_id = self._two_writers(tmp_path)
+        assert storage.set_field_choice(db_id, "creator", "steam", user_id=1)
+
+        cleared = _invoke_with_mocks(
+            cli_runner,
+            [
+                "library",
+                "choose-writer",
+                "--id",
+                str(db_id),
+                "--field",
+                "creator",
+                "--clear",
+                "--format",
+                "json",
+            ],
+            storage,
+        )
+        again = _invoke_with_mocks(
+            cli_runner,
+            [
+                "library",
+                "choose-writer",
+                "--id",
+                str(db_id),
+                "--field",
+                "creator",
+                "--clear",
+            ],
+            storage,
+        )
+
+        assert cleared.exit_code == 0, cleared.output
+        assert json.loads(cleared.output)["author"] == "Valve Corporation"
+        assert again.exit_code != 0
+        assert f"Item {db_id} follows no chosen writer for creator." in again.output
+
+    def test_the_listing_marks_the_writer_the_field_follows(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        storage, db_id = self._two_writers(tmp_path)
+        assert storage.set_field_choice(db_id, "creator", "steam", user_id=1)
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["library", "field-writers", "--id", str(db_id), "--field", "creator"],
+            storage,
+        )
+
+        assert result.exit_code == 0, result.output
+        marked = {
+            row.split("|")[2].strip(): "Yes" in row
+            for row in result.output.splitlines()
+            if "steam" in row or "rawg" in row
+        }
+        assert marked == {"steam": True, "rawg": False}
+
+    def test_choosing_folds_the_case_of_the_field_name_as_the_listing_does(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        storage, db_id = self._two_writers(tmp_path)
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            [
+                "library",
+                "choose-writer",
+                "--id",
+                str(db_id),
+                "--field",
+                "Creator",
+                "--writer",
+                "steam",
+                "--format",
+                "json",
+            ],
+            storage,
+        )
+
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.output)["author"] == "Valve"
+
+    def test_choosing_a_writer_that_states_nothing_keeps_the_operators_own_entry(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        storage, db_id = self._two_writers(tmp_path)
+        storage.update_item_from_ui(db_id=db_id, creator="Valve Software", user_id=1)
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            [
+                "library",
+                "choose-writer",
+                "--id",
+                str(db_id),
+                "--field",
+                "creator",
+                "--writer",
+                "stem",
+            ],
+            storage,
+        )
+
+        assert result.exit_code != 0
+        assert f"Item {db_id} cannot follow stem for creator." in result.output
+        stored = storage.get_content_item(db_id, user_id=1)
+        assert stored is not None
+        assert stored.author == "Valve Software"
+
+    def test_choosing_a_writer_for_a_combining_field_leaves_the_typed_list_standing(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        storage, db_id = self._two_writers(tmp_path)
+        storage.update_item_from_ui(
+            db_id=db_id, genres=["Cozy", "Comfort Read"], user_id=1
+        )
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            [
+                "library",
+                "choose-writer",
+                "--id",
+                str(db_id),
+                "--field",
+                "genres",
+                "--writer",
+                "rawg",
+            ],
+            storage,
+        )
+
+        assert result.exit_code != 0
+        assert f"Item {db_id} cannot follow rawg for genres." in result.output
+        stored = storage.get_content_item(db_id, user_id=1)
+        assert stored is not None
+        assert stored.metadata["genres"] == ["Cozy", "Comfort Read"]
+
+    def test_a_field_no_choice_can_move_is_said_to_be_settled_not_unstated(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        storage, db_id = self._two_writers(tmp_path)
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["library", "field-writers", "--id", str(db_id), "--field", "genres"],
+            storage,
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "Genres is not decided by rank, so no choice can move it." in (
+            result.output
+        )
+        assert "No writer has stated" not in result.output
+
+    def _two_writers_naming_the_series(
+        self, tmp_path: Path
+    ) -> tuple[StorageManager, int]:
+        storage = StorageManager(sqlite_path=tmp_path / "series.db")
+        item = ContentItem(
+            id="dune",
+            title="Dune",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            source="goodreads_rss",
+            author="Frank Herbert",
+            metadata={"series_name": "Dune Chronicles"},
+        )
+        db_id = storage.save_content_item(item, user_id=1)
+        storage.save_enrichment_metadata(
+            db_id,
+            item,
+            FieldWriter(WriterBand.PROVIDER, "openlibrary"),
+            {"series_name": "The Dune Saga"},
+        )
+        return storage, db_id
+
+    def test_a_choice_on_a_field_rank_cannot_move_is_refused_and_leaves_it_standing(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        storage, db_id = self._two_writers_naming_the_series(tmp_path)
+
+        offered = _invoke_with_mocks(
+            cli_runner,
+            [
+                "library",
+                "field-writers",
+                "--id",
+                str(db_id),
+                "--field",
+                "series_name",
+                "--format",
+                "json",
+            ],
+            storage,
+        )
+        chosen = _invoke_with_mocks(
+            cli_runner,
+            [
+                "library",
+                "choose-writer",
+                "--id",
+                str(db_id),
+                "--field",
+                "series_name",
+                "--writer",
+                "openlibrary",
+            ],
+            storage,
+        )
+
+        assert offered.exit_code == 0, offered.output
+        offers = {
+            row["field"]: row["writers"] for row in json.loads(offered.output)["fields"]
+        }
+        assert offers["series_name"] == []
+        assert chosen.exit_code != 0
+        assert f"Item {db_id} cannot follow openlibrary for series_name." in (
+            chosen.output
+        )
+        stored = storage.get_content_item(db_id, user_id=1)
+        assert stored is not None
+        assert stored.metadata["series_name"] == "Dune Chronicles"
+
+    def test_both_doors_answer_to_the_name_the_type_files_the_creator_under(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        storage, db_id = self._two_writers(tmp_path)
+
+        listed = _invoke_with_mocks(
+            cli_runner,
+            [
+                "library",
+                "field-writers",
+                "--id",
+                str(db_id),
+                "--field",
+                "developer",
+                "--format",
+                "json",
+            ],
+            storage,
+        )
+        chosen = _invoke_with_mocks(
+            cli_runner,
+            [
+                "library",
+                "choose-writer",
+                "--id",
+                str(db_id),
+                "--field",
+                "developer",
+                "--writer",
+                "steam",
+                "--format",
+                "json",
+            ],
+            storage,
+        )
+
+        assert listed.exit_code == 0, listed.output
+        [offered] = json.loads(listed.output)["fields"]
+        assert offered["field"] == "creator"
+        assert chosen.exit_code == 0, chosen.output
+        assert json.loads(chosen.output)["author"] == "Valve"

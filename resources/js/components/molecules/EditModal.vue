@@ -1,6 +1,11 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, watch } from 'vue'
-import type { ContentItemResponse, EnrichmentCandidate, ItemEditRequest } from '@/types/api'
+import type {
+  ContentItemResponse,
+  EnrichmentCandidate,
+  FieldWriters,
+  ItemEditRequest,
+} from '@/types/api'
 import {
   MAX_CREATOR_LENGTH,
   MAX_SEARCH_LENGTH,
@@ -15,6 +20,7 @@ import StarRating from '@/components/atoms/StarRating.vue'
 import SeasonChecklist from '@/components/molecules/SeasonChecklist.vue'
 import TagInput from '@/components/atoms/TagInput.vue'
 import ConfirmPanel from '@/components/molecules/ConfirmPanel.vue'
+import FieldWriterList from '@/components/molecules/FieldWriterList.vue'
 
 const props = defineProps<{
   item: ContentItemResponse
@@ -29,11 +35,14 @@ const props = defineProps<{
   pinSearching?: boolean
   /** What the server said about the last pin or retry, '' before either. */
   pinMessage?: string
+  /** Left out where the host has not wired the switcher, which hides it. */
+  fieldWriters?: FieldWriters[]
 }>()
 
 const emit = defineEmits<{
   save: [dbId: number, data: ItemEditRequest]
   clearManual: [dbId: number, field: string]
+  chooseWriter: [dbId: number, field: string, writer: string | null]
   pinSearch: [dbId: number, query: string]
   pin: [dbId: number, provider: string, recordId: string | null]
   retryEnrichment: [dbId: number]
@@ -163,8 +172,12 @@ function onStatusChange(event: Event) {
 // show is never completed without its seasons shown first.
 if (props.initialStatus) seasonsForStatus()
 
+// Compared as sets: a rebuild that reorders a list states the same thing, and
+// reading that as an edit would save a hold nobody asked for.
 function sameList(one: readonly (string | number)[], other: readonly (string | number)[]) {
-  return one.length === other.length && one.every((value, index) => value === other[index])
+  if (one.length !== other.length) return false
+  const ordered = [...other].sort()
+  return [...one].sort().every((value, index) => value === ordered[index])
 }
 
 // Only what changed is sent: storage holds every field it receives against its
@@ -408,6 +421,15 @@ function searchRecords() {
         </li>
       </ul>
     </div>
+
+    <template v-if="fieldWriters">
+      <hr class="edit-modal-divider">
+      <h4 class="edit-modal-section">Where each field comes from</h4>
+      <FieldWriterList
+        :field-writers="fieldWriters"
+        @choose="(field: string, writer: string | null) => emit('chooseWriter', item.db_id!, field, writer)"
+      />
+    </template>
 
     <hr class="edit-modal-divider">
     <h4

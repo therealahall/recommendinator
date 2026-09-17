@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import Collection
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import click
 from tabulate import tabulate
@@ -18,6 +18,7 @@ from src.cli._shared import (
     write_output_file,
 )
 from src.ingestion.source_labels import label_for_source
+from src.library.field_choice import UnfollowableWriterError, follow_writer
 from src.library.rebuild import start_library_rebuild
 from src.models.content import (
     MAX_CREATOR_LENGTH,
@@ -60,7 +61,11 @@ from src.utils.duplicate_serialization import (
     suggestion_page_to_dict,
 )
 from src.utils.export import export_items_csv, export_items_json
-from src.utils.item_serialization import ignore_result_to_dict, item_to_dict
+from src.utils.item_serialization import (
+    field_writers_to_dict,
+    ignore_result_to_dict,
+    item_to_dict,
+)
 from src.utils.series import MAX_SEASONS
 from src.utils.sorting import MAX_SEARCH_LENGTH, normalize_for_search
 
@@ -713,7 +718,7 @@ def library_clear_manual(
     """Stop holding a field, leaving what it says alone."""
     storage = ctx.obj["storage"]
 
-    if not storage.clear_manual_field(item_id, field, user_id=user_id):
+    if not storage.clear_manual_field(item_id, field.lower(), user_id=user_id):
         abort_with(f"Item {item_id} holds no manual {field}.")
 
     def refreshed() -> dict[str, object]:
@@ -723,6 +728,152 @@ def library_clear_manual(
         return item_to_dict(cleared)
 
     emit_view(output_format, refreshed, f"Stopped holding {field} on item {item_id}.")
+
+
+@library.command(
+    "field-writers",
+    help="List what every writer says about an item's fields"
+    " (GET /api/items/{id}/field-writers).",
+)
+@click.option("--id", "item_id", type=int, required=True, help="Item database ID")
+@click.option(
+    "--field",
+    default=None,
+    help="One field's writers (default: every field)",
+)
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format",
+)
+@click.option(
+    "--user",
+    "user_id",
+    type=int,
+    default=1,
+    help="User ID",
+)
+@click.pass_context
+def library_field_writers(
+    ctx: click.Context,
+    item_id: int,
+    field: str | None,
+    output_format: str,
+    user_id: int,
+) -> None:
+    """Show each writer's value for a field, and the writer it follows."""
+    storage = ctx.obj["storage"]
+
+    if storage.get_content_item(item_id, user_id=user_id) is None:
+        abort_with(f"Item {item_id} not found.")
+
+    payload = field_writers_to_dict(
+        item_id,
+        storage.field_writers(item_id, field.lower() if field else None, user_id),
+        storage.field_choices(item_id, user_id=user_id),
+    )
+
+    if output_format == "json":
+        click.echo(json.dumps(payload, indent=2))
+        return
+
+    offers = cast(list[dict[str, Any]], payload["fields"])
+    table_data = [
+        [
+            offer["field"],
+            row["writer"],
+            row["band"],
+            row["value"],
+            "Yes" if row["writer"] == offer["chosen"] else "",
+        ]
+        for offer in offers
+        for row in cast(list[dict[str, str]], offer["writers"])
+    ]
+    settled = [str(offer["note"]) for offer in offers if offer["note"]]
+    if not table_data and not settled:
+        click.echo(f"No writer has stated {field or 'a field'} on item {item_id}.")
+        return
+
+    if table_data:
+        headers = ["Field", "Writer", "Band", "Value", "Chosen"]
+        click.echo(tabulate(table_data, headers=headers, tablefmt="grid"))
+    for said in settled:
+        click.echo(said)
+
+
+@library.command(
+    "choose-writer",
+    help="Follow one writer for one field"
+    " (PUT /api/items/{id}/field-writers/{field}).",
+)
+@click.option("--id", "item_id", type=int, required=True, help="Item database ID")
+@click.option("--field", required=True, help="Field the choice is about")
+@click.option(
+    "--writer",
+    default=None,
+    help="Writer the field follows, named as field-writers names one",
+)
+@click.option(
+    "--clear",
+    is_flag=True,
+    help="Return the field to the default provider order",
+)
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format",
+)
+@click.option(
+    "--user",
+    "user_id",
+    type=int,
+    default=1,
+    help="User ID",
+)
+@click.pass_context
+def library_choose_writer(
+    ctx: click.Context,
+    item_id: int,
+    field: str,
+    writer: str | None,
+    clear: bool,
+    output_format: str,
+    user_id: int,
+) -> None:
+    """Follow one writer for a field, releasing your own entry for it."""
+    if clear == bool(writer):
+        abort_with("Pass either --writer or --clear.")
+
+    storage = ctx.obj["storage"]
+
+    if storage.get_content_item(item_id, user_id=user_id) is None:
+        abort_with(f"Item {item_id} not found.")
+
+    try:
+        followed = follow_writer(
+            storage, item_id, field, None if clear else writer, user_id
+        )
+    except UnfollowableWriterError as error:
+        abort_with(str(error))
+    if not followed:
+        abort_with(f"Item {item_id} follows no chosen writer for {field}.")
+
+    def refreshed() -> dict[str, object]:
+        chosen = storage.get_content_item(item_id, user_id=user_id)
+        if chosen is None:
+            abort_with(f"Item {item_id} not found after update.")
+        return item_to_dict(chosen)
+
+    said = (
+        f"{field} on item {item_id} is back to the default order."
+        if clear
+        else f"{field} on item {item_id} now follows {writer}."
+    )
+    emit_view(output_format, refreshed, said)
 
 
 def _apply_ignored(

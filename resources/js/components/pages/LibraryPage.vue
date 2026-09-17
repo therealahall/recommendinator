@@ -72,6 +72,15 @@ async function onClearManual(dbId: number, field: string) {
   }
 }
 
+async function onChooseWriter(dbId: number, field: string, writer: string | null) {
+  lib.editError = ''
+  try {
+    await lib.chooseFieldWriter(dbId, field, writer)
+  } catch (err) {
+    lib.editError = err instanceof Error ? err.message : 'Failed to choose a writer'
+  }
+}
+
 function onEdit(dbId: number) {
   const active = document.activeElement
   editTrigger.value = active instanceof HTMLElement && active !== document.body ? active : null
@@ -240,8 +249,10 @@ onUnmounted(() => {
       :pinned="lib.pinned"
       :pin-searching="lib.pinSearching"
       :pin-message="lib.pinMessage"
+      :field-writers="lib.fieldWriters"
       @save="lib.saveEdit"
       @clear-manual="onClearManual"
+      @choose-writer="onChooseWriter"
       @pin-search="lib.findPinCandidates"
       @pin="lib.pinEnrichment"
       @retry-enrichment="lib.retryEnrichment"

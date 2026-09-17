@@ -33,6 +33,27 @@ export interface ContentItemResponse {
   description: string | null
 }
 
+/** One writer's word on one field, as the switcher offers it. */
+export interface FieldWriter {
+  writer: string
+  band: string
+  value: string
+}
+
+export interface FieldWriters {
+  field: string
+  /** The writer this field follows, null while it follows the default order. */
+  chosen: string | null
+  /** Why this field offers no writer, '' where it offers some. */
+  note: string
+  writers: FieldWriter[]
+}
+
+export interface ItemFieldWritersResponse {
+  item_id: number
+  fields: FieldWriters[]
+}
+
 /** A library item named as the reason for another one. */
 export interface RelatedItemResponse {
   db_id: number | null

@@ -51,6 +51,7 @@ from src.recommendations.scorers import SCORER_NAME_MAP
 from src.settings.metadata import PROVIDER_ORDER_KEY, default_of
 from src.settings.service import build_settings_view
 from src.sources.service import SOURCE_MISCONFIGURED_DETAIL, resolve_inputs
+from src.storage.field_writes import FieldWriter, WriterBand
 from src.storage.manager import (
     UNSET,
     SavedItem,
@@ -1967,6 +1968,117 @@ def test_clearing_a_field_nobody_holds_is_a_404(mock_components, tmp_path):
     assert unknown.status_code == 404
 
 
+def test_the_switcher_offers_every_writer_and_the_field_follows_the_one_picked(
+    mock_components, tmp_path
+):
+    storage = StorageManager(sqlite_path=tmp_path / "writers.db")
+    item = ContentItem(
+        id="620",
+        title="Portal 2",
+        content_type=ContentType.VIDEO_GAME,
+        status=ConsumptionStatus.UNREAD,
+        source="steam",
+        author="Valve",
+    )
+    db_id = storage.save_content_item(item, user_id=1)
+    storage.save_enrichment_metadata(
+        db_id,
+        item,
+        FieldWriter(WriterBand.PROVIDER, "rawg"),
+        {"developer": "Valve Corporation"},
+    )
+    client = _client_on(mock_components["app"], storage)
+
+    offered = client.get(f"/api/items/{db_id}/field-writers?field=Creator&user_id=1")
+
+    assert offered.status_code == 200, offered.text
+    [creator] = offered.json()["fields"]
+    assert {row["writer"]: row["value"] for row in creator["writers"]} == {
+        "steam": "Valve",
+        "rawg": "Valve Corporation",
+    }
+
+    chosen = client.put(
+        f"/api/items/{db_id}/field-writers/creator", json={"writer": "steam"}
+    )
+    cleared = client.put(
+        f"/api/items/{db_id}/field-writers/creator", json={"writer": None}
+    )
+
+    assert chosen.status_code == 200, chosen.text
+    assert chosen.json()["author"] == "Valve"
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["author"] == "Valve Corporation"
+
+
+def test_choosing_a_writer_nobody_stated_is_refused_and_keeps_the_hold(
+    mock_components, tmp_path
+):
+    storage = StorageManager(sqlite_path=tmp_path / "typo.db")
+    db_id = storage.save_content_item(
+        ContentItem(
+            id="620",
+            title="Portal 2",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+            source="steam",
+            author="Valve",
+        ),
+        user_id=1,
+    )
+    storage.update_item_from_ui(db_id=db_id, creator="Valve Software", user_id=1)
+    client = _client_on(mock_components["app"], storage)
+
+    refused = client.put(
+        f"/api/items/{db_id}/field-writers/creator", json={"writer": "stem"}
+    )
+
+    assert refused.status_code == 400
+    assert refused.json()["detail"].startswith(
+        f"Item {db_id} cannot follow stem for creator."
+    )
+    stored = storage.get_content_item(db_id, user_id=1)
+    assert stored is not None
+    assert stored.author == "Valve Software"
+
+
+def test_the_switcher_offers_no_writer_for_a_combining_field_and_refuses_a_choice(
+    mock_components, tmp_path
+):
+    storage = StorageManager(sqlite_path=tmp_path / "combining.db")
+    item = ContentItem(
+        id="620",
+        title="Portal 2",
+        content_type=ContentType.VIDEO_GAME,
+        status=ConsumptionStatus.UNREAD,
+        source="steam",
+        metadata={"genres": ["Puzzle"]},
+    )
+    db_id = storage.save_content_item(item, user_id=1)
+    storage.save_enrichment_metadata(
+        db_id,
+        item,
+        FieldWriter(WriterBand.PROVIDER, "rawg"),
+        {"genres": ["Platformer"]},
+    )
+    storage.update_item_from_ui(db_id=db_id, genres=["Cozy", "Comfort Read"], user_id=1)
+    client = _client_on(mock_components["app"], storage)
+
+    offered = client.get(f"/api/items/{db_id}/field-writers?field=genres&user_id=1")
+    chosen = client.put(
+        f"/api/items/{db_id}/field-writers/genres", json={"writer": "rawg"}
+    )
+
+    assert offered.status_code == 200, offered.text
+    [genres] = offered.json()["fields"]
+    assert genres["writers"] == []
+    assert genres["note"] == "Genres is not decided by rank, so no choice can move it."
+    assert chosen.status_code == 400
+    stored = storage.get_content_item(db_id, user_id=1)
+    assert stored is not None
+    assert stored.metadata["genres"] == ["Cozy", "Comfort Read"]
+
+
 def test_edit_rejects_oversized_manual_metadata(client, mock_components):
     """The review bound is checked with the rest of the dialog's own refusals,
     which are worded for it to render."""
@@ -3047,6 +3159,19 @@ _GUARDED_ENDPOINTS = [
         "/api/items/{db_id}/manual-fields/{field}",
         ("storage",),
         url="/api/items/1/manual-fields/creator",
+    ),
+    _Endpoint(
+        "GET",
+        "/api/items/{db_id}/field-writers",
+        ("storage",),
+        url="/api/items/1/field-writers",
+    ),
+    _Endpoint(
+        "PUT",
+        "/api/items/{db_id}/field-writers/{field}",
+        ("storage",),
+        url="/api/items/1/field-writers/creator",
+        body={"writer": "steam"},
     ),
     _Endpoint("GET", "/api/duplicates", ("storage",)),
     _Endpoint("GET", "/api/duplicates/declined", ("storage",)),
