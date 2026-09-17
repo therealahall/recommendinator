@@ -1,5 +1,3 @@
-"""A backfill the server started was invisible to the CLI, so both walked."""
-
 from __future__ import annotations
 
 import json
@@ -11,27 +9,23 @@ from typing import Any
 from src.storage.job_claim import SingleRowJobStore, is_alive, parse
 
 _COLUMNS = (
-    "running, completed, cancelled, total_items, items_processed, items_cached, "
-    "items_cleared, items_failed, items_without_cover, current_item, errors_json, "
-    "started_at, heartbeat_at"
+    "running, completed, cancelled, total_items, items_processed, items_changed, "
+    "current_item, errors_json, started_at, heartbeat_at, rerun_requested"
 )
 
 
 @dataclass
-class CoverBackfillRecord:
+class LibraryRebuildRecord:
     running: bool = False
     completed: bool = False
-    #: A stop the user asked for, which neither interface reports as a failure.
     cancelled: bool = False
     total: int = 0
     processed: int = 0
-    cached: int = 0
-    cleared: int = 0
-    failed: int = 0
-    without_cover: int = 0
+    changed: int = 0
     current_item: str = ""
     errors: list[str] = field(default_factory=list)
     started_at: datetime | None = None
+    rerun_requested: bool = False
 
     def payload(self) -> dict[str, Any]:
         return {
@@ -40,73 +34,84 @@ class CoverBackfillRecord:
             "cancelled": self.cancelled,
             "total_items": self.total,
             "items_processed": self.processed,
-            "items_cached": self.cached,
-            "items_cleared": self.cleared,
-            "items_failed": self.failed,
-            "items_without_cover": self.without_cover,
+            "items_changed": self.changed,
             "current_item": self.current_item,
             "errors": list(self.errors),
         }
 
 
-def _to_record(row: sqlite3.Row, *, alive: bool) -> CoverBackfillRecord:
-    return CoverBackfillRecord(
+def _to_record(row: sqlite3.Row, *, alive: bool) -> LibraryRebuildRecord:
+    return LibraryRebuildRecord(
         running=bool(row["running"]) and alive,
         completed=bool(row["completed"]),
         cancelled=bool(row["cancelled"]),
         total=row["total_items"],
         processed=row["items_processed"],
-        cached=row["items_cached"],
-        cleared=row["items_cleared"],
-        failed=row["items_failed"],
-        without_cover=row["items_without_cover"],
+        changed=row["items_changed"],
         current_item=row["current_item"],
         errors=json.loads(row["errors_json"]),
         started_at=parse(row["started_at"]),
+        rerun_requested=bool(row["rerun_requested"]),
     )
 
 
-class CoverBackfillStore(SingleRowJobStore):
-    table = "cover_backfill_job"
-    fresh = {
-        "total_items": 0,
-        "items_processed": 0,
-        "items_cached": 0,
-        "items_cleared": 0,
-        "items_failed": 0,
-        "items_without_cover": 0,
-    }
+class LibraryRebuildStore(SingleRowJobStore):
+    table = "library_rebuild_job"
+    fresh = {"total_items": 0, "items_processed": 0, "items_changed": 0}
 
-    def read(self) -> CoverBackfillRecord:
+    def read(self) -> LibraryRebuildRecord:
         now = datetime.now(UTC)
         with self._sqlite_db.connection() as conn:
             cursor = conn.cursor()
             cursor.execute(f"SELECT {_COLUMNS} FROM {self.table} WHERE id = 1")
             row = cursor.fetchone()
         if row is None:
-            return CoverBackfillRecord()
+            return LibraryRebuildRecord()
         return _to_record(row, alive=is_alive(parse(row["heartbeat_at"]), now))
 
     def claim(self) -> bool:
-        return self._claim()
+        return self._claim(rerun_requested=0)
 
-    def heartbeat(self, record: CoverBackfillRecord) -> None:
+    def request_rerun(self) -> None:
+        with self._sqlite_db.connection() as conn:
+            conn.execute(
+                f"INSERT INTO {self.table} (id, running) VALUES (1, 0)"
+                " ON CONFLICT(id) DO NOTHING"
+            )
+            conn.execute(f"UPDATE {self.table} SET rerun_requested = 1 WHERE id = 1")
+            conn.commit()
+
+    def rerun_requested(self) -> bool:
+        with self._sqlite_db.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(f"SELECT rerun_requested FROM {self.table} WHERE id = 1")
+            row = cursor.fetchone()
+        return row is not None and bool(row["rerun_requested"])
+
+    def take_rerun(self) -> bool:
+        with self._sqlite_db.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                f"UPDATE {self.table} SET rerun_requested = 0"
+                " WHERE id = 1 AND rerun_requested = 1"
+            )
+            conn.commit()
+            return cursor.rowcount == 1
+
+    def heartbeat(self, record: LibraryRebuildRecord) -> None:
         self._publish_record(record, running=True)
 
-    def finish(self, record: CoverBackfillRecord) -> None:
+    def finish(self, record: LibraryRebuildRecord) -> None:
         self._publish_record(record, running=False)
 
-    def _publish_record(self, record: CoverBackfillRecord, *, running: bool) -> None:
+    def _publish_record(self, record: LibraryRebuildRecord, *, running: bool) -> None:
         self._publish(
             running=running,
             completed=1 if record.completed else 0,
             cancelled=1 if record.cancelled else 0,
             total_items=record.total,
             items_processed=record.processed,
-            items_cached=record.cached,
-            items_cleared=record.cleared,
-            items_failed=record.failed,
-            items_without_cover=record.without_cover,
+            items_changed=record.changed,
             current_item=record.current_item,
             errors_json=json.dumps(list(record.errors)),
         )

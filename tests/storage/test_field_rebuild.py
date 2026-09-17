@@ -1,10 +1,18 @@
 from __future__ import annotations
 
+import sqlite3
+import time
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
+from src.library.rebuild import (
+    owe_library_rebuild,
+    run_library_rebuild,
+    start_library_rebuild,
+)
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.detail_fields import (
     CREATOR_FIELDS,
@@ -21,6 +29,8 @@ from src.storage.field_writes import (
     WriterBand,
     record_field_writes,
 )
+from src.storage.manager import StorageManager
+from src.storage.rebuild_jobs import LibraryRebuildRecord
 from src.storage.settings_store import SettingsStore
 from src.storage.sqlite_db import SQLiteDB
 from src.utils.series import SERIES_NAME_KEY, SeriesAuthority
@@ -48,7 +58,7 @@ def _rebuild(
     db: SQLiteDB, db_id: int, ranks: WriterRanks = WriterRanks()
 ) -> dict[str, Any]:
     with db.connection() as conn:
-        return rebuild_item_fields(conn.cursor(), db_id, ranks)
+        return rebuild_item_fields(conn.cursor(), db_id, ranks).values
 
 
 def _states(db: SQLiteDB, db_id: int, writer: FieldWriter, *writes: FieldWrite) -> None:
@@ -64,11 +74,11 @@ def _provider_states(
     _states(db, db_id, FieldWriter(WriterBand.PROVIDER, provider), *writes)
 
 
-def _book(source: str, **metadata: Any) -> ContentItem:
+def _book(source: str, title: str = "Dune", **metadata: Any) -> ContentItem:
     return ContentItem(
-        id=f"{source}-1",
+        id=f"{source}-{title}",
         source=source,
-        title="Dune",
+        title=title,
         author="Frank Herbert",
         content_type=ContentType.BOOK,
         status=ConsumptionStatus.UNREAD,
@@ -432,13 +442,15 @@ def test_a_legacy_row_ranks_below_the_source_that_claimed_the_field(
     assert resolved["description"] == "A feed blurb."
 
 
-def _enriches(db: SQLiteDB, db_id: int, provider: str, **stated: Any) -> None:
+def _enriches(
+    db: SQLiteDB, db_id: int, provider: str, *, title: str = "Dune", **stated: Any
+) -> None:
     """The enrichment door as a run drives it: what the provider stated, filed
     under its own name.
     """
     db.save_enrichment_metadata(
         db_id,
-        _book(provider, **stated),
+        _book(provider, title, **stated),
         FieldWriter(WriterBand.PROVIDER, provider),
         stated,
     )
@@ -562,6 +574,245 @@ def test_pinning_a_provider_moves_the_cover_and_unpinning_moves_it_back(
 
     assert pinned is not None and pinned.cover_url == _RAWG_SCREENSHOT
     assert cleared is not None and cleared.cover_url == _STEAM_PORTRAIT
+
+
+def test_reordering_providers_restores_the_higher_ranked_value_without_asking_one(
+    tmp_path: Path,
+) -> None:
+    db = SQLiteDB(tmp_path / "reorder.db")
+    db_id = db.save_content_item(_book("goodreads_rss"))
+    _enriches(db, db_id, "openlibrary", description="A")
+    _enriches(db, db_id, "hardcover", description="B")
+    settings = SettingsStore(db)
+
+    settings.set(PROVIDER_ORDER_KEY, ["openlibrary", "hardcover"])
+    db.rebuild_item(db_id)
+    first = db.get_content_item(db_id)
+
+    settings.set(PROVIDER_ORDER_KEY, ["hardcover", "openlibrary"])
+    moved = db.rebuild_item(db_id)
+
+    stored = db.get_content_item(db_id)
+    assert first is not None and first.metadata["description"] == "A"
+    assert moved is True
+    assert stored is not None and stored.metadata["description"] == "B"
+
+
+def test_switching_a_provider_off_empties_the_field_only_it_stated_until_it_is_back(
+    tmp_path: Path,
+) -> None:
+    db = SQLiteDB(tmp_path / "switched_off.db")
+    db_id = db.save_content_item(_book("goodreads_rss"))
+    _enriches(db, db_id, "openlibrary", description="Only OpenLibrary said this")
+    settings = SettingsStore(db)
+
+    settings.set("enrichment.providers.openlibrary.enabled", False)
+    db.rebuild_item(db_id)
+    emptied = db.get_content_item(db_id)
+
+    settings.set("enrichment.providers.openlibrary.enabled", True)
+    db.rebuild_item(db_id)
+    restored = db.get_content_item(db_id)
+
+    assert emptied is not None and emptied.metadata.get("description") is None
+    assert restored is not None
+    assert restored.metadata["description"] == "Only OpenLibrary said this"
+
+
+def _stored_description(storage: StorageManager, db_id: int) -> Any:
+    item = storage.get_content_item(db_id)
+    assert item is not None
+    return item.metadata.get("description")
+
+
+def _finished_rebuild(storage: StorageManager) -> LibraryRebuildRecord:
+    for _ in range(500):
+        record = storage.rebuild_jobs.read()
+        if not record.running and not record.rerun_requested:
+            return record
+        time.sleep(0.01)
+    raise AssertionError("the rebuild never finished")
+
+
+def test_a_reorder_moves_the_stored_value_on_every_item_the_pass_walks(
+    tmp_path: Path,
+) -> None:
+    storage = StorageManager(sqlite_path=tmp_path / "pass.db")
+    storage.settings.set(PROVIDER_ORDER_KEY, ["openlibrary", "hardcover"])
+    ids: list[int] = []
+    for title in ("Dune", "Emma"):
+        db_id = storage.save_content_item(_book("goodreads_rss", title))
+        _enriches(storage.sqlite_db, db_id, "openlibrary", title=title, description="A")
+        _enriches(storage.sqlite_db, db_id, "hardcover", title=title, description="B")
+        ids.append(db_id)
+    assert [_stored_description(storage, db_id) for db_id in ids] == ["A", "A"]
+
+    storage.settings.set(PROVIDER_ORDER_KEY, ["hardcover", "openlibrary"])
+    assert start_library_rebuild(storage) is not None
+    record = _finished_rebuild(storage)
+
+    assert (record.total, record.processed, record.changed) == (2, 2, 2)
+    assert (record.completed, record.errors) == (True, [])
+    assert [_stored_description(storage, db_id) for db_id in ids] == ["B", "B"]
+
+
+def test_a_stop_ends_the_pass_after_the_item_in_flight_and_frees_the_claim(
+    tmp_path: Path,
+) -> None:
+    storage = StorageManager(sqlite_path=tmp_path / "stopped.db")
+    for title in ("Dune", "Emma"):
+        storage.save_content_item(_book("goodreads_rss", title))
+    rebuild_one = storage.rebuild_item
+
+    def stop_once_one_is_in_flight(db_id: int) -> bool:
+        storage.rebuild_jobs.request_stop()
+        return rebuild_one(db_id)
+
+    with patch.object(storage, "rebuild_item", side_effect=stop_once_one_is_in_flight):
+        assert start_library_rebuild(storage) is not None
+        record = _finished_rebuild(storage)
+
+    assert (record.processed, record.total) == (1, 2)
+    assert (record.completed, record.cancelled) == (False, True)
+    assert storage.rebuild_jobs.claim() is True
+
+
+def test_a_stop_leaves_an_owed_rebuild_for_the_next_start_rather_than_restarting(
+    tmp_path: Path,
+) -> None:
+    storage = StorageManager(sqlite_path=tmp_path / "stopped_owing.db")
+    ids = [
+        storage.save_content_item(_book("goodreads_rss", title))
+        for title in ("Dune", "Emma")
+    ]
+    rebuild_one = storage.rebuild_item
+    walked: list[int] = []
+
+    def owe_once_then_stop(db_id: int) -> bool:
+        walked.append(db_id)
+        if len(walked) == 1:
+            owe_library_rebuild(storage)
+        storage.rebuild_jobs.request_stop()
+        return rebuild_one(db_id)
+
+    assert storage.rebuild_jobs.claim() is True
+    with patch.object(storage, "rebuild_item", side_effect=owe_once_then_stop):
+        record = run_library_rebuild(storage)
+
+    assert record.cancelled is True
+    assert walked == ids[:1]
+    assert storage.rebuild_jobs.read().rerun_requested is True
+
+
+def test_a_pass_that_raised_reports_the_failure_and_leaves_the_change_owed(
+    tmp_path: Path,
+) -> None:
+    storage = StorageManager(sqlite_path=tmp_path / "raised.db")
+    owe_library_rebuild(storage)
+    assert storage.rebuild_jobs.claim() is True
+
+    with patch.object(
+        storage, "rebuildable_items", side_effect=sqlite3.OperationalError("locked")
+    ):
+        record = run_library_rebuild(storage)
+
+    assert (record.completed, record.cancelled) == (False, False)
+    assert record.errors == ["the rebuild stopped on an error"]
+    assert storage.rebuild_jobs.rerun_requested() is True
+    assert storage.rebuild_jobs.claim() is True
+
+
+def test_a_precedence_change_during_a_pass_is_walked_before_the_pass_ends(
+    tmp_path: Path,
+) -> None:
+    storage = StorageManager(sqlite_path=tmp_path / "mid_pass.db")
+    storage.settings.set(PROVIDER_ORDER_KEY, ["openlibrary", "hardcover"])
+    ids: list[int] = []
+    for title in ("Dune", "Emma"):
+        db_id = storage.save_content_item(_book("goodreads_rss", title))
+        _enriches(storage.sqlite_db, db_id, "openlibrary", title=title, description="A")
+        _enriches(storage.sqlite_db, db_id, "hardcover", title=title, description="B")
+        ids.append(db_id)
+    rebuild_one = storage.rebuild_item
+    reordered = False
+
+    def reorder_once_one_is_behind_us(db_id: int) -> bool:
+        nonlocal reordered
+        changed = rebuild_one(db_id)
+        if not reordered:
+            reordered = True
+            storage.settings.set(PROVIDER_ORDER_KEY, ["hardcover", "openlibrary"])
+            owe_library_rebuild(storage)
+        return changed
+
+    with patch.object(
+        storage, "rebuild_item", side_effect=reorder_once_one_is_behind_us
+    ):
+        assert start_library_rebuild(storage) is not None
+        record = _finished_rebuild(storage)
+
+    assert record.completed is True
+    assert [_stored_description(storage, db_id) for db_id in ids] == ["B", "B"]
+
+
+def test_a_precedence_change_landing_as_the_pass_ends_is_still_walked(
+    tmp_path: Path,
+) -> None:
+    storage = StorageManager(sqlite_path=tmp_path / "at_the_end.db")
+    storage.settings.set(PROVIDER_ORDER_KEY, ["openlibrary", "hardcover"])
+    ids: list[int] = []
+    for title in ("Dune", "Emma"):
+        db_id = storage.save_content_item(_book("goodreads_rss", title))
+        _enriches(storage.sqlite_db, db_id, "openlibrary", title=title, description="A")
+        _enriches(storage.sqlite_db, db_id, "hardcover", title=title, description="B")
+        ids.append(db_id)
+    take_rerun = storage.rebuild_jobs.take_rerun
+    reordered = False
+
+    def reorder_once_the_walk_is_past_its_check() -> bool:
+        nonlocal reordered
+        owed = take_rerun()
+        if not owed and not reordered:
+            reordered = True
+            storage.settings.set(PROVIDER_ORDER_KEY, ["hardcover", "openlibrary"])
+            owe_library_rebuild(storage)
+            assert start_library_rebuild(storage) is None
+        return owed
+
+    with patch.object(
+        storage.rebuild_jobs,
+        "take_rerun",
+        side_effect=reorder_once_the_walk_is_past_its_check,
+    ):
+        assert start_library_rebuild(storage) is not None
+        record = _finished_rebuild(storage)
+
+    assert record.completed is True
+    assert [_stored_description(storage, db_id) for db_id in ids] == ["B", "B"]
+
+
+def test_an_item_that_raises_is_named_in_the_errors_and_the_walk_goes_on(
+    tmp_path: Path,
+) -> None:
+    storage = StorageManager(sqlite_path=tmp_path / "raising_item.db")
+    ids = [
+        storage.save_content_item(_book("goodreads_rss", title))
+        for title in ("Dune", "Emma")
+    ]
+    rebuild_one = storage.rebuild_item
+
+    def raise_on_the_first(db_id: int) -> bool:
+        if db_id == ids[0]:
+            raise sqlite3.OperationalError("no such column")
+        return rebuild_one(db_id)
+
+    with patch.object(storage, "rebuild_item", side_effect=raise_on_the_first):
+        assert start_library_rebuild(storage) is not None
+        record = _finished_rebuild(storage)
+
+    assert (record.processed, record.total) == (2, 2)
+    assert record.completed is True
+    assert record.errors == ["Dune: OperationalError"]
 
 
 def test_the_shipped_precedence_beats_the_provider_that_enriched_first(

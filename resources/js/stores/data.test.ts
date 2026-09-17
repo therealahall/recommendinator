@@ -642,6 +642,65 @@ describe('useDataStore', () => {
     })
   })
 
+  describe('the library rebuild pass', () => {
+    const runningRebuild = {
+      running: true,
+      completed: false,
+      cancelled: false,
+      total_items: 2,
+      items_processed: 1,
+      items_changed: 1,
+      current_item: 'Dune',
+      errors: [],
+    }
+
+    it('polls while the pass runs and drops the timer once it ends', async () => {
+      const finished = {
+        ...runningRebuild,
+        running: false,
+        completed: true,
+        items_processed: 2,
+      }
+      mockGet.mockResolvedValueOnce(runningRebuild)
+      const store = useDataStore()
+
+      await store.checkRebuildStatus()
+
+      expect(mockGet).toHaveBeenCalledWith('/library/rebuild/status')
+      expect(store.rebuildJob).toEqual(runningRebuild)
+      expect(vi.getTimerCount()).toBe(1)
+
+      mockGet.mockResolvedValueOnce(finished)
+      await vi.advanceTimersByTimeAsync(3000)
+
+      expect(store.rebuildJob).toEqual(finished)
+      expect(vi.getTimerCount()).toBe(0)
+    })
+
+    it('keeps the last known pass when a status poll drops', async () => {
+      mockGet.mockResolvedValueOnce(runningRebuild)
+      const store = useDataStore()
+      await store.checkRebuildStatus()
+
+      mockGet.mockRejectedValueOnce(new Error('network'))
+      await store.checkRebuildStatus()
+      store.cleanup()
+
+      expect(store.rebuildJob).toEqual(runningRebuild)
+    })
+
+    it('rejects out of startRebuild rather than swallowing the reason', async () => {
+      mockPost.mockRejectedValue(
+        new ApiError(409, 'A library rebuild is already running.'),
+      )
+      const store = useDataStore()
+
+      await expect(store.startRebuild()).rejects.toThrow(
+        'A library rebuild is already running.',
+      )
+    })
+  })
+
   function pendingStatusReads(): Array<(status: unknown) => void> {
     const resolvers: Array<(status: unknown) => void> = []
     mockGet.mockImplementation(

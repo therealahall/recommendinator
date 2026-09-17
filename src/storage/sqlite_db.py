@@ -50,6 +50,7 @@ from src.storage.duplicates import (
     undecline_duplicate,
 )
 from src.storage.field_rebuild import (
+    counts_for_the_group,
     fields_leaving_the_group,
     item_writer_ranks,
     rebuild_item_fields,
@@ -61,7 +62,9 @@ from src.storage.field_writes import (
     FieldWriter,
     WriterBand,
     drop_manual_field,
+    drop_provider_writes,
     parse_manual_fields,
+    read_field_writes,
     read_manual_fields,
     record_field_writes,
     stated_writes,
@@ -601,6 +604,52 @@ class SQLiteDB:
             )
             conn.commit()
 
+    def rebuildable_items(self) -> list[tuple[int, str]]:
+        with self.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT id, title FROM content_items"
+                " WHERE merged_into IS NULL ORDER BY id"
+            )
+            return [(row["id"], row["title"]) for row in cursor.fetchall()]
+
+    def rebuild_item(self, db_id: int) -> bool:
+        with self.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT 1 FROM content_items WHERE id = ? AND merged_into IS NULL",
+                (db_id,),
+            )
+            if cursor.fetchone() is None:
+                return False
+            changed = self._rebuild_from_ledger(cursor, db_id)
+            conn.commit()
+            return changed
+
+    def reset_provider_writes(
+        self, db_ids: Sequence[int], provider: str | None = None
+    ) -> None:
+        with self.connection() as conn:
+            cursor = conn.cursor()
+            for db_id in db_ids:
+                cursor.execute("SELECT 1 FROM content_items WHERE id = ?", (db_id,))
+                if cursor.fetchone() is None:
+                    continue
+                dropped = drop_provider_writes(cursor, db_id, provider)
+                if not dropped:
+                    continue
+                remaining = {
+                    write.field
+                    for write in read_field_writes(cursor, db_id)
+                    if counts_for_the_group(
+                        write.field, write.writer_kind, write.absorbed
+                    )
+                }
+                self._rebuild_from_ledger(
+                    cursor, db_id, clear_fields=frozenset(dropped - remaining)
+                )
+                conn.commit()
+
     def clear_cover_url(self, db_id: int) -> bool:
         """The url is buried before the clear, so the rebuild never resolves it
         again — otherwise the next sync re-offers the Steam guess that 404s.
@@ -905,13 +954,14 @@ class SQLiteDB:
         assert_known_detail_table(spec)
         existing = self._detail_row(cursor, spec, db_id)
         stored_blob = _metadata_blob(existing.get("metadata"))
-        resolved = rebuild_item_fields(
+        rebuilt = rebuild_item_fields(
             cursor, db_id, item_writer_ranks(cursor, frozenset(pins_of(stored_blob)))
         )
+        clearing = clear_fields | rebuilt.cleared
         self._local.rebuilding = True
         try:
             base_changed = self._write_base_columns(
-                cursor, db_id, resolved, clear_fields
+                cursor, db_id, rebuilt.values, clearing
             )
             detail_changed = self._write_detail_row(
                 cursor,
@@ -920,8 +970,8 @@ class SQLiteDB:
                 existing,
                 stored_blob,
                 stated_metadata,
-                resolved,
-                clear_fields,
+                rebuilt.values,
+                clearing,
             )
         finally:
             self._local.rebuilding = False
@@ -1653,7 +1703,7 @@ class SQLiteDB:
                 evidence_detail=evidence_detail,
                 user_id=user_id,
             )
-            self._rebuild_merge_group(cursor, survivor_id)
+            self._rebuild_from_ledger(cursor, survivor_id)
             conn.commit()
             return record
 
@@ -1664,7 +1714,7 @@ class SQLiteDB:
             cursor = conn.cursor()
             record = unmerge_item(cursor, merge_id, user_id=user_id)
             if record is not None:
-                self._rebuild_merge_group(
+                self._rebuild_from_ledger(
                     cursor,
                     record.survivor_id,
                     clear_fields=fields_leaving_the_group(
@@ -1674,28 +1724,26 @@ class SQLiteDB:
             conn.commit()
             return record
 
-    def _rebuild_merge_group(
+    def _rebuild_from_ledger(
         self,
         cursor: sqlite3.Cursor,
-        survivor_id: int,
+        db_id: int,
         clear_fields: frozenset[str] = frozenset(),
-    ) -> None:
-        """The group the ledger resolves over just changed, so the survivor is
-        rebuilt here: a one-off import may never save this item again. The undo
-        leg runs it too, which is what takes these writes back.
+    ) -> bool:
+        """A one-off import may never save this item again, so a merge, an undo
+        and a precedence change each run this rather than await a sync.
         """
-        cursor.execute(
-            "SELECT content_type FROM content_items WHERE id = ?", (survivor_id,)
-        )
+        cursor.execute("SELECT content_type FROM content_items WHERE id = ?", (db_id,))
         content_type = cursor.fetchone()["content_type"]
-        self._write_ledger_fields(
-            cursor, survivor_id, content_type, {}, clear_fields=clear_fields
+        changed = self._write_ledger_fields(
+            cursor, db_id, content_type, {}, clear_fields=clear_fields
         )
-        write_derived_columns(cursor, survivor_id)
+        write_derived_columns(cursor, db_id)
         if content_type == "tv_show":
             # The group's highest season count is the survivor's now, so a show
             # completed at the old total has an unwatched season again.
-            self._handle_tv_season_change(cursor, survivor_id)
+            self._handle_tv_season_change(cursor, db_id)
+        return changed
 
     def list_content_item_merges(self, user_id: int | None = None) -> list[MergeRecord]:
         effective_user_id = user_id if user_id is not None else get_default_user_id()

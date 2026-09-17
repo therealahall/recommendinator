@@ -10,12 +10,15 @@ from tabulate import tabulate
 
 from src.cli._shared import (
     abort_with,
+    await_library_rebuild,
+    echo_rebuild,
     emit_view,
     is_blank_review,
     series_label,
     write_output_file,
 )
 from src.ingestion.source_labels import label_for_source
+from src.library.rebuild import start_library_rebuild
 from src.models.content import (
     MAX_CREATOR_LENGTH,
     MAX_DESCRIPTION_LENGTH,
@@ -65,6 +68,68 @@ from src.utils.sorting import MAX_SEARCH_LENGTH, normalize_for_search
 @click.group()
 def library() -> None:
     """Manage your content library."""
+
+
+@library.command(
+    "rebuild",
+    help="Re-resolve stored fields from the ledger (POST /api/library/rebuild).",
+)
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format",
+)
+@click.pass_context
+def library_rebuild(ctx: click.Context, output_format: str) -> None:
+    storage = ctx.obj["storage"]
+    if start_library_rebuild(storage) is None:
+        abort_with("A library rebuild is already running.")
+
+    record = await_library_rebuild(storage)
+
+    if output_format == "json":
+        click.echo(json.dumps(record.payload(), indent=2))
+    else:
+        echo_rebuild(record)
+
+    if not record.completed and not record.cancelled:
+        ctx.exit(1)
+
+
+@library.command(
+    "rebuild-stop",
+    help="Stop the running rebuild (POST /api/library/rebuild/stop).",
+)
+@click.pass_context
+def library_rebuild_stop(ctx: click.Context) -> None:
+    if not ctx.obj["storage"].rebuild_jobs.request_stop():
+        abort_with("No library rebuild is running.")
+    click.echo("Stop requested. The pass ends after the item it is on.")
+
+
+@library.command(
+    "rebuild-status",
+    help="Show the live rebuild (GET /api/library/rebuild/status).",
+)
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format",
+)
+@click.pass_context
+def library_rebuild_status(ctx: click.Context, output_format: str) -> None:
+    record = ctx.obj["storage"].rebuild_jobs.read()
+
+    if output_format == "json":
+        click.echo(json.dumps(record.payload(), indent=2))
+    elif record.started_at is None:
+        click.echo("No library rebuild has run.")
+    else:
+        echo_rebuild(record)
 
 
 @library.command("list")

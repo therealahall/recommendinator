@@ -5,6 +5,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, assert_never
 
 from src.enrichment.registry import get_enrichment_registry
+from src.library.rebuild import owe_library_rebuild
 from src.settings.metadata import (
     PROVIDER_ORDER_KEY,
     SettingMetadata,
@@ -12,6 +13,7 @@ from src.settings.metadata import (
     default_of,
     entries_by_section,
     get_entry,
+    provider_of_enabled_key,
 )
 
 # Live-apply addresses the running config by the same nested leaf paths
@@ -113,6 +115,13 @@ def apply_settings(
         ],
     )
 
+    if any(_changes_precedence(entry.key) for entry, _ in validated):
+        owe_library_rebuild(storage)
+
+
+def _changes_precedence(key: str) -> bool:
+    return key == PROVIDER_ORDER_KEY or provider_of_enabled_key(key) is not None
+
 
 def reset_setting(config: dict[str, Any], storage: StorageManager, key: str) -> None:
     """Deletes the stored leaf so it falls back to the const default, and
@@ -128,6 +137,8 @@ def reset_setting(config: dict[str, Any], storage: StorageManager, key: str) -> 
         # default_of, not entry.default: this writes into the running config, so
         # it must not be the registry's own object.
         _apply_live(config, [(key, default_of(key))])
+    if _changes_precedence(key):
+        owe_library_rebuild(storage)
 
 
 def set_secret(storage: StorageManager, key: str, value: str) -> None:

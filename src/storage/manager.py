@@ -35,6 +35,7 @@ from src.storage.item_merges import MergeError as MergeError
 from src.storage.item_merges import MergeEvidence as MergeEvidence
 from src.storage.item_merges import MergeRecord as MergeRecord
 from src.storage.profiles import ProfileStore
+from src.storage.rebuild_jobs import LibraryRebuildStore
 from src.storage.schema import UnknownUserError as UnknownUserError
 from src.storage.schema import (
     UserDict,
@@ -103,6 +104,10 @@ class StorageManager:
         return CoverBackfillStore(self.sqlite_db)
 
     @functools.cached_property
+    def rebuild_jobs(self) -> LibraryRebuildStore:
+        return LibraryRebuildStore(self.sqlite_db)
+
+    @functools.cached_property
     def settings(self) -> SettingsStore:
         return SettingsStore(self.sqlite_db)
 
@@ -162,6 +167,13 @@ class StorageManager:
     def clear_cover_url(self, db_id: int) -> bool:
         with self._save_lock:
             return self.sqlite_db.clear_cover_url(db_id)
+
+    def rebuildable_items(self) -> list[tuple[int, str]]:
+        return self.sqlite_db.rebuildable_items()
+
+    def rebuild_item(self, db_id: int) -> bool:
+        with self._save_lock:
+            return self.sqlite_db.rebuild_item(db_id)
 
     def complete_content_item(
         self, item: ContentItem, user_id: int | None = None

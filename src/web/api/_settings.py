@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
 
+from src.library.rebuild import start_owed_rebuild
 from src.settings.metadata import get_entry
 from src.settings.service import (
     SettingsValidationError,
@@ -112,6 +113,7 @@ def update_settings(
             status_code=422,
             detail={"key": error.key, "reason": error.reason},
         ) from error
+    start_owed_rebuild(storage)
     return SettingsResponse(**view)
 
 
@@ -134,6 +136,7 @@ def reset_setting_endpoint(key: str, storage: RequiredStorage) -> SettingsRespon
             status_code=422,
             detail={"key": error.key, "reason": error.reason},
         ) from error
+    start_owed_rebuild(storage)
     return SettingsResponse(**view)
 
 

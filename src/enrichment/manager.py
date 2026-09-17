@@ -276,7 +276,7 @@ class EnrichmentManager:
             )
         pins = with_pin(item.metadata, provider.name, record_id)
         self.storage_manager.set_enrichment_pins(db_id, pins)
-        self.storage_manager.enrichment.reset(content_item_id=db_id)
+        self.storage_manager.enrichment.requeue(db_id)
         if record_id is None:
             return pins, None
         return pins, self.start_enrichment(user_id=user_id, content_item_id=db_id)

@@ -31,6 +31,7 @@ from src.enrichment.registry import EnrichmentRegistry
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.enrichment_status import EnrichmentStore
 from src.storage.field_writes import (
+    FieldWriter,
     StoredFieldWrite,
     WriterBand,
     read_field_writes,
@@ -1952,6 +1953,26 @@ class TestPinnedProviderRecord:
             WriterBand.SOURCE,
             WriterBand.PROVIDER,
         }
+
+    def test_a_pin_re_queues_the_item_and_drops_no_ledger_row(
+        self, storage_manager: StorageManager
+    ) -> None:
+        db_id = storage_manager.save_content_item(self._movie())
+        storage_manager.record_stated_fields(
+            db_id, FieldWriter(WriterBand.PROVIDER, "tmdb"), {"runtime": 137}
+        )
+        storage_manager.enrichment.mark_complete(db_id, "tmdb", "high")
+        manager = self._manager(storage_manager)
+
+        manager.pin(
+            db_id, storage_manager.get_content_item(db_id), "mock", None, user_id=1
+        )
+
+        assert (WriterBand.PROVIDER, "tmdb", "runtime") in {
+            (write.writer_kind, write.writer, write.field)
+            for write in field_writes(storage_manager, db_id)
+        }
+        assert db_id in queued_ids(storage_manager)
 
     def test_an_unpinned_run_leaves_the_cover_the_item_already_had(
         self, storage_manager: StorageManager

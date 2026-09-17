@@ -17,11 +17,14 @@ from src.cli._shared import (
     SECRET_VALUE_ENV,
     ValueCoercionError,
     abort_with,
+    await_library_rebuild,
     coerce_value,
+    echo_rebuild,
     emit_view,
     read_json_payload,
     require_storage,
 )
+from src.library.rebuild import start_owed_rebuild
 from src.settings.metadata import get_entry
 from src.settings.service import (
     SettingsValidationError,
@@ -32,6 +35,7 @@ from src.settings.service import (
     set_secret,
     setting_view,
 )
+from src.storage.manager import StorageManager
 
 #: How this group words a value its setting type cannot represent.
 _VALUE_TYPE_ERRORS = {
@@ -68,6 +72,13 @@ def _echo_restart_advisory(keys: Iterable[str], output_format: str) -> None:
     ]
     if deferred:
         click.echo(f"{RESTART_ADVISORY}: {', '.join(deferred)}")
+
+
+def _run_owed_rebuild(storage: StorageManager) -> None:
+    if start_owed_rebuild(storage) is None:
+        return
+    click.echo("Rebuilding the library on the new precedence...", err=True)
+    echo_rebuild(await_library_rebuild(storage), err=True)
 
 
 def _setting_flags(view: dict[str, Any]) -> str:
@@ -232,6 +243,7 @@ def settings_set(ctx: click.Context, key: str, value: str, output_format: str) -
         f"Set {key} = {_format_value(storage.settings.get(key))}.",
     )
     _echo_restart_advisory([key], output_format)
+    _run_owed_rebuild(storage)
 
 
 @settings.command("apply")
@@ -272,6 +284,7 @@ def settings_apply(ctx: click.Context, from_json: str, output_format: str) -> No
         f"Applied {len(updates)} setting(s).",
     )
     _echo_restart_advisory(updates, output_format)
+    _run_owed_rebuild(storage)
 
 
 @settings.command("reset")
@@ -301,6 +314,7 @@ def settings_reset(ctx: click.Context, key: str, output_format: str) -> None:
         f"Reset {key} to its default.",
     )
     _echo_restart_advisory([key], output_format)
+    _run_owed_rebuild(storage)
 
 
 @settings.command("set-secret")

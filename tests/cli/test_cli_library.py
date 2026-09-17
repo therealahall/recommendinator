@@ -30,6 +30,7 @@ from src.storage.manager import (
     StorageManager,
     UncorrectableFieldError,
 )
+from src.storage.rebuild_jobs import LibraryRebuildRecord
 from src.utils.duplicate_serialization import (
     ALSO_OFFERED_NOTE,
     declined_pair_to_dict,
@@ -39,10 +40,83 @@ from src.utils.duplicate_serialization import (
 )
 from src.utils.series import MAX_SEASONS
 from src.utils.sorting import MAX_SEARCH_LENGTH
-from src.web.api._library import ContentItemResponse, IgnoreItemResponse
+from src.web.api._library import (
+    ContentItemResponse,
+    IgnoreItemResponse,
+    LibraryRebuildResponse,
+)
 from tests.factories import make_storage_mock
 
 from .conftest import _invoke_with_mocks
+
+
+def test_rebuild_reports_the_pass_with_the_web_actions_keys(
+    cli_runner: CliRunner,
+) -> None:
+    finished = LibraryRebuildRecord(completed=True, total=3, processed=3, changed=2)
+    storage = make_storage_mock()
+    storage.rebuild_jobs.read.return_value = finished
+
+    with patch(
+        "src.cli.commands._library.start_library_rebuild", return_value=finished
+    ):
+        result = _invoke_with_mocks(
+            cli_runner, ["library", "rebuild", "--format", "json"], storage
+        )
+
+    assert result.exit_code == 0
+    assert json.loads(result.output) == finished.payload()
+
+
+def test_rebuild_refuses_to_start_beside_the_one_the_web_started(
+    cli_runner: CliRunner,
+) -> None:
+    with patch("src.cli.commands._library.start_library_rebuild", return_value=None):
+        result = _invoke_with_mocks(
+            cli_runner, ["library", "rebuild"], make_storage_mock()
+        )
+
+    assert result.exit_code != 0
+    assert "already running" in result.output
+
+
+def test_ctrl_c_asks_the_walk_to_stop_rather_than_outliving_it(
+    cli_runner: CliRunner,
+) -> None:
+    storage = make_storage_mock()
+    running = LibraryRebuildRecord(running=True, total=2, processed=1)
+    stopped = LibraryRebuildRecord(cancelled=True, total=2, processed=1)
+    storage.rebuild_jobs.read.side_effect = lambda: (
+        stopped if storage.rebuild_jobs.request_stop.called else running
+    )
+
+    with (
+        patch("src.cli.commands._library.start_library_rebuild", return_value=running),
+        patch("src.cli._shared.time.sleep", side_effect=KeyboardInterrupt),
+    ):
+        result = _invoke_with_mocks(cli_runner, ["library", "rebuild"], storage)
+
+    assert result.exit_code == 0
+    storage.rebuild_jobs.request_stop.assert_called_once_with()
+    storage.rebuild_jobs.finish.assert_not_called()
+
+
+def test_rebuild_stop_reports_an_idle_pass_the_way_the_web_action_does(
+    cli_runner: CliRunner,
+) -> None:
+    storage = make_storage_mock()
+    storage.rebuild_jobs.request_stop.return_value = False
+
+    result = _invoke_with_mocks(cli_runner, ["library", "rebuild-stop"], storage)
+
+    assert result.exit_code != 0
+    assert "No library rebuild is running." in result.output
+
+
+def test_both_interfaces_report_a_rebuild_with_the_same_keys() -> None:
+    assert set(LibraryRebuildRecord().payload()) == set(
+        LibraryRebuildResponse.model_fields
+    )
 
 
 def _make_item(

@@ -12,6 +12,7 @@ from src.models.content import (
     ContentType,
     get_enum_value,
 )
+from src.storage.enrichment_status import EnrichmentStore
 from src.storage.field_writes import FieldWriter, WriterBand
 from src.storage.item_merges import MergeError, MergeEvidence
 from src.storage.schema import (
@@ -19,7 +20,7 @@ from src.storage.schema import (
     mark_enrichment_complete,
     mark_enrichment_failed,
     mark_item_needs_enrichment,
-    reset_enrichment_status,
+    requeue_enrichment_status,
 )
 from src.storage.settings_store import SettingsStore
 from src.storage.sqlite_db import SQLiteDB
@@ -765,24 +766,26 @@ def test_an_undo_keeps_the_enrichment_that_landed_after_the_merge(
     assert _enrichment_provider(db, survivor_id) == "giantbomb"
 
 
-def test_an_undo_keeps_a_column_whose_only_writer_is_a_switched_off_provider(
+def test_an_undo_does_not_leave_a_departed_rows_value_under_a_switched_off_writer(
     db: SQLiteDB,
 ) -> None:
-    """Switching a provider off stops its rows being resolved, which is not the
-    same claim as the writer having left the group."""
     survivor_id = _save(db, "steam", "620", title="Portal 2")
     absorbed_id = _save(db, "gog", "1207658961", title="Portal Two")
-    db.save_enrichment_metadata(
-        survivor_id,
-        ContentItem(
-            title="Portal 2",
-            content_type=ContentType.VIDEO_GAME,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"description": "Aperture Science"},
-        ),
-        FieldWriter(WriterBand.PROVIDER, "igdb"),
-        {"description": "Aperture Science"},
-    )
+    for db_id, description in (
+        (survivor_id, "Aperture Science"),
+        (absorbed_id, "A GOG blurb"),
+    ):
+        db.save_enrichment_metadata(
+            db_id,
+            ContentItem(
+                title="Portal 2",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.UNREAD,
+                metadata={"description": description},
+            ),
+            FieldWriter(WriterBand.PROVIDER, "igdb"),
+            {"description": description},
+        )
     record = db.merge_content_items(survivor_id, absorbed_id, MergeEvidence.MANUAL)
     SettingsStore(db).set("enrichment.providers.igdb.enabled", False)
 
@@ -790,10 +793,54 @@ def test_an_undo_keeps_a_column_whose_only_writer_is_a_switched_off_provider(
 
     survivor = db.get_content_item(survivor_id)
     assert survivor is not None
-    assert survivor.metadata.get("description") == "Aperture Science"
+    assert survivor.metadata.get("description") is None
 
 
-def test_a_reset_neither_requeues_nor_counts_the_row_behind_a_merge(
+def test_a_reset_takes_back_what_a_provider_stated_on_an_absorbed_row(
+    db: SQLiteDB,
+) -> None:
+    survivor_id = _save(db, "steam", "620", title="Portal 2")
+    absorbed_id = _save(db, "gog", "1207658961", title="Portal Two")
+    absorbed = db.get_content_item(absorbed_id)
+    assert absorbed is not None
+    db.save_enrichment_metadata(
+        absorbed_id,
+        absorbed,
+        FieldWriter(WriterBand.PROVIDER, "igdb"),
+        {"genres": ["Puzzle"]},
+    )
+    db.merge_content_items(survivor_id, absorbed_id, MergeEvidence.MANUAL)
+
+    EnrichmentStore(db).reset()
+
+    survivor = db.get_content_item(survivor_id)
+    assert survivor is not None
+    assert survivor.metadata.get("genres") in (None, [])
+
+
+def test_a_reset_by_provider_reaches_one_that_only_wrote_on_an_absorbed_row(
+    db: SQLiteDB,
+) -> None:
+    survivor_id = _save(db, "steam", "620", title="Portal 2")
+    absorbed_id = _save(db, "gog", "1207658961", title="Portal Two")
+    absorbed = db.get_content_item(absorbed_id)
+    assert absorbed is not None
+    db.save_enrichment_metadata(
+        absorbed_id,
+        absorbed,
+        FieldWriter(WriterBand.PROVIDER, "igdb"),
+        {"genres": ["Puzzle"]},
+    )
+    db.merge_content_items(survivor_id, absorbed_id, MergeEvidence.MANUAL)
+
+    EnrichmentStore(db).reset(provider="igdb")
+
+    survivor = db.get_content_item(survivor_id)
+    assert survivor is not None
+    assert survivor.metadata.get("genres") in (None, [])
+
+
+def test_a_requeue_neither_reaches_nor_counts_the_row_behind_a_merge(
     db: SQLiteDB,
 ) -> None:
     survivor_id = _save(db, "steam", "620", title="Portal 2")
@@ -804,7 +851,7 @@ def test_a_reset_neither_requeues_nor_counts_the_row_behind_a_merge(
     before = _snapshot(db, absorbed_id)
 
     with db.connection() as conn:
-        assert reset_enrichment_status(conn) == 1
+        assert requeue_enrichment_status(conn) == 1
 
     assert [db_id for db_id, _item in db.get_items_needing_enrichment()] == [
         survivor_id

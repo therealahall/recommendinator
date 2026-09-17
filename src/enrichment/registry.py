@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Any
 
 from src.enrichment.provider_base import EnrichmentProvider
-from src.settings.metadata import PROVIDER_ORDER_KEY, default_of
 from src.utils.private_plugins import private_plugin_module_names
 from src.utils.text import exception_for_log, sanitize_for_log
 
@@ -19,6 +18,10 @@ logger = logging.getLogger(__name__)
 _registry_lock = threading.Lock()
 
 
+def _by_precedence(precedence: dict[str, int]) -> tuple[str, ...]:
+    return tuple(sorted(precedence, key=lambda name: (precedence[name], name)))
+
+
 class EnrichmentRegistry:
     """The enrichment providers, discovered rather than listed."""
 
@@ -26,6 +29,8 @@ class EnrichmentRegistry:
 
     def __init__(self) -> None:
         self._providers: dict[str, EnrichmentProvider] = {}
+        self._precedence: dict[str, int] = {}
+        self._order: tuple[str, ...] = ()
         self._discovered = False
 
     @classmethod
@@ -54,6 +59,8 @@ class EnrichmentRegistry:
 
         with _registry_lock:
             self._providers = providers
+            self._precedence = staging._precedence
+            self._order = staging._order
             self._discovered = True
 
         logger.info(
@@ -144,6 +151,8 @@ class EnrichmentRegistry:
             )
 
         self._providers[provider.name] = provider
+        self._precedence[provider.name] = provider.precedence
+        self._order = _by_precedence(self._precedence)
         logger.debug(
             "Registered enrichment provider: %s (%s)",
             provider.name,
@@ -157,6 +166,10 @@ class EnrichmentRegistry:
     def get_all_providers(self) -> dict[str, EnrichmentProvider]:
         self.discover_providers()
         return dict(self._providers)
+
+    def shipped_provider_order(self) -> tuple[str, ...]:
+        self.discover_providers()
+        return self._order
 
     def get_enabled_providers(self, config: dict[str, Any]) -> list[EnrichmentProvider]:
         """Sorted here and nowhere else, so the match loop, the ordinal pass and
@@ -174,9 +187,7 @@ class EnrichmentRegistry:
             if provider_config.get("enabled", False):
                 enabled_providers.append(provider)
 
-        order = enrichment_config.get("provider_order") or default_of(
-            PROVIDER_ORDER_KEY
-        )
+        order = enrichment_config.get("provider_order") or self.shipped_provider_order()
         rank = {name: position for position, name in enumerate(order)}
         return sorted(
             enabled_providers,

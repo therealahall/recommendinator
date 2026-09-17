@@ -30,6 +30,7 @@ from src.storage.manager import StorageManager
 from src.utils.urls import is_bare_origin
 
 _SECRET_KEY = "enrichment.providers.tmdb.api_key"
+_TMDB_ENABLED_KEY = "enrichment.providers.tmdb.enabled"
 _INT_KEY = "recommendations.default_count"
 _ORIGINS_KEY = "web.allowed_origins"
 _ORDER_KEY = PROVIDER_ORDER_KEY
@@ -391,6 +392,22 @@ class TestApplySettings:
         assert storage.settings.get(_INT_KEY) == 9
         assert config["recommendations"]["default_count"] == 9
 
+    def test_switching_a_provider_off_owes_a_rebuild_without_claiming_one(
+        self, storage: StorageManager, config: dict[str, Any]
+    ) -> None:
+        apply_settings(config, storage, {_TMDB_ENABLED_KEY: False})
+
+        assert storage.rebuild_jobs.rerun_requested() is True
+        assert storage.rebuild_jobs.read().running is False
+        assert storage.rebuild_jobs.claim() is True
+
+    def test_a_setting_no_writer_ranks_by_owes_no_library_rebuild(
+        self, storage: StorageManager, config: dict[str, Any]
+    ) -> None:
+        apply_settings(config, storage, {_INT_KEY: 9})
+
+        assert storage.rebuild_jobs.rerun_requested() is False
+
     def test_restart_required_persists_without_live_apply(
         self, storage: StorageManager, config: dict[str, Any]
     ) -> None:
@@ -442,6 +459,16 @@ class TestResetSetting:
 
         assert storage.settings.get("logging.level") is None
         assert config["logging"]["level"] == "WARNING"
+
+    def test_reset_of_a_ranking_key_owes_a_rebuild_without_claiming_one(
+        self, storage: StorageManager, config: dict[str, Any]
+    ) -> None:
+        storage.settings.set(_TMDB_ENABLED_KEY, False)
+
+        reset_setting(config, storage, _TMDB_ENABLED_KEY)
+
+        assert storage.rebuild_jobs.rerun_requested() is True
+        assert storage.rebuild_jobs.claim() is True
 
     def test_reset_sensitive_key_raises(
         self, storage: StorageManager, config: dict[str, Any]
