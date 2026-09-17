@@ -36,23 +36,10 @@ Parses and normalizes data from external sources, plus one-off files through
 
 ### 2. Storage (`src/storage/`)
 
-SQLite holds everything.
-
-| Table | Holds |
-|-------|-------|
-| `users` | Per-user settings (JSON) |
-| `content_items` | Library items, scoped by `user_id` |
-| `content_item_external_ids` | The id each source knows an item by, unique per `(user_id, source, external_id, content_type)` |
-| `book_details`, `movie_details`, `tv_show_details`, `video_game_details` | Per-type detail |
-| `content_item_dead_covers` | A cover URL that permanently failed, so no fill door re-offers it |
-| `credentials` | Encrypted OAuth tokens and API keys, per-source and global |
-| `source_configs` | Non-sensitive per-source config |
-| `settings` | Global config, dotted leaf key to JSON value, only what a user set |
-| `enrichment_status` | Enrichment tracking |
-| `enrichment_job` | The live enrichment run, one row, so either interface can watch and stop it |
-| `cover_backfill_job` | The live cover backfill, one row, so either interface can watch and stop it |
-| `sync_runs` | One row per sync run: outcome, item counts and errors, pruned per source. An unfinished row claims its source, so no two processes sync it at once |
-| `preference_profiles` | The generated per-user taste profile |
+SQLite holds everything, and `src/storage/schema.py` is the table list. Two of
+them carry a rule their columns do not say: an unfinished `sync_runs` row claims
+its source, so no two processes sync it at once, and `content_item_dead_covers`
+holds a cover URL that permanently failed, so nothing re-offers it.
 
 #### User-owned fields
 
@@ -72,7 +59,8 @@ SQLite holds everything.
 The series name and position are the one family the rebuild re-decides: the
 first writer to name it keeps the name, and the ordinal goes to the
 best-founded authority among writers numbering that same series. One naming no
-series does not count, the operator excepted.
+series does not count, the operator excepted. Equal standing goes to the
+highest-ranked writer, not to whoever answered first.
 
 After the upsert, `_handle_tv_season_change` regresses a completed TV show to
 `currently_consuming` when the season count rises above the seasons the user
@@ -317,7 +305,7 @@ Wikidata and Hardcover state a position, at `authored` authority. Wikidata imple
 
 Rules:
 
-- **Every enabled provider is asked**, in `enrichment.provider_order`. Genres and tags are combined, the rest gap-filled in rank order, and the top-ranked match is credited on `enrichment_status`. A retryable failure beside a match keeps the item queued with that credit. An edited field overwrites its detail column and a manual row holds it against sync and enrichment until `library clear-manual`.
+- **Every enabled provider is asked**, in `enrichment.provider_order`. Each answer is recorded in the field-write ledger whether or not a column moves, and the top-ranked match is credited on `enrichment_status`. A retryable failure beside a match keeps the item queued with that credit. An edit is a manual row, outranking every writer until `library clear-manual`.
 - **A settled miss is not a failure.** Every provider answering "not this one" retires the item through `mark_enrichment_complete(..., "not_found")`, which only `--retry-not-found` requeues.
 - **A failure is classified before it is acted on** (`_classify_failure`,
   `_is_retryable`). Transport errors, 5xx, 408 and 429 are retryable, so
@@ -371,6 +359,9 @@ Internal network only.
   `library list --search` errors, the input caps typing and announces the cap
   to screen readers, and the library store truncates in `setFilter`.
 - Library export: `GET /api/items/export?type=book&format=csv`.
+- The **Data** page's **Rebuild stored fields** card is the peer of
+  `library rebuild`, and the edit modal's **Where each field comes from**
+  switcher the peer of `library field-writers` and `library choose-writer`.
 - The duplicates review reaches the merge door from both sides: `/api/duplicates`
   and `/api/merges` behind the **Duplicates** page, `library duplicates`,
   `merge`, `unmerge`, `merges`, `decline-duplicate`, `declined-duplicates` and

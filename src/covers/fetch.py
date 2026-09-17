@@ -32,7 +32,7 @@ _PERMANENT_STATUSES = frozenset({403, 404, 410})
 @dataclass(frozen=True)
 class CoverUnavailable:
     reason: str
-    #: A retry fails the same way, so the fill-only column can be cleared.
+    #: A retry fails the same way, so the url is buried and the column cleared.
     permanent: bool
 
 

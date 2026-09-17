@@ -111,6 +111,11 @@ class FieldOfferPayload(TypedDict):
     writers: list[FieldWriterPayload]
 
 
+class FieldWritersPayload(TypedDict):
+    item_id: int
+    fields: list[FieldOfferPayload]
+
+
 #: Fields listed with no writer to follow: their value is not decided by rank,
 #: so a choice on one could move nothing.
 SETTLED_FIELDS: frozenset[str] = RANK_FREE_FIELDS | MERGEABLE_DETAIL_COLUMNS
@@ -140,7 +145,7 @@ def field_writers_to_dict(
     db_id: int,
     writes: Iterable[StoredFieldWrite],
     choices: Mapping[str, str],
-) -> dict[str, object]:
+) -> FieldWritersPayload:
     """What every writer says about each field, the operator's own entry among
     them. A legacy row is left out: nobody claimed those values. A settled field
     is listed with no writer, keeping it apart from one nobody has stated.
