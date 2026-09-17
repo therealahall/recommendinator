@@ -10,6 +10,7 @@ from src.enrichment.manager import EnrichmentManager, EnrichmentStart, PinRefuse
 from src.enrichment.providers.hardcover.hardcover import HardcoverProvider
 from src.enrichment.registry import EnrichmentRegistry, get_enrichment_registry
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.storage.enrichment_status import ResetCounts
 from src.storage.field_writes import FieldWriter, WriterBand
 from src.storage.manager import StorageManager
 from src.utils.matching import Candidate
@@ -198,11 +199,13 @@ class TestEnrichmentStats:
         stats = {
             "total": 100,
             "resettable": 88,
+            "legacy_items": 7,
             "enriched": 80,
             "pending": 15,
             "not_found": 3,
             "failed": 2,
             "resettable_by_provider": {"tmdb": 320, "openlibrary": 95},
+            "legacy_by_provider": {"tmdb": 5, "openlibrary": 2},
             "by_provider": {"tmdb": 50, "openlibrary": 30},
             "by_quality": {"high": 60, "medium": 20},
         }
@@ -454,19 +457,19 @@ class TestEnrichmentRequeue:
 class TestEnrichmentReset:
     def test_reset_all(self) -> None:
         storage = make_storage_mock()
-        storage.enrichment.reset.return_value = 50
+        storage.enrichment.reset.return_value = ResetCounts(requeued=50, stripped=12)
 
         with _client(storage, {}) as client:
             response = client.post("/api/enrichment/reset", json={})
 
         assert response.status_code == 200
         data = response.json()
-        assert data["count"] == 50
-        assert "50" in data["message"]
+        assert (data["requeued"], data["dropped"]) == (50, 12)
+        assert "for 12 item(s) and re-queued 50 item(s)" in data["message"]
 
     def test_reset_one_item_narrows_the_reset_to_it_and_enriches_it(self) -> None:
         storage = make_storage_mock()
-        storage.enrichment.reset.return_value = 1
+        storage.enrichment.reset.return_value = ResetCounts(requeued=1, stripped=1)
         manager = MagicMock(spec=EnrichmentManager)
         manager.start_enrichment.return_value = EnrichmentStart.STARTED
 
@@ -480,9 +483,10 @@ class TestEnrichmentReset:
         assert response.json() == {
             "message": (
                 "Dropped what the providers stated for 1 item(s) and re-queued"
-                " them. Enriching it now."
+                " 1 item(s). Enriching it now."
             ),
-            "count": 1,
+            "dropped": 1,
+            "requeued": 1,
             "run": "started",
         }
         assert storage.enrichment.reset.call_args[1]["content_item_id"] == 7
@@ -493,7 +497,7 @@ class TestEnrichmentReset:
         self, provider: str
     ) -> None:
         storage = make_storage_mock()
-        storage.enrichment.reset.return_value = 1
+        storage.enrichment.reset.return_value = ResetCounts(requeued=1, stripped=1)
         manager = MagicMock(spec=EnrichmentManager)
         manager.start_enrichment.return_value = EnrichmentStart.STARTED
 
@@ -508,6 +512,25 @@ class TestEnrichmentReset:
         assert response.status_code == 200
         assert storage.enrichment.reset.call_args.kwargs["provider"] is None
         assert manager.start_enrichment.call_args.kwargs["content_item_id"] == 7
+
+    def test_a_hard_reset_drops_the_unclaimed_values_and_starts_no_run(self) -> None:
+        storage = make_storage_mock()
+        storage.enrichment.reset.return_value = ResetCounts(requeued=50, stripped=37)
+        manager = MagicMock(spec=EnrichmentManager)
+
+        with (
+            patch("src.web.api._enrichment.EnrichmentManager", return_value=manager),
+            _client(storage, {}) as client,
+        ):
+            response = client.post("/api/enrichment/reset", json={"hard": True})
+
+        assert response.status_code == 200
+        assert response.json()["message"] == (
+            "Dropped what the providers stated and the values no writer claimed"
+            " for 37 item(s) and re-queued 50 item(s)"
+        )
+        assert storage.enrichment.reset.call_args.kwargs["hard"] is True
+        manager.start_enrichment.assert_not_called()
 
     def test_reset_refuses_an_item_id_beside_a_filter(self) -> None:
         storage = make_storage_mock()

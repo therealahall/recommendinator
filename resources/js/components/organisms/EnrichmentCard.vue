@@ -57,6 +57,11 @@ const resettable = computed(() =>
     ? null
     : { all: stats.value.resettable, ...stats.value.resettable_by_provider },
 )
+const legacy = computed(() =>
+  enrichType.value || !stats.value
+    ? null
+    : { all: stats.value.legacy_items, ...stats.value.legacy_by_provider },
+)
 
 function control(testid: string): HTMLElement | null {
   return document.querySelector<HTMLElement>(`[data-testid="${testid}"]`)
@@ -94,8 +99,8 @@ const onEnrich = () =>
     ? Promise.resolve()
     : run(() => data.startEnrichment(enrichType.value || undefined, retryNotFound.value))
 const onStop = () => run(() => data.stopEnrichment())
-const onReset = (provider: string) =>
-  run(() => data.resetEnrichment(enrichType.value || undefined, provider))
+const onReset = (provider: string, hard: boolean) =>
+  run(() => data.resetEnrichment(enrichType.value || undefined, provider, hard))
 </script>
 
 <template>
@@ -133,6 +138,9 @@ const onReset = (provider: string) =>
         <div v-else class="enrichment-summary">
           <span>{{ stats.enriched }}/{{ stats.total }}
             ({{ Math.round((stats.enriched / stats.total) * 100) }}% enriched)</span>
+          <span data-testid="enrichment-legacy">
+            {{ stats.legacy_items }} holding unclaimed values
+          </span>
         </div>
       </div>
 
@@ -166,6 +174,7 @@ const onReset = (provider: string) =>
             :type-label="typeLabel"
             :providers="stats?.providers ?? []"
             :resettable="resettable"
+            :legacy="legacy"
             :busy="busy || running"
             @reset="onReset"
           />
@@ -305,6 +314,9 @@ const onReset = (provider: string) =>
 }
 
 .enrichment-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
   margin-bottom: var(--space-3);
 }
 

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, useId } from 'vue'
 import ConfirmPanel from '@/components/molecules/ConfirmPanel.vue'
+import ToggleSwitch from '@/components/atoms/ToggleSwitch.vue'
 import type { EnrichmentProvider } from '@/types/api'
 
 const props = defineProps<{
@@ -10,11 +11,12 @@ const props = defineProps<{
   providers: EnrichmentProvider[]
   /** Items a reset re-queues, keyed by provider filter; null under a type filter. */
   resettable: Record<string, number> | null
+  legacy: Record<string, number> | null
   busy: boolean
 }>()
 
 const emit = defineEmits<{
-  reset: [provider: string]
+  reset: [provider: string, hard: boolean]
 }>()
 
 // Offered beside the installed providers, and deliberately not one of them:
@@ -22,6 +24,7 @@ const emit = defineEmits<{
 const EVERY_PROVIDER: EnrichmentProvider = { name: 'all', display_name: 'All providers' }
 
 const provider = ref(EVERY_PROVIDER.name)
+const hard = ref(false)
 const confirming = ref(false)
 const selectId = useId()
 
@@ -40,19 +43,35 @@ const subject = computed(() =>
     : `${props.resettable[provider.value] ?? 0} item(s)`,
 )
 
-const question = computed(
-  () =>
+const legacySubject = computed(() =>
+  props.legacy === null
+    ? 'wherever a matching item holds one'
+    : `held by at least ${props.legacy[provider.value] ?? 0} item(s)`,
+)
+
+const question = computed(() => {
+  const asked =
     `Re-queue ${subject.value} for enrichment (${scope.value})? Everything ` +
     'those providers stated goes — genres, tags, descriptions, runtimes and ' +
     'the rest — and each item is rebuilt on what its sources, your edits and ' +
-    'its pins say. The next run refills it from rate-limited APIs.',
-)
+    'its pins say. The next run refills it from rate-limited APIs.'
+  if (!hard.value) return asked
+  return (
+    asked +
+    ` It also deletes the values no writer ever claimed, ${legacySubject.value}, ` +
+    'cover art included: the next enrichment run refetches a cover, and anything ' +
+    'else comes back only when the writer that supplied it states it again. Your ' +
+    'edits, pins, ratings and reviews stay, but a creator you typed at the ' +
+    'completion door before this release goes with the rest.'
+  )
+})
 
 function answer(reset: boolean): void {
   confirming.value = false
   // Sent through, the storage layer would match 'all' against
   // `enrichment_provider` and find nothing.
-  if (reset) emit('reset', provider.value === EVERY_PROVIDER.name ? '' : provider.value)
+  if (reset)
+    emit('reset', provider.value === EVERY_PROVIDER.name ? '' : provider.value, hard.value)
 }
 </script>
 
@@ -64,6 +83,7 @@ function answer(reset: boolean): void {
         {{ one.display_name }}
       </option>
     </select>
+    <ToggleSwitch v-model="hard" label="Drop unclaimed values too" />
     <button
       :id="`${selectId}-btn`"
       type="button"

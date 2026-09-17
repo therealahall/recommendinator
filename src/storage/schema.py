@@ -1730,6 +1730,30 @@ def enrichment_reset_count(
         f"SELECT COUNT(*) FROM enrichment_status WHERE content_item_id IN ({query})",
         params,
     )
+    return int(cursor.fetchone()[0])
+
+
+def enrichment_legacy_count(
+    conn: sqlite3.Connection,
+    provider: str | None = None,
+    content_type: str | None = None,
+    user_id: int | None = None,
+    content_item_id: int | None = None,
+) -> int:
+    query, params = _enrichment_scope(provider, content_type, user_id, content_item_id)
+    legacy, dropped = WriterBand.LEGACY.value, WriterBand.PROVIDER.value
+    cursor = conn.cursor()
+    cursor.execute(
+        f"SELECT COUNT(*) FROM ({query}) scope"
+        " WHERE EXISTS (SELECT 1 FROM content_item_field_writes w"
+        f" WHERE {merge_group_clause('w.content_item_id', 'scope.id')}"
+        " AND w.writer_kind = ?"
+        " AND NOT EXISTS (SELECT 1 FROM content_item_field_writes surviving"
+        f" WHERE {merge_group_clause('surviving.content_item_id', 'scope.id')}"
+        " AND surviving.field = w.field AND surviving.writer_kind <> ?"
+        " AND NOT (surviving.writer_kind = ? AND (? IS NULL OR surviving.writer = ?))))",
+        [*params, legacy, legacy, dropped, provider, provider],
+    )
     counted: int = cursor.fetchone()[0]
     return counted
 
@@ -1855,7 +1879,12 @@ def get_enrichment_stats(
     return {
         "total": total_items,
         "resettable": tracked_items,
+        "legacy_items": enrichment_legacy_count(conn, user_id=user_id),
         "resettable_by_provider": resettable_by_provider,
+        "legacy_by_provider": {
+            name: enrichment_legacy_count(conn, name, user_id=user_id)
+            for name in resettable_by_provider
+        },
         "enriched": enriched,
         "pending": needs_enrichment + untracked,
         "not_found": by_quality.get("not_found", 0),

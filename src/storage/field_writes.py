@@ -37,6 +37,7 @@ class WriterBand(str, Enum):
 
     #: A value already in a column when the ledger arrived, claimed by nobody.
     LEGACY = "legacy"
+    COMPLETION = "completion"
     SOURCE = "source"
     PROVIDER = "provider"
     PINNED = "pinned"
@@ -63,6 +64,8 @@ MANUAL_WRITER = FieldWriter(WriterBand.MANUAL, "operator")
 #: The one identity in the legacy band, nameless because the band exists for
 #: values whose writer nobody recorded.
 LEGACY_WRITER = FieldWriter(WriterBand.LEGACY, "")
+
+COMPLETION_WRITER = FieldWriter(WriterBand.COMPLETION, "completion")
 
 
 @dataclass(frozen=True)
@@ -218,17 +221,24 @@ def read_manual_fields(cursor: sqlite3.Cursor, db_id: int) -> set[str]:
 
 
 def drop_provider_writes(
-    cursor: sqlite3.Cursor, db_id: int, provider: str | None = None
+    cursor: sqlite3.Cursor,
+    db_id: int,
+    provider: str | None = None,
+    legacy: bool = False,
 ) -> frozenset[str]:
     """What a reset takes back across the merge group, *provider* ``None`` every
     provider's. The fields dropped, so the caller can tell which column no writer
     is left to fill.
     """
-    where = f"{merge_group_clause('content_item_id', ':id')} AND writer_kind = :kind"
+    banded = "writer_kind = :kind"
     params: dict[str, str | int] = {"id": db_id, "kind": WriterBand.PROVIDER.value}
     if provider is not None:
-        where += " AND writer = :writer"
+        banded += " AND writer = :writer"
         params["writer"] = provider
+    if legacy:
+        banded = f"({banded} OR writer_kind = :legacy)"
+        params["legacy"] = WriterBand.LEGACY.value
+    where = f"{merge_group_clause('content_item_id', ':id')} AND {banded}"
     cursor.execute(f"SELECT DISTINCT field FROM {_TABLE} WHERE {where}", params)
     dropped = frozenset(row["field"] for row in cursor.fetchall())
     cursor.execute(f"DELETE FROM {_TABLE} WHERE {where}", params)

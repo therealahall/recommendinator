@@ -57,6 +57,10 @@ class EnrichmentResetRequest(BaseModel):
     item_id: int | None = Field(
         None, ge=1, description="Reset this one item, whatever left it settled"
     )
+    hard: bool = Field(
+        False,
+        description="Also delete the values no writer ever claimed, from before the ledger",
+    )
     user_id: int = Field(1, ge=1, description="User ID for filtering items")
 
 
@@ -127,11 +131,13 @@ class EnrichmentStatsResponse(BaseModel):
     enabled: bool = False
     total: int = 0
     resettable: int = 0
+    legacy_items: int = 0
     enriched: int = 0
     pending: int = 0
     not_found: int = 0
     failed: int = 0
     resettable_by_provider: dict[str, int] = Field(default_factory=dict)
+    legacy_by_provider: dict[str, int] = Field(default_factory=dict)
     by_provider: dict[str, int] = Field(default_factory=dict)
     by_quality: dict[str, int] = Field(default_factory=dict)
     providers: list[EnrichmentProviderView] = Field(default_factory=list)
@@ -219,6 +225,7 @@ def get_enrichment_stats(
         enabled=enrichment_enabled,
         total=cast(int, stats.get("total", 0)),
         resettable=cast(int, stats.get("resettable", 0)),
+        legacy_items=cast(int, stats.get("legacy_items", 0)),
         enriched=cast(int, stats.get("enriched", 0)),
         pending=cast(int, stats.get("pending", 0)),
         not_found=cast(int, stats.get("not_found", 0)),
@@ -226,6 +233,7 @@ def get_enrichment_stats(
         resettable_by_provider=cast(
             dict[str, int], stats.get("resettable_by_provider", {})
         ),
+        legacy_by_provider=cast(dict[str, int], stats.get("legacy_by_provider", {})),
         by_provider=cast(dict[str, int], stats.get("by_provider", {})),
         by_quality=cast(dict[str, int], stats.get("by_quality", {})),
         providers=[
@@ -332,11 +340,12 @@ def reset_enrichment(
             )
         _item_or_404(storage, request.item_id, request.user_id)
 
-    count = storage.enrichment.reset(
+    counts = storage.enrichment.reset(
         provider=provider,
         content_type=content_type,
         user_id=request.user_id,
         content_item_id=request.item_id,
+        hard=request.hard,
     )
 
     started = None
@@ -344,4 +353,4 @@ def reset_enrichment(
         started = EnrichmentManager(storage, config).start_enrichment(
             user_id=request.user_id, content_item_id=request.item_id
         )
-    return enrichment_reset_to_dict(count, started)
+    return enrichment_reset_to_dict(counts, started, hard=request.hard)

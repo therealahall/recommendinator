@@ -358,11 +358,13 @@ export interface EnrichmentStatsResponse {
   total: number
   /** Items an unfiltered reset re-queues: the ones with enrichment status tracked. */
   resettable: number
+  legacy_items: number
   enriched: number
   pending: number
   not_found: number
   failed: number
   resettable_by_provider: Record<string, number>
+  legacy_by_provider: Record<string, number>
   by_provider: Record<string, number>
   by_quality: Record<string, number>
   /** Every installed provider, whether or not it has enriched anything. */
