@@ -103,6 +103,9 @@ src/
 │                     # each writer stated for a field, recorded whether or not
 │                     # the column took it, the operator's own edits included,
 │                     # and field_rebuild.py: the value those writes rank to
+├── library/          # rebuild.py: the walk that re-decides every item from the
+│                     # ledger, which both interfaces start when a precedence
+│                     # change owes one
 ├── settings/         # Global-config registry (metadata.py) + service (list/get/set/reset/secrets)
 ├── recommendations/  # Recommendation engine (scorers, scoring_pipeline, variety, genre_clusters,
 │                     # identity.py for candidate keys, record.py for the emitted Recommendation)
