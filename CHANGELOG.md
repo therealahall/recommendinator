@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.68.0 (2026-09-17)
+
+### Features
+
+- **storage**: Decide every field by rank rather than by write order
+  ([`accd707`](https://github.com/therealahall/recommendinator/commit/accd7071b6284a4b00f938b21aef37d8ba85ea28))
+
+
 ## v0.67.0 (2026-09-17)
 
 ### Features
