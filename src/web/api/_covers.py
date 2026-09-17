@@ -24,8 +24,8 @@ class CoverBackfillResponse(BaseModel):
         0,
         description=(
             "Items a provider settled before it was asked for art, so no walk"
-            " can fetch them. POST /api/enrichment/reset then"
-            " /api/enrichment/start to ask again."
+            " can fetch them. POST /api/enrichment/requeue to ask again, every"
+            " value the item holds standing."
         ),
     )
     current_item: str = ""

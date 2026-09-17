@@ -25,6 +25,7 @@ from src.utils.item_serialization import (
     enrichment_pin_to_dict,
     enrichment_provider_filter,
     enrichment_providers_to_list,
+    enrichment_requeue_to_dict,
     enrichment_reset_to_dict,
 )
 from src.utils.sorting import MAX_SEARCH_LENGTH
@@ -425,11 +426,45 @@ def enrichment_pin(
         _await_run(manager, storage, err=output_format == "json")
 
 
+@enrichment.command(
+    "requeue",
+    help="Enrich one item again, every stored value standing. The door for a run"
+    " that failed on a timeout, where `reset --id` drops what the providers had"
+    " already said about it.",
+)
+@click.option("--id", "item_id", type=int, required=True, help="Item database ID")
+@click.option("--user", "user_id", type=int, default=1, help="User ID")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format",
+)
+@click.pass_context
+def enrichment_requeue(
+    ctx: click.Context, item_id: int, user_id: int, output_format: str
+) -> None:
+    storage = ctx.obj["storage"]
+    _item_or_abort(storage, item_id, user_id)
+    storage.enrichment.requeue(item_id)
+    manager = EnrichmentManager(storage, ctx.obj["config"])
+    started = manager.start_enrichment(user_id=user_id, content_item_id=item_id)
+    payload = enrichment_requeue_to_dict(item_id, started)
+
+    if output_format == "json":
+        click.echo(json.dumps(payload, indent=2))
+    else:
+        click.echo(payload["message"])
+    if started is EnrichmentStart.STARTED:
+        _await_run(manager, storage, err=output_format == "json")
+
+
 @enrichment.command("reset")
 @click.option(
     "--provider",
     default="all",
-    help="Reset items enriched by specific provider (default: all)",
+    help="Reset every item this provider stated a value for (default: all)",
 )
 @click.option(
     "--type",
@@ -443,7 +478,7 @@ def enrichment_pin(
     "item_id",
     type=int,
     default=None,
-    help="Re-queue this one item, whatever left it settled",
+    help="Reset this one item, whatever left it settled",
 )
 @click.option(
     "--user",
@@ -466,8 +501,9 @@ def enrichment_reset(
     user_id: int,
     yes: bool,
 ) -> None:
-    """Re-queue items the next run would otherwise skip, by provider, content
-    type, or the one item that failed.
+    """Drop what the providers in scope stated and re-queue the items: one
+    provider's, one content type's, or the one item that failed, which asks for
+    a run of its own.
     """
     storage = ctx.obj["storage"]
 
@@ -492,18 +528,23 @@ def enrichment_reset(
     desc = f" ({', '.join(desc_parts)})" if desc_parts else ""
 
     if not yes:
-        target = f"items{desc}"
-        # Stats can count a provider filter ahead of the reset but not a content
-        # type, and --id already names the single item it would touch.
-        if content_type_str is None and item_id is None:
-            stats = storage.enrichment.stats(user_id=user_id)
-            count = (
-                stats["by_provider"].get(provider_filter, 0)
-                if provider_filter
-                else stats["resettable"]
+        if content_type is not None:
+            subject = "every matching item"
+        else:
+            counted = storage.enrichment.reset_count(
+                provider=provider_filter,
+                content_type=None,
+                user_id=user_id,
+                content_item_id=item_id,
             )
-            target = f"{count} item(s){desc}"
-        if not click.confirm(f"Reset enrichment status for {target}?"):
+            subject = f"{counted} item(s)"
+        question = (
+            f"Re-queue {subject}{desc} for enrichment? Everything those"
+            " providers stated goes — genres, tags, descriptions, runtimes and the"
+            " rest — and each item is rebuilt on what its sources, your edits and"
+            " its pins say. The next run refills it from rate-limited APIs."
+        )
+        if not click.confirm(question):
             click.echo("Aborted.")
             return
 

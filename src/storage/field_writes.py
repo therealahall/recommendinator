@@ -156,13 +156,30 @@ def record_field_writes(
     writer: FieldWriter,
     writes: Iterable[FieldWrite],
 ) -> None:
-    """Runs on the caller's cursor, no commit. Nothing is deleted implicitly: a
-    door short-circuits on its own terms, so "did not state it" cannot be told
-    apart from "was never asked".
+    """Runs on the caller's cursor, no commit. A row goes only when legacy holds
+    the value a real writer has now claimed.
     """
-    # Fixed width, for the reason sync_runs stamps its runs that way: the column
-    # sorts as text, and a short stamp sorts out of order.
+    # Fixed width: the column sorts as text, and a short stamp sorts out of order.
     now = utc_now().isoformat(timespec="microseconds")
+    # Sorted, so a dict restated in another key order rewrites nothing.
+    stated = [(write, json.dumps(write.value, sort_keys=True)) for write in writes]
+    if writer.kind is not WriterBand.LEGACY:
+        cursor.executemany(
+            f"UPDATE OR REPLACE {_TABLE} SET writer_kind = ?, writer = ?"
+            " WHERE content_item_id = ? AND field = ? AND writer_kind = ?"
+            " AND value_json = ?",
+            [
+                (
+                    writer.kind.value,
+                    writer.name,
+                    db_id,
+                    write.field,
+                    WriterBand.LEGACY.value,
+                    value_json,
+                )
+                for write, value_json in stated
+            ],
+        )
     cursor.executemany(
         f"INSERT INTO {_TABLE} (content_item_id, field, writer_kind, writer,"
         " value_json, authority, written_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
@@ -176,14 +193,19 @@ def record_field_writes(
                 write.field,
                 writer.kind.value,
                 writer.name,
-                # Sorted: the text is compared to skip a no-op write, so a dict
-                # restated in another key order rewrites nothing.
-                json.dumps(write.value, sort_keys=True),
+                value_json,
                 write.authority,
                 now,
             )
-            for write in writes
+            for write, value_json in stated
         ],
+    )
+
+
+def merge_group_clause(column: str, item: str) -> str:
+    return (
+        f"({column} = {item} OR {column} IN"
+        f" (SELECT id FROM content_items WHERE merged_into = {item}))"
     )
 
 
@@ -195,10 +217,26 @@ def read_manual_fields(cursor: sqlite3.Cursor, db_id: int) -> set[str]:
     return {row["field"] for row in cursor.fetchall()}
 
 
-def drop_manual_field(cursor: sqlite3.Cursor, db_id: int, field: str) -> bool:
-    """The operator releasing a field, which is the one deletion this table
-    takes: every other row persists until its writer states something else.
+def drop_provider_writes(
+    cursor: sqlite3.Cursor, db_id: int, provider: str | None = None
+) -> frozenset[str]:
+    """What a reset takes back across the merge group, *provider* ``None`` every
+    provider's. The fields dropped, so the caller can tell which column no writer
+    is left to fill.
     """
+    where = f"{merge_group_clause('content_item_id', ':id')} AND writer_kind = :kind"
+    params: dict[str, str | int] = {"id": db_id, "kind": WriterBand.PROVIDER.value}
+    if provider is not None:
+        where += " AND writer = :writer"
+        params["writer"] = provider
+    cursor.execute(f"SELECT DISTINCT field FROM {_TABLE} WHERE {where}", params)
+    dropped = frozenset(row["field"] for row in cursor.fetchall())
+    cursor.execute(f"DELETE FROM {_TABLE} WHERE {where}", params)
+    return dropped
+
+
+def drop_manual_field(cursor: sqlite3.Cursor, db_id: int, field: str) -> bool:
+    """The operator releasing a field."""
     cursor.execute(
         f"DELETE FROM {_TABLE} WHERE content_item_id = ? AND field = ?"
         " AND writer_kind = ?",
@@ -223,8 +261,7 @@ def read_field_writes(cursor: sqlite3.Cursor, db_id: int) -> list[StoredFieldWri
     cursor.execute(
         "SELECT field, writer_kind, writer, value_json, authority, written_at,"
         " content_item_id <> :id AS absorbed"
-        f" FROM {_TABLE} WHERE content_item_id = :id OR content_item_id IN"
-        " (SELECT id FROM content_items WHERE merged_into = :id)"
+        f" FROM {_TABLE} WHERE {merge_group_clause('content_item_id', ':id')}"
         " ORDER BY field, writer_kind, writer",
         {"id": db_id},
     )

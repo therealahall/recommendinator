@@ -55,7 +55,7 @@ const progressAnnouncement = computed(() => {
 const resettable = computed(() =>
   enrichType.value || !stats.value
     ? null
-    : { all: stats.value.resettable, ...stats.value.by_provider },
+    : { all: stats.value.resettable, ...stats.value.resettable_by_provider },
 )
 
 function control(testid: string): HTMLElement | null {

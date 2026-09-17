@@ -29,7 +29,8 @@ def _echo_backfill(record: CoverBackfillRecord) -> None:
         click.echo(f"  Items with no cover art to fetch: {record.without_cover}")
         click.echo(
             "    A provider settled these before it was asked for art. Run"
-            " 'enrichment reset' then 'enrichment start' to ask again."
+            " 'enrichment requeue --id' on one to ask again, keeping what it"
+            " holds."
         )
     for error in record.errors:
         click.echo(f"    - {error}")

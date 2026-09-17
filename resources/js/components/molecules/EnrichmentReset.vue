@@ -42,9 +42,10 @@ const subject = computed(() =>
 
 const question = computed(
   () =>
-    `Re-queue ${subject.value} for enrichment (${scope.value})? Their current ` +
-    'genres, tags and descriptions are dropped and fetched again from ' +
-    'rate-limited APIs.',
+    `Re-queue ${subject.value} for enrichment (${scope.value})? Everything ` +
+    'those providers stated goes — genres, tags, descriptions, runtimes and ' +
+    'the rest — and each item is rebuilt on what its sources, your edits and ' +
+    'its pins say. The next run refills it from rate-limited APIs.',
 )
 
 function answer(reset: boolean): void {
@@ -57,7 +58,7 @@ function answer(reset: boolean): void {
 
 <template>
   <div class="enrichment-reset">
-    <label :for="selectId" class="sr-only">Reset which provider's matches</label>
+    <label :for="selectId" class="sr-only">Reset which provider's values</label>
     <select :id="selectId" v-model="provider" class="field toolbar-select" data-testid="reset-provider">
       <option v-for="one in choices" :key="one.name" :value="one.name">
         {{ one.display_name }}
