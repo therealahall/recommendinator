@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.67.0 (2026-09-17)
+
+### Features
+
+- **storage**: File the creator under the key its type states it in
+  ([`6b3dfca`](https://github.com/therealahall/recommendinator/commit/6b3dfca6907ae82882881ea7abe72bb3cc55ab2b))
+
+
 ## v0.66.0 (2026-09-16)
 
 ### Chores
