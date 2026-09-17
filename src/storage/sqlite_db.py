@@ -8,7 +8,7 @@ import sqlite3
 import threading
 from collections.abc import Generator, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 from enum import Enum
 from pathlib import Path
@@ -33,6 +33,7 @@ from src.models.detail_fields import (
     ContentTypeFields,
     FieldKind,
     FieldOwner,
+    interface_field,
     ledger_field,
 )
 from src.storage.derived import (
@@ -61,12 +62,16 @@ from src.storage.field_writes import (
     MANUAL_WRITER,
     FieldWrite,
     FieldWriter,
+    StoredFieldWrite,
     WriterBand,
+    drop_field_choice,
     drop_manual_field,
     drop_provider_writes,
     parse_manual_fields,
+    read_field_choices,
     read_field_writes,
     read_manual_fields,
+    record_field_choice,
     record_field_writes,
     stated_writes,
 )
@@ -1665,6 +1670,64 @@ class SQLiteDB:
                 return False
             conn.commit()
             return True
+
+    def set_field_choice(
+        self, db_id: int, field: str, writer: str | None, user_id: int | None = None
+    ) -> bool:
+        """The writer this field follows from now on, *writer* ``None`` clearing
+        the choice. A choice is a rank change, so the rebuild runs here rather
+        than at the next sync.
+        """
+        with self.connection() as conn:
+            cursor = conn.cursor()
+            item = self._item_on_cursor(cursor, db_id, user_id)
+            if item is None:
+                return False
+            recorded = ledger_field(get_enum_value(item.content_type), field)
+            if writer is None:
+                if not drop_field_choice(cursor, db_id, recorded):
+                    return False
+            else:
+                record_field_choice(cursor, db_id, recorded, writer)
+            self._rebuild_from_ledger(cursor, db_id)
+            conn.commit()
+            return True
+
+    def field_choices(self, db_id: int, user_id: int | None = None) -> dict[str, str]:
+        with self.connection() as conn:
+            cursor = conn.cursor()
+            item = self._item_on_cursor(cursor, db_id, user_id)
+            if item is None:
+                return {}
+            content_type = get_enum_value(item.content_type)
+            return {
+                interface_field(content_type, field): writer
+                for field, writer in read_field_choices(cursor, db_id).items()
+            }
+
+    def field_writers(
+        self, db_id: int, field: str | None = None, user_id: int | None = None
+    ) -> list[StoredFieldWrite]:
+        """Every word deciding this item, filed under the names both interfaces
+        speak rather than the ones the ledger records. *field* is resolved the
+        same way, so a book's ``author`` narrows to the same rows ``creator``
+        does.
+        """
+        with self.connection() as conn:
+            cursor = conn.cursor()
+            item = self._item_on_cursor(cursor, db_id, user_id)
+            if item is None:
+                return []
+            content_type = get_enum_value(item.content_type)
+            spoken = [
+                replace(write, field=interface_field(content_type, write.field))
+                for write in read_field_writes(cursor, db_id)
+                if counts_for_the_group(write.field, write.writer_kind, write.absorbed)
+            ]
+            if field is None:
+                return spoken
+            named = interface_field(content_type, field)
+            return [write for write in spoken if write.field == named]
 
     def _write_detail_columns(
         self,

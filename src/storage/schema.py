@@ -1750,9 +1750,11 @@ def enrichment_legacy_count(
         " AND w.writer_kind = ?"
         " AND NOT EXISTS (SELECT 1 FROM content_item_field_writes surviving"
         f" WHERE {merge_group_clause('surviving.content_item_id', 'scope.id')}"
-        " AND surviving.field = w.field AND surviving.writer_kind <> ?"
+        # A choice names a writer instead of stating a value, so it cannot keep
+        # a field filled once the reset takes the rows it points at.
+        " AND surviving.field = w.field AND surviving.writer_kind NOT IN (?, ?)"
         " AND NOT (surviving.writer_kind = ? AND (? IS NULL OR surviving.writer = ?))))",
-        [*params, legacy, legacy, dropped, provider, provider],
+        [*params, legacy, legacy, WriterBand.CHOSEN.value, dropped, provider, provider],
     )
     counted: int = cursor.fetchone()[0]
     return counted

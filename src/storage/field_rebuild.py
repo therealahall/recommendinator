@@ -21,7 +21,12 @@ from src.settings.metadata import (
     PROVIDER_ORDER_KEY,
     provider_of_enabled_key,
 )
-from src.storage.field_writes import StoredFieldWrite, WriterBand, read_field_writes
+from src.storage.field_writes import (
+    StoredFieldWrite,
+    WriterBand,
+    read_field_choices,
+    read_field_writes,
+)
 from src.storage.merge import (
     MERGEABLE_DETAIL_COLUMNS,
     MONOTONIC_DETAIL_COLUMNS,
@@ -54,6 +59,12 @@ _SOURCE_FIRST_TRADE: dict[WriterBand, WriterBand] = {
 #: What a row this item absorbed still states for it. Not the title: which row
 #: survived is the operator's own decision, and rank would rename the item.
 _ABSORBED_ROW_STATES: frozenset[str] = WRITER_STATED_FIELDS - {"title"}
+
+#: Fields no choice can move: the first writer to name a series keeps the name,
+#: and an ordinal is settled by how well founded it is rather than by rank.
+RANK_FREE_FIELDS: frozenset[str] = frozenset(
+    {SERIES_NAME_KEY, SERIES_POSITION_KEY, SERIES_AUTHORITY_KEY}
+)
 
 _RankKey = tuple[int, int, bool, str, str]
 
@@ -111,7 +122,8 @@ def item_writer_ranks(cursor: sqlite3.Cursor, pinned: frozenset[str]) -> WriterR
 def rebuild_item_fields(
     cursor: sqlite3.Cursor, db_id: int, ranks: WriterRanks
 ) -> RebuiltFields:
-    ranked = _ranked(read_field_writes(cursor, db_id), ranks)
+    choices = read_field_choices(cursor, db_id)
+    ranked = _ranked(read_field_writes(cursor, db_id), ranks, choices)
     named = ranked.get(SERIES_NAME_KEY, [])
     resolved: dict[str, Any] = {}
     cleared: set[str] = set()
@@ -135,7 +147,7 @@ def rebuild_item_fields(
         elif field in MERGEABLE_DETAIL_COLUMNS:
             resolved[field] = _combined_names(_stopping_at_the_operator(writes))
         elif field in MONOTONIC_DETAIL_COLUMNS:
-            resolved.update(_highest_count(field, writes))
+            resolved.update(_stated_count(field, writes, choices.get(field)))
         else:
             resolved[field] = writes[0].value
     return RebuiltFields(values=resolved, cleared=frozenset(cleared))
@@ -181,7 +193,9 @@ def _strength(band: WriterBand, field: str) -> int:
 
 
 def _ranked(
-    writes: Iterable[StoredFieldWrite], ranks: WriterRanks
+    writes: Iterable[StoredFieldWrite],
+    ranks: WriterRanks,
+    choices: Mapping[str, str],
 ) -> dict[str, list[StoredFieldWrite]]:
     graded: dict[str, list[tuple[_RankKey, StoredFieldWrite]]] = {}
     for write in writes:
@@ -191,6 +205,8 @@ def _ranked(
         band = ranks.band_of(write)
         if band is None:
             continue
+        if choices.get(write.field) == write.writer:
+            band = WriterBand.CHOSEN
         key = (
             -_strength(band, write.field),
             ranks.position(write.writer),
@@ -225,9 +241,21 @@ def _combined_names(writes: list[StoredFieldWrite]) -> list[str]:
     return combined
 
 
-def _highest_count(field: str, writes: list[StoredFieldWrite]) -> dict[str, int]:
-    counts = [count for write in writes if (count := to_int(write.value)) is not None]
-    return {field: max(counts)} if counts else {}
+def _stated_count(
+    field: str, writes: list[StoredFieldWrite], chosen: str | None
+) -> dict[str, int]:
+    """The highest count of the writers that state one, because a source listing
+    only the seasons it holds files for would otherwise shrink the show and
+    finish it. A choice overrules that: the operator named who to believe.
+    """
+    counted: dict[str, int] = {}
+    for write in writes:
+        if (count := to_int(write.value)) is not None:
+            counted[write.writer] = max(count, counted.get(write.writer, count))
+    if not counted:
+        return {}
+    picked = counted.get(chosen) if chosen is not None else None
+    return {field: max(counted.values()) if picked is None else picked}
 
 
 def _first_live_cover(

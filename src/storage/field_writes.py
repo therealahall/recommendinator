@@ -41,6 +41,7 @@ class WriterBand(str, Enum):
     SOURCE = "source"
     PROVIDER = "provider"
     PINNED = "pinned"
+    CHOSEN = "chosen"
     #: The operator's own word, and the only band a user-owned field reaches:
     #: the sync door reads these rows to leave what they state alone.
     MANUAL = "manual"
@@ -66,6 +67,8 @@ MANUAL_WRITER = FieldWriter(WriterBand.MANUAL, "operator")
 LEGACY_WRITER = FieldWriter(WriterBand.LEGACY, "")
 
 COMPLETION_WRITER = FieldWriter(WriterBand.COMPLETION, "completion")
+
+CHOICE_WRITER = FieldWriter(WriterBand.CHOSEN, "operator")
 
 
 @dataclass(frozen=True)
@@ -166,7 +169,7 @@ def record_field_writes(
     now = utc_now().isoformat(timespec="microseconds")
     # Sorted, so a dict restated in another key order rewrites nothing.
     stated = [(write, json.dumps(write.value, sort_keys=True)) for write in writes]
-    if writer.kind is not WriterBand.LEGACY:
+    if writer.kind not in (WriterBand.LEGACY, WriterBand.CHOSEN):
         cursor.executemany(
             f"UPDATE OR REPLACE {_TABLE} SET writer_kind = ?, writer = ?"
             " WHERE content_item_id = ? AND field = ? AND writer_kind = ?"
@@ -255,6 +258,30 @@ def drop_manual_field(cursor: sqlite3.Cursor, db_id: int, field: str) -> bool:
     return cursor.rowcount > 0
 
 
+def record_field_choice(
+    cursor: sqlite3.Cursor, db_id: int, field: str, writer: str
+) -> None:
+    record_field_writes(cursor, db_id, CHOICE_WRITER, [FieldWrite(field, writer)])
+
+
+def read_field_choices(cursor: sqlite3.Cursor, db_id: int) -> dict[str, str]:
+    cursor.execute(
+        f"SELECT field, value_json FROM {_TABLE}"
+        " WHERE content_item_id = ? AND writer_kind = ?",
+        (db_id, WriterBand.CHOSEN.value),
+    )
+    return {row["field"]: json.loads(row["value_json"]) for row in cursor.fetchall()}
+
+
+def drop_field_choice(cursor: sqlite3.Cursor, db_id: int, field: str) -> bool:
+    cursor.execute(
+        f"DELETE FROM {_TABLE} WHERE content_item_id = ? AND field = ?"
+        " AND writer_kind = ?",
+        (db_id, field, WriterBand.CHOSEN.value),
+    )
+    return cursor.rowcount > 0
+
+
 def parse_manual_fields(payload: str | None, content_type: str) -> list[str]:
     """Ordered by name, so the report reads the same twice, and in the names both
     interfaces speak rather than the ones the ledger files them under.
@@ -272,8 +299,9 @@ def read_field_writes(cursor: sqlite3.Cursor, db_id: int) -> list[StoredFieldWri
         "SELECT field, writer_kind, writer, value_json, authority, written_at,"
         " content_item_id <> :id AS absorbed"
         f" FROM {_TABLE} WHERE {merge_group_clause('content_item_id', ':id')}"
+        " AND writer_kind <> :chosen"
         " ORDER BY field, writer_kind, writer",
-        {"id": db_id},
+        {"id": db_id, "chosen": WriterBand.CHOSEN.value},
     )
     return [
         StoredFieldWrite(

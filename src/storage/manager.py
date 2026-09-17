@@ -29,7 +29,7 @@ from src.storage.duplicates import SuggestionEvidence as SuggestionEvidence
 from src.storage.duplicates import SuggestionPage as SuggestionPage
 from src.storage.enrichment_jobs import EnrichmentJobStore
 from src.storage.enrichment_status import EnrichmentStore
-from src.storage.field_writes import FieldWriter
+from src.storage.field_writes import FieldWriter, StoredFieldWrite
 from src.storage.global_secrets import SecretStore
 from src.storage.item_merges import MergeError as MergeError
 from src.storage.item_merges import MergeEvidence as MergeEvidence
@@ -405,6 +405,28 @@ class StorageManager:
         """``False`` when the item is unknown or the field is not held."""
         with self._save_lock:
             return self.sqlite_db.clear_manual_field(db_id, field, user_id=user_id)
+
+    def set_field_choice(
+        self, db_id: int, field: str, writer: str | None, user_id: int | None = None
+    ) -> bool:
+        """The writer this field follows, *writer* ``None`` clearing the choice.
+        Rebuilds the item's resolved columns, so the profile is regenerated here.
+        """
+        with self._save_lock:
+            chosen = self.sqlite_db.set_field_choice(
+                db_id, field, writer, user_id=user_id
+            )
+        if chosen:
+            refresh_profile(self, user_id)
+        return chosen
+
+    def field_choices(self, db_id: int, user_id: int | None = None) -> dict[str, str]:
+        return self.sqlite_db.field_choices(db_id, user_id=user_id)
+
+    def field_writers(
+        self, db_id: int, field: str | None = None, user_id: int | None = None
+    ) -> list[StoredFieldWrite]:
+        return self.sqlite_db.field_writers(db_id, field, user_id=user_id)
 
     def count_items(
         self,

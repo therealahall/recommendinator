@@ -619,6 +619,98 @@ def test_switching_a_provider_off_empties_the_field_only_it_stated_until_it_is_b
     assert restored.metadata["description"] == "Only OpenLibrary said this"
 
 
+def _two_providers_describing(tmp_path: Path, name: str) -> tuple[SQLiteDB, int]:
+    """Both describing the book, OpenLibrary ranked over Hardcover."""
+    db = SQLiteDB(tmp_path / f"{name}.db")
+    db_id = db.save_content_item(_book("goodreads_rss"))
+    SettingsStore(db).set(PROVIDER_ORDER_KEY, ["openlibrary", "hardcover"])
+    _enriches(db, db_id, "openlibrary", description="A")
+    _enriches(db, db_id, "hardcover", description="B")
+    return db, db_id
+
+
+def test_choosing_a_writer_moves_the_field_and_clearing_the_choice_moves_it_back(
+    tmp_path: Path,
+) -> None:
+    db, db_id = _two_providers_describing(tmp_path, "choice")
+
+    assert db.set_field_choice(db_id, "description", "hardcover") is True
+    chosen = db.get_content_item(db_id)
+    choices = db.field_choices(db_id)
+
+    assert db.set_field_choice(db_id, "description", None) is True
+    cleared = db.get_content_item(db_id)
+
+    assert chosen is not None and chosen.metadata["description"] == "B"
+    assert choices == {"description": "hardcover"}
+    assert cleared is not None and cleared.metadata["description"] == "A"
+    assert db.field_choices(db_id) == {}
+
+
+def test_the_chosen_writer_correcting_itself_lands_without_choosing_again(
+    tmp_path: Path,
+) -> None:
+    db, db_id = _two_providers_describing(tmp_path, "correction")
+    assert db.set_field_choice(db_id, "description", "hardcover") is True
+
+    _enriches(db, db_id, "hardcover", description="B, corrected")
+
+    stored = db.get_content_item(db_id)
+    assert stored is not None
+    assert stored.metadata["description"] == "B, corrected"
+
+
+def test_a_chosen_writer_switched_off_falls_back_rather_than_emptying_the_field(
+    tmp_path: Path,
+) -> None:
+    db, db_id = _two_providers_describing(tmp_path, "chosen_off")
+    assert db.set_field_choice(db_id, "description", "hardcover") is True
+
+    SettingsStore(db).set("enrichment.providers.hardcover.enabled", False)
+    db.rebuild_item(db_id)
+
+    stored = db.get_content_item(db_id)
+    assert stored is not None
+    assert stored.metadata["description"] == "A"
+
+
+def test_a_choice_outlives_the_reset_that_took_the_chosen_writers_word(
+    tmp_path: Path,
+) -> None:
+    db, db_id = _two_providers_describing(tmp_path, "choice_reset")
+    assert db.set_field_choice(db_id, "description", "hardcover") is True
+
+    assert db.reset_provider_writes([db_id], provider="hardcover") == [db_id]
+    without = db.get_content_item(db_id)
+
+    _enriches(db, db_id, "hardcover", description="B again")
+
+    rebound = db.get_content_item(db_id)
+    assert without is not None and without.metadata["description"] == "A"
+    assert rebound is not None and rebound.metadata["description"] == "B again"
+
+
+def test_choosing_the_writer_that_counts_fewer_seasons_moves_the_count(
+    tmp_path: Path,
+) -> None:
+    db = SQLiteDB(tmp_path / "seasons.db")
+    db_id = db.save_content_item(
+        ContentItem(
+            id="fargo",
+            source="sonarr",
+            title="Fargo",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"seasons": 5},
+        )
+    )
+    _provider_states(db, db_id, "tmdb", FieldWrite("seasons", 3))
+
+    assert db.set_field_choice(db_id, "seasons", "tmdb") is True
+
+    assert _rebuild(db, db_id)["seasons"] == 3
+
+
 def _stored_description(storage: StorageManager, db_id: int) -> Any:
     item = storage.get_content_item(db_id)
     assert item is not None
