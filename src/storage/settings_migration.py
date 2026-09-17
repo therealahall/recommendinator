@@ -7,22 +7,12 @@ from __future__ import annotations
 import copy
 from typing import TYPE_CHECKING, Any
 
+from src.settings.metadata import IN_SCOPE_SECTIONS, default_config
 from src.utils.deep_merge import deep_merge
 from src.utils.dotted_path import set_leaf
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
-
-# Global/system config sections whose effective value is assembled here. The
-# ``storage`` section is intentionally excluded — it bootstraps the database
-# itself and must stay in YAML/env.
-IN_SCOPE_SECTIONS: tuple[str, ...] = (
-    "recommendations",
-    "sync",
-    "enrichment",
-    "web",
-    "logging",
-)
 
 
 #: Where ``logging.file`` pointed before the log moved under the ``data/`` mount.
@@ -47,10 +37,6 @@ def migrate_config_settings(
     assembled result so existing ``config[section][key]`` read sites resolve the
     layered value.
     """
-    # Deferred import: the metadata registry imports IN_SCOPE_SECTIONS from this
-    # module, so importing it at module top would be a circular import.
-    from src.settings.metadata import default_config
-
     defaults = default_config()
     db_settings = storage.settings.list()
 

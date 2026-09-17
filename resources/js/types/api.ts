@@ -337,6 +337,17 @@ export interface EnrichmentJobStatusResponse {
   progress_percent: number
 }
 
+export interface LibraryRebuildResponse {
+  running: boolean
+  completed: boolean
+  cancelled: boolean
+  total_items: number
+  items_processed: number
+  items_changed: number
+  current_item: string
+  errors: string[]
+}
+
 export interface EnrichmentProvider {
   name: string
   display_name: string
@@ -351,6 +362,7 @@ export interface EnrichmentStatsResponse {
   pending: number
   not_found: number
   failed: number
+  resettable_by_provider: Record<string, number>
   by_provider: Record<string, number>
   by_quality: Record<string, number>
   /** Every installed provider, whether or not it has enriched anything. */
@@ -567,6 +579,12 @@ export interface EnrichmentPinResponse {
 export interface EnrichmentResetResponse {
   message: string
   count: number
+  run: EnrichmentRun
+}
+
+export interface EnrichmentRequeueResponse {
+  item_id: number
+  message: string
   run: EnrichmentRun
 }
 

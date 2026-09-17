@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from src.enrichment.registry import get_enrichment_registry
 from src.models.detail_fields import (
     COVER_FIELD,
     SOURCE_FIRST_FIELDS,
@@ -16,7 +16,11 @@ from src.models.detail_fields import (
     text_names,
     to_int,
 )
-from src.settings.metadata import PROVIDER_ORDER_KEY, default_of
+from src.settings.metadata import (
+    ENABLED_KEY_PATTERN,
+    PROVIDER_ORDER_KEY,
+    provider_of_enabled_key,
+)
 from src.storage.field_writes import StoredFieldWrite, WriterBand, read_field_writes
 from src.storage.merge import (
     MERGEABLE_DETAIL_COLUMNS,
@@ -53,8 +57,11 @@ _ABSORBED_ROW_STATES: frozenset[str] = WRITER_STATED_FIELDS - {"title"}
 
 _RankKey = tuple[int, int, bool, str, str]
 
-_ENABLED_PREFIX = "enrichment.providers."
-_ENABLED_SUFFIX = ".enabled"
+
+@dataclass(frozen=True)
+class RebuiltFields:
+    values: dict[str, Any]
+    cleared: frozenset[str]
 
 
 @dataclass(frozen=True)
@@ -87,27 +94,31 @@ def item_writer_ranks(cursor: sqlite3.Cursor, pinned: frozenset[str]) -> WriterR
     """
     cursor.execute(
         "SELECT key, value_json FROM settings WHERE key = ? OR key LIKE ?",
-        (PROVIDER_ORDER_KEY, f"{_ENABLED_PREFIX}%{_ENABLED_SUFFIX}"),
+        (PROVIDER_ORDER_KEY, ENABLED_KEY_PATTERN),
     )
-    order: tuple[str, ...] = tuple(default_of(PROVIDER_ORDER_KEY))
+    order = get_enrichment_registry().shipped_provider_order()
     disabled: set[str] = set()
     for row in cursor.fetchall():
         stored = json.loads(row["value_json"])
         if row["key"] == PROVIDER_ORDER_KEY:
             if isinstance(stored, list):
                 order = tuple(str(name) for name in stored)
-        elif not stored:
-            disabled.add(row["key"][len(_ENABLED_PREFIX) : -len(_ENABLED_SUFFIX)])
+        elif not stored and (off := provider_of_enabled_key(row["key"])) is not None:
+            disabled.add(off)
     return WriterRanks(providers=order, pinned=pinned, disabled=frozenset(disabled))
 
 
 def rebuild_item_fields(
     cursor: sqlite3.Cursor, db_id: int, ranks: WriterRanks
-) -> dict[str, Any]:
+) -> RebuiltFields:
     ranked = _ranked(read_field_writes(cursor, db_id), ranks)
     named = ranked.get(SERIES_NAME_KEY, [])
     resolved: dict[str, Any] = {}
+    cleared: set[str] = set()
     for field, writes in ranked.items():
+        if not writes:
+            cleared.add(field)
+            continue
         if field == SERIES_NAME_KEY:
             # The first writer to name the series keeps it: a later one naming
             # another series is describing a different work, not correcting
@@ -127,10 +138,10 @@ def rebuild_item_fields(
             resolved.update(_highest_count(field, writes))
         else:
             resolved[field] = writes[0].value
-    return resolved
+    return RebuiltFields(values=resolved, cleared=frozenset(cleared))
 
 
-def _counts_for_the_group(field: str, writer_kind: WriterBand, absorbed: bool) -> bool:
+def counts_for_the_group(field: str, writer_kind: WriterBand, absorbed: bool) -> bool:
     """A hold belongs to the row it was made against: the manual_fields read and
     the release door are both survivor-only, so an absorbed row's hold entering
     the group would decide a field nobody can see or release.
@@ -151,14 +162,14 @@ def fields_leaving_the_group(
         write.field
         for write in read_field_writes(cursor, departed_id)
         # Read as the absorbed rows they were in the group they are leaving.
-        if _counts_for_the_group(write.field, write.writer_kind, True)
+        if counts_for_the_group(write.field, write.writer_kind, True)
     }
     return frozenset(
         departed
         - {
             write.field
             for write in read_field_writes(cursor, survivor_id)
-            if _counts_for_the_group(write.field, write.writer_kind, write.absorbed)
+            if counts_for_the_group(write.field, write.writer_kind, write.absorbed)
         }
     )
 
@@ -172,12 +183,11 @@ def _strength(band: WriterBand, field: str) -> int:
 def _ranked(
     writes: Iterable[StoredFieldWrite], ranks: WriterRanks
 ) -> dict[str, list[StoredFieldWrite]]:
-    graded: defaultdict[str, list[tuple[_RankKey, StoredFieldWrite]]] = defaultdict(
-        list
-    )
+    graded: dict[str, list[tuple[_RankKey, StoredFieldWrite]]] = {}
     for write in writes:
-        if not _counts_for_the_group(write.field, write.writer_kind, write.absorbed):
+        if not counts_for_the_group(write.field, write.writer_kind, write.absorbed):
             continue
+        entries = graded.setdefault(write.field, [])
         band = ranks.band_of(write)
         if band is None:
             continue
@@ -190,7 +200,7 @@ def _ranked(
             write.written_at,
             write.writer,
         )
-        graded[write.field].append((key, write))
+        entries.append((key, write))
     return {
         field: [write for _, write in sorted(entries, key=lambda entry: entry[0])]
         for field, entries in graded.items()

@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
 
 from src.cli.commands._settings import RESTART_ADVISORY
 from src.enrichment.registry import get_enrichment_registry
+from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.settings.metadata import PROVIDER_ORDER_KEY, default_of
 from src.storage.manager import StorageManager
 from tests.cli.conftest import _invoke_with_mocks
@@ -605,6 +608,35 @@ class TestMutatingCommandsEmitTheRefreshedView:
         secret = _find_json(json.loads(result.output), _SECRET_KEY)
         assert secret["has_secret"] is True
         assert "value" not in secret
+
+
+class TestASettingsWriteRunsTheRebuildItOwes:
+    def test_set_waits_for_the_pass_instead_of_leaving_a_claim_behind(
+        self, cli_runner: CliRunner, storage: StorageManager
+    ) -> None:
+        storage.save_content_item(
+            ContentItem(
+                id="dune",
+                title="Dune",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            )
+        )
+        order = sorted(get_enrichment_registry().get_all_providers(), reverse=True)
+
+        def slow_rebuild(db_id: int) -> bool:
+            time.sleep(0.5)
+            return False
+
+        with patch.object(storage, "rebuild_item", side_effect=slow_rebuild):
+            result = _invoke_with_mocks(
+                cli_runner, ["settings", "set", _ORDER_KEY, ", ".join(order)], storage
+            )
+
+        assert result.exit_code == 0
+        record = storage.rebuild_jobs.read()
+        assert (record.running, record.completed) == (False, True)
+        assert storage.rebuild_jobs.claim() is True
 
 
 def _find_json(payload: dict, key: str) -> dict:

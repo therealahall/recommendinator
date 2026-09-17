@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, NoReturn
@@ -10,6 +11,7 @@ from typing import Any, NoReturn
 import click
 
 from src.storage.manager import StorageManager
+from src.storage.rebuild_jobs import LibraryRebuildRecord
 from src.utils.series import (
     get_series_name_from_metadata,
     get_series_position_from_metadata,
@@ -148,6 +150,65 @@ def write_output_file(
     except OSError as error:
         abort_after_failure(ctx, f"Could not write {output_path}", error)
     return True
+
+
+REBUILD_POLL_SECONDS = 1.0
+REBUILD_STOP_WAIT_SECONDS = 10.0
+
+
+def _rebuild_state(record: LibraryRebuildRecord) -> str:
+    if record.running:
+        return "running"
+    if record.cancelled:
+        return "cancelled"
+    return "completed" if record.completed else "stopped on an error"
+
+
+def echo_rebuild(record: LibraryRebuildRecord, *, err: bool = False) -> None:
+    click.echo(f"Library rebuild: {_rebuild_state(record)}", err=err)
+    click.echo(f"  Progress: {record.processed}/{record.total}", err=err)
+    click.echo(f"  Items changed: {record.changed}", err=err)
+    for error in record.errors:
+        click.echo(f"    - {error}", err=err)
+
+
+def await_library_rebuild(storage: StorageManager) -> LibraryRebuildRecord:
+    record = storage.rebuild_jobs.read()
+    try:
+        while record.running:
+            click.echo(
+                f"  {record.processed}/{record.total} - {record.current_item[:40]}",
+                nl=False,
+                err=True,
+            )
+            click.echo("\r", nl=False, err=True)
+            time.sleep(REBUILD_POLL_SECONDS)
+            record = storage.rebuild_jobs.read()
+        return record
+    except KeyboardInterrupt:
+        return _stop_library_rebuild(storage)
+
+
+def _stop_library_rebuild(storage: StorageManager) -> LibraryRebuildRecord:
+    click.echo(
+        f"\nStopping after the item in flight,"
+        f" up to {REBUILD_STOP_WAIT_SECONDS:.0f}s...",
+        err=True,
+    )
+    storage.rebuild_jobs.request_stop()
+    deadline = time.monotonic() + REBUILD_STOP_WAIT_SECONDS
+    record = storage.rebuild_jobs.read()
+    try:
+        while record.running and time.monotonic() < deadline:
+            time.sleep(REBUILD_POLL_SECONDS)
+            record = storage.rebuild_jobs.read()
+    except KeyboardInterrupt:
+        record = storage.rebuild_jobs.read()
+    if record.running:
+        record.running = False
+        record.cancelled = True
+        storage.rebuild_jobs.finish(record)
+    return record
 
 
 def emit_view(

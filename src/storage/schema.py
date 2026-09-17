@@ -25,6 +25,7 @@ from src.storage.field_writes import (
     MANUAL_WRITER,
     FieldWrite,
     WriterBand,
+    merge_group_clause,
     record_field_writes,
     stated_writes,
 )
@@ -602,6 +603,27 @@ def create_schema(conn: sqlite3.Connection) -> None:
         "cover_backfill_job",
         "items_without_cover",
         "INTEGER NOT NULL DEFAULT 0",
+    )
+
+    cursor.execute(
+        "CREATE TABLE IF NOT EXISTS library_rebuild_job ("
+        " id INTEGER PRIMARY KEY CHECK (id = 1),"
+        " running INTEGER NOT NULL DEFAULT 0,"
+        " completed INTEGER NOT NULL DEFAULT 0,"
+        " cancelled INTEGER NOT NULL DEFAULT 0,"
+        " stop_requested INTEGER NOT NULL DEFAULT 0,"
+        " total_items INTEGER NOT NULL DEFAULT 0,"
+        " items_processed INTEGER NOT NULL DEFAULT 0,"
+        " items_changed INTEGER NOT NULL DEFAULT 0,"
+        " current_item TEXT NOT NULL DEFAULT '',"
+        " errors_json TEXT NOT NULL DEFAULT '[]',"
+        " rerun_requested INTEGER NOT NULL DEFAULT 0,"
+        " started_at TIMESTAMP,"
+        " heartbeat_at TIMESTAMP"
+        ")"
+    )
+    _add_column_if_not_exists(
+        cursor, "library_rebuild_job", "rerun_requested", "INTEGER NOT NULL DEFAULT 0"
     )
 
     # Nothing is seeded here on boot; a stored leaf wins over the registry's
@@ -1648,39 +1670,84 @@ def mark_item_needs_enrichment(
     conn.commit()
 
 
-def reset_enrichment_status(
-    conn: sqlite3.Connection,
-    provider: str | None = None,
-    content_type: str | None = None,
-    user_id: int | None = None,
-    content_item_id: int | None = None,
-) -> int:
+def _enrichment_scope(
+    provider: str | None,
+    content_type: str | None,
+    user_id: int | None,
+    content_item_id: int | None,
+) -> tuple[str, list[str | int]]:
     conditions = ["ci.merged_into IS NULL"]
     params: list[str | int] = []
     if content_item_id is not None:
-        conditions.append("es.content_item_id = ?")
+        conditions.append("ci.id = ?")
         params.append(content_item_id)
     if provider:
-        conditions.append("es.enrichment_provider = ?")
-        params.append(provider)
+        # A provider that stated a field without winning the match wrote it too.
+        conditions.append(
+            "(EXISTS (SELECT 1 FROM enrichment_status es"
+            f" WHERE {merge_group_clause('es.content_item_id', 'ci.id')}"
+            " AND es.enrichment_provider = ?)"
+            " OR EXISTS (SELECT 1 FROM content_item_field_writes w"
+            f" WHERE {merge_group_clause('w.content_item_id', 'ci.id')}"
+            " AND w.writer_kind = ? AND w.writer = ?))"
+        )
+        params.extend([provider, WriterBand.PROVIDER.value, provider])
     if content_type:
         conditions.append("ci.content_type = ?")
         params.append(content_type)
     if user_id:
         conditions.append("ci.user_id = ?")
         params.append(user_id)
+    return (
+        f"SELECT ci.id FROM content_items ci WHERE {' AND '.join(conditions)}",
+        params,
+    )
 
+
+def enrichment_scope_ids(
+    conn: sqlite3.Connection,
+    provider: str | None = None,
+    content_type: str | None = None,
+    user_id: int | None = None,
+    content_item_id: int | None = None,
+) -> list[int]:
+    query, params = _enrichment_scope(provider, content_type, user_id, content_item_id)
+    cursor = conn.cursor()
+    cursor.execute(query, params)
+    return [int(row["id"]) for row in cursor.fetchall()]
+
+
+def enrichment_reset_count(
+    conn: sqlite3.Connection,
+    provider: str | None = None,
+    content_type: str | None = None,
+    user_id: int | None = None,
+    content_item_id: int | None = None,
+) -> int:
+    query, params = _enrichment_scope(provider, content_type, user_id, content_item_id)
     cursor = conn.cursor()
     cursor.execute(
-        f"""
-        UPDATE enrichment_status
-           SET needs_enrichment = 1, enrichment_error = NULL,
-               enrichment_quality = NULL
-         WHERE content_item_id IN (
-               SELECT es.content_item_id FROM enrichment_status es
-               JOIN content_items ci ON es.content_item_id = ci.id
-                WHERE {' AND '.join(conditions)})
-        """,
+        f"SELECT COUNT(*) FROM enrichment_status WHERE content_item_id IN ({query})",
+        params,
+    )
+    counted: int = cursor.fetchone()[0]
+    return counted
+
+
+def requeue_enrichment_status(
+    conn: sqlite3.Connection,
+    provider: str | None = None,
+    content_type: str | None = None,
+    user_id: int | None = None,
+    content_item_id: int | None = None,
+) -> int:
+    query, params = _enrichment_scope(provider, content_type, user_id, content_item_id)
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE enrichment_status"
+        " SET needs_enrichment = 1, enrichment_error = NULL,"
+        " enrichment_quality = NULL"
+        f" WHERE content_item_id IN ({query})",
         params,
     )
     updated = cursor.rowcount
@@ -1710,6 +1777,18 @@ def _enrichment_group(
         params,
     )
     return {row[0]: row[1] for row in cursor.fetchall()}
+
+
+def _provider_writers(
+    cursor: sqlite3.Cursor, scope: str, params: tuple[int, ...]
+) -> set[str]:
+    cursor.execute(
+        "SELECT DISTINCT w.writer FROM content_item_field_writes w"
+        f" JOIN content_items ci ON {merge_group_clause('w.content_item_id', 'ci.id')}"
+        f" WHERE w.writer_kind = ? AND {scope}",
+        (WriterBand.PROVIDER.value, *params),
+    )
+    return {row[0] for row in cursor.fetchall()}
 
 
 def get_enrichment_stats(
@@ -1767,10 +1846,16 @@ def get_enrichment_stats(
     by_quality = _enrichment_group(
         cursor, source, f"{es}enrichment_quality", scope, params
     )
+    reset_scopes = by_provider.keys() | _provider_writers(cursor, scope, params)
+    resettable_by_provider = {
+        name: enrichment_reset_count(conn, name, user_id=user_id)
+        for name in sorted(reset_scopes - {"none"})
+    }
 
     return {
         "total": total_items,
         "resettable": tracked_items,
+        "resettable_by_provider": resettable_by_provider,
         "enriched": enriched,
         "pending": needs_enrichment + untracked,
         "not_found": by_quality.get("not_found", 0),

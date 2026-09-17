@@ -6,7 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from src.storage.enrichment_jobs import STALE_AFTER, EnrichmentJobStore
+from src.storage.enrichment_jobs import EnrichmentJobStore
+from src.storage.job_claim import STALE_AFTER
 from src.storage.manager import StorageManager
 
 

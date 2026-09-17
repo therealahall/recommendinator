@@ -3,9 +3,9 @@ from typing import Any
 
 import pytest
 
-from src.settings.metadata import default_config
+from src.settings.metadata import IN_SCOPE_SECTIONS, default_config
 from src.storage.manager import StorageManager
-from src.storage.settings_migration import IN_SCOPE_SECTIONS, migrate_config_settings
+from src.storage.settings_migration import migrate_config_settings
 
 
 class TestMigrateConfigSettings:

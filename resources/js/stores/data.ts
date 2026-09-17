@@ -12,6 +12,7 @@ import type {
   SyncRunResponse,
   EnrichmentStatsResponse,
   EnrichmentJobStatusResponse,
+  LibraryRebuildResponse,
   SourceSchemaResponse,
   SourceConfigResponse,
   PluginImportErrorResponse,
@@ -152,9 +153,11 @@ export const useDataStore = defineStore('data', () => {
   const enrichmentStatsError = ref('')
   const enrichmentJob = ref<EnrichmentJobStatusResponse | null>(null)
   const enrichmentEnabled = ref(false)
+  const rebuildJob = ref<LibraryRebuildResponse | null>(null)
 
   let syncPollTimer: ReturnType<typeof setInterval> | null = null
   let enrichPollTimer: ReturnType<typeof setInterval> | null = null
+  let rebuildPollTimer: ReturnType<typeof setInterval> | null = null
 
   async function loadSyncSources() {
     syncLoading.value = true
@@ -571,9 +574,50 @@ export const useDataStore = defineStore('data', () => {
     }
   }
 
+  async function startRebuild() {
+    const job = await api.post<LibraryRebuildResponse>('/library/rebuild')
+    rebuildJob.value = job
+    startRebuildPolling()
+    return job
+  }
+
+  async function stopRebuild() {
+    const result = await api.post<{ message: string }>('/library/rebuild/stop')
+    stopRebuildPolling()
+    await checkRebuildStatus()
+    return result.message
+  }
+
+  async function checkRebuildStatus() {
+    try {
+      const status = await api.get<LibraryRebuildResponse>('/library/rebuild/status')
+      rebuildJob.value = status
+      if (status.running) {
+        if (!rebuildPollTimer) startRebuildPolling()
+      } else {
+        stopRebuildPolling()
+      }
+    } catch (err) {
+      console.error('Library rebuild status poll failed:', err)
+    }
+  }
+
+  function startRebuildPolling() {
+    if (rebuildPollTimer) return
+    rebuildPollTimer = setInterval(checkRebuildStatus, 3000)
+  }
+
+  function stopRebuildPolling() {
+    if (rebuildPollTimer) {
+      clearInterval(rebuildPollTimer)
+      rebuildPollTimer = null
+    }
+  }
+
   function cleanup() {
     stopSyncPolling()
     stopEnrichmentPolling()
+    stopRebuildPolling()
   }
 
   const sourceSchemas = ref<Record<string, SourceSchemaResponse>>({})
@@ -778,6 +822,7 @@ export const useDataStore = defineStore('data', () => {
     enrichmentStatsError,
     enrichmentJob,
     enrichmentEnabled,
+    rebuildJob,
     sourceSchemas,
     sourceConfigs,
     sourceRuns,
@@ -801,6 +846,9 @@ export const useDataStore = defineStore('data', () => {
     resetEnrichment,
     clearManualField,
     checkEnrichmentStatus,
+    startRebuild,
+    stopRebuild,
+    checkRebuildStatus,
     loadSourceSchema,
     loadSourceConfig,
     updateSourceConfig,

@@ -6,6 +6,7 @@ import AppIcon from '@/components/atoms/AppIcon.vue'
 import SyncSourceAccordion from '@/components/organisms/SyncSourceAccordion.vue'
 import AddSourceModal from '@/components/organisms/AddSourceModal.vue'
 import EnrichmentCard from '@/components/organisms/EnrichmentCard.vue'
+import LibraryRebuildCard from '@/components/organisms/LibraryRebuildCard.vue'
 import ImportPanel from '@/components/organisms/ImportPanel.vue'
 
 const data = useDataStore()
@@ -54,6 +55,7 @@ onMounted(() => {
   data.checkSyncStatus()
   data.loadEnrichmentStats()
   data.checkEnrichmentStatus()
+  data.checkRebuildStatus()
 })
 
 onUnmounted(() => {
@@ -232,6 +234,8 @@ const orderedSources = computed(() => {
     <ImportPanel />
 
     <EnrichmentCard />
+
+    <LibraryRebuildCard />
 
     <AddSourceModal
       v-if="showAddSourceModal"

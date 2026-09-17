@@ -1,6 +1,5 @@
-"""The dotted-key scheme and the in-scope section list match
-``src.storage.settings_migration`` so the registry and the config overlay
-describe the same leaves.
+"""The registry of every configurable leaf, which ``src.storage.settings_migration``
+overlays onto the running config, so both describe the same leaves.
 """
 
 from __future__ import annotations
@@ -10,7 +9,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
 from src.enrichment.provider_base import flags_no_credential, stored_config_schema
-from src.storage.settings_migration import IN_SCOPE_SECTIONS
+from src.enrichment.registry import get_enrichment_registry
 from src.utils.text import humanize_source_id
 
 logger = logging.getLogger(__name__)
@@ -21,6 +20,17 @@ if TYPE_CHECKING:
 SettingType = Literal["bool", "int", "float", "string", "list", "enum"]
 Widget = Literal["toggle", "number", "text", "tags", "select", "provider-order"]
 
+#: Global/system config sections whose effective value is assembled from these
+#: leaves. The ``storage`` section is intentionally excluded — it bootstraps the
+#: database itself and must stay in YAML/env.
+IN_SCOPE_SECTIONS: tuple[str, ...] = (
+    "recommendations",
+    "sync",
+    "enrichment",
+    "web",
+    "logging",
+)
+
 #: Precedence among enrichment providers, read by the registry and checked by the
 #: settings service, so neither re-spells it.
 PROVIDER_ORDER_KEY = "enrichment.provider_order"
@@ -30,6 +40,20 @@ _PROVIDER_PREFIX = "enrichment.providers."
 #: Added to every provider rather than read off its schema, so one shipping
 #: without it is still a provider the operator can turn off.
 _ENABLED_FIELD = "enabled"
+_ENABLED_SUFFIX = f".{_ENABLED_FIELD}"
+
+ENABLED_KEY_PATTERN = f"{_PROVIDER_PREFIX}%{_ENABLED_SUFFIX}"
+
+
+def provider_enabled_key(name: str) -> str:
+    return f"{_PROVIDER_PREFIX}{name}{_ENABLED_SUFFIX}"
+
+
+def provider_of_enabled_key(key: str) -> str | None:
+    if key.startswith(_PROVIDER_PREFIX) and key.endswith(_ENABLED_SUFFIX):
+        return key[len(_PROVIDER_PREFIX) : -len(_ENABLED_SUFFIX)]
+    return None
+
 
 #: A ``ConfigField`` typed outside this map is left off the settings page rather
 #: than given a control that cannot hold it. The second half is what a field
@@ -307,15 +331,9 @@ _BY_KEY: dict[str, SettingMetadata] = {entry.key: entry for entry in _REGISTRY}
 
 
 def _installed_providers() -> list[EnrichmentProvider]:
-    """Imported here rather than at module level: the enrichment registry reads
-    this module for the order key, so naming it above would be a cycle.
-    """
-    from src.enrichment.registry import get_enrichment_registry
-
-    return sorted(
-        get_enrichment_registry().get_all_providers().values(),
-        key=lambda provider: (provider.precedence, provider.name),
-    )
+    registry = get_enrichment_registry()
+    installed = registry.get_all_providers()
+    return [installed[name] for name in registry.shipped_provider_order()]
 
 
 #: Keys already reported. Every ``get_entry`` and ``default_of`` for a provider
@@ -388,7 +406,7 @@ def _provider_entries() -> tuple[SettingMetadata, ...]:
     for provider in installed:
         entries.append(
             _entry(
-                f"{_PROVIDER_PREFIX}{provider.name}.{_ENABLED_FIELD}",
+                provider_enabled_key(provider.name),
                 label=f"{provider.display_name} enabled",
                 help=provider.description,
                 type="bool",

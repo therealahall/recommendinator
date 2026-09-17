@@ -132,6 +132,22 @@ describe('DataPage rows during a Sync All', () => {
     wrapper.unmount()
   })
 
+  it('reaches the library rebuild control from the Data page', async () => {
+    mockPost.mockResolvedValue({})
+    mockGet.mockImplementation((path: string) => {
+      if (path === '/sync/sources') return Promise.resolve([enabledSource])
+      return Promise.resolve({})
+    })
+    const wrapper = mount(DataPage, {
+      global: { stubs: { AddSourceModal: true, EnrichmentCard: true, ImportPanel: true } },
+    })
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="library-rebuild-start"]').exists()).toBe(true)
+    expect(mockGet).toHaveBeenCalledWith('/library/rebuild/status')
+    wrapper.unmount()
+  })
+
   it('refuses a Sync All while a per-source run nobody triggered here is in flight', async () => {
     const goodreads = {
       ...enabledSource,

@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import AfterValidator, BaseModel, Field, StringConstraints
 
+from src.library.rebuild import start_library_rebuild
 from src.models.content import (
     MAX_CREATOR_LENGTH,
     MAX_DESCRIPTION_LENGTH,
@@ -179,6 +180,40 @@ class ItemEditRequest(BaseModel):
 
 def _item_to_response(item: "ContentItem") -> ContentItemResponse:
     return ContentItemResponse.model_validate(item_to_dict(item))
+
+
+class LibraryRebuildResponse(BaseModel):
+    running: bool = False
+    completed: bool = False
+    cancelled: bool = False
+    total_items: int = 0
+    items_processed: int = 0
+    items_changed: int = 0
+    current_item: str = ""
+    errors: list[str] = Field(default_factory=list)
+
+
+@router.post("/library/rebuild", response_model=LibraryRebuildResponse)
+def start_rebuild(storage: RequiredStorage) -> LibraryRebuildResponse:
+    started = start_library_rebuild(storage)
+    if started is None:
+        raise HTTPException(
+            status_code=409, detail="A library rebuild is already running."
+        )
+    return LibraryRebuildResponse(**started.payload())
+
+
+@router.post("/library/rebuild/stop")
+def stop_rebuild(storage: RequiredStorage) -> dict[str, str]:
+    if not storage.rebuild_jobs.request_stop():
+        raise HTTPException(status_code=400, detail="No library rebuild is running.")
+
+    return {"message": "Library rebuild stop requested", "status": "stopping"}
+
+
+@router.get("/library/rebuild/status", response_model=LibraryRebuildResponse)
+def get_rebuild_status(storage: RequiredStorage) -> LibraryRebuildResponse:
+    return LibraryRebuildResponse(**storage.rebuild_jobs.read().payload())
 
 
 @router.get("/items", response_model=list[ContentItemResponse])

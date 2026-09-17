@@ -16,7 +16,9 @@ from src.covers import cache
 from src.covers.fetch import MAX_BYTES, CoverUnavailable
 from src.covers.service import backfill_covers, fill_cover, start_backfill
 from src.ingestion.urls import MAX_SAME_ORIGIN_REDIRECTS
-from src.storage.cover_jobs import STALE_AFTER, CoverBackfillRecord
+from src.storage.cover_jobs import CoverBackfillRecord
+from src.storage.field_writes import FieldWriter, WriterBand, read_field_writes
+from src.storage.job_claim import STALE_AFTER
 from src.storage.manager import StorageManager
 from src.storage.schema import create_user
 from src.web.api._covers import CoverBackfillResponse
@@ -160,6 +162,24 @@ class TestFillOnlyInvalidation:
             fill_cover(storage, config, storage.get_content_item(db_id))
 
         assert [queued for queued, _ in storage.enrichment.items_needing()] == [db_id]
+
+    def test_a_clear_keeps_the_rows_the_next_run_refills_the_cover_from(
+        self, library: tuple[StorageManager, dict[str, Any]]
+    ) -> None:
+        storage, config = library
+        db_id = save(storage, REMOTE)
+        storage.record_stated_fields(
+            db_id, FieldWriter(WriterBand.PROVIDER, "rawg"), {"genres": ["Action"]}
+        )
+
+        with patch("src.covers.fetch.requests.get", return_value=FakeResponse(404)):
+            fill_cover(storage, config, storage.get_content_item(db_id))
+
+        with storage.connection() as conn:
+            writes = read_field_writes(conn.cursor(), db_id)
+        assert (WriterBand.PROVIDER, "rawg", "genres") in {
+            (write.writer_kind, write.writer, write.field) for write in writes
+        }
 
     def test_a_settled_item_is_not_re_queued_and_refetched_on_every_later_sync(
         self, library: tuple[StorageManager, dict[str, Any]]
