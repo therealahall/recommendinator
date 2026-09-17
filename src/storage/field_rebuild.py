@@ -1,7 +1,8 @@
-"""What the ledger says an item's fields are, which no door writes yet."""
+"""What the ledger says an item's fields are, which every door writes."""
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
@@ -11,9 +12,11 @@ from typing import Any
 from src.models.detail_fields import (
     COVER_FIELD,
     SOURCE_FIRST_FIELDS,
+    WRITER_STATED_FIELDS,
     text_names,
     to_int,
 )
+from src.settings.metadata import PROVIDER_ORDER_KEY, default_of
 from src.storage.field_writes import StoredFieldWrite, WriterBand, read_field_writes
 from src.storage.merge import (
     MERGEABLE_DETAIL_COLUMNS,
@@ -23,9 +26,11 @@ from src.storage.merge import (
 from src.utils.list_merge import merge_string_lists
 from src.utils.series import (
     SERIES_AUTHORITY_KEY,
+    SERIES_NAME_KEY,
     SERIES_POSITION_KEY,
     SeriesAuthority,
     get_series_position_from_metadata,
+    series_names_agree,
     stored_series_authority,
 )
 
@@ -42,18 +47,30 @@ _SOURCE_FIRST_TRADE: dict[WriterBand, WriterBand] = {
     WriterBand.PROVIDER: WriterBand.SOURCE,
 }
 
-_RankKey = tuple[int, int, str, str]
+#: What a row this item absorbed still states for it. Not the title: which row
+#: survived is the operator's own decision, and rank would rename the item.
+_ABSORBED_ROW_STATES: frozenset[str] = WRITER_STATED_FIELDS - {"title"}
+
+_RankKey = tuple[int, int, bool, str, str]
+
+_ENABLED_PREFIX = "enrichment.providers."
+_ENABLED_SUFFIX = ".enabled"
 
 
 @dataclass(frozen=True)
 class WriterRanks:
+    #: The precedence the operator stated. One this does not name is ranked
+    #: below those it does, by when it wrote — the order the run asked in.
     providers: tuple[str, ...] = ()
     pinned: frozenset[str] = frozenset()
+    #: Providers switched off. Their rows stay in the ledger and stop being
+    #: resolved, which is what switching one back on undoes.
+    disabled: frozenset[str] = frozenset()
 
     def band_of(self, write: StoredFieldWrite) -> WriterBand | None:
         if write.writer_kind is not WriterBand.PROVIDER:
             return write.writer_kind
-        if write.writer not in self.providers:
+        if write.writer in self.disabled:
             return None
         return WriterBand.PINNED if write.writer in self.pinned else WriterBand.PROVIDER
 
@@ -63,17 +80,49 @@ class WriterRanks:
         return self.providers.index(writer)
 
 
+def item_writer_ranks(cursor: sqlite3.Cursor, pinned: frozenset[str]) -> WriterRanks:
+    """The precedence an item rebuilds under: what the operator set on the
+    settings page — or, until they set one, the shipped order the run itself
+    asks in — and the records they pinned this item to.
+    """
+    cursor.execute(
+        "SELECT key, value_json FROM settings WHERE key = ? OR key LIKE ?",
+        (PROVIDER_ORDER_KEY, f"{_ENABLED_PREFIX}%{_ENABLED_SUFFIX}"),
+    )
+    order: tuple[str, ...] = tuple(default_of(PROVIDER_ORDER_KEY))
+    disabled: set[str] = set()
+    for row in cursor.fetchall():
+        stored = json.loads(row["value_json"])
+        if row["key"] == PROVIDER_ORDER_KEY:
+            if isinstance(stored, list):
+                order = tuple(str(name) for name in stored)
+        elif not stored:
+            disabled.add(row["key"][len(_ENABLED_PREFIX) : -len(_ENABLED_SUFFIX)])
+    return WriterRanks(providers=order, pinned=pinned, disabled=frozenset(disabled))
+
+
 def rebuild_item_fields(
     cursor: sqlite3.Cursor, db_id: int, ranks: WriterRanks
 ) -> dict[str, Any]:
+    ranked = _ranked(read_field_writes(cursor, db_id), ranks)
+    named = ranked.get(SERIES_NAME_KEY, [])
     resolved: dict[str, Any] = {}
-    for field, writes in _ranked(read_field_writes(cursor, db_id), ranks).items():
+    for field, writes in ranked.items():
+        if field == SERIES_NAME_KEY:
+            # The first writer to name the series keeps it: a later one naming
+            # another series is describing a different work, not correcting
+            # this one, so rank never re-opens the name.
+            continue
         if field == SERIES_POSITION_KEY:
-            resolved.update(_best_founded_ordinal(writes))
+            resolved.update(
+                _best_founded_ordinal(
+                    writes, _first_named(named), _named_by_writer(named)
+                )
+            )
         elif field == COVER_FIELD:
             resolved.update(_first_live_cover(cursor, db_id, writes))
         elif field in MERGEABLE_DETAIL_COLUMNS:
-            resolved[field] = _combined_names(writes)
+            resolved[field] = _combined_names(_stopping_at_the_operator(writes))
         elif field in MONOTONIC_DETAIL_COLUMNS:
             resolved.update(_highest_count(field, writes))
         else:
@@ -94,12 +143,23 @@ def _ranked(
         list
     )
     for write in writes:
+        # A hold belongs to the row it was made against: the manual_fields read
+        # and the release door are both survivor-only, so an absorbed row's hold
+        # entering the group would decide a field nobody can see or release.
+        if write.absorbed and (
+            write.writer_kind is WriterBand.MANUAL
+            or write.field not in _ABSORBED_ROW_STATES
+        ):
+            continue
         band = ranks.band_of(write)
         if band is None:
             continue
         key = (
             -_strength(band, write.field),
             ranks.position(write.writer),
+            # The item's own word first: an absorbed row's older one would
+            # otherwise outrank what was stated on the row the operator kept.
+            write.absorbed,
             write.written_at,
             write.writer,
         )
@@ -108,6 +168,17 @@ def _ranked(
         field: [write for _, write in sorted(entries, key=lambda entry: entry[0])]
         for field, entries in graded.items()
     }
+
+
+def _stopping_at_the_operator(
+    writes: list[StoredFieldWrite],
+) -> list[StoredFieldWrite]:
+    """A hand-written list is the list: combining it with what a source offers
+    would refill the genre the operator just deleted.
+    """
+    if writes and writes[0].writer_kind is WriterBand.MANUAL:
+        return writes[:1]
+    return writes
 
 
 def _combined_names(writes: list[StoredFieldWrite]) -> list[str]:
@@ -143,9 +214,54 @@ def _founded_authority(
     return stored_series_authority(stated)
 
 
-def _best_founded_ordinal(writes: list[StoredFieldWrite]) -> dict[str, Any]:
+def _first_named(writes: list[StoredFieldWrite]) -> str | None:
+    """The series the item is in, which is the name the blob kept. Its own rows
+    come before an absorbed row's, which would move it into that row's series.
+    """
+    stated = sorted(
+        (write for write in writes if write.value),
+        key=lambda write: (write.absorbed, write.written_at, write.writer),
+    )
+    return str(stated[0].value) if stated else None
+
+
+def _named_by_writer(
+    writes: list[StoredFieldWrite],
+) -> dict[tuple[WriterBand, str], str]:
+    named: dict[tuple[WriterBand, str], str] = {}
+    for write in writes:
+        if write.value:
+            # Rank-ordered, so the item's own word stands where a row it
+            # absorbed shares the writer.
+            named.setdefault((write.writer_kind, write.writer), str(write.value))
+    return named
+
+
+def _counted_in_this_series(
+    write: StoredFieldWrite,
+    named: Mapping[tuple[WriterBand, str], str],
+    series: str | None,
+) -> bool:
+    """An ordinal counts only within the series its writer named, naming none
+    included: a number counted elsewhere positions the wrong work under the
+    franchise's name. Excepted is the operator, whose modal writes a position
+    alone.
+    """
+    if series is None or write.writer_kind is WriterBand.MANUAL:
+        return True
+    counted = named.get((write.writer_kind, write.writer))
+    return counted is not None and series_names_agree(counted, series)
+
+
+def _best_founded_ordinal(
+    writes: list[StoredFieldWrite],
+    series: str | None,
+    named: Mapping[tuple[WriterBand, str], str],
+) -> dict[str, Any]:
     best: tuple[float, SeriesAuthority] | None = None
     for write in writes:
+        if not _counted_in_this_series(write, named, series):
+            continue
         stated = {
             SERIES_POSITION_KEY: write.value,
             SERIES_AUTHORITY_KEY: write.authority,

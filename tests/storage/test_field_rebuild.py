@@ -12,6 +12,7 @@ from src.models.detail_fields import (
     FieldKind,
     FieldOwner,
 )
+from src.settings.metadata import PROVIDER_ORDER_KEY
 from src.storage.field_rebuild import WriterRanks, rebuild_item_fields
 from src.storage.field_writes import (
     MANUAL_WRITER,
@@ -20,8 +21,9 @@ from src.storage.field_writes import (
     WriterBand,
     record_field_writes,
 )
+from src.storage.settings_store import SettingsStore
 from src.storage.sqlite_db import SQLiteDB
-from src.utils.series import SeriesAuthority
+from src.utils.series import SERIES_NAME_KEY, SeriesAuthority
 
 _SAMPLE_BY_KIND: dict[FieldKind, Any] = {
     FieldKind.CREATOR: "Frank Herbert",
@@ -93,20 +95,22 @@ def _stating_every_writer_field(content_type: str) -> ContentItem:
     )
 
 
+def _steam_portal_2() -> ContentItem:
+    return ContentItem(
+        id="440",
+        source="steam",
+        title="Portal 2",
+        content_type=ContentType.VIDEO_GAME,
+        status=ConsumptionStatus.UNREAD,
+        cover_url=_STEAM_PORTRAIT,
+    )
+
+
 def _steam_game_two_providers_matched(
     tmp_path: Path, name: str
 ) -> tuple[SQLiteDB, int]:
     db = SQLiteDB(tmp_path / f"{name}.db")
-    db_id = db.save_content_item(
-        ContentItem(
-            id="440",
-            source="steam",
-            title="Portal 2",
-            content_type=ContentType.VIDEO_GAME,
-            status=ConsumptionStatus.UNREAD,
-            cover_url=_STEAM_PORTRAIT,
-        )
-    )
+    db_id = db.save_content_item(_steam_portal_2())
     _provider_states(db, db_id, "rawg", FieldWrite("cover_url", _RAWG_SCREENSHOT))
     _provider_states(db, db_id, "igdb", FieldWrite("cover_url", _IGDB_BOX_ART))
     return db, db_id
@@ -117,7 +121,8 @@ def test_one_sources_item_rebuilds_to_the_fields_the_library_stored(
     tmp_path: Path, content_type: str
 ) -> None:
     db = SQLiteDB(tmp_path / f"stored-{content_type}.db")
-    db_id = db.save_content_item(_stating_every_writer_field(content_type))
+    item = _stating_every_writer_field(content_type)
+    db_id = db.save_content_item(item)
     stored = db.get_content_item(db_id)
     assert stored is not None
 
@@ -129,6 +134,9 @@ def test_one_sources_item_rebuilds_to_the_fields_the_library_stored(
         key = detail_field.metadata_key
         if detail_field.owner is FieldOwner.USER:
             assert key not in resolved
+        elif key == SERIES_NAME_KEY:
+            assert key not in resolved
+            assert stored.metadata[key] == item.metadata[key]
         elif detail_field.kind is FieldKind.CREATOR:
             assert resolved[key] == stored.author
         else:
@@ -188,12 +196,18 @@ def test_a_cleared_cover_is_never_resolved_however_it_ranks(tmp_path: Path) -> N
     assert resolved["cover_url"] == _RAWG_SCREENSHOT
 
 
-def test_a_buried_cover_is_not_resurrected_when_no_other_writer_offers_one(
+def test_no_cover_is_left_to_offer_once_the_operator_has_cleared_every_one(
     tmp_path: Path,
 ) -> None:
     db, db_id = _steam_game_two_providers_matched(tmp_path, "exhausted")
-    assert db.clear_cover_url(db_id) is True
 
+    for _ in range(3):
+        assert db.clear_cover_url(db_id) is True
+        db.save_content_item(_steam_portal_2())
+
+    stored = db.get_content_item(db_id)
+    assert stored is not None
+    assert stored.cover_url is None
     assert "cover_url" not in _rebuild(db, db_id)
 
 
@@ -225,8 +239,10 @@ def test_a_disabled_provider_drops_out_and_returns_when_it_is_enabled_again(
     db_id = db.save_content_item(_book("goodreads_rss", pages=662))
     _provider_states(db, db_id, "openlibrary", FieldWrite("pages", 722))
 
-    assert _rebuild(db, db_id)["pages"] == 662
-    assert _rebuild(db, db_id, WriterRanks(providers=("openlibrary",)))["pages"] == 722
+    switched_off = WriterRanks(disabled=frozenset({"openlibrary"}))
+
+    assert _rebuild(db, db_id, switched_off)["pages"] == 662
+    assert _rebuild(db, db_id)["pages"] == 722
 
 
 def test_the_series_ordinal_follows_authority_rather_than_writer_rank(
@@ -245,6 +261,7 @@ def test_the_series_ordinal_follows_authority_rather_than_writer_rank(
         db,
         db_id,
         "openlibrary",
+        FieldWrite("series_name", "Dune"),
         FieldWrite("series_position", 2.0, SeriesAuthority.STATED.value),
     )
 
@@ -270,6 +287,7 @@ def test_an_ordinal_past_the_bounds_check_loses_to_one_inside_it(
         db,
         db_id,
         "openlibrary",
+        FieldWrite("series_name", "Dune"),
         FieldWrite("series_position", 3.0, SeriesAuthority.AUTHORED.value),
     )
 
@@ -277,6 +295,31 @@ def test_an_ordinal_past_the_bounds_check_loses_to_one_inside_it(
 
     assert resolved["series_position"] == 3.0
     assert resolved["series_position_authority"] == SeriesAuthority.AUTHORED.value
+
+
+def test_an_ordinal_from_a_writer_naming_no_series_cannot_renumber_the_item(
+    tmp_path: Path,
+) -> None:
+    db = SQLiteDB(tmp_path / "unnamed_ordinal.db")
+    db_id = db.save_content_item(
+        _book(
+            "calibre_web",
+            series_name="The Expanse",
+            series_position=2.5,
+            series_position_authority=SeriesAuthority.STATED.value,
+        )
+    )
+    _provider_states(
+        db,
+        db_id,
+        "openlibrary",
+        FieldWrite("series_position", 1.0, SeriesAuthority.AUTHORED.value),
+    )
+
+    resolved = _rebuild(db, db_id, WriterRanks(providers=("openlibrary",)))
+
+    assert resolved["series_position"] == 2.5
+    assert resolved["series_position_authority"] == SeriesAuthority.STATED.value
 
 
 @pytest.mark.parametrize("content_type", sorted(DETAIL_FIELDS))
@@ -387,3 +430,227 @@ def test_a_legacy_row_ranks_below_the_source_that_claimed_the_field(
     resolved = _rebuild(db, db_id)
 
     assert resolved["description"] == "A feed blurb."
+
+
+def _enriches(db: SQLiteDB, db_id: int, provider: str, **stated: Any) -> None:
+    """The enrichment door as a run drives it: what the provider stated, filed
+    under its own name.
+    """
+    db.save_enrichment_metadata(
+        db_id,
+        _book(provider, **stated),
+        FieldWriter(WriterBand.PROVIDER, provider),
+        stated,
+    )
+
+
+def test_the_library_serves_the_provider_over_the_feed_that_first_filled_it(
+    tmp_path: Path,
+) -> None:
+    db = SQLiteDB(tmp_path / "served.db")
+    db_id = db.save_content_item(
+        _book("goodreads_rss", pages=662, description="A feed blurb.")
+    )
+
+    _enriches(
+        db,
+        db_id,
+        "openlibrary",
+        pages=722,
+        description="Set on the desert planet Arrakis.",
+    )
+
+    stored = db.get_content_item(db_id)
+    assert stored is not None
+    assert stored.metadata["pages"] == 722
+    assert stored.metadata["description"] == "Set on the desert planet Arrakis."
+
+
+def test_the_steam_cover_survives_the_providers_that_matched_the_game(
+    tmp_path: Path,
+) -> None:
+    db, db_id = _steam_game_two_providers_matched(tmp_path, "kept_cover")
+
+    db.save_content_item(_steam_portal_2())
+
+    stored = db.get_content_item(db_id)
+    assert stored is not None
+    assert stored.cover_url == _STEAM_PORTRAIT
+
+
+def test_a_description_the_operator_typed_is_untouched_by_a_later_run(
+    tmp_path: Path,
+) -> None:
+    db = SQLiteDB(tmp_path / "held_description.db")
+    db_id = db.save_content_item(_book("goodreads_rss", description="A feed blurb."))
+    assert db.update_item_from_ui(db_id=db_id, description="As I read it.") is True
+
+    _enriches(db, db_id, "openlibrary", description="Set on Arrakis.")
+
+    stored = db.get_content_item(db_id)
+    assert stored is not None
+    assert stored.metadata["description"] == "As I read it."
+
+
+def test_a_provider_switched_off_in_the_settings_stops_being_served(
+    tmp_path: Path,
+) -> None:
+    db = SQLiteDB(tmp_path / "switched_off.db")
+    db_id = db.save_content_item(_book("goodreads_rss", pages=662))
+    _enriches(db, db_id, "openlibrary", pages=722)
+
+    SettingsStore(db).set("enrichment.providers.openlibrary.enabled", False)
+    db.save_content_item(_book("goodreads_rss", pages=662))
+
+    stored = db.get_content_item(db_id)
+    assert stored is not None
+    assert stored.metadata["pages"] == 662
+
+
+def test_a_provider_matching_with_an_empty_result_states_nothing(
+    tmp_path: Path,
+) -> None:
+    db = SQLiteDB(tmp_path / "empty_match.db")
+    db_id = db.save_content_item(
+        _book("goodreads_rss", pages=662, description="A feed blurb.")
+    )
+    before = db.get_content_item(db_id)
+
+    _enriches(db, db_id, "openlibrary")
+
+    assert db.get_content_item(db_id) == before
+
+
+def test_a_source_correcting_itself_lands_over_another_sources_older_word(
+    tmp_path: Path,
+) -> None:
+    db = SQLiteDB(tmp_path / "corrected_among_sources.db")
+    db_id = db.save_content_item(_book("calibre_web", description="A desert planet."))
+    db.save_content_item(_book("storygraph_csv", description="A shelf blurb."))
+
+    db.save_content_item(_book("calibre_web", description="Arrakis, desert planet."))
+
+    stored = db.get_content_item(db_id)
+    assert stored is not None
+    assert stored.metadata["description"] == "Arrakis, desert planet."
+
+
+def test_a_genre_the_operator_typed_is_served_alone_rather_than_combined(
+    tmp_path: Path,
+) -> None:
+    db = SQLiteDB(tmp_path / "manual_genres.db")
+    db_id = db.save_content_item(_book("goodreads_rss", genres=["Science Fiction"]))
+    assert db.update_item_from_ui(db_id=db_id, genres=["Literary Fiction"]) is True
+
+    _enriches(db, db_id, "openlibrary", genres=["Adventure"])
+
+    stored = db.get_content_item(db_id)
+    assert stored is not None
+    assert stored.metadata["genres"] == ["Literary Fiction"]
+
+
+def test_pinning_a_provider_moves_the_cover_and_unpinning_moves_it_back(
+    tmp_path: Path,
+) -> None:
+    db, db_id = _steam_game_two_providers_matched(tmp_path, "pin_door")
+
+    db.set_enrichment_pins(db_id, {"rawg": "620"})
+    pinned = db.get_content_item(db_id)
+
+    db.set_enrichment_pins(db_id, {})
+    cleared = db.get_content_item(db_id)
+
+    assert pinned is not None and pinned.cover_url == _RAWG_SCREENSHOT
+    assert cleared is not None and cleared.cover_url == _STEAM_PORTRAIT
+
+
+def test_the_shipped_precedence_beats_the_provider_that_enriched_first(
+    tmp_path: Path,
+) -> None:
+    db = SQLiteDB(tmp_path / "shipped_precedence.db")
+    db_id = db.save_content_item(_book("goodreads_rss", pages=662))
+
+    _enriches(db, db_id, "openlibrary", pages=722)
+    _enriches(db, db_id, "hardcover", pages=700)
+
+    stored = db.get_content_item(db_id)
+    assert stored is not None
+    assert stored.metadata["pages"] == 700
+
+
+def test_the_precedence_the_operator_set_decides_between_two_matches(
+    tmp_path: Path,
+) -> None:
+    db = SQLiteDB(tmp_path / "precedence.db")
+    db_id = db.save_content_item(_book("goodreads_rss", pages=662))
+    _enriches(db, db_id, "openlibrary", pages=722)
+    _enriches(db, db_id, "hardcover", pages=700)
+
+    SettingsStore(db).set(PROVIDER_ORDER_KEY, ["hardcover", "openlibrary"])
+    db.save_content_item(_book("goodreads_rss", pages=662))
+
+    stored = db.get_content_item(db_id)
+    assert stored is not None
+    assert stored.metadata["pages"] == 700
+
+
+def test_a_sourceless_save_is_outranked_by_every_source_that_names_itself(
+    tmp_path: Path,
+) -> None:
+    db = SQLiteDB(tmp_path / "legacy_door.db")
+    db_id = db.complete_content_item(
+        ContentItem(
+            title="Dune",
+            author="Frank Herbert",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            metadata={"description": "Typed at the prompt."},
+        )
+    )
+
+    synced = db.save_content_item(_book("goodreads_rss", description="A feed blurb."))
+
+    stored = db.get_content_item(db_id)
+    assert synced == db_id
+    assert stored is not None
+    assert stored.metadata["description"] == "A feed blurb."
+
+
+def _matrix(**metadata: Any) -> ContentItem:
+    return ContentItem(
+        id="603",
+        source="radarr",
+        title="The Matrix",
+        content_type=ContentType.MOVIE,
+        status=ConsumptionStatus.UNREAD,
+        metadata=metadata,
+    )
+
+
+def test_a_films_ordinal_follows_the_same_ladder_a_books_does(
+    tmp_path: Path,
+) -> None:
+    db = SQLiteDB(tmp_path / "film_series.db")
+    db_id = db.save_content_item(
+        _matrix(
+            series_name="The Matrix",
+            series_position=9.0,
+            series_position_authority=SeriesAuthority.STATED.value,
+        )
+    )
+    _provider_states(
+        db,
+        db_id,
+        "tmdb",
+        FieldWrite("series_name", "The Matrix Collection"),
+        FieldWrite("series_position", 1.0, SeriesAuthority.AUTHORED.value),
+    )
+
+    db.save_content_item(_matrix(series_name="The Matrix"))
+
+    stored = db.get_content_item(db_id)
+    assert stored is not None
+    assert stored.metadata["series_position"] == 1.0
+    assert (
+        stored.metadata["series_position_authority"] == SeriesAuthority.AUTHORED.value
+    )

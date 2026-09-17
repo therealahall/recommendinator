@@ -282,6 +282,9 @@ _CONTENT_ITEM_CHILDREN: dict[str, str] = {
             -- other site stores by value, and an index would be the declaration
             -- order, so inserting a rung would reinterpret every stored row.
             authority TEXT,
+            -- When this writer first stated the field, and never moved after:
+            -- the rebuild breaks a tie on it, so a writer correcting its own
+            -- value must not fall behind another's older word.
             written_at TEXT NOT NULL,
             PRIMARY KEY (content_item_id, field, writer_kind, writer)
         )
@@ -986,7 +989,7 @@ def _queue_for_enrichment(cursor: sqlite3.Cursor, content_item_id: int) -> None:
 
 
 def _clear_placeholder_authors(cursor: sqlite3.Cursor) -> None:
-    """Drop a stored "Unknown": ``author`` is fill-only, so no sync replaces it."""
+    """Drop a stored "Unknown": no writer states one, so no rebuild replaces it."""
     cursor.execute(
         "SELECT content_item_id, author FROM book_details WHERE author IS NOT NULL"
     )
@@ -1180,10 +1183,8 @@ def _column_can_hold(field: DetailField, value: Any) -> bool:
 
 
 def _migrate_stranded_detail_shapes(cursor: sqlite3.Cursor) -> None:
-    """No shape self-repairs on a re-sync — the metadata blob merge lets
-    existing keys win, and ``platforms``, ``developer`` and ``publisher`` are
-    fill-only in ``SQLiteDB._save_detail_table`` — so a one-off rewrite is the
-    only fix.
+    """No writer restates these shapes, so no later run rewrites them and a
+    one-off rewrite is the only fix.
     """
     _move_stranded_total_seasons(cursor)
     _fold_stranded_company_names(cursor)
@@ -1327,7 +1328,6 @@ def _reduce_non_scalar_list_columns(cursor: sqlite3.Cursor) -> None:
             if not reduced:
                 continue
             assignments = ", ".join(f"{column} = ?" for column in reduced)
-            # NULL rather than "[]": a fill-only column never fills again.
             values = [
                 json.dumps(names) if names else None for names in reduced.values()
             ]

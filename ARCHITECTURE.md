@@ -62,33 +62,33 @@ SQLite holds everything.
 
 | Field | Rule |
 |-------|------|
-| `rating`, `review` | Fill-only, written only into an empty column, so a re-import cannot erase either |
+| `rating`, `review` | Fill-only, so a re-import cannot erase either |
 | `status` | Forward-only, through `resolve_status_forward` (`src/storage/merge.py`) |
 | `date_completed` | Later date wins |
 | `ignored` | Only a stated `True` or `False` wins, in either direction. `None` leaves the stored flag alone |
 
 `seasons_watched` is the one metadata key the sync door unions.
 
-The series name and position are the one family it re-decides:
-`reconcile_series` gives them to the better-founded source, recorded in
-`series_position_authority`. Equal standing keeps the first answer; the
-operator's own catalogue corrects a position.
+The series name and position are the one family the rebuild re-decides: the
+first writer to name it keeps the name, and the ordinal goes to the
+best-founded authority among writers numbering that same series. One naming no
+series does not count, the operator excepted.
 
 After the upsert, `_handle_tv_season_change` regresses a completed TV show to
 `currently_consuming` when the season count rises above the seasons the user
-checked off. It needs an existing `seasons_watched` list, and it skips ignored
+checked off. It needs an existing `seasons_watched` list and skips ignored
 items.
 
 The enrichment door runs that same pass when it saves:
 
 - **`save_enrichment_metadata`** writes a provider's metadata to the detail
-  table and the derived columns. Of the user-owned fields it writes only
-  `status`.
+  table and the derived columns, and of the user-owned fields only `status`.
 - **`record_stated_fields`** records a provider's statement without saving, so a
   refused offer moves no column.
 
-The three user-action doors overwrite freely and write only what the caller
-supplied:
+#### User-action doors
+
+These three overwrite freely and write only what the caller supplied:
 
 - **`complete_content_item`** backs `complete` and `POST /api/complete`. It
   finds or creates the row and applies rating, review, status and date in one
@@ -197,26 +197,24 @@ Steam's app 440 and GOG's product 440 are different games.
 
 `content_items.source` is display provenance and no sync overwrites it.
 
+#### Merging duplicates
+
 The rules every merge follows:
 
 - `rating` and `review` fill from the duplicate only into a null
 - `date_completed` keeps the later date
 - `status` takes the further-advanced under the sync ordering
 - `ignored` moves nowhere: each row keeps its own
-- Genres and tags merge additively, monotonic columns (seasons, episodes) keep
-  the higher value, and detail metadata merges existing-wins
+- A detail column the survivor left empty fills from the duplicate, and detail
+  metadata merges existing-wins
 - `seasons_watched` is the exception, unioned across both rows, and
-  `seasons_watched_dates` merged per season keeping the later watch date, so an
-  ingestion date never overrides a user date
+  `seasons_watched_dates` merged per season keeping the later watch date
 
-Nothing deletes a row to dedup (`src/storage/item_merges.py`). The absorbed row
-keeps every column, sets `merged_into` and drops out of every read, and every
-write door refuses it; `content_item_merges` records survivor, absorbed,
-evidence (so far only the operator's own choice) and what it overwrote.
+Both rows' words stay in the field ledger, which `rebuild_item_fields` reads across the merge group, so the merge rebuilds the survivor from it at once: genres and tags combine and the higher season and episode count wins. A hold belongs to the row it was made against, and the survivor keeps its own title — which row survived is the operator's decision, not a metadata question.
 
-`unmerge_content_items` writes that back: a record holds the columns that merge
-itself moved, so an undo puts those back and leaves a rating, a description or
-an enrichment run that landed since where it stands.
+Nothing deletes a row to dedup (`src/storage/item_merges.py`). The absorbed row keeps every column, sets `merged_into` and drops out of every read, and every write door refuses it; `content_item_merges` records survivor, absorbed, evidence and what it overwrote.
+
+`unmerge_content_items` writes that back: the record holds the columns the merge moved, and the rebuild runs again over the group it leaves, so an undo puts the survivor back and leaves anything that landed since where it stands.
 
 #### Detail-shape repairs
 

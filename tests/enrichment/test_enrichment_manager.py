@@ -30,7 +30,6 @@ from src.enrichment.providers.wikidata.wikidata import WikidataProvider
 from src.enrichment.registry import EnrichmentRegistry
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.enrichment_status import EnrichmentStore
-from src.storage.field_rebuild import WriterRanks, rebuild_item_fields
 from src.storage.field_writes import (
     StoredFieldWrite,
     WriterBand,
@@ -2391,11 +2390,11 @@ class TestTwoProvidersThatBothMatch:
         assert storage_manager.get_content_item(db_id).metadata["description"] == "D1"
 
 
-class TestTheShadowRebuildOverARecordedRun:
+class TestTheRebuildOverARecordedRun:
     _SOURCE_COVER = "https://calibre.test/dune.jpg"
     _PROVIDER_COVER = "https://covers.openlibrary.org/b/id/1.jpg"
 
-    def test_the_rebuild_reads_a_real_run_as_provider_over_source_per_field(
+    def test_a_run_leaves_the_library_serving_provider_over_source_per_field(
         self, tmp_path: Path
     ) -> None:
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
@@ -2421,19 +2420,12 @@ class TestTheShadowRebuildOverARecordedRun:
         manager.start_enrichment(content_type=ContentType.BOOK)
         assert manager._wait_for_completion()
 
-        with storage_manager.connection() as conn:
-            resolved = rebuild_item_fields(
-                conn.cursor(), db_id, WriterRanks(providers=("openlibrary",))
-            )
         stored = storage_manager.get_content_item(db_id)
 
-        assert resolved["description"] == "Set on Arrakis."
-        assert resolved["pages"] == 722
-        assert resolved["genres"] == ["Adventure", "Science Fiction"]
-        assert resolved["cover_url"] == self._SOURCE_COVER
-        # The fill-only column still decides what is served, so the provider's
-        # answer lives only in the ledger until the rebuild becomes the write path.
-        assert stored.metadata["description"] == "A feed blurb."
+        assert stored.metadata["description"] == "Set on Arrakis."
+        assert stored.metadata["pages"] == 722
+        assert stored.metadata["genres"] == ["Adventure", "Science Fiction"]
+        # The cover is the one field a source outranks a provider on.
         assert stored.cover_url == self._SOURCE_COVER
 
 

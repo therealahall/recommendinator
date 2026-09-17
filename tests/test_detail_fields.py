@@ -391,7 +391,7 @@ class TestReadingAListColumnBack:
 
 
 class TestARefusedWriteLeavesNothingBehind:
-    """``_save_detail_table`` runs after the ``content_items`` row is written and
+    """The detail write runs after the ``content_items`` row is written and
     inside the same connection, so the raise crosses a transaction that has
     already inserted."""
 

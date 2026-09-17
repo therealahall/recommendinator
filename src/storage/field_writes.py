@@ -1,6 +1,5 @@
-"""The fill-only rules discard most of what a source offers, so the offer is
-recorded here: a later rebuild decides a field by rank, not by which write
-reached an empty column first.
+"""Every writer's offer is recorded here whole, so the rebuild decides a field
+by rank rather than by which write reached an empty column first.
 """
 
 from __future__ import annotations
@@ -84,6 +83,8 @@ class StoredFieldWrite:
     value: Any
     authority: str | None
     written_at: str
+    #: Recorded against a row this item absorbed rather than against the item.
+    absorbed: bool = False
 
 
 def _stated_base_writes(stated: Mapping[str, Any]) -> list[FieldWrite]:
@@ -166,8 +167,7 @@ def record_field_writes(
         f"INSERT INTO {_TABLE} (content_item_id, field, writer_kind, writer,"
         " value_json, authority, written_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
         " ON CONFLICT (content_item_id, field, writer_kind, writer) DO UPDATE SET"
-        " value_json = excluded.value_json, authority = excluded.authority,"
-        " written_at = excluded.written_at"
+        " value_json = excluded.value_json, authority = excluded.authority"
         " WHERE value_json IS NOT excluded.value_json"
         " OR authority IS NOT excluded.authority",
         [
@@ -176,8 +176,8 @@ def record_field_writes(
                 write.field,
                 writer.kind.value,
                 writer.name,
-                # Sorted: the text is compared to decide whether written_at
-                # moves, so a dict restated in another key order is no write.
+                # Sorted: the text is compared to skip a no-op write, so a dict
+                # restated in another key order rewrites nothing.
                 json.dumps(write.value, sort_keys=True),
                 write.authority,
                 now,
@@ -216,11 +216,17 @@ def parse_manual_fields(payload: str | None, content_type: str) -> list[str]:
 
 
 def read_field_writes(cursor: sqlite3.Cursor, db_id: int) -> list[StoredFieldWrite]:
+    """Every word deciding this item, the rows it absorbed included: two rows a
+    merge made one work, and no primary key here could hold both their words
+    under a writer they share.
+    """
     cursor.execute(
-        "SELECT field, writer_kind, writer, value_json, authority, written_at"
-        f" FROM {_TABLE} WHERE content_item_id = ?"
+        "SELECT field, writer_kind, writer, value_json, authority, written_at,"
+        " content_item_id <> :id AS absorbed"
+        f" FROM {_TABLE} WHERE content_item_id = :id OR content_item_id IN"
+        " (SELECT id FROM content_items WHERE merged_into = :id)"
         " ORDER BY field, writer_kind, writer",
-        (db_id,),
+        {"id": db_id},
     )
     return [
         StoredFieldWrite(
@@ -230,6 +236,7 @@ def read_field_writes(cursor: sqlite3.Cursor, db_id: int) -> list[StoredFieldWri
             value=json.loads(row["value_json"]),
             authority=row["authority"],
             written_at=row["written_at"],
+            absorbed=bool(row["absorbed"]),
         )
         for row in cursor.fetchall()
     ]

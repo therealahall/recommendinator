@@ -6,9 +6,8 @@ import sqlite3
 from difflib import SequenceMatcher
 from typing import Any
 
-from src.models.detail_fields import ContentTypeFields, text_names
+from src.models.detail_fields import ContentTypeFields
 from src.utils.dates import merge_seasons_watched_dates
-from src.utils.list_merge import merge_string_lists
 from src.utils.series import reconcile_seasons, reconcile_series
 from src.utils.sorting import FUZZY_MATCH_THRESHOLD
 
@@ -27,7 +26,6 @@ __all__ = [
     "merge_scalar_columns",
     "normalize_creator_for_matching",
     "normalize_title_for_matching",
-    "parse_json_list",
     "regions_conflict",
     "resolve_status_forward",
     "stated_creator",
@@ -42,18 +40,6 @@ def cover_url_is_dead(cursor: sqlite3.Cursor, db_id: int, cover_url: str) -> boo
         (db_id, cover_url),
     )
     return cursor.fetchone() is not None
-
-
-def parse_json_list(raw: str | None) -> list[str]:
-    if not raw:
-        return []
-    try:
-        parsed = json.loads(raw)
-        if isinstance(parsed, list):
-            return text_names(parsed)
-    except (json.JSONDecodeError, TypeError):
-        pass
-    return []
 
 
 # Hand-written rather than derived from ``models.detail_fields``: it is the
@@ -304,8 +290,8 @@ def normalize_creator_for_matching(creator: str | None) -> str:
 
 
 def stated_creator(creator: str | None) -> str | None:
-    """The column is fill-only, so a stored "Unknown" is permanent — an import
-    writing one undoes what the schema-17 step cleared.
+    """A placeholder is no statement: recorded in the ledger, it would rebuild
+    into the column the schema-17 step cleared.
     """
     return creator if normalize_creator_for_matching(creator) else None
 
@@ -514,8 +500,9 @@ def _merge_detail_metadata(
 
 
 def merge_detail_tables(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -> None:
-    """Leaves ``updated_at`` alone: what moves here is bookkeeping, not an edit
-    the user made. Requires ``row_factory = sqlite3.Row``.
+    """The survivor's empty columns and its blob only: every writer-owned field
+    is the ledger's to resolve. Leaves ``updated_at`` alone, and requires
+    ``row_factory = sqlite3.Row``.
     """
     for table, columns in _DETAIL_TABLE_COLUMNS.items():
         cursor.execute(
@@ -543,25 +530,7 @@ def merge_detail_tables(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) ->
         detail_params: list[Any] = []
 
         for col in columns:
-            if col in MERGEABLE_DETAIL_COLUMNS:
-                keep_list = parse_json_list(keep_detail[col])
-                dup_list = parse_json_list(dup_detail[col])
-                if dup_list:
-                    merged = merge_string_lists(keep_list, dup_list)
-                    detail_updates.append(f"{col} = ?")
-                    detail_params.append(json.dumps(merged))
-            elif col in MONOTONIC_DETAIL_COLUMNS:
-                keep_val = keep_detail[col]
-                dup_val = dup_detail[col]
-                try:
-                    if dup_val is not None and (
-                        keep_val is None or int(dup_val) > int(keep_val)
-                    ):
-                        detail_updates.append(f"{col} = ?")
-                        detail_params.append(int(dup_val))
-                except (ValueError, TypeError):
-                    pass
-            elif keep_detail[col] is None and dup_detail[col] is not None:
+            if keep_detail[col] is None and dup_detail[col] is not None:
                 detail_updates.append(f"{col} = ?")
                 detail_params.append(dup_detail[col])
 

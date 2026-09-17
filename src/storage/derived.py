@@ -88,8 +88,8 @@ _BACKFILL_SELECT = (
 
 def write_derived_columns(cursor: sqlite3.Cursor, db_id: int) -> None:
     """Read back from the database rather than taken from the item being saved:
-    the creator column is fill-only, so what a sync hands over is not always
-    what ends up stored.
+    the ledger decides the creator by rank, so what a sync hands over is not
+    always what ends up stored.
     """
     cursor.execute(f"{_SOURCE_SELECT} WHERE ci.id = ?", (db_id,))
     row = cursor.fetchone()

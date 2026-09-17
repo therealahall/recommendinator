@@ -139,19 +139,15 @@ class StorageManager:
         self,
         db_id: int,
         item: ContentItem,
-        *,
-        replace_cover: bool = False,
-        writer: FieldWriter | None = None,
-        stated: Mapping[str, Any] | None = None,
+        writer: FieldWriter,
+        stated: Mapping[str, Any],
     ) -> None:
         with self._save_lock:
-            self.sqlite_db.save_enrichment_metadata(
-                db_id,
-                item,
-                replace_cover=replace_cover,
-                writer=writer,
-                stated=stated,
-            )
+            self.sqlite_db.save_enrichment_metadata(db_id, item, writer, stated)
+
+    def set_enrichment_pins(self, db_id: int, pins: Mapping[str, str]) -> None:
+        with self._save_lock:
+            self.sqlite_db.set_enrichment_pins(db_id, pins)
 
     def record_stated_fields(
         self, db_id: int, writer: FieldWriter, stated: Mapping[str, Any]

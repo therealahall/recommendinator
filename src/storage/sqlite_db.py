@@ -13,6 +13,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Literal, TypeVar
 
+from src.enrichment.provider_base import pins_of
 from src.ingestion.source_labels import source_label
 from src.models.content import (
     ConsumptionStatus,
@@ -23,15 +24,15 @@ from src.models.content import (
     get_enum_value,
 )
 from src.models.detail_fields import (
+    COVER_FIELD,
     CREATOR_FIELDS,
     DETAIL_FIELDS,
     PIN_KEY,
     RELEASE_YEAR_FIELDS,
     ContentTypeFields,
     FieldKind,
-    detail_field_for,
+    FieldOwner,
     ledger_field,
-    to_int,
 )
 from src.storage.derived import (
     MatchSignals,
@@ -47,7 +48,9 @@ from src.storage.duplicates import (
     list_declines,
     undecline_duplicate,
 )
+from src.storage.field_rebuild import item_writer_ranks, rebuild_item_fields
 from src.storage.field_writes import (
+    LEGACY_WRITER,
     MANUAL_WRITER,
     FieldWrite,
     FieldWriter,
@@ -67,24 +70,17 @@ from src.storage.item_merges import (
 )
 from src.storage.merge import (
     ALLOWED_DETAIL_TABLES,
-    MERGEABLE_DETAIL_COLUMNS,
-    MONOTONIC_DETAIL_COLUMNS,
     assert_known_detail_table,
-    cover_url_is_dead,
     detail_join,
     normalize_title_for_matching,
-    parse_json_list,
     resolve_status_forward,
-    stated_creator,
     stated_region,
 )
 from src.storage.schema import create_schema, get_default_user_id
 from src.utils.dates import local_today, merge_seasons_watched_dates, utc_now
-from src.utils.list_merge import merge_string_lists
 from src.utils.series import (
     all_seasons_watched,
     reconcile_seasons,
-    reconcile_series,
     seasons_watched_for_completed,
     status_for_seasons_watched,
 )
@@ -305,7 +301,7 @@ _TITLE_MATCH_CANDIDATES = """
 
 
 def _incoming_creator(item: ContentItem, content_type_value: str) -> str | None:
-    """The creator the item being saved states, by ``_save_detail_table``'s rule:
+    """The creator the item being saved states, as the ledger records it:
     ``author``, or the type's creator key, which is where every game, film and
     show plugin puts it."""
     field = CREATOR_FIELDS.get(content_type_value)
@@ -374,14 +370,20 @@ def _corrected_fields(
     return stated
 
 
-def _held_detail_columns(content_type: str, held: set[str]) -> set[str]:
-    """The columns this type keeps the held fields in."""
-    fields = (detail_field_for(content_type, field) for field in held)
-    return {
-        field.column
-        for field in fields
-        if field is not None and field.column is not None
-    }
+def _assert_correctable(
+    content_type: str, release_year: int | None, creator: str | None
+) -> None:
+    """Refused before anything is written: a book states no release year of its
+    own, so a correction naming one names a field no column could hold.
+    """
+    for name, field, value in (
+        ("release year", RELEASE_YEAR_FIELDS.get(content_type), release_year),
+        ("creator", CREATOR_FIELDS.get(content_type), creator),
+    ):
+        if value is None:
+            continue
+        if field is None or field.column is None:
+            raise UncorrectableFieldError(f"A {content_type} has no {name} to correct.")
 
 
 def _title_match(
@@ -491,19 +493,16 @@ class SQLiteDB:
         self,
         db_id: int,
         item: ContentItem,
-        *,
-        replace_cover: bool = False,
-        writer: FieldWriter | None = None,
-        stated: Mapping[str, Any] | None = None,
+        writer: FieldWriter,
+        stated: Mapping[str, Any],
     ) -> None:
         """A row absorbed since the batch read it is refused rather
         than redirected: the survivor is enriched on its own turn.
-        *replace_cover* overwrites a stored cover, which only a pin asks for.
         """
         with self.connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT content_type, cover_url FROM content_items"
+                "SELECT content_type FROM content_items"
                 " WHERE id = ? AND merged_into IS NULL",
                 (db_id,),
             )
@@ -511,37 +510,51 @@ class SQLiteDB:
             if row is None:
                 return
             content_type = row["content_type"]
-            if (
-                (row["cover_url"] is None or replace_cover)
-                and item.cover_url
-                and not cover_url_is_dead(cursor, db_id, item.cover_url)
-            ):
-                cursor.execute(
-                    "UPDATE content_items SET cover_url = ? WHERE id = ?",
-                    (item.cover_url, db_id),
-                )
-            # SQLite refuses to bind the lone surrogate an undecodable byte leaves.
-            self._save_detail_table(
+            # SQLite refuses to bind the lone surrogate an undecodable byte
+            # leaves, and a provider's word reaches a column through the ledger.
+            record_field_writes(
                 cursor,
                 db_id,
-                _surrogate_free(item),
-                content_type,
-                # Clearing a pin writes an empty map, which a fill-only write
-                # would discard.
-                replaceable_metadata_keys=frozenset({PIN_KEY}),
+                writer,
+                stated_writes(
+                    DETAIL_FIELDS[content_type], _without_surrogates(dict(stated))
+                ),
             )
-            if writer is not None:
-                record_field_writes(
-                    cursor,
-                    db_id,
-                    writer,
-                    stated_writes(DETAIL_FIELDS[content_type], stated or {}),
-                )
+            self._write_ledger_fields(
+                cursor, db_id, content_type, _surrogate_free(item).metadata or {}
+            )
             # Both read what was stored: a creator this filled belongs in the
             # search text, and a season count it raised unfinishes the show.
             write_derived_columns(cursor, db_id)
             if content_type == "tv_show":
                 self._handle_tv_season_change(cursor, db_id)
+            conn.commit()
+
+    def set_enrichment_pins(self, db_id: int, pins: Mapping[str, str]) -> None:
+        """The records the operator bound this item to, theirs to replace: a
+        cleared pin writes an empty map. A pin is a rank change, so the rebuild
+        runs here rather than at the next sync.
+        """
+        with self.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT content_type FROM content_items"
+                " WHERE id = ? AND merged_into IS NULL",
+                (db_id,),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return
+            content_type = row["content_type"]
+            spec = DETAIL_FIELDS[content_type]
+            assert_known_detail_table(spec)
+            blob = _metadata_blob(self._detail_row(cursor, spec, db_id).get("metadata"))
+            blob[PIN_KEY] = dict(pins)
+            self._write_detail_columns(
+                cursor, db_id, content_type, {"metadata": json.dumps(blob)}
+            )
+            self._write_ledger_fields(cursor, db_id, content_type, {})
+            write_derived_columns(cursor, db_id)
             conn.commit()
 
     def record_stated_fields(
@@ -564,13 +577,16 @@ class SQLiteDB:
                 cursor,
                 db_id,
                 writer,
-                stated_writes(DETAIL_FIELDS[row["content_type"]], stated),
+                stated_writes(
+                    DETAIL_FIELDS[row["content_type"]],
+                    _without_surrogates(dict(stated)),
+                ),
             )
             conn.commit()
 
     def clear_cover_url(self, db_id: int) -> bool:
-        """The url is buried before the clear, so the fill-only writes that would
-        otherwise re-offer a Steam guess that 404s refuse it instead.
+        """The url is buried before the clear, so the rebuild never resolves it
+        again — otherwise the next sync re-offers the Steam guess that 404s.
         """
         with self.connection() as conn:
             cursor = conn.cursor()
@@ -709,18 +725,15 @@ class SQLiteDB:
             # empty, never overwritten, and a None incoming value states
             # nothing to fill from.
             cursor.execute(
-                "SELECT title, normalized_title, source, status, rating, review,"
-                " date_completed, ignored, cover_url FROM content_items WHERE id = ?",
+                "SELECT source, status, rating, review, date_completed, ignored"
+                " FROM content_items WHERE id = ?",
                 (existing_id,),
             )
             existing_row = cursor.fetchone()
 
-            # Title is an identity field and always present; normalized_title
-            # tracks it. The rest are only offered when the incoming value
-            # states something the rules above let it state.
+            # The person's own columns alone: title and the cover are stated by
+            # writers, so the rebuild below decides them from the ledger.
             offered: dict[str, str | int | None] = {
-                "title": item.title,
-                "normalized_title": normalized_title,
                 "status": resolve_status_forward(
                     existing_row["status"], get_enum_value(item.status)
                 ),
@@ -736,15 +749,6 @@ class SQLiteDB:
             if existing_row["review"] is None and incoming_review is not None:
                 offered["review"] = incoming_review
 
-            # Fill-only: the first source to name a cover keeps it, and a url a
-            # clear buried is never offered again.
-            if (
-                existing_row["cover_url"] is None
-                and incoming_cover is not None
-                and not cover_url_is_dead(cursor, existing_id, incoming_cover)
-            ):
-                offered["cover_url"] = incoming_cover
-
             # Date completed: fill only from a later incoming date.
             if item.date_completed is not None:
                 incoming_date_str = item.date_completed.isoformat()
@@ -759,13 +763,10 @@ class SQLiteDB:
                 offered["ignored"] = 1 if item.ignored else 0
 
             # A held field is the operator's, so the sync withdraws the offer.
-            # normalized_title tracks the title that stays, not the one being
-            # refused.
-            held = read_manual_fields(cursor, existing_id)
-            for field in held:
+            # Only these reach here: no rank protects a column the ledger does
+            # not rebuild.
+            for field in read_manual_fields(cursor, existing_id):
                 offered.pop(field, None)
-            if "title" in held:
-                offered.pop("normalized_title")
 
             # Writing only the columns that actually move is what lets a
             # re-sync report itself as unchanged, and keeps ``updated_at`` — a
@@ -810,16 +811,22 @@ class SQLiteDB:
             db_id = lastrowid
             row_changed = True
 
-        if item.source:
-            stated = dict(item.metadata or {})
-            stated["title"] = item.title
-            stated["cover_url"] = incoming_cover
-            record_field_writes(
-                cursor,
-                db_id,
-                FieldWriter(WriterBand.SOURCE, item.source),
-                stated_writes(DETAIL_FIELDS[content_type_value], stated, item.author),
-            )
+        stated = dict(item.metadata or {})
+        stated["title"] = item.title
+        stated["cover_url"] = incoming_cover
+        # An item nobody sourced is the library's own word, which every named
+        # writer outranks.
+        writer = (
+            FieldWriter(WriterBand.SOURCE, item.source)
+            if item.source
+            else LEGACY_WRITER
+        )
+        record_field_writes(
+            cursor,
+            db_id,
+            writer,
+            stated_writes(DETAIL_FIELDS[content_type_value], stated, item.author),
+        )
 
         # On both paths: a source that lost the dedup race would otherwise never
         # attach its id, and take the title path again on every later sync.
@@ -827,8 +834,8 @@ class SQLiteDB:
             cursor, db_id, effective_user_id, item, content_type_value
         )
 
-        detail_changed = self._save_detail_table(
-            cursor, db_id, item, content_type_value
+        detail_changed = self._write_ledger_fields(
+            cursor, db_id, content_type_value, item.metadata or {}
         )
 
         # After the detail write, so the derived columns read the creator that
@@ -866,155 +873,164 @@ class SQLiteDB:
         )
         return cursor.rowcount > 0
 
-    def _save_detail_table(
+    def _write_ledger_fields(
         self,
         cursor: sqlite3.Cursor,
         db_id: int,
-        item: ContentItem,
         content_type: str,
-        replaceable_metadata_keys: frozenset[str] = frozenset(),
+        stated_metadata: Mapping[str, Any],
     ) -> bool:
-        """For existing rows, enrichment is the source of truth: genres and tags
-        merge additively, every other column is fill-only, and the metadata blob
-        keeps existing keys — bar the season fields and *replaceable_metadata_keys*.
+        """Record first, then rebuild: every writer-owned column holds what the
+        ledger says by rank, and only one whose value moves is written.
         """
         spec = DETAIL_FIELDS[content_type]
+        assert_known_detail_table(spec)
+        existing = self._detail_row(cursor, spec, db_id)
+        stored_blob = _metadata_blob(existing.get("metadata"))
+        resolved = rebuild_item_fields(
+            cursor, db_id, item_writer_ranks(cursor, frozenset(pins_of(stored_blob)))
+        )
+        base_changed = self._write_base_columns(cursor, db_id, resolved)
+        detail_changed = self._write_detail_row(
+            cursor, spec, db_id, existing, stored_blob, stated_metadata, resolved
+        )
+        return base_changed or detail_changed
 
-        metadata = item.metadata or {}
-        table = spec.table
-        if table not in ALLOWED_DETAIL_TABLES:
-            raise ValueError(f"Unknown detail table: {table!r}")
-        known_keys = spec.known_keys
+    @staticmethod
+    def _detail_row(
+        cursor: sqlite3.Cursor, spec: ContentTypeFields, db_id: int
+    ) -> dict[str, Any]:
+        cursor.execute(
+            f"SELECT * FROM {spec.table} WHERE content_item_id = ?", (db_id,)
+        )
+        row = cursor.fetchone()
+        return {} if row is None else dict(row)
+
+    @staticmethod
+    def _write_base_columns(
+        cursor: sqlite3.Cursor, db_id: int, resolved: Mapping[str, Any]
+    ) -> bool:
+        """Title and the cover are the only ``content_items`` columns a writer
+        states; status, rating, review and the rest are the person's own.
+        """
+        offered: dict[str, Any] = {}
+        if (title := resolved.get("title")) is not None:
+            offered["title"] = title
+            offered["normalized_title"] = normalize_title_for_matching(str(title))
+        if (cover := resolved.get(COVER_FIELD)) is not None:
+            offered[COVER_FIELD] = cover
+        if not offered:
+            return False
 
         cursor.execute(
-            f"SELECT * FROM {table} WHERE content_item_id = ?",
+            "SELECT title, normalized_title, cover_url FROM content_items WHERE id = ?",
             (db_id,),
         )
-        existing_row = cursor.fetchone()
-        existing_col_names = (
-            [description[0] for description in cursor.description]
-            if existing_row is not None
-            else []
-        )
-        existing_data: dict[str, Any] = (
-            dict(zip(existing_col_names, existing_row, strict=True))
-            if existing_row is not None
-            else {}
-        )
-
-        col_names = ["content_item_id"]
-        values: list[Any] = [db_id]
-
-        # Only an existing row can be held: a hold is an edit to a stored item.
-        held = read_manual_fields(cursor, db_id) if existing_data else set()
-        held_columns = _held_detail_columns(content_type, held)
-
-        for detail_field in spec.fields:
-            col_name = detail_field.column
-            if col_name is None:
-                continue
-
-            raw = detail_field.value_from(metadata)
-            if detail_field.kind is FieldKind.CREATOR:
-                # The item's own author outranks whatever metadata carries.
-                new_value = stated_creator(detail_field.store(item.author or raw))
-            else:
-                new_value = detail_field.store(raw)
-
-            if col_name in held_columns:
-                values.append(existing_data.get(col_name))
-            elif col_name in MERGEABLE_DETAIL_COLUMNS and existing_data:
-                existing_list = parse_json_list(existing_data.get(col_name))
-                new_list = parse_json_list(new_value)
-                merged = merge_string_lists(existing_list, new_list)
-                values.append(json.dumps(merged) if merged else new_value)
-            elif col_name in MONOTONIC_DETAIL_COLUMNS and existing_data:
-                existing_val = to_int(existing_data.get(col_name))
-                incoming_val = to_int(new_value)
-                if existing_val is not None and incoming_val is not None:
-                    values.append(max(existing_val, incoming_val))
-                elif incoming_val is not None:
-                    values.append(incoming_val)
-                else:
-                    values.append(existing_val)
-            elif existing_data and existing_data.get(col_name) is not None:
-                # Enrichment is the source of truth for a column already set.
-                values.append(existing_data[col_name])
-            else:
-                values.append(new_value)
-
-            col_names.append(col_name)
-
-        remaining_metadata = {
-            key: val for key, val in metadata.items() if key not in known_keys
+        row = cursor.fetchone()
+        changed = {
+            column: value for column, value in offered.items() if row[column] != value
         }
-        existing_remaining: dict[str, Any] = {}
-        if existing_data and existing_data.get("metadata"):
-            try:
-                parsed = json.loads(existing_data["metadata"])
-                if isinstance(parsed, dict):
-                    existing_remaining = parsed
-            except (json.JSONDecodeError, TypeError):
-                pass
+        if not changed:
+            return False
+        set_clause = ", ".join(f"{column} = ?" for column in changed)
+        cursor.execute(
+            f"UPDATE content_items SET {set_clause},"
+            " updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            [*changed.values(), db_id],
+        )
+        return True
 
-        # Existing keys take precedence, incoming fills gaps
-        merged_remaining = {**remaining_metadata, **existing_remaining}
-        merged_remaining.update(
-            {
-                key: val
-                for key, val in remaining_metadata.items()
-                if key in replaceable_metadata_keys
-            }
+    def _write_detail_row(
+        self,
+        cursor: sqlite3.Cursor,
+        spec: ContentTypeFields,
+        db_id: int,
+        existing: Mapping[str, Any],
+        stored_blob: Mapping[str, Any],
+        stated_metadata: Mapping[str, Any],
+        resolved: Mapping[str, Any],
+    ) -> bool:
+        """A field no writer states is left as it stands: saying nothing is not
+        a claim that the column is empty.
+        """
+        values: dict[str, Any] = {}
+        for detail_field in spec.fields:
+            column = detail_field.column
+            if (
+                column is None
+                or detail_field.owner is not FieldOwner.WRITER
+                or detail_field.metadata_key not in resolved
+            ):
+                continue
+            values[column] = detail_field.store(resolved[detail_field.metadata_key])
+        values["metadata"] = self._merged_blob(
+            spec, stored_blob, stated_metadata, resolved
         )
-        # Exception: the season fields, which no one source can state alone.
-        merged_remaining.update(
-            reconcile_seasons(existing_remaining, remaining_metadata)
-        )
-        # Exception: the series fields, where the better-founded source wins
-        # rather than the first one to write.
-        merged_remaining.update(
-            reconcile_series(existing_remaining, remaining_metadata)
-        )
-        # Exception: seasons_watched_dates merges per season, keeping the
-        # later watch date — an earlier sync date never overwrites a
-        # later manual/existing date, but a genuinely newer Trakt watch
-        # does update it, and new seasons are added.
-        combined_dates = merge_seasons_watched_dates(
-            existing_remaining.get("seasons_watched_dates"),
-            remaining_metadata.get("seasons_watched_dates"),
-        )
-        # A None result (e.g. both sides only had unparseable timestamps)
-        # intentionally leaves the general blob-merge result above in place.
-        if combined_dates is not None:
-            merged_remaining["seasons_watched_dates"] = combined_dates
-        metadata_json = json.dumps(merged_remaining) if merged_remaining else None
-        col_names.append("metadata")
-        values.append(metadata_json)
 
-        if existing_data:
-            # Same reason as the base row's write: a column already holding
-            # the value this sync carries is not an update of anything.
+        if existing:
+            # A column already holding the value this write carries is not an
+            # update of anything, which is what lets a re-sync report unchanged.
             changed = {
                 name: value
-                for name, value in zip(col_names, values, strict=True)
-                if name != "content_item_id" and existing_data.get(name) != value
+                for name, value in values.items()
+                if existing.get(name) != value
             }
             if not changed:
                 return False
             set_clauses = ", ".join(f"{name} = ?" for name in changed)
             cursor.execute(
-                f"UPDATE {table} SET {set_clauses} WHERE content_item_id = ?",
+                f"UPDATE {spec.table} SET {set_clauses} WHERE content_item_id = ?",
                 [*changed.values(), db_id],
             )
             return True
 
-        placeholders = ", ".join("?" for _ in values)
-        col_list = ", ".join(col_names)
+        col_list = ", ".join(["content_item_id", *values])
+        placeholders = ", ".join("?" for _ in range(len(values) + 1))
         cursor.execute(
-            f"INSERT INTO {table} ({col_list}) VALUES ({placeholders})",
-            values,
+            f"INSERT INTO {spec.table} ({col_list}) VALUES ({placeholders})",
+            [db_id, *values.values()],
         )
         return True
+
+    @staticmethod
+    def _merged_blob(
+        spec: ContentTypeFields,
+        stored: Mapping[str, Any],
+        stated: Mapping[str, Any],
+        resolved: Mapping[str, Any],
+    ) -> str | None:
+        """What the ledger resolved, over the keys no column and no writer
+        claims: a writer's own ids, and the person's own watching.
+        """
+        incoming = {
+            key: value for key, value in stated.items() if key not in spec.known_keys
+        }
+        # Stored keys take precedence, incoming fills gaps.
+        merged: dict[str, Any] = {**incoming, **stored}
+        # Only against a statement: with nothing incoming both rules below can
+        # merely re-derive the stored blob, re-ticking a season the operator
+        # just unticked through the edit door.
+        if incoming:
+            # Exception: the season fields, which no one source states alone.
+            merged.update(reconcile_seasons(stored, incoming))
+            # Exception: seasons_watched_dates keeps the later date per season,
+            # so an earlier sync never overwrites a later watch. A None result —
+            # both sides unparseable — leaves the merge above in place.
+            combined_dates = merge_seasons_watched_dates(
+                stored.get("seasons_watched_dates"),
+                incoming.get("seasons_watched_dates"),
+            )
+            if combined_dates is not None:
+                merged["seasons_watched_dates"] = combined_dates
+        for detail_field in spec.fields:
+            key = detail_field.metadata_key
+            if (
+                detail_field.column is None
+                and detail_field.owner is FieldOwner.WRITER
+                and key in resolved
+            ):
+                merged[key] = resolved[key]
+        return json.dumps(merged) if merged else None
 
     def _handle_tv_season_change(self, cursor: sqlite3.Cursor, db_id: int) -> bool:
         """Status follows the season list: a show completes when every season of
@@ -1448,18 +1464,7 @@ class SQLiteDB:
                 creator=creator,
             )
 
-            if release_year is not None or creator is not None:
-                self._write_corrections(
-                    cursor, db_id, content_type, release_year, creator
-                )
-            if title is not UNSET:
-                cursor.execute(
-                    "UPDATE content_items SET title = ?, normalized_title = ?"
-                    " WHERE id = ?",
-                    (title, normalize_title_for_matching(title), db_id),
-                )
-            if creator is not None or title is not UNSET:
-                write_derived_columns(cursor, db_id)
+            _assert_correctable(content_type, release_year, creator)
 
             if content_type == "tv_show":
                 cursor.execute(
@@ -1529,11 +1534,6 @@ class SQLiteDB:
                 params,
             )
 
-            if genres is not None or tags is not None or description is not None:
-                self._write_manual_metadata(
-                    cursor, db_id, content_type, genres, tags, description
-                )
-
             record_field_writes(
                 cursor,
                 db_id,
@@ -1543,6 +1543,8 @@ class SQLiteDB:
                     for field, value in corrected.items()
                 ],
             )
+            self._write_ledger_fields(cursor, db_id, content_type, {})
+            write_derived_columns(cursor, db_id)
 
             conn.commit()
             return True
@@ -1563,46 +1565,6 @@ class SQLiteDB:
                 return False
             conn.commit()
             return True
-
-    def _write_manual_metadata(
-        self,
-        cursor: sqlite3.Cursor,
-        db_id: int,
-        content_type: str,
-        genres: list[str] | None,
-        tags: list[str] | None,
-        description: str | None,
-    ) -> None:
-        updates: dict[str, Any] = {}
-        if genres is not None:
-            updates["genres"] = json.dumps(genres)
-        if tags is not None:
-            updates["tags"] = json.dumps(tags)
-        if description is not None:
-            updates["description"] = description
-        self._write_detail_columns(cursor, db_id, content_type, updates)
-
-    def _write_corrections(
-        self,
-        cursor: sqlite3.Cursor,
-        db_id: int,
-        content_type: str,
-        release_year: int | None,
-        creator: str | None,
-    ) -> None:
-        updates: dict[str, Any] = {}
-        for name, field, value in (
-            ("release year", RELEASE_YEAR_FIELDS.get(content_type), release_year),
-            ("creator", CREATOR_FIELDS.get(content_type), creator),
-        ):
-            if value is None:
-                continue
-            if field is None or field.column is None:
-                raise UncorrectableFieldError(
-                    f"A {content_type} has no {name} to correct."
-                )
-            updates[field.column] = field.store(value)
-        self._write_detail_columns(cursor, db_id, content_type, updates)
 
     def _write_detail_columns(
         self,
@@ -1652,6 +1614,7 @@ class SQLiteDB:
                 evidence_detail=evidence_detail,
                 user_id=user_id,
             )
+            self._rebuild_merge_group(cursor, survivor_id)
             conn.commit()
             return record
 
@@ -1661,8 +1624,22 @@ class SQLiteDB:
         with self.connection() as conn:
             cursor = conn.cursor()
             record = unmerge_item(cursor, merge_id, user_id=user_id)
+            if record is not None:
+                self._rebuild_merge_group(cursor, record.survivor_id)
             conn.commit()
             return record
+
+    def _rebuild_merge_group(self, cursor: sqlite3.Cursor, survivor_id: int) -> None:
+        """The group the ledger resolves over just changed, so the survivor is
+        rebuilt here: a one-off import may never save this item again. The undo
+        leg runs it too, which is what takes these writes back.
+        """
+        cursor.execute(
+            "SELECT content_type FROM content_items WHERE id = ?", (survivor_id,)
+        )
+        content_type = cursor.fetchone()["content_type"]
+        self._write_ledger_fields(cursor, survivor_id, content_type, {})
+        write_derived_columns(cursor, survivor_id)
 
     def list_content_item_merges(self, user_id: int | None = None) -> list[MergeRecord]:
         effective_user_id = user_id if user_id is not None else get_default_user_id()

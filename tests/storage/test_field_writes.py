@@ -241,12 +241,10 @@ def test_a_source_correcting_itself_replaces_its_own_row(tmp_path: Path) -> None
     writes = _writes(db, db_id)
 
     assert [write.value for write in _for_field(writes, "title")] == ["Dune: Book One"]
-    # The fill-only column refuses the new description, so the row it would
-    # otherwise be read off never moves: the ledger has to carry the correction.
     assert [write.value for write in _for_field(writes, "description")] == [
         "Arrakis, desert planet."
     ]
-    assert _stored_description(db, db_id) == "A desert planet."
+    assert _stored_description(db, db_id) == "Arrakis, desert planet."
 
 
 def test_two_sources_stating_one_field_keep_a_row_each(tmp_path: Path) -> None:
@@ -263,7 +261,7 @@ def test_two_sources_stating_one_field_keep_a_row_each(tmp_path: Path) -> None:
     }
 
 
-def test_the_fill_only_rules_still_decide_what_the_column_holds(
+def test_the_source_that_stated_a_field_first_holds_it_against_a_second_source(
     tmp_path: Path,
 ) -> None:
     db = SQLiteDB(tmp_path / "unchanged.db")
@@ -336,11 +334,15 @@ def test_an_enrichment_write_is_not_recorded_as_a_source(tmp_path: Path) -> None
             status=ConsumptionStatus.UNREAD,
             metadata={"publisher": "Chilton Books"},
         ),
+        FieldWriter(WriterBand.PROVIDER, "openlibrary"),
+        {"publisher": "Chilton Books"},
     )
     writes = _writes(db, db_id)
 
-    assert {write.writer for write in writes} == {"calibre_web"}
-    assert _for_field(writes, "publisher") == []
+    assert {write.writer for write in writes} == {"calibre_web", "openlibrary"}
+    assert [
+        (write.writer_kind, write.value) for write in _for_field(writes, "publisher")
+    ] == [(WriterBand.PROVIDER, "Chilton Books")]
 
 
 def test_an_aliased_list_records_one_canonical_row_restating_it_moves_nothing(
@@ -373,20 +375,27 @@ def test_a_source_raising_its_own_authority_replaces_the_one_beside_the_ordinal(
     assert [(write.value, write.authority) for write in ordinals] == [(1.0, "library")]
 
 
-def test_a_correction_no_column_accepts_survives_a_sync_reporting_unchanged(
+def _updated_at(db: SQLiteDB, db_id: int) -> str:
+    with db.connection() as conn:
+        row = conn.execute(
+            "SELECT updated_at FROM content_items WHERE id = ?", (db_id,)
+        ).fetchone()
+    return str(row["updated_at"])
+
+
+def test_a_sync_restating_what_is_stored_reports_unchanged_and_stamps_nothing(
     tmp_path: Path,
 ) -> None:
-    db = SQLiteDB(tmp_path / "refused.db")
+    db = SQLiteDB(tmp_path / "restated.db")
     db_id = db.save_content_item(
         _book("calibre_web", "cw-1", description="A desert planet.")
     )
+    stamped = _updated_at(db, db_id)
 
     outcome = db.save_content_item_outcome(
-        _book("calibre_web", "cw-1", description="Arrakis, desert planet.")
+        _book("calibre_web", "cw-1", description="A desert planet.")
     ).outcome
 
     assert outcome is SaveOutcome.UNCHANGED
-    assert [write.value for write in _for_field(_writes(db, db_id), "description")] == [
-        "Arrakis, desert planet."
-    ]
+    assert _updated_at(db, db_id) == stamped
     assert _stored_description(db, db_id) == "A desert planet."

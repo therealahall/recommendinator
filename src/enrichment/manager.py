@@ -18,7 +18,6 @@ from src.enrichment.provider_base import (
     ProviderRefusedError,
     accepts_a_pin,
     offers_candidates,
-    pinned_record,
     states_a_match,
     states_a_series_ordinal,
     stored_config_schema,
@@ -27,7 +26,6 @@ from src.enrichment.provider_base import (
 from src.enrichment.rate_limiter import RateLimiter
 from src.enrichment.registry import EnrichmentRegistry, get_enrichment_registry
 from src.models.content import ContentItem, ContentType, get_enum_value
-from src.models.detail_fields import PIN_KEY
 from src.storage.enrichment_jobs import EnrichmentJobRecord
 from src.storage.field_writes import FieldWriter, WriterBand
 from src.storage.global_secrets import read_secret
@@ -276,10 +274,7 @@ class EnrichmentManager:
                 "pin a record id it offered as a candidate."
             )
         pins = with_pin(item.metadata, provider.name, record_id)
-        self.storage_manager.save_enrichment_metadata(
-            db_id,
-            item.model_copy(update={"metadata": {**item.metadata, PIN_KEY: pins}}),
-        )
+        self.storage_manager.set_enrichment_pins(db_id, pins)
         self.storage_manager.enrichment.reset(content_item_id=db_id)
         if record_id is None:
             return pins, None
@@ -873,8 +868,9 @@ class EnrichmentManager:
             stated = ordinal.as_metadata()
             fields = reconcile_series(item.metadata, stated)
             if not fields:
-                # The ledger holds an offer precisely because the merge rules
-                # discarded it, and recording one is no reason to save the item.
+                # Recorded though this run keeps the stored series: the rebuild
+                # ranks the offer at the next save, and recording one is no
+                # reason to save the item now.
                 self.storage_manager.record_stated_fields(
                     db_id, FieldWriter(WriterBand.PROVIDER, provider.name), stated
                 )
@@ -981,15 +977,9 @@ class EnrichmentManager:
         item: ContentItem,
         provider_name: str,
         stated: Mapping[str, Any],
-        *,
-        replace_cover: bool = False,
     ) -> None:
         self.storage_manager.save_enrichment_metadata(
-            db_id,
-            item,
-            replace_cover=replace_cover,
-            writer=FieldWriter(WriterBand.PROVIDER, provider_name),
-            stated=stated,
+            db_id, item, FieldWriter(WriterBand.PROVIDER, provider_name), stated
         )
 
     def _apply_enrichment(
@@ -999,29 +989,13 @@ class EnrichmentManager:
         provider: EnrichmentProvider,
         result: EnrichmentResult,
     ) -> ContentItem:
-        # Filling only, so a nightly run never churns covers — except behind a
-        # pin, which is the operator correcting the one a merge left wrong.
-        replace_cover = (
-            result.cover_url is not None
-            and pinned_record(item, provider.name) is not None
-        )
         enriched = item.model_copy(
             update={
                 "metadata": merge_enrichment(item.metadata, result),
-                "cover_url": (
-                    result.cover_url
-                    if replace_cover
-                    else item.cover_url or result.cover_url
-                ),
+                "cover_url": item.cover_url or result.cover_url,
             }
         )
-        self._save_stated(
-            db_id,
-            enriched,
-            provider.name,
-            result.as_metadata(),
-            replace_cover=replace_cover,
-        )
+        self._save_stated(db_id, enriched, provider.name, result.as_metadata())
         return enriched
 
 

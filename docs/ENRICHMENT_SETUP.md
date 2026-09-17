@@ -146,8 +146,8 @@ Repeated `--genre` and `--tag` replace the existing lists rather than appending,
 and `--description` replaces the description. `--clear-genres`, `--clear-tags`
 and `--description ""` empty them.
 
-Manual values **overwrite** the stored detail, unlike the gap-filling merge that
-sync and automatic enrichment use. To let a field be stated again, run
+Manual values **outrank** every other writer, so sync and automatic enrichment
+leave them standing. To let a field be stated again, run
 `library clear-manual --id <id> --field genres` or press **Stop holding this
 field** beside it in the edit modal.
 

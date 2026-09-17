@@ -215,15 +215,16 @@ warning and no error at any layer.** Your own `number_of_seasons` re-classifies
 the show's length.
 
 RAWG writes `average_playtime_hours`, TMDB writes `series_name` and
-`tmdb_collection_id`. Neither writes a position. `merge_enrichment`
-(`src/enrichment/manager.py`) fills each only where the key is missing or empty.
-Write your own series name to `series_name`.
+`tmdb_collection_id`. Neither writes a position. Each writer's statement is
+recorded, and the stored value rebuilt from them by rank. Write your own
+series name to `series_name`.
 
-The series name and position are the other exception: `reconcile_series` decides
-those by rank, and a position naming no series settles nothing. Record yours in
-`series_position_authority` — `library` for an ordinal your catalogue states,
-`stated` for one read out of a title — and no weaker source can replace it. A
-re-sync of that same catalogue corrects rather than competes.
+The series name and position are the other exception: the first writer to name
+it keeps the name, and the ordinal goes to the best-founded authority
+among writers numbering that same series. A position naming no series settles
+nothing. Record yours in `series_position_authority` — `library` for an ordinal
+your catalogue states, `stated` for one read out of a title — and no weaker
+authority replaces it. A re-sync of that catalogue corrects rather than competes.
 
 ### Shape rules
 
@@ -240,16 +241,16 @@ one-element list rather than rejected, so a wrong shape survives all the way out
 to the library export and back in as a literal string. Write
 `["Windows", "Linux"]`.
 
-**Get the shape right the first time, because fixing the plugin does not repair
-what it already stored.** `platforms` is fill-only, so a stored value wins on
-every later sync, and the user has no way to undo it. Removing the source drops
-its config and secrets but keeps its items, so re-adding syncs into the same rows
-and the stored value still wins.
+**Get the shape right, though fixing the plugin does repair what it stored.**
+Every field your plugin states is recorded under its name, and a later sync
+restating it replaces what it said before, so a corrected plugin lands the
+correction on its next run.
 
-**`genres` and `tags` merge additively, and `seasons` and `episodes` only ever
-increase.** Every other detail column is fill-only, written while the stored
-value is empty and left alone afterwards, because enrichment and the user's own
-edits outrank a re-sync. The
+**`genres` and `tags` combine across writers, and `seasons` and `episodes` only
+ever increase.** Every other detail column is decided by rank: the user's own
+edit first, then a pinned provider, the providers in precedence order, then
+sources and imports. Covers invert it — a source outranks a provider, because a
+store's own art beats a database's screenshot. The
 [full rules](../ARCHITECTURE.md#user-owned-fields) for the fields the user owns
 cover every case.
 
@@ -699,7 +700,7 @@ Your position is taken only where your series name agrees with the stored one,
 so a sub-series' number is not filed under its parent. Your name is written only
 where nothing named the series yet.
 
-The merge is gap-filling bar the series fields.
+Every other field is rebuilt by rank.
 
 Your config needs no entry anywhere: the settings registry reads
 `get_config_schema()` and offers each field under `enrichment.providers.<name>`,
