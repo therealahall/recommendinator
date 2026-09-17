@@ -398,6 +398,25 @@ describe('useLibraryStore', () => {
     expect(store.pinned).toEqual({ openlibrary: 'OL1W' })
   })
 
+  it('openEdit reads the writers behind each field, so the switcher offers them', async () => {
+    const item = { db_id: 1, title: 'Book A', content_type: 'book', status: 'unread', ignored: false }
+    mockGet.mockResolvedValueOnce([item])
+    const store = useLibraryStore()
+    await store.resetAndLoad()
+
+    const fields = [{
+      field: 'genres',
+      chosen: null,
+      note: '',
+      writers: [{ writer: 'openlibrary', band: 'provider', value: 'Sci-Fi' }],
+    }]
+    mockGet.mockResolvedValueOnce(item).mockResolvedValueOnce({ item_id: 1, fields })
+    await store.openEdit(1)
+
+    expect(mockGet.mock.lastCall![0]).toBe('/items/1/field-writers')
+    expect(store.fieldWriters).toEqual(fields)
+  })
+
   it('pinEnrichment keeps the words the server answered with, for the dialog to say', async () => {
     const store = useLibraryStore()
     mockPost.mockResolvedValue({

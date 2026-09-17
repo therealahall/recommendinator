@@ -1315,8 +1315,8 @@ def _fold_stranded_company_names(cursor: sqlite3.Cursor) -> None:
         if not isinstance(blob, dict) or not _STRANDED_COMPANY_COLUMNS.keys() & blob:
             continue
         # Popped whatever the columns hold: the stranded key ceases to exist
-        # either way, and only then is the fold fill-only, like the write path
-        # — a name enrichment has already written stands.
+        # either way, and the fold fills only an empty column, so a name a
+        # writer has since stated stands.
         folded = {
             column: to_text(text_names(blob.pop(key, None)))
             for key, column in _STRANDED_COMPANY_COLUMNS.items()

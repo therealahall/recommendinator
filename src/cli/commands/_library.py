@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import Collection
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 import click
 from tabulate import tabulate
@@ -779,7 +779,7 @@ def library_field_writers(
         click.echo(json.dumps(payload, indent=2))
         return
 
-    offers = cast(list[dict[str, Any]], payload["fields"])
+    offers = payload["fields"]
     table_data = [
         [
             offer["field"],
@@ -789,9 +789,9 @@ def library_field_writers(
             "Yes" if row["writer"] == offer["chosen"] else "",
         ]
         for offer in offers
-        for row in cast(list[dict[str, str]], offer["writers"])
+        for row in offer["writers"]
     ]
-    settled = [str(offer["note"]) for offer in offers if offer["note"]]
+    settled = [offer["note"] for offer in offers if offer["note"]]
     if not table_data and not settled:
         click.echo(f"No writer has stated {field or 'a field'} on item {item_id}.")
         return

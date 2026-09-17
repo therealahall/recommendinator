@@ -224,7 +224,10 @@ it keeps the name, and the ordinal goes to the best-founded authority
 among writers numbering that same series. A position naming no series settles
 nothing. Record yours in `series_position_authority` — `library` for an ordinal
 your catalogue states, `stated` for one read out of a title — and no weaker
-authority replaces it. A re-sync of that catalogue corrects rather than competes.
+authority replaces it.
+
+Equal standing goes to the highest-ranked writer, not to whoever answered
+first. A re-sync of that catalogue corrects rather than competes.
 
 ### Shape rules
 
@@ -246,11 +249,14 @@ Every field your plugin states is recorded under its name, and a later sync
 restating it replaces what it said before, so a corrected plugin lands the
 correction on its next run.
 
-**`genres` and `tags` combine across writers, and `seasons` and `episodes` only
-ever increase.** Every other detail column is decided by rank: the user's own
-edit first, then a chosen writer, then a pinned provider, the providers in
-precedence order, then sources and imports. Covers invert it — a source outranks a provider, because a
-store's own art beats a database's screenshot. The
+**`genres` and `tags` combine across writers, and `seasons` and `episodes` take
+the highest count any writer states** — unless the operator has chosen a writer
+for the field, whose own count then stands, a lower one included.
+
+Every other detail column is decided by rank: the operator's own edit first,
+then a chosen writer, then a pinned provider, the providers in precedence order,
+then sources and imports. Covers invert it — a source outranks a provider,
+because a store's own art beats a database's screenshot. The
 [full rules](../ARCHITECTURE.md#user-owned-fields) for the fields the user owns
 cover every case.
 

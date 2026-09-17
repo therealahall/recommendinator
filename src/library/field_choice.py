@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from src.storage.field_writes import WriterBand
-from src.utils.item_serialization import FieldOfferPayload, field_writers_to_dict
+from src.utils.item_serialization import field_writers_to_dict
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
@@ -52,9 +52,7 @@ def _followable_writers(
     force, and following it would mean releasing it.
     """
     stated = storage.field_writers(db_id, field, user_id=user_id)
-    offers = cast(
-        list[FieldOfferPayload], field_writers_to_dict(db_id, stated, {})["fields"]
-    )
+    offers = field_writers_to_dict(db_id, stated, {})["fields"]
     return [
         row["writer"]
         for offer in offers
