@@ -10,6 +10,7 @@ from src.enrichment.manager import EnrichmentManager, EnrichmentStart, PinRefuse
 from src.enrichment.providers.hardcover.hardcover import HardcoverProvider
 from src.enrichment.registry import EnrichmentRegistry, get_enrichment_registry
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.storage.field_writes import FieldWriter, WriterBand
 from src.storage.manager import StorageManager
 from src.utils.matching import Candidate
 from tests.enrichment.test_enrichment_manager import (
@@ -201,6 +202,7 @@ class TestEnrichmentStats:
             "pending": 15,
             "not_found": 3,
             "failed": 2,
+            "resettable_by_provider": {"tmdb": 320, "openlibrary": 95},
             "by_provider": {"tmdb": 50, "openlibrary": 30},
             "by_quality": {"high": 60, "medium": 20},
         }
@@ -415,6 +417,40 @@ class TestEnrichmentPinning:
         assert response.status_code == 404
 
 
+class TestEnrichmentRequeue:
+    def test_requeue_enriches_the_item_again_with_every_ledger_row_standing(
+        self, tmp_path: Path
+    ) -> None:
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+        db_id = save_movie(storage)
+        item = storage.get_content_item(db_id)
+        assert item is not None
+        storage.save_enrichment_metadata(
+            db_id, item, FieldWriter(WriterBand.PROVIDER, "tmdb"), {"runtime": 136}
+        )
+        storage.enrichment.mark_complete(db_id, "tmdb", "high")
+
+        with _client(storage, {}) as client:
+            response = client.post("/api/enrichment/requeue", json={"item_id": db_id})
+
+        assert response.status_code == 200
+        assert response.json()["item_id"] == db_id
+        rebuilt = storage.get_content_item(db_id)
+        assert rebuilt is not None and rebuilt.metadata["runtime"] == 136
+        status = storage.enrichment.status(db_id)
+        assert status is not None and status["needs_enrichment"] is True
+
+    def test_requeue_reports_an_item_that_is_not_there(self) -> None:
+        storage = make_storage_mock()
+        storage.get_content_item.return_value = None
+
+        with _client(storage, {}) as client:
+            response = client.post("/api/enrichment/requeue", json={"item_id": 999})
+
+        assert response.status_code == 404
+        storage.enrichment.requeue.assert_not_called()
+
+
 class TestEnrichmentReset:
     def test_reset_all(self) -> None:
         storage = make_storage_mock()
@@ -442,7 +478,10 @@ class TestEnrichmentReset:
 
         assert response.status_code == 200
         assert response.json() == {
-            "message": "Reset enrichment status for 1 item(s). Enriching it now.",
+            "message": (
+                "Dropped what the providers stated for 1 item(s) and re-queued"
+                " them. Enriching it now."
+            ),
             "count": 1,
             "run": "started",
         }

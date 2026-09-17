@@ -77,7 +77,7 @@ def fill_cover(
     if isinstance(outcome, CoverUnavailable):
         if outcome.permanent and storage.clear_cover_url(item.db_id):
             # The provider that dead cover outranked is what can refill it.
-            storage.enrichment.reset(content_item_id=item.db_id)
+            storage.enrichment.requeue(item.db_id)
         logger.info("No cover for %s: %s", sanitize_for_log(item.title), outcome.reason)
         return outcome
 

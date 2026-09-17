@@ -132,6 +132,47 @@ def test_a_sync_records_one_row_per_field_the_source_stated(tmp_path: Path) -> N
     assert _for_field(writes, "isbn") == []
 
 
+def test_a_source_restating_a_value_legacy_holds_takes_only_that_legacy_row(
+    tmp_path: Path,
+) -> None:
+    db = SQLiteDB(tmp_path / "promoted.db")
+    db_id = db.save_content_item(
+        _book("", "pre-ledger", description="A desert planet.")
+    )
+
+    db.record_stated_fields(
+        db_id,
+        FieldWriter(WriterBand.SOURCE, "calibre_web"),
+        {"description": "A desert planet.", "title": "Dune (Deluxe)"},
+    )
+    writes = _writes(db, db_id)
+
+    assert [
+        (write.writer_kind, write.writer) for write in _for_field(writes, "description")
+    ] == [(WriterBand.SOURCE, "calibre_web")]
+    assert [
+        (write.writer_kind, write.value) for write in _for_field(writes, "title")
+    ] == [(WriterBand.LEGACY, "Dune"), (WriterBand.SOURCE, "Dune (Deluxe)")]
+
+
+def test_a_source_restating_legacy_over_its_own_earlier_word_keeps_one_row(
+    tmp_path: Path,
+) -> None:
+    db = SQLiteDB(tmp_path / "reattributed.db")
+    db_id = db.save_content_item(
+        _book("", "pre-ledger", description="A desert planet.")
+    )
+    calibre = FieldWriter(WriterBand.SOURCE, "calibre_web")
+
+    db.record_stated_fields(db_id, calibre, {"description": "Arrakis."})
+    db.record_stated_fields(db_id, calibre, {"description": "A desert planet."})
+
+    assert [
+        (write.writer_kind, write.value)
+        for write in _for_field(_writes(db, db_id), "description")
+    ] == [(WriterBand.SOURCE, "A desert planet.")]
+
+
 @pytest.mark.parametrize("content_type", sorted(DETAIL_FIELDS))
 def test_a_source_stating_every_field_records_only_the_writer_owned_ones(
     tmp_path: Path, content_type: str

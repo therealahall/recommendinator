@@ -398,6 +398,7 @@ class TestEnrichmentStatus:
             "pending": 15,
             "not_found": 3,
             "failed": 2,
+            "resettable_by_provider": {"tmdb": 320},
             "by_provider": {"tmdb": 50},
             "by_quality": {"high": 60},
         }
@@ -642,15 +643,56 @@ class TestEnrichmentCommandImport:
         assert loaded.stdout.strip() == "[]"
 
 
-class TestEnrichmentReset:
-    def test_reset_prompt_states_the_count_each_filter_leaves(
+class TestEnrichmentRequeue:
+    def test_requeue_re_queues_the_one_item_and_drops_nothing_it_holds(
         self, cli_runner: CliRunner
     ) -> None:
         mock_storage = make_storage_mock()
-        mock_storage.enrichment.stats.return_value = {
-            "resettable": 1488,
-            "by_provider": {"tmdb": 12},
+        manager = _idle_manager()
+        manager.start_enrichment.return_value = EnrichmentStart.STARTED
+
+        result = _invoke_with_enrichment_manager(
+            cli_runner,
+            ["enrichment", "requeue", "--id", "42", "--format", "json"],
+            mock_storage,
+            manager,
+        )
+
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.stdout) == {
+            "item_id": 42,
+            "message": (
+                "Item 42 is queued for enrichment, everything it holds standing."
+                " Enriching it now."
+            ),
+            "run": "started",
         }
+        mock_storage.enrichment.requeue.assert_called_once_with(42)
+        mock_storage.enrichment.reset.assert_not_called()
+        assert manager.start_enrichment.call_args.kwargs["content_item_id"] == 42
+
+    def test_requeue_names_an_id_that_is_not_there(self, cli_runner: CliRunner) -> None:
+        mock_storage = make_storage_mock()
+        mock_storage.get_content_item.return_value = None
+
+        result = _invoke_with_mocks(
+            cli_runner, ["enrichment", "requeue", "--id", "999"], mock_storage
+        )
+
+        assert result.exit_code != 0
+        assert "Item 999 not found" in result.output
+        mock_storage.enrichment.requeue.assert_not_called()
+
+
+class TestEnrichmentReset:
+    def test_reset_prompt_counts_what_it_re_queues_not_what_it_credited(
+        self, cli_runner: CliRunner
+    ) -> None:
+        mock_storage = make_storage_mock()
+        counts = {None: 1488, "tmdb": 300}
+        mock_storage.enrichment.reset_count.side_effect = lambda provider, **_: counts[
+            provider
+        ]
 
         def prompt(*args: str) -> str:
             result = _invoke_with_mocks(
@@ -665,8 +707,26 @@ class TestEnrichmentReset:
         unfiltered = prompt()
         assert "1488 item(s)" in unfiltered
         assert "Aborted" in unfiltered
-        assert "12 item(s)" in prompt("--provider", "tmdb")
-        assert "1488" not in prompt("--type", "movie")
+        assert "300 item(s)" in prompt("--provider", "tmdb")
+        assert "every matching item (type=movie)" in prompt("--type", "movie")
+        mock_storage.enrichment.reset.assert_not_called()
+
+    def test_reset_prompt_says_the_provider_values_go_not_that_a_status_flips(
+        self, cli_runner: CliRunner
+    ) -> None:
+        mock_storage = make_storage_mock()
+        mock_storage.enrichment.reset_count.return_value = 12
+
+        result = _invoke_with_mocks(
+            cli_runner, ["enrichment", "reset"], mock_storage, input_text="n\n"
+        )
+
+        assert result.exit_code == 0
+        assert "Everything those providers stated goes" in result.output
+        assert (
+            "rebuilt on what its sources, your edits and its pins say" in result.output
+        )
+        assert "refills it from rate-limited APIs" in result.output
         mock_storage.enrichment.reset.assert_not_called()
 
     def test_enrichment_reset_all(self, cli_runner: CliRunner) -> None:
@@ -678,7 +738,10 @@ class TestEnrichmentReset:
         )
 
         assert result.exit_code == 0
-        assert "Reset enrichment status for 50 item(s)" in result.output
+        assert (
+            "Dropped what the providers stated for 50 item(s) and re-queued them"
+            in result.output
+        )
         mock_storage.enrichment.reset.assert_called_once_with(
             provider=None, content_type=None, user_id=1, content_item_id=None
         )
@@ -753,7 +816,8 @@ class TestEnrichmentReset:
 
         assert result.exit_code == 0, result.output
         assert (
-            "Reset enrichment status for 1 item(s). Enriching it now." in result.output
+            "Dropped what the providers stated for 1 item(s) and re-queued them."
+            " Enriching it now." in result.output
         )
         assert mock_storage.enrichment.reset.call_args.kwargs["content_item_id"] == 42
         assert manager.start_enrichment.call_args.kwargs["content_item_id"] == 42

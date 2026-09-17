@@ -3,13 +3,15 @@ from __future__ import annotations
 from src.models.content import ContentItem, ContentType
 from src.storage.schema import (
     EnrichmentStatusDict,
+    enrichment_reset_count,
+    enrichment_scope_ids,
     get_enrichment_stats,
     get_enrichment_status,
     mark_enrichment_complete,
     mark_enrichment_failed,
     mark_enrichment_settled_failure,
     mark_item_needs_enrichment,
-    reset_enrichment_status,
+    requeue_enrichment_status,
 )
 from src.storage.sqlite_db import SQLiteDB
 
@@ -51,7 +53,6 @@ class EnrichmentStore:
         )
 
     def settled_without_cover(self, user_id: int) -> int:
-        """Only a reset puts these back in front of a provider."""
         return self._sqlite_db.count_settled_without_cover(user_id)
 
     def not_found_ids(
@@ -97,6 +98,13 @@ class EnrichmentStore:
         with self._sqlite_db.connection() as conn:
             mark_item_needs_enrichment(conn, content_item_id)
 
+    def requeue(self, content_item_id: int) -> None:
+        """Back in front of a provider, every ledger row standing. ``mark_needed``
+        is no substitute: it ignores an item that already has a row.
+        """
+        with self._sqlite_db.connection() as conn:
+            requeue_enrichment_status(conn, content_item_id=content_item_id)
+
     def reset(
         self,
         provider: str | None = None,
@@ -104,13 +112,30 @@ class EnrichmentStore:
         user_id: int | None = None,
         content_item_id: int | None = None,
     ) -> int:
-        """Each filter left as ``None`` widens the reset; all unset resets every
-        item. ``mark_needed`` is no substitute for the single-item case: it
-        ignores an item that already has a row, which every enriched one has.
+        """Each filter left as ``None`` widens the reset. What the providers in
+        scope stated goes, and each item rebuilds on what is left standing.
         """
+        content_type_str = content_type.value if content_type else None
         with self._sqlite_db.connection() as conn:
-            content_type_str = content_type.value if content_type else None
-            return reset_enrichment_status(
+            scope = enrichment_scope_ids(
+                conn, provider, content_type_str, user_id, content_item_id
+            )
+            requeued = requeue_enrichment_status(
+                conn, provider, content_type_str, user_id, content_item_id
+            )
+        self._sqlite_db.reset_provider_writes(scope, provider)
+        return requeued
+
+    def reset_count(
+        self,
+        provider: str | None = None,
+        content_type: ContentType | None = None,
+        user_id: int | None = None,
+        content_item_id: int | None = None,
+    ) -> int:
+        content_type_str = content_type.value if content_type else None
+        with self._sqlite_db.connection() as conn:
+            return enrichment_reset_count(
                 conn, provider, content_type_str, user_id, content_item_id
             )
 

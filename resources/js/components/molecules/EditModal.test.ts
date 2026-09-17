@@ -216,11 +216,12 @@ describe('EditModal', () => {
       attachTo: document.body,
     })
 
+    const queued = 'Item 1 is queued for enrichment, everything it holds standing. Enriching it now.'
     await wrapper.findAll('button').find(b => b.text() === 'Enrich this again')!.trigger('click')
-    await wrapper.setProps({ pinMessage: 'Reset enrichment status for 1 item(s)' })
+    await wrapper.setProps({ pinMessage: queued })
 
     expect(wrapper.emitted('retryEnrichment')).toEqual([[1]])
-    expect(wrapper.get('#edit-pin-note').text()).toBe('Reset enrichment status for 1 item(s)')
+    expect(wrapper.get('#edit-pin-note').text()).toBe(queued)
     wrapper.unmount()
   })
 

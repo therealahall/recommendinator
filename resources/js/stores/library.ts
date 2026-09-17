@@ -8,7 +8,7 @@ import type {
   EnrichmentCandidate,
   EnrichmentCandidatesResponse,
   EnrichmentPinResponse,
-  EnrichmentResetResponse,
+  EnrichmentRequeueResponse,
   ItemEditRequest,
   MergeRecord,
 } from '@/types/api'
@@ -272,13 +272,13 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
-  // Not pinning: a pin re-queues only as a side effect of binding a record, and
-  // an item that failed for a transient reason has the right record already.
+  // Re-queuing, not resetting: a retry after a failed run keeps what the
+  // providers already said, and a pin would bind a record it never asked for.
   async function retryEnrichment(dbId: number) {
     editError.value = ''
     pinMessage.value = ''
     try {
-      const result = await api.post<EnrichmentResetResponse>('/enrichment/reset', {
+      const result = await api.post<EnrichmentRequeueResponse>('/enrichment/requeue', {
         item_id: dbId,
         user_id: useAppStore().currentUserId,
       })

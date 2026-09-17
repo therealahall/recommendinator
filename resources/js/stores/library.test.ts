@@ -17,6 +17,12 @@ vi.mock('@/composables/useApi', () => ({
   }),
 }))
 
+const QUEUED = {
+  item_id: 7,
+  message: 'Item 7 is queued for enrichment, everything it holds standing. Enriching it now.',
+  run: 'started',
+}
+
 describe('useLibraryStore', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
@@ -406,21 +412,20 @@ describe('useLibraryStore', () => {
     expect(store.pinMessage).toBe('Item 1 now enriches from rawg record 41494')
   })
 
-  it('retryEnrichment re-queues the one item, whatever settled it', async () => {
+  it('retryEnrichment asks the re-queue door, so a failed item keeps what the providers said', async () => {
     const store = useLibraryStore()
-    mockPost.mockResolvedValue({ message: 'Reset enrichment status for 1 item(s)', count: 1 })
+    mockPost.mockResolvedValue(QUEUED)
 
     await store.retryEnrichment(7)
 
-    expect(mockPost.mock.lastCall![0]).toBe('/enrichment/reset')
+    expect(mockPost.mock.lastCall![0]).toBe('/enrichment/requeue')
     expect(mockPost.mock.lastCall![1]).toMatchObject({ item_id: 7 })
-    expect(store.pinMessage).toBe('Reset enrichment status for 1 item(s)')
+    expect(store.pinMessage).toBe(QUEUED.message)
   })
 
   it('a repeat blanks the note while it waits, so the same sentence is announced again', async () => {
-    const reset = { message: 'Reset enrichment status for 1 item(s)', count: 1 }
     const store = useLibraryStore()
-    mockPost.mockResolvedValueOnce(reset)
+    mockPost.mockResolvedValueOnce(QUEUED)
     await store.retryEnrichment(7)
 
     let answer: (value: unknown) => void = () => {}
@@ -428,9 +433,9 @@ describe('useLibraryStore', () => {
     const second = store.retryEnrichment(7)
     expect(store.pinMessage).toBe('')
 
-    answer(reset)
+    answer(QUEUED)
     await second
-    expect(store.pinMessage).toBe('Reset enrichment status for 1 item(s)')
+    expect(store.pinMessage).toBe(QUEUED.message)
 
     mockPost.mockRejectedValueOnce(new Error('Provider is down'))
     await store.pinEnrichment(7, 'rawg', '41494')

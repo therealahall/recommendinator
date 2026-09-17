@@ -24,6 +24,7 @@ function makeStats(overrides: Partial<EnrichmentStatsResponse> = {}): Enrichment
     pending: 45,
     not_found: 5,
     failed: 0,
+    resettable_by_provider: {},
     by_provider: {},
     by_quality: {},
     providers: [
@@ -291,6 +292,20 @@ describe('EnrichmentCard', () => {
       expect(data.resetEnrichment).not.toHaveBeenCalled()
       expect(question).toContain('90 item(s)')
       expect(question).toContain('every content type')
+    })
+
+    it('counts what a provider reset re-queues, not what it was credited with', async () => {
+      const wrapper = mountWithEnrichment({
+        enrichmentStats: makeStats({
+          by_provider: { rawg: 12 },
+          resettable_by_provider: { rawg: 300 },
+        }),
+      })
+
+      await wrapper.find('[data-testid="reset-provider"]').setValue('rawg')
+      await wrapper.find('[data-testid="reset-btn"]').trigger('click')
+
+      expect(wrapper.get('[data-testid="confirm-panel"]').text()).toContain('300 item(s)')
     })
 
     it('sends no provider filter on the default, which is not a provider name', async () => {

@@ -20,6 +20,7 @@ from src.utils.item_serialization import (
     enrichment_pin_to_dict,
     enrichment_provider_filter,
     enrichment_providers_to_list,
+    enrichment_requeue_to_dict,
     enrichment_reset_to_dict,
 )
 from src.utils.sorting import MAX_SEARCH_LENGTH
@@ -48,15 +49,20 @@ class EnrichmentStartRequest(BaseModel):
 class EnrichmentResetRequest(BaseModel):
     provider: str | None = Field(
         None,
-        description="Reset items enriched by this provider, named as /enrichment/stats reports it",
+        description="Reset every item this provider stated a value for, named as /enrichment/stats reports it",
     )
     content_type: str | None = Field(
         None, description="Reset items of this content type"
     )
     item_id: int | None = Field(
-        None, ge=1, description="Re-queue this one item, whatever left it settled"
+        None, ge=1, description="Reset this one item, whatever left it settled"
     )
     user_id: int = Field(1, ge=1, description="User ID for filtering items")
+
+
+class EnrichmentRequeueRequest(BaseModel):
+    item_id: int = Field(..., ge=1, description="Library item to enrich again")
+    user_id: int = Field(1, ge=1, description="User ID for authorization")
 
 
 class EnrichmentPinRequest(BaseModel):
@@ -90,6 +96,12 @@ class EnrichmentPinResponse(BaseModel):
     run: str | None = None
 
 
+class EnrichmentRequeueResponse(BaseModel):
+    item_id: int
+    message: str
+    run: str
+
+
 class EnrichmentJobStatusResponse(BaseModel):
     running: bool = False
     completed: bool = False
@@ -119,6 +131,7 @@ class EnrichmentStatsResponse(BaseModel):
     pending: int = 0
     not_found: int = 0
     failed: int = 0
+    resettable_by_provider: dict[str, int] = Field(default_factory=dict)
     by_provider: dict[str, int] = Field(default_factory=dict)
     by_quality: dict[str, int] = Field(default_factory=dict)
     providers: list[EnrichmentProviderView] = Field(default_factory=list)
@@ -210,6 +223,9 @@ def get_enrichment_stats(
         pending=cast(int, stats.get("pending", 0)),
         not_found=cast(int, stats.get("not_found", 0)),
         failed=cast(int, stats.get("failed", 0)),
+        resettable_by_provider=cast(
+            dict[str, int], stats.get("resettable_by_provider", {})
+        ),
         by_provider=cast(dict[str, int], stats.get("by_provider", {})),
         by_quality=cast(dict[str, int], stats.get("by_quality", {})),
         providers=[
@@ -268,15 +284,30 @@ def pin_enrichment_record(
     return EnrichmentPinResponse.model_validate(payload)
 
 
+@router.post("/enrichment/requeue", response_model=EnrichmentRequeueResponse)
+def requeue_enrichment(
+    request: EnrichmentRequeueRequest,
+    storage: RequiredStorage,
+    config: RequiredConfig,
+) -> EnrichmentRequeueResponse:
+    _item_or_404(storage, request.item_id, request.user_id)
+    storage.enrichment.requeue(request.item_id)
+    started = EnrichmentManager(storage, config).start_enrichment(
+        user_id=request.user_id, content_item_id=request.item_id
+    )
+    payload = enrichment_requeue_to_dict(request.item_id, started)
+    return EnrichmentRequeueResponse.model_validate(payload)
+
+
 @router.post("/enrichment/reset")
 def reset_enrichment(
     request: EnrichmentResetRequest,
     storage: RequiredStorage,
     config: RequiredConfig,
 ) -> dict[str, Any]:
-    """Re-queue items the next run would otherwise skip: everything a provider
-    settled, everything of one content type, or the one item that failed, which
-    asks for a run of its own.
+    """Drop what the providers in scope stated and re-queue the items: one
+    provider's, one content type's, or the one item that failed, which asks for
+    a run of its own.
     """
     content_type = None
     if request.content_type:

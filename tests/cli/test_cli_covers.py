@@ -52,8 +52,8 @@ def test_backfill_counts_the_items_it_cannot_fetch_and_names_the_way_to_them(
 
     assert result.exit_code == 0
     assert str(finished.without_cover) in result.output
-    for step in ("reset", "start"):
-        assert f"{enrichment.name} {enrichment.commands[step].name}" in result.output
+    requeue = enrichment.commands["requeue"]
+    assert f"{enrichment.name} {requeue.name}" in result.output
 
 
 def test_backfill_refuses_to_start_beside_the_one_the_web_started(

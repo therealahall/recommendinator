@@ -1,4 +1,7 @@
+import sqlite3
 from pathlib import Path
+from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -10,6 +13,9 @@ from src.recommendations.content_length import (
     classify_length,
     score_length_match,
 )
+from src.storage.derived import write_derived_columns
+from src.storage.field_writes import FieldWriter, WriterBand, read_field_writes
+from src.storage.item_merges import MergeEvidence
 from src.storage.manager import StorageManager
 from src.storage.schema import create_user
 
@@ -29,6 +35,26 @@ def save_unenriched(
         ),
         user_id=user_id,
     )
+
+
+def provider_enriches(
+    storage_manager: StorageManager, db_id: int, provider: str, **stated: Any
+) -> None:
+    item = storage_manager.get_content_item(db_id)
+    assert item is not None
+    storage_manager.save_enrichment_metadata(
+        db_id, item, FieldWriter(WriterBand.PROVIDER, provider), stated
+    )
+
+
+def field_writers(
+    storage_manager: StorageManager, db_id: int
+) -> set[tuple[WriterBand, str, str]]:
+    with storage_manager.connection() as conn:
+        return {
+            (write.writer_kind, write.writer, write.field)
+            for write in read_field_writes(conn.cursor(), db_id)
+        }
 
 
 class TestEnrichmentStatusMethods:
@@ -115,6 +141,108 @@ class TestEnrichmentStatusMethods:
         assert status is not None
         assert status["enrichment_quality"] is None
         assert status["needs_enrichment"] is True
+
+    def test_reset_drops_what_the_provider_stated_and_rebuilds_on_what_is_left(
+        self, storage_manager: StorageManager
+    ) -> None:
+        db_id = storage_manager.save_content_item(
+            ContentItem(
+                id="movie1",
+                title="Prey",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.UNREAD,
+                source="radarr",
+                metadata={"release_year": 1984},
+            )
+        )
+        provider_enriches(
+            storage_manager, db_id, "tmdb", release_year=1985, runtime=137
+        )
+        storage_manager.enrichment.mark_complete(db_id, "tmdb", "high")
+
+        assert storage_manager.enrichment.reset() == 1
+
+        rebuilt = storage_manager.get_content_item(db_id)
+        assert rebuilt is not None
+        assert rebuilt.metadata["release_year"] == 1984
+        assert rebuilt.metadata.get("runtime") is None
+        assert field_writers(storage_manager, db_id) == {
+            (WriterBand.SOURCE, "radarr", "title"),
+            (WriterBand.SOURCE, "radarr", "release_year"),
+        }
+
+    def test_reset_by_provider_reaches_an_item_another_provider_was_credited_with(
+        self, storage_manager: StorageManager
+    ) -> None:
+        db_id = save_unenriched(storage_manager, "item7")
+        provider_enriches(storage_manager, db_id, "tmdb", genres=["Action"])
+        storage_manager.enrichment.mark_complete(db_id, "hardcover", "high")
+
+        assert storage_manager.enrichment.reset(provider="tmdb") == 1
+
+        assert (WriterBand.PROVIDER, "tmdb", "genres") not in field_writers(
+            storage_manager, db_id
+        )
+        status = storage_manager.enrichment.status(db_id)
+        assert status is not None and status["needs_enrichment"] is True
+
+    def test_a_reset_commits_each_item_before_it_walks_to_the_next(
+        self, storage_manager: StorageManager
+    ) -> None:
+        first = save_unenriched(storage_manager, "item1")
+        second = save_unenriched(storage_manager, "item2")
+        provider_enriches(storage_manager, first, "tmdb", runtime=137)
+        provider_enriches(storage_manager, second, "tmdb", runtime=140)
+        committed = write_derived_columns
+        seen: list[int] = []
+
+        def peek(cursor: sqlite3.Cursor, db_id: int) -> None:
+            if db_id == second:
+                reader = sqlite3.connect(storage_manager.sqlite_db.db_path)
+                try:
+                    seen.append(
+                        reader.execute(
+                            "SELECT COUNT(*) FROM content_item_field_writes"
+                            " WHERE content_item_id = ? AND writer = 'tmdb'",
+                            (first,),
+                        ).fetchone()[0]
+                    )
+                finally:
+                    reader.close()
+            committed(cursor, db_id)
+
+        with patch("src.storage.sqlite_db.write_derived_columns", side_effect=peek):
+            storage_manager.sqlite_db.reset_provider_writes([first, second], "tmdb")
+
+        assert seen == [0]
+
+    def test_reset_by_provider_leaves_the_field_another_provider_also_stated(
+        self, storage_manager: StorageManager
+    ) -> None:
+        db_id = save_unenriched(storage_manager, "item7")
+        provider_enriches(storage_manager, db_id, "tmdb", runtime=137)
+        provider_enriches(storage_manager, db_id, "omdb", runtime=140)
+
+        storage_manager.enrichment.reset(provider="tmdb")
+
+        rebuilt = storage_manager.get_content_item(db_id)
+        assert rebuilt is not None
+        assert rebuilt.metadata["runtime"] == 140
+
+    def test_reset_empties_a_field_whose_only_word_left_is_an_absorbed_rows_edit(
+        self, storage_manager: StorageManager
+    ) -> None:
+        survivor = save_unenriched(storage_manager, "item8")
+        absorbed = save_unenriched(storage_manager, "item9")
+        assert storage_manager.update_item_from_ui(db_id=absorbed, genres=["Co-op"])
+        provider_enriches(storage_manager, survivor, "tmdb", genres=["Action"])
+        storage_manager.merge_content_items(survivor, absorbed, MergeEvidence.MANUAL)
+
+        storage_manager.enrichment.reset(content_item_id=survivor)
+
+        rebuilt = storage_manager.get_content_item(survivor)
+        assert rebuilt is not None
+        assert rebuilt.metadata.get("genres") is None
 
 
 class TestGetItemsNeedingEnrichment:
@@ -345,6 +473,32 @@ class TestEnrichmentStats:
 
         assert (stats["total"], stats["pending"], stats["resettable"]) == (3, 2, 2)
         assert storage_manager.enrichment.reset() == 2
+
+    def test_a_provider_filter_counts_every_item_it_wrote_to_not_the_credited_ones(
+        self, storage_manager: StorageManager
+    ) -> None:
+        credited = save_unenriched(storage_manager, "item1")
+        written_to = save_unenriched(storage_manager, "item2")
+        provider_enriches(storage_manager, credited, "tmdb", genres=["Action"])
+        provider_enriches(storage_manager, written_to, "tmdb", genres=["Drama"])
+        storage_manager.enrichment.mark_complete(credited, "tmdb", "high")
+        storage_manager.enrichment.mark_complete(written_to, "hardcover", "high")
+
+        stats = storage_manager.enrichment.stats()
+        counted = storage_manager.enrichment.reset_count(provider="tmdb")
+
+        assert stats["by_provider"]["tmdb"] == 1
+        assert counted == 2
+        assert stats["resettable_by_provider"]["tmdb"] == counted
+        assert storage_manager.enrichment.reset(provider="tmdb") == counted
+
+    def test_a_not_found_item_names_no_provider_in_the_resettable_counts(
+        self, storage_manager: StorageManager
+    ) -> None:
+        db_id = save_unenriched(storage_manager, "item1")
+        storage_manager.enrichment.mark_complete(db_id, "none", "not_found")
+
+        assert storage_manager.enrichment.stats()["resettable_by_provider"] == {}
 
     def test_stats_for_one_user_exclude_another_users_items(
         self, storage_manager: StorageManager

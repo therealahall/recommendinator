@@ -196,10 +196,23 @@ def enrichment_pin_to_dict(
     }
 
 
+def enrichment_requeue_to_dict(
+    db_id: int, started: EnrichmentStart
+) -> dict[str, object]:
+    return {
+        "item_id": db_id,
+        "message": (
+            f"Item {db_id} is queued for enrichment, everything it holds "
+            f"standing. {_RUN_CLAUSES[started]}"
+        ),
+        "run": started.value,
+    }
+
+
 def enrichment_reset_to_dict(
     count: int, started: EnrichmentStart | None
 ) -> dict[str, object]:
-    said = f"Reset enrichment status for {count} item(s)"
+    said = f"Dropped what the providers stated for {count} item(s) and re-queued them"
     if started is not None:
         said = f"{said}. {_RUN_CLAUSES[started]}"
     return {"message": said, "count": count, "run": started.value if started else None}

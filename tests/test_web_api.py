@@ -2731,6 +2731,22 @@ class TestSettingsEndpoints:
         assert setting["value"] == 7
         assert setting["db_overridden"] is True
 
+    def test_a_precedence_save_hosts_the_rebuild_the_service_owes(
+        self, settings_env
+    ) -> None:
+        client, storage, _config = settings_env
+        listed = client.get("/api/settings").json()
+        order = self._find(listed, PROVIDER_ORDER_KEY)["value"]
+
+        response = client.put(
+            "/api/settings",
+            json={"updates": {PROVIDER_ORDER_KEY: list(reversed(order))}},
+        )
+
+        assert response.status_code == 200
+        assert storage.rebuild_jobs.read().started_at is not None
+        assert storage.rebuild_jobs.rerun_requested() is False
+
     def test_put_invalid_returns_422_no_partial_write(self, settings_env) -> None:
         client, storage, config = settings_env
 
@@ -3095,6 +3111,9 @@ _GUARDED_ENDPOINTS = [
     _Endpoint("POST", "/api/update", ("storage", "config"), body={"source": "all"}),
     _Endpoint("POST", "/api/covers/backfill", ("storage", "config")),
     _Endpoint("POST", "/api/covers/backfill/stop", ("storage",)),
+    _Endpoint("POST", "/api/library/rebuild", ("storage",)),
+    _Endpoint("POST", "/api/library/rebuild/stop", ("storage",)),
+    _Endpoint("GET", "/api/library/rebuild/status", ("storage",)),
     _Endpoint(
         "GET",
         "/api/covers/{item_id}",
@@ -3191,6 +3210,12 @@ _GUARDED_ENDPOINTS = [
     _Endpoint("POST", "/api/enrichment/start", ("storage", "config"), body={}),
     _Endpoint("GET", "/api/enrichment/stats", ("config", "storage")),
     _Endpoint("POST", "/api/enrichment/reset", ("storage",), body={}),
+    _Endpoint(
+        "POST",
+        "/api/enrichment/requeue",
+        ("storage", "config"),
+        body={"item_id": 1},
+    ),
     _Endpoint(
         "GET",
         "/api/enrichment/candidates",
