@@ -10,6 +10,7 @@ from src.enrichment.provider_base import pins_of
 from src.enrichment.registry import get_enrichment_registry
 from src.models.content import ContentItem, get_enum_value
 from src.models.detail_fields import to_int
+from src.storage.enrichment_status import ResetCounts
 from src.utils.matching import Candidate
 from src.utils.series import (
     get_series_name_from_metadata,
@@ -210,12 +211,23 @@ def enrichment_requeue_to_dict(
 
 
 def enrichment_reset_to_dict(
-    count: int, started: EnrichmentStart | None
+    counts: ResetCounts, started: EnrichmentStart | None, hard: bool = False
 ) -> dict[str, object]:
-    said = f"Dropped what the providers stated for {count} item(s) and re-queued them"
+    stated = "what the providers stated"
+    if hard:
+        stated += " and the values no writer claimed"
+    said = (
+        f"Dropped {stated} for {counts.stripped} item(s)"
+        f" and re-queued {counts.requeued} item(s)"
+    )
     if started is not None:
         said = f"{said}. {_RUN_CLAUSES[started]}"
-    return {"message": said, "count": count, "run": started.value if started else None}
+    return {
+        "message": said,
+        "dropped": counts.stripped,
+        "requeued": counts.requeued,
+        "run": started.value if started else None,
+    }
 
 
 def completion_to_dict(title: str, db_id: int) -> dict[str, object]:

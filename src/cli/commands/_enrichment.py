@@ -302,6 +302,7 @@ def enrichment_status(ctx: click.Context, user_id: int, output_format: str) -> N
         click.echo(f"  Pending: {stats['pending']}")
         click.echo(f"  Not found: {stats['not_found']}")
         click.echo(f"  Failed: {stats['failed']}")
+        click.echo(f"  Holding unclaimed values: {stats['legacy_items']}")
 
         if stats["by_provider"]:
             click.echo("\nBy Provider:")
@@ -488,6 +489,11 @@ def enrichment_requeue(
     help="User ID for filtering items",
 )
 @click.option(
+    "--hard",
+    is_flag=True,
+    help="Also delete the values no writer ever claimed, from before the ledger",
+)
+@click.option(
     "--yes",
     is_flag=True,
     help="Skip confirmation prompt",
@@ -499,6 +505,7 @@ def enrichment_reset(
     content_type_str: str | None,
     item_id: int | None,
     user_id: int,
+    hard: bool,
     yes: bool,
 ) -> None:
     """Drop what the providers in scope stated and re-queue the items: one
@@ -544,23 +551,43 @@ def enrichment_reset(
             " rest — and each item is rebuilt on what its sources, your edits and"
             " its pins say. The next run refills it from rate-limited APIs."
         )
+        if hard:
+            if content_type is not None:
+                legacy_subject = "wherever a matching item holds one"
+            else:
+                legacy_counted = storage.enrichment.legacy_count(
+                    provider=provider_filter,
+                    content_type=None,
+                    user_id=user_id,
+                    content_item_id=item_id,
+                )
+                legacy_subject = f"held by at least {legacy_counted} item(s)"
+            question += (
+                f" It also deletes the values no writer ever claimed, {legacy_subject},"
+                " cover art included: the next enrichment run refetches a cover, and"
+                " anything else comes back only when the writer that supplied it"
+                " states it again. Your edits, pins, ratings and reviews stay, but a"
+                " creator you typed at the completion door before this release goes"
+                " with the rest."
+            )
         if not click.confirm(question):
             click.echo("Aborted.")
             return
 
-    count = storage.enrichment.reset(
+    counts = storage.enrichment.reset(
         provider=provider_filter,
         content_type=content_type,
         user_id=user_id,
         content_item_id=item_id,
+        hard=hard,
     )
 
     if item_id is None:
-        click.echo(enrichment_reset_to_dict(count, None)["message"])
+        click.echo(enrichment_reset_to_dict(counts, None, hard=hard)["message"])
         return
 
     manager = EnrichmentManager(storage, ctx.obj["config"])
     started = manager.start_enrichment(user_id=user_id, content_item_id=item_id)
-    click.echo(enrichment_reset_to_dict(count, started)["message"])
+    click.echo(enrichment_reset_to_dict(counts, started, hard=hard)["message"])
     if started is EnrichmentStart.STARTED:
         _await_run(manager, storage, err=False)

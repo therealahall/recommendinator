@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from src.models.content import ContentItem, ContentType
 from src.storage.schema import (
     EnrichmentStatusDict,
+    enrichment_legacy_count,
     enrichment_reset_count,
     enrichment_scope_ids,
     get_enrichment_stats,
@@ -14,6 +17,12 @@ from src.storage.schema import (
     requeue_enrichment_status,
 )
 from src.storage.sqlite_db import SQLiteDB
+
+
+@dataclass(frozen=True)
+class ResetCounts:
+    requeued: int
+    stripped: int
 
 
 class EnrichmentStore:
@@ -111,7 +120,8 @@ class EnrichmentStore:
         content_type: ContentType | None = None,
         user_id: int | None = None,
         content_item_id: int | None = None,
-    ) -> int:
+        hard: bool = False,
+    ) -> ResetCounts:
         """Each filter left as ``None`` widens the reset. What the providers in
         scope stated goes, and each item rebuilds on what is left standing.
         """
@@ -123,8 +133,8 @@ class EnrichmentStore:
             requeued = requeue_enrichment_status(
                 conn, provider, content_type_str, user_id, content_item_id
             )
-        self._sqlite_db.reset_provider_writes(scope, provider)
-        return requeued
+        stripped = self._sqlite_db.reset_provider_writes(scope, provider, legacy=hard)
+        return ResetCounts(requeued=requeued, stripped=len(stripped))
 
     def reset_count(
         self,
@@ -136,6 +146,19 @@ class EnrichmentStore:
         content_type_str = content_type.value if content_type else None
         with self._sqlite_db.connection() as conn:
             return enrichment_reset_count(
+                conn, provider, content_type_str, user_id, content_item_id
+            )
+
+    def legacy_count(
+        self,
+        provider: str | None = None,
+        content_type: ContentType | None = None,
+        user_id: int | None = None,
+        content_item_id: int | None = None,
+    ) -> int:
+        content_type_str = content_type.value if content_type else None
+        with self._sqlite_db.connection() as conn:
+            return enrichment_legacy_count(
                 conn, provider, content_type_str, user_id, content_item_id
             )
 

@@ -6,7 +6,7 @@ from unittest.mock import patch
 import pytest
 
 from src.enrichment.manager import merge_enrichment
-from src.enrichment.provider_base import EnrichmentResult
+from src.enrichment.provider_base import EnrichmentResult, pins_of
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.recommendations.content_length import (
     LengthPreference,
@@ -14,7 +14,12 @@ from src.recommendations.content_length import (
     score_length_match,
 )
 from src.storage.derived import write_derived_columns
-from src.storage.field_writes import FieldWriter, WriterBand, read_field_writes
+from src.storage.field_writes import (
+    LEGACY_WRITER,
+    FieldWriter,
+    WriterBand,
+    read_field_writes,
+)
 from src.storage.item_merges import MergeEvidence
 from src.storage.manager import StorageManager
 from src.storage.schema import create_user
@@ -25,6 +30,7 @@ def save_unenriched(
     item_id: str,
     content_type: ContentType = ContentType.MOVIE,
     user_id: int | None = None,
+    source: str | None = None,
 ) -> int:
     return storage_manager.save_content_item(
         ContentItem(
@@ -32,9 +38,16 @@ def save_unenriched(
             title=item_id,
             content_type=content_type,
             status=ConsumptionStatus.UNREAD,
+            source=source,
         ),
         user_id=user_id,
     )
+
+
+def library_holds(storage_manager: StorageManager, db_id: int, **stated: Any) -> None:
+    item = storage_manager.get_content_item(db_id)
+    assert item is not None
+    storage_manager.save_enrichment_metadata(db_id, item, LEGACY_WRITER, stated)
 
 
 def provider_enriches(
@@ -123,9 +136,9 @@ class TestEnrichmentStatusMethods:
         storage_manager.enrichment.mark_complete(db_id1, "tmdb", "high")
         storage_manager.enrichment.mark_complete(db_id2, "other", "high")
 
-        count = storage_manager.enrichment.reset(provider="tmdb")
+        counts = storage_manager.enrichment.reset(provider="tmdb")
 
-        assert count == 1
+        assert counts.requeued == 1
         assert storage_manager.enrichment.status(db_id1)["needs_enrichment"] is True
         assert storage_manager.enrichment.status(db_id2)["needs_enrichment"] is False
 
@@ -160,7 +173,7 @@ class TestEnrichmentStatusMethods:
         )
         storage_manager.enrichment.mark_complete(db_id, "tmdb", "high")
 
-        assert storage_manager.enrichment.reset() == 1
+        assert storage_manager.enrichment.reset().stripped == 1
 
         rebuilt = storage_manager.get_content_item(db_id)
         assert rebuilt is not None
@@ -178,7 +191,7 @@ class TestEnrichmentStatusMethods:
         provider_enriches(storage_manager, db_id, "tmdb", genres=["Action"])
         storage_manager.enrichment.mark_complete(db_id, "hardcover", "high")
 
-        assert storage_manager.enrichment.reset(provider="tmdb") == 1
+        assert storage_manager.enrichment.reset(provider="tmdb").stripped == 1
 
         assert (WriterBand.PROVIDER, "tmdb", "genres") not in field_writers(
             storage_manager, db_id
@@ -243,6 +256,166 @@ class TestEnrichmentStatusMethods:
         rebuilt = storage_manager.get_content_item(survivor)
         assert rebuilt is not None
         assert rebuilt.metadata.get("genres") is None
+
+
+class TestHardReset:
+    @pytest.fixture
+    def storage_manager(self, tmp_path: Path) -> StorageManager:
+        return StorageManager(sqlite_path=tmp_path / "test.db")
+
+    def test_a_hard_reset_of_an_all_legacy_item_leaves_its_title_standing(
+        self, storage_manager: StorageManager
+    ) -> None:
+        db_id = save_unenriched(storage_manager, "item10")
+        library_holds(storage_manager, db_id, description="From before the ledger")
+
+        storage_manager.enrichment.reset(content_item_id=db_id, hard=True)
+
+        rebuilt = storage_manager.get_content_item(db_id)
+        assert rebuilt is not None
+        assert rebuilt.title == "item10"
+        assert rebuilt.metadata.get("description") is None
+
+    def test_a_reset_that_is_not_hard_leaves_what_the_library_itself_held(
+        self, storage_manager: StorageManager
+    ) -> None:
+        db_id = save_unenriched(storage_manager, "item11", source="radarr")
+        library_holds(storage_manager, db_id, description="From before the ledger")
+
+        storage_manager.enrichment.reset(content_item_id=db_id)
+
+        rebuilt = storage_manager.get_content_item(db_id)
+        assert rebuilt is not None
+        assert rebuilt.metadata["description"] == "From before the ledger"
+
+    def test_a_hard_reset_keeps_the_operators_own_word_and_the_pin(
+        self, storage_manager: StorageManager
+    ) -> None:
+        db_id = save_unenriched(storage_manager, "item12", source="radarr")
+        library_holds(storage_manager, db_id, description="From before the ledger")
+        assert storage_manager.update_item_from_ui(db_id=db_id, genres=["Co-op"])
+        storage_manager.set_enrichment_pins(db_id, {"rawg": "3328"})
+
+        storage_manager.enrichment.reset(content_item_id=db_id, hard=True)
+
+        rebuilt = storage_manager.get_content_item(db_id)
+        assert rebuilt is not None
+        assert rebuilt.metadata.get("description") is None
+        assert rebuilt.metadata["genres"] == ["Co-op"]
+        assert pins_of(rebuilt.metadata) == {"rawg": "3328"}
+
+    def test_a_hard_reset_keeps_the_creator_the_completion_door_recorded(
+        self, storage_manager: StorageManager
+    ) -> None:
+        db_id = storage_manager.complete_content_item(
+            ContentItem(
+                id=None,
+                title="Piranesi",
+                author="Susanna Clarke",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+            )
+        )
+
+        storage_manager.enrichment.reset(hard=True)
+
+        rebuilt = storage_manager.get_content_item(db_id)
+        assert rebuilt is not None
+        assert rebuilt.author == "Susanna Clarke"
+
+    def test_a_hard_reset_blanks_a_cover_no_writer_claimed(
+        self, storage_manager: StorageManager
+    ) -> None:
+        db_id = save_unenriched(storage_manager, "item15", source="radarr")
+        library_holds(storage_manager, db_id, cover_url="https://covers/old.jpg")
+        held = storage_manager.get_content_item(db_id)
+        assert held is not None and held.cover_url == "https://covers/old.jpg"
+
+        storage_manager.enrichment.reset(content_item_id=db_id, hard=True)
+
+        rebuilt = storage_manager.get_content_item(db_id)
+        assert rebuilt is not None
+        assert rebuilt.cover_url is None
+
+    def test_a_hard_reset_of_one_item_leaves_another_items_unclaimed_values(
+        self, storage_manager: StorageManager
+    ) -> None:
+        named = save_unenriched(storage_manager, "item16", source="radarr")
+        bystander = save_unenriched(storage_manager, "item17", source="radarr")
+        library_holds(storage_manager, named, description="From before the ledger")
+        library_holds(storage_manager, bystander, description="Still the library's")
+
+        storage_manager.enrichment.reset(content_item_id=named, hard=True)
+
+        rebuilt = storage_manager.get_content_item(bystander)
+        assert rebuilt is not None
+        assert rebuilt.metadata["description"] == "Still the library's"
+
+    def test_legacy_count_counts_only_items_holding_a_value_no_writer_claimed(
+        self, storage_manager: StorageManager
+    ) -> None:
+        held = save_unenriched(storage_manager, "item13", source="radarr")
+        library_holds(storage_manager, held, description="From before the ledger")
+        save_unenriched(storage_manager, "item14", source="radarr")
+
+        assert storage_manager.enrichment.legacy_count() == 1
+        assert storage_manager.enrichment.stats()["legacy_items"] == 1
+
+        storage_manager.enrichment.reset(content_item_id=held, hard=True)
+
+        assert storage_manager.enrichment.legacy_count() == 0
+
+    def test_legacy_count_passes_over_an_item_whose_source_states_the_field_too(
+        self, storage_manager: StorageManager
+    ) -> None:
+        db_id = storage_manager.save_content_item(
+            ContentItem(
+                id="item18",
+                title="item18",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.UNREAD,
+                source="radarr",
+                metadata={"description": "What radarr says"},
+            )
+        )
+        library_holds(storage_manager, db_id, description="From before the ledger")
+
+        assert storage_manager.enrichment.legacy_count() == 0
+
+        storage_manager.enrichment.reset(hard=True)
+
+        rebuilt = storage_manager.get_content_item(db_id)
+        assert rebuilt is not None
+        assert rebuilt.metadata["description"] == "What radarr says"
+
+    def test_legacy_count_counts_an_item_only_when_this_reset_drops_its_other_word(
+        self, storage_manager: StorageManager
+    ) -> None:
+        db_id = save_unenriched(storage_manager, "item21", source="radarr")
+        library_holds(storage_manager, db_id, description="From before the ledger")
+        provider_enriches(storage_manager, db_id, "tmdb", description="What tmdb says")
+        provider_enriches(storage_manager, db_id, "openlibrary", runtime=120)
+
+        assert storage_manager.enrichment.legacy_count() == 1
+        assert storage_manager.enrichment.legacy_count(provider="openlibrary") == 0
+
+        storage_manager.enrichment.reset(hard=True)
+
+        rebuilt = storage_manager.get_content_item(db_id)
+        assert rebuilt is not None
+        assert rebuilt.metadata.get("description") is None
+
+    def test_a_reset_counts_what_it_stripped_apart_from_what_it_re_queued(
+        self, storage_manager: StorageManager
+    ) -> None:
+        untracked = save_unenriched(storage_manager, "item19")
+        library_holds(storage_manager, untracked, description="From before the ledger")
+        tracked = save_unenriched(storage_manager, "item20", source="radarr")
+        storage_manager.enrichment.mark_complete(tracked, "tmdb", "high")
+
+        counts = storage_manager.enrichment.reset(hard=True)
+
+        assert (counts.requeued, counts.stripped) == (1, 1)
 
 
 class TestGetItemsNeedingEnrichment:
@@ -472,7 +645,7 @@ class TestEnrichmentStats:
         stats = storage_manager.enrichment.stats()
 
         assert (stats["total"], stats["pending"], stats["resettable"]) == (3, 2, 2)
-        assert storage_manager.enrichment.reset() == 2
+        assert storage_manager.enrichment.reset().requeued == 2
 
     def test_a_provider_filter_counts_every_item_it_wrote_to_not_the_credited_ones(
         self, storage_manager: StorageManager
@@ -490,7 +663,7 @@ class TestEnrichmentStats:
         assert stats["by_provider"]["tmdb"] == 1
         assert counted == 2
         assert stats["resettable_by_provider"]["tmdb"] == counted
-        assert storage_manager.enrichment.reset(provider="tmdb") == counted
+        assert storage_manager.enrichment.reset(provider="tmdb").requeued == counted
 
     def test_a_not_found_item_names_no_provider_in_the_resettable_counts(
         self, storage_manager: StorageManager

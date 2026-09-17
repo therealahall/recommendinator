@@ -20,11 +20,13 @@ function makeStats(overrides: Partial<EnrichmentStatsResponse> = {}): Enrichment
     enabled: true,
     total: 100,
     resettable: 90,
+    legacy_items: 6,
     enriched: 50,
     pending: 45,
     not_found: 5,
     failed: 0,
     resettable_by_provider: {},
+    legacy_by_provider: {},
     by_provider: {},
     by_quality: {},
     providers: [
@@ -317,7 +319,7 @@ describe('EnrichmentCard', () => {
       await wrapper.find('[data-testid="confirm-panel-confirm"]').trigger('click')
       await flushPromises()
 
-      expect(data.resetEnrichment).toHaveBeenCalledWith(undefined, '')
+      expect(data.resetEnrichment).toHaveBeenCalledWith(undefined, '', false)
     })
 
     it('puts the keyboard back on Reset once the question is answered', async () => {
@@ -353,7 +355,7 @@ describe('EnrichmentCard', () => {
       await wrapper.find('[data-testid="confirm-panel-confirm"]').trigger('click')
       await flushPromises()
 
-      expect(data.resetEnrichment).toHaveBeenCalledWith('movie', 'wikidata')
+      expect(data.resetEnrichment).toHaveBeenCalledWith('movie', 'wikidata', false)
     })
 
     it('keeps the keyboard on the button it disables while the request runs', async () => {
@@ -368,6 +370,59 @@ describe('EnrichmentCard', () => {
 
       expect(button.attributes('disabled')).toBeUndefined()
       expect(document.activeElement).toBe(button.element)
+    })
+
+    it('warns about the unclaimed values in the words the CLI confirmation uses', async () => {
+      const wrapper = mountWithEnrichment()
+
+      await wrapper.find('[aria-label="Drop unclaimed values too"]').trigger('click')
+      await wrapper.find('[data-testid="reset-btn"]').trigger('click')
+
+      const question = wrapper.get('[data-testid="confirm-panel"]').text()
+      expect(question).toContain(
+        'values no writer ever claimed, held by at least 6 item(s), cover art included',
+      )
+      expect(question).toContain('the next enrichment run refetches a cover')
+      expect(question).toContain(
+        'comes back only when the writer that supplied it states it again',
+      )
+      expect(question).toContain('Your edits, pins, ratings and reviews stay')
+      expect(question).toContain(
+        'a creator you typed at the completion door before this release',
+      )
+    })
+
+    it('claims no count for the unclaimed values under a type filter, having none', async () => {
+      const wrapper = mountWithEnrichment()
+
+      await wrapper.findAll('[role="radio"]').find((p) => p.text() === 'Movie')!.trigger('click')
+      await wrapper.find('[aria-label="Drop unclaimed values too"]').trigger('click')
+      await wrapper.find('[data-testid="reset-btn"]').trigger('click')
+
+      expect(wrapper.get('[data-testid="confirm-panel"]').text()).toContain(
+        'values no writer ever claimed, wherever a matching item holds one',
+      )
+    })
+
+    it('sends the hard flag the CLI offers', async () => {
+      const wrapper = mountWithEnrichment()
+      const data = useDataStore()
+      data.resetEnrichment = vi.fn().mockResolvedValue('Reset 6 item(s).')
+
+      await wrapper.find('[aria-label="Drop unclaimed values too"]').trigger('click')
+      await wrapper.find('[data-testid="reset-btn"]').trigger('click')
+      await wrapper.find('[data-testid="confirm-panel-confirm"]').trigger('click')
+      await flushPromises()
+
+      expect(data.resetEnrichment).toHaveBeenCalledWith(undefined, '', true)
+    })
+
+    it('reports how many items still hold unclaimed values', () => {
+      const wrapper = mountWithEnrichment()
+
+      expect(wrapper.get('[data-testid="enrichment-legacy"]').text()).toBe(
+        '6 holding unclaimed values',
+      )
     })
 
     it('leaves the items alone when the question is declined', async () => {

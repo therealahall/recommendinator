@@ -174,6 +174,8 @@ Different from "not found". The provider never answered, having timed out, been 
 
 `enrichment reset --id <id>` is the heavier door: it drops what the providers stated about the item before re-enriching, so a field only a provider ever filled is emptied. Reach for it when the stored values are wrong, not when a provider failed.
 
+Adding `--hard` also drops what the library itself held before the ledger existed, unclaimed by any writer, cover art included: only the writer that supplied a value stating it again brings it back, which a re-sync or a re-enrich does, and the next enrichment run refetches the cover. A creator you typed at the completion door before this release goes with it. Your ratings, reviews, edits and pins do not.
+
 An item one provider matched while another failed is saved and still reports under **Failed**, credited to the provider that matched, until a run hears from the one that failed.
 
 **Keeping a failure queued is new.** Before, *any* provider error settled the

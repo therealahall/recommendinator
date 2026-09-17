@@ -845,26 +845,45 @@ def test_the_precedence_the_operator_set_decides_between_two_matches(
     assert stored.metadata["pages"] == 700
 
 
-def test_a_sourceless_save_is_outranked_by_every_source_that_names_itself(
+def test_a_provider_corrects_the_creator_the_completion_door_typed(
     tmp_path: Path,
 ) -> None:
-    db = SQLiteDB(tmp_path / "legacy_door.db")
+    db = SQLiteDB(tmp_path / "completion_door.db")
     db_id = db.complete_content_item(
         ContentItem(
             title="Dune",
-            author="Frank Herbert",
+            author="frank herbert",
             content_type=ContentType.BOOK,
             status=ConsumptionStatus.COMPLETED,
-            metadata={"description": "Typed at the prompt."},
         )
     )
 
-    synced = db.save_content_item(_book("goodreads_rss", description="A feed blurb."))
+    _enriches(db, db_id, "openlibrary", author="Frank Herbert")
+
+    stored = db.get_content_item(db_id)
+    assert stored is not None
+    assert stored.author == "Frank Herbert"
+
+
+def test_a_source_corrects_the_creator_the_completion_door_typed(
+    tmp_path: Path,
+) -> None:
+    db = SQLiteDB(tmp_path / "completion_then_sync.db")
+    db_id = db.complete_content_item(
+        ContentItem(
+            title="Dune",
+            author="frank herbert",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+        )
+    )
+
+    synced = db.save_content_item(_book("goodreads_rss"))
 
     stored = db.get_content_item(db_id)
     assert synced == db_id
     assert stored is not None
-    assert stored.metadata["description"] == "A feed blurb."
+    assert stored.author == "Frank Herbert"
 
 
 def _matrix(**metadata: Any) -> ContentItem:

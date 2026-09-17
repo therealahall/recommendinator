@@ -56,6 +56,7 @@ from src.storage.field_rebuild import (
     rebuild_item_fields,
 )
 from src.storage.field_writes import (
+    COMPLETION_WRITER,
     LEGACY_WRITER,
     MANUAL_WRITER,
     FieldWrite,
@@ -627,17 +628,22 @@ class SQLiteDB:
             return changed
 
     def reset_provider_writes(
-        self, db_ids: Sequence[int], provider: str | None = None
-    ) -> None:
+        self,
+        db_ids: Sequence[int],
+        provider: str | None = None,
+        legacy: bool = False,
+    ) -> list[int]:
+        stripped: list[int] = []
         with self.connection() as conn:
             cursor = conn.cursor()
             for db_id in db_ids:
                 cursor.execute("SELECT 1 FROM content_items WHERE id = ?", (db_id,))
                 if cursor.fetchone() is None:
                     continue
-                dropped = drop_provider_writes(cursor, db_id, provider)
+                dropped = drop_provider_writes(cursor, db_id, provider, legacy=legacy)
                 if not dropped:
                     continue
+                stripped.append(db_id)
                 remaining = {
                     write.field
                     for write in read_field_writes(cursor, db_id)
@@ -649,6 +655,7 @@ class SQLiteDB:
                     cursor, db_id, clear_fields=frozenset(dropped - remaining)
                 )
                 conn.commit()
+        return stripped
 
     def clear_cover_url(self, db_id: int) -> bool:
         """The url is buried before the clear, so the rebuild never resolves it
@@ -683,7 +690,9 @@ class SQLiteDB:
 
         with self.connection() as conn:
             cursor = conn.cursor()
-            db_id = self._upsert_content_item(cursor, item, user_id).db_id
+            db_id = self._upsert_content_item(
+                cursor, item, user_id, unsourced=COMPLETION_WRITER
+            ).db_id
             self._write_completion(
                 cursor,
                 db_id,
@@ -732,7 +741,11 @@ class SQLiteDB:
         )
 
     def _upsert_content_item(
-        self, cursor: sqlite3.Cursor, item: ContentItem, user_id: int | None
+        self,
+        cursor: sqlite3.Cursor,
+        item: ContentItem,
+        user_id: int | None,
+        unsourced: FieldWriter = LEGACY_WRITER,
     ) -> SavedItem:
         """Runs on the caller's cursor and does not commit, so a caller can add
         writes to it.
@@ -880,12 +893,10 @@ class SQLiteDB:
         stated = dict(item.metadata or {})
         stated["title"] = item.title
         stated["cover_url"] = incoming_cover
-        # An item nobody sourced is the library's own word, which every named
-        # writer outranks.
+        # An item nobody sourced falls to the door's own writer: the library's
+        # unclaimed word unless the door names one.
         writer = (
-            FieldWriter(WriterBand.SOURCE, item.source)
-            if item.source
-            else LEGACY_WRITER
+            FieldWriter(WriterBand.SOURCE, item.source) if item.source else unsourced
         )
         record_field_writes(
             cursor,

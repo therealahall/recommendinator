@@ -580,6 +580,7 @@ describe('useDataStore', () => {
       expect(mockPost).toHaveBeenCalledWith('/enrichment/reset', {
         content_type: 'movie',
         provider: 'rawg',
+        hard: false,
         user_id: 1,
       })
     })

@@ -18,6 +18,7 @@ from src.enrichment.manager import (
 from src.enrichment.providers.hardcover.hardcover import HardcoverProvider
 from src.enrichment.registry import get_enrichment_registry
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.storage.enrichment_status import ResetCounts
 from src.storage.manager import StorageManager
 from src.utils.matching import Candidate
 from tests.factories import make_storage_mock
@@ -394,11 +395,13 @@ class TestEnrichmentStatus:
         stats = {
             "total": 100,
             "resettable": 88,
+            "legacy_items": 7,
             "enriched": 80,
             "pending": 15,
             "not_found": 3,
             "failed": 2,
             "resettable_by_provider": {"tmdb": 320},
+            "legacy_by_provider": {"tmdb": 5},
             "by_provider": {"tmdb": 50},
             "by_quality": {"high": 60},
         }
@@ -420,6 +423,26 @@ class TestEnrichmentStatus:
                 )
             ],
         }
+
+    def test_enrichment_status_table_counts_the_items_holding_unclaimed_values(
+        self, cli_runner: CliRunner
+    ) -> None:
+        mock_storage = make_storage_mock()
+        mock_storage.enrichment.stats.return_value = {
+            "total": 100,
+            "enriched": 80,
+            "pending": 15,
+            "not_found": 3,
+            "failed": 2,
+            "legacy_items": 7,
+            "by_provider": {},
+            "by_quality": {},
+        }
+
+        result = _invoke_with_mocks(cli_runner, ["enrichment", "status"], mock_storage)
+
+        assert result.exit_code == 0, result.output
+        assert "Holding unclaimed values: 7" in result.output
 
 
 class TestEnrichmentPinning:
@@ -731,7 +754,9 @@ class TestEnrichmentReset:
 
     def test_enrichment_reset_all(self, cli_runner: CliRunner) -> None:
         mock_storage = make_storage_mock()
-        mock_storage.enrichment.reset.return_value = 50
+        mock_storage.enrichment.reset.return_value = ResetCounts(
+            requeued=50, stripped=12
+        )
 
         result = _invoke_with_mocks(
             cli_runner, ["enrichment", "reset", "--yes"], mock_storage
@@ -739,11 +764,15 @@ class TestEnrichmentReset:
 
         assert result.exit_code == 0
         assert (
-            "Dropped what the providers stated for 50 item(s) and re-queued them"
-            in result.output
+            "Dropped what the providers stated for 12 item(s)"
+            " and re-queued 50 item(s)" in result.output
         )
         mock_storage.enrichment.reset.assert_called_once_with(
-            provider=None, content_type=None, user_id=1, content_item_id=None
+            provider=None,
+            content_type=None,
+            user_id=1,
+            content_item_id=None,
+            hard=False,
         )
 
         # Typed out, "all" is the same absence of a filter as leaving it off.
@@ -770,7 +799,9 @@ class TestEnrichmentReset:
             # operator copies into the terminal is the shouted one.
             for spelled in (name, name.upper()):
                 mock_storage = make_storage_mock()
-                mock_storage.enrichment.reset.return_value = 3
+                mock_storage.enrichment.reset.return_value = ResetCounts(
+                    requeued=3, stripped=3
+                )
 
                 result = _invoke_with_mocks(
                     cli_runner,
@@ -803,7 +834,7 @@ class TestEnrichmentReset:
         self, cli_runner: CliRunner
     ) -> None:
         mock_storage = make_storage_mock()
-        mock_storage.enrichment.reset.return_value = 1
+        mock_storage.enrichment.reset.return_value = ResetCounts(requeued=1, stripped=1)
         manager = _idle_manager()
         manager.start_enrichment.return_value = EnrichmentStart.STARTED
 
@@ -816,11 +847,86 @@ class TestEnrichmentReset:
 
         assert result.exit_code == 0, result.output
         assert (
-            "Dropped what the providers stated for 1 item(s) and re-queued them."
-            " Enriching it now." in result.output
+            "Dropped what the providers stated for 1 item(s) and re-queued"
+            " 1 item(s). Enriching it now." in result.output
         )
         assert mock_storage.enrichment.reset.call_args.kwargs["content_item_id"] == 42
         assert manager.start_enrichment.call_args.kwargs["content_item_id"] == 42
+
+    def test_hard_reset_prompt_names_the_unclaimed_values_and_counts_them(
+        self, cli_runner: CliRunner
+    ) -> None:
+        mock_storage = make_storage_mock()
+        mock_storage.enrichment.reset_count.return_value = 12
+        mock_storage.enrichment.legacy_count.return_value = 4
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["enrichment", "reset", "--hard"],
+            mock_storage,
+            input_text="n\n",
+        )
+
+        assert result.exit_code == 0
+        assert (
+            "values no writer ever claimed, held by at least 4 item(s), cover art"
+            " included" in result.output
+        )
+        assert "the next enrichment run refetches a cover" in result.output
+        assert (
+            "comes back only when the writer that supplied it states it again"
+            in result.output
+        )
+        assert "Your edits, pins, ratings and reviews stay" in result.output
+        assert (
+            "a creator you typed at the completion door before this release"
+            in result.output
+        )
+        mock_storage.enrichment.reset.assert_not_called()
+
+    def test_a_type_filtered_hard_prompt_claims_no_count_it_does_not_have(
+        self, cli_runner: CliRunner
+    ) -> None:
+        mock_storage = make_storage_mock()
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["enrichment", "reset", "--type", "movie", "--hard"],
+            mock_storage,
+            input_text="n\n",
+        )
+
+        assert result.exit_code == 0
+        assert (
+            "values no writer ever claimed, wherever a matching item holds one"
+            in result.output
+        )
+        mock_storage.enrichment.legacy_count.assert_not_called()
+        mock_storage.enrichment.reset.assert_not_called()
+
+    def test_a_bulk_hard_reset_drops_the_unclaimed_values_and_starts_no_run(
+        self, cli_runner: CliRunner
+    ) -> None:
+        mock_storage = make_storage_mock()
+        mock_storage.enrichment.reset.return_value = ResetCounts(
+            requeued=50, stripped=37
+        )
+        manager = _idle_manager()
+
+        result = _invoke_with_enrichment_manager(
+            cli_runner,
+            ["enrichment", "reset", "--hard", "--yes"],
+            mock_storage,
+            manager,
+        )
+
+        assert result.exit_code == 0, result.output
+        assert (
+            "Dropped what the providers stated and the values no writer claimed"
+            " for 37 item(s) and re-queued 50 item(s)" in result.output
+        )
+        assert mock_storage.enrichment.reset.call_args.kwargs["hard"] is True
+        manager.start_enrichment.assert_not_called()
 
     def test_enrichment_reset_refuses_an_id_beside_a_filter(
         self, cli_runner: CliRunner

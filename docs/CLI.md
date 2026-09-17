@@ -468,6 +468,7 @@ uv run python -m src.cli enrichment job                       # the live run, if
 uv run python -m src.cli enrichment stop
 uv run python -m src.cli enrichment reset                     # drop every provider's values, then re-enrich
 uv run python -m src.cli enrichment reset --id 42             # drop one item's provider values, then re-enrich
+uv run python -m src.cli enrichment reset --hard              # also drop the values no writer claimed
 uv run python -m src.cli enrichment requeue --id 42           # enrich one item again, keeping what it holds
 uv run python -m src.cli enrichment candidates --id 42        # what each provider offers
 uv run python -m src.cli enrichment pin --id 42 --provider rawg --record 41494
@@ -487,6 +488,12 @@ up; the refusal names the ones that can.
 `reset` deletes what the providers in scope stated from the ledger — across a merge group, so a survivor and the rows merged into it go together — and rebuilds each item on what is left standing: what its sources said, your own edits and its pins. A field only a provider ever filled is emptied, and the item is queued for the run that refills it.
 
 `--provider` reaches every item that provider wrote a ledger row for, not only the ones credited to it for the match, so resetting one provider takes back its word everywhere it spoke.
+
+`--hard` takes the unclaimed band with it: what the library held before the ledger existed, which nothing else deletes. Only the writer that supplied a value stating it again brings it back, so a re-sync or a re-enrich restores most of it. It is the recourse for a value a provider stated once and has gone quiet about. In bulk it starts no run.
+
+Your edits, pins, ratings and reviews stand, since a hard reset never drops the manual band, and the title is never cleared. Cover art is not spared: a cover the library held before the ledger goes with the rest, and the next enrichment run refetches it. A creator typed at the completion door before this release is unclaimed too, and goes the same way: nothing recorded which values those were.
+
+`enrichment status` counts the items holding a field the unclaimed band alone would be left to fill, and so does the confirmation. Both are a floor: an item whose genres merge a legacy row with a source's keeps a claimed row, escapes the count, and still loses the legacy entries.
 
 Nothing else drops a row: `requeue`, pinning an item, clearing that pin and a cover found permanently gone each re-queue the item with every ledger row standing.
 

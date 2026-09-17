@@ -528,13 +528,14 @@ export const useDataStore = defineStore('data', () => {
     })
   }
 
-  async function resetEnrichment(contentType?: string, provider?: string) {
+  async function resetEnrichment(contentType?: string, provider?: string, hard = false) {
     const app = useAppStore()
-    const result = await api.post<{ message: string; count: number }>(
+    const result = await api.post<{ message: string; dropped: number; requeued: number }>(
       '/enrichment/reset',
       {
         content_type: contentType || undefined,
         provider: provider || undefined,
+        hard,
         user_id: app.currentUserId,
       },
     )
