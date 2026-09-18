@@ -147,7 +147,7 @@ class TestWikidataSeriesOrdinal:
             authority=SeriesAuthority.AUTHORED,
         )
 
-    def test_a_series_with_no_english_label_states_no_position(
+    def test_a_series_labelled_in_no_language_states_no_position(
         self, provider: WikidataProvider
     ) -> None:
         with patch(_REQUESTS) as mock_get:
@@ -165,6 +165,47 @@ class TestWikidataSeriesOrdinal:
             )
 
         assert ordinal is None
+
+    def test_a_series_named_only_under_the_multilingual_label_is_still_named(
+        self, provider: WikidataProvider
+    ) -> None:
+        """Super Mario Kart counts within Q188196, whose name Wikidata holds
+        under 'mul' alone: asking labels/en for it left the game seriesless.
+        """
+        entities = {
+            "Q1061560": _statements(
+                _VIDEO_GAME, year=1992, series="Q188196", ordinal="1"
+            ),
+            "Q1046604": _statements(
+                _VIDEO_GAME, year=1996, series="Q188196", ordinal="2"
+            ),
+        }
+
+        def _wikidata(url: str, **kwargs: Any) -> MagicMock:
+            for entity_id, statements in entities.items():
+                if url.endswith(f"/{entity_id}/statements"):
+                    return _response(statements)
+            if url.endswith("/labels_with_language_fallback/en"):
+                return _response("Mario Kart")
+            if url.endswith("/labels/en"):
+                return _response(None, status=404)
+            return _response(
+                _search(
+                    {"id": "Q1061560", "label": "Super Mario Kart"},
+                    {
+                        "id": "Q1046604",
+                        "label": "Mario Kart 64",
+                        "aliases": ["Super Mario Kart R"],
+                    },
+                )
+            )
+
+        with patch(_REQUESTS, side_effect=_wikidata):
+            ordinal = provider.fetch_series_ordinal(
+                _item("Super Mario Kart", year=1993), {}
+            )
+
+        assert ordinal == SeriesOrdinal(position=1.0, series_name="Mario Kart")
 
     def test_a_series_stating_no_ordinal_still_names_the_series(
         self, provider: WikidataProvider

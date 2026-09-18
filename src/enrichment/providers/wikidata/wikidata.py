@@ -305,7 +305,13 @@ class WikidataProvider(EnrichmentProvider):
         return payload if isinstance(payload, dict) else {}
 
     def _label(self, entity_id: str) -> str | None:
-        payload = self._get(f"{ITEMS_URL}/{entity_id}/labels/en", unnamed_is_none=True)
+        # Mario Kart and Super Mario hold their name only under the
+        # language-agnostic 'mul' label, where asking for 'en' 404s. The
+        # fallback path redirects to whichever language answers.
+        payload = self._get(
+            f"{ITEMS_URL}/{entity_id}/labels_with_language_fallback/en",
+            unnamed_is_none=True,
+        )
         name = payload.strip() if isinstance(payload, str) else ""
         return name or None
 
