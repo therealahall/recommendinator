@@ -106,10 +106,12 @@ change depends on the field, and is usually less than you expect:
 | `genre` | Merge in. An import never removes a genre |
 | `total_seasons` | Raise it. A smaller number is discarded |
 | `seasons_watched` | Merge in. An import adds a season, never removes one. Unticking one in the season checklist or with `library edit --seasons-watched` holds only until a source reports that season again, so to drop it for good remove it at the source (unwatch the season in Trakt, say) |
-| `year_published`, `pages`, `isbn`, `runtime_minutes`, `platform`, `hours_played`, `notes`, `series_name` | Fill an empty value, and nothing else ever. There is no edit surface for these either, so fix them at the source they came from |
-| `series_position`, `series_position_authority` | Replace a stored position only when the file's authority outranks it (`stated`, `authored`, `library`, `manual`, weakest first), or restates it at `library` or `manual`, which counts as a correction. A blank authority reads as `stated`, and a position naming a different series from the stored one changes nothing |
-| `year` and the creator: `author`, `director`, `creator`, `developer` | Fill an empty value. The edit modal and `library edit --release-year`/`--creator` replace one |
+| `year_published`, `pages`, `isbn`, `runtime_minutes`, `platform`, `hours_played`, `notes`, `series_name` | Fill an empty column, and replace a value from before the ledger. A provider's word, or another writer that stated the field first, stands instead — and the first writer to name a series keeps the name |
+| `series_position`, `series_position_authority` | Replace a stored position only when the file's authority outranks the one on file (`stated`, `authored`, `library`, `manual`, weakest first), or when the writer that stated it restates its own. A blank authority reads as `stated`, and a position naming a different series from the stored one changes nothing |
+| `year` and the creator: `author`, `director`, `creator`, `developer` | Fill an empty column, and replace a value from before the ledger, as the row above. The edit modal and `library edit --release-year`/`--creator` outrank every writer |
 | `title` | Replace it, since the title is how a re-import finds the row. Renaming in the edit modal or with `library edit --title` holds it against later imports |
+
+What a sync or an import states is recorded whether or not the column takes it, so a value is only ever the highest-ranked writer's: `library field-writers --id <id>` lists every writer of a field and `library choose-writer` follows another.
 
 Every row this app exports carries a real `true` or `false` in `ignored`, never
 a blank cell, so re-importing an export replaces your entire ignore list with

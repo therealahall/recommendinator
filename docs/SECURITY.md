@@ -176,6 +176,8 @@ cp data/recommendations.db data/recommendations.db.backup
 gpg -c data/recommendations.db.backup   # if the backup leaves the machine
 ```
 
+Only a copy of the file preserves provenance. An export carries neither the field-write ledger nor any other child table, so a library restored from one keeps no record of who stated what: every writer's word is gone, every pin, hold and choice with it, and the values that survive are claimed by the import alone.
+
 ## Dependencies
 
 ```bash
