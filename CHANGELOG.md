@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v0.72.0 (2026-09-18)
+
+### Documentation
+
+- Describe the ledger, the rebuild and the field switcher
+  ([`7956ea5`](https://github.com/therealahall/recommendinator/commit/7956ea573d7043145c32f1161861abb11c45b26d))
+
+### Features
+
+- Delete the cover backfill and close the ledger's loose ends
+  ([`2941569`](https://github.com/therealahall/recommendinator/commit/294156966e765b912af7e7922171964380cc94ff))
+
+
 ## v0.71.0 (2026-09-18)
 
 ### Documentation
