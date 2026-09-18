@@ -1,6 +1,22 @@
 # CHANGELOG
 
 
+## v0.71.0 (2026-09-18)
+
+### Documentation
+
+- Let schema.py be the table list, and correct what rank does
+  ([`d941bdd`](https://github.com/therealahall/recommendinator/commit/d941bdd4ff22ae8207e337d3847da82688390555))
+
+### Features
+
+- **library**: Show what every writer says about a field, and pick one
+  ([`4c284b5`](https://github.com/therealahall/recommendinator/commit/4c284b5e0e404847fe335fe6b43aab93269aa889))
+
+- **storage**: Let a field name the writer it follows
+  ([`369060e`](https://github.com/therealahall/recommendinator/commit/369060e9ede0feccc6d833ae8f910d13f3f2f2fe))
+
+
 ## v0.70.0 (2026-09-17)
 
 ### Documentation
