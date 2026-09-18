@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.72.3 (2026-09-18)
+
+### Bug Fixes
+
+- **enrichment**: Ask every source for a series, not just until one could not win
+  ([`973df44`](https://github.com/therealahall/recommendinator/commit/973df44da57f966a7849145625518664c572236f))
+
+
 ## v0.72.2 (2026-09-18)
 
 ### Bug Fixes
