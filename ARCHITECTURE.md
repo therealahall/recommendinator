@@ -215,7 +215,7 @@ Both rows' words stay in the field ledger, which `rebuild_item_fields` reads acr
 
 Nothing deletes a row to dedup (`src/storage/item_merges.py`). The absorbed row keeps every column, sets `merged_into` and drops out of every read, and every write door refuses it; `content_item_merges` records survivor, absorbed, evidence and what it overwrote.
 
-`unmerge_content_items` writes that back: the record holds the columns the merge moved, and the rebuild runs again over the group it leaves, so an undo puts the survivor back and leaves anything that landed since where it stands.
+`unmerge_content_items` writes that back: the record holds the columns the merge moved, and the rebuild runs again over the group it leaves, so an undo puts the survivor back and leaves anything that landed since where it stands. A merge recorded before the ledger existed names detail columns the rebuild owns now (`merge_predates_the_ledger`), and no row says which side supplied what it carried, so undoing one drops both rows to the words a writer is still named for and queues them for a refill.
 
 #### Detail-shape repairs
 
@@ -324,9 +324,11 @@ Rules:
 - **A failure is classified before it is acted on** (`_classify_failure`,
   `_is_retryable`). Transport errors, 5xx, 408 and 429 are retryable, so
   `mark_enrichment_failed` records the error and leaves `needs_enrichment=1`. Any
-  other 4xx is not, being rejected identically every run.
+  other 4xx is not, being rejected identically every run. Neither is an exception
+  with no request error under it, a refused redirect excepted: the provider's own
+  code raised, and the next run raises it again on the same item.
 - **A provider that keeps rejecting is abandoned for the run.** Five consecutive non-retryable rejections (`_MAX_CONSECUTIVE_REJECTIONS`) drop it, ending the run once none is left for its content type.
-- **A failed save is ours, not a miss.** `mark_enrichment_settled_failure` dequeues the item with the error on the row.
+- **A settled failure is not a miss.** A failed save, and a non-retryable provider failure with nothing matched, both retire the item through `mark_enrichment_settled_failure`: dequeued, error on the row, counted under Failed rather than not found.
 - An item counts as enriched only with a real provider, no error, not
   `not_found`, and `needs_enrichment=0`. `get_content_items(enrichment=...)` and
   the per-row `enriched` flag share that predicate (`_ENRICHED_PREDICATE`).
@@ -339,8 +341,8 @@ The CLI and the web UI are **alternative interfaces to the same capabilities**,
 neither a subset of the other. Every service both call sits outside both
 packages: recommendation, ingestion, storage, settings,
 `src/config/service.py` (YAML loading, bootstrap resolution, component
-factories), `src/sources/service.py` (source config CRUD), `src/covers/` (cover fetch guards,
-the disk cache and the backfill both claim), `src/auth/` (the
+factories), `src/sources/service.py` (source config CRUD), `src/covers/` (cover fetch guards
+and the disk cache the enrichment run fills), `src/auth/` (the
 connect, status and disconnect every plugin's declared OAuth flow runs through)
 and `src/utils/export.py`.
 

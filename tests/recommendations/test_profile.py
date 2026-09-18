@@ -1,6 +1,8 @@
 import tempfile
 from collections.abc import Generator
 from pathlib import Path
+from sqlite3 import OperationalError
+from unittest.mock import patch
 
 import pytest
 
@@ -418,6 +420,24 @@ class TestRegenerateAndSave:
         # ticks on a different write in a different timezone.
         assert generated.generated_at is not None
         assert payload["generated_at"] == generated.generated_at.isoformat()
+
+
+class TestAFailedRegeneration:
+    def test_the_edit_that_landed_is_not_reported_as_the_failure(
+        self, storage_manager: StorageManager, sample_items: list[int]
+    ) -> None:
+        with patch.object(
+            ProfileGenerator,
+            "regenerate_and_save",
+            side_effect=OperationalError("database is locked"),
+        ):
+            updated = storage_manager.update_item_from_ui(
+                db_id=sample_items[0], rating=2
+            )
+
+        assert updated
+        edited = storage_manager.get_content_item(sample_items[0])
+        assert edited is not None and edited.rating == 2
 
 
 class TestProfileRegression:

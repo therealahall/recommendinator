@@ -481,8 +481,9 @@ and an entry in that file's `_CREDENTIAL_URL_FUNCTIONS`.
 
 Raise it from inside the `except` block. `from None` clears `__cause__` but
 leaves `__context__`, and the enrichment manager reads that chain to tell a
-timeout from a rejected API key — raise outside the handler and every failure
-of yours reads as retryable.
+timeout from a rejected API key — raise outside the handler and a timeout of
+yours reads as a crash in your own code, settling the item as failed instead of
+retrying it.
 
 ## Thread safety
 

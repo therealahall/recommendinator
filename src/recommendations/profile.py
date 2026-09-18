@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, field
@@ -11,6 +12,8 @@ from src.storage.schema import PreferenceProfileRow, get_default_user_id
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -104,15 +107,21 @@ def profile_payload(
 
 def refresh_profile(storage: "StorageManager", user_id: int | None = None) -> None:
     """Once at the end of a bulk operation, and after each user-owned write: it
-    reads the whole library, so a per-item call would run one pass per item.
+    reads the whole library. Logged rather than raised, because the write it
+    follows has landed and raising reported that write as the failure.
     """
-    ProfileGenerator(storage).regenerate_and_save(user_id or get_default_user_id())
+    try:
+        ProfileGenerator(storage).regenerate_and_save(user_id or get_default_user_id())
+    except Exception:
+        logger.exception("Regenerating the preference profile failed")
 
 
 def regenerated_payload(storage: "StorageManager", user_id: int) -> ProfilePayload:
     """Serialise what was stored: a body built from the in-memory profile drifts
-    from what the next read answers."""
-    refresh_profile(storage, user_id)
+    from what the next read answers. Raising, unlike :func:`refresh_profile`,
+    because here the regeneration is what the operator asked for.
+    """
+    ProfileGenerator(storage).regenerate_and_save(user_id)
     return profile_payload(user_id, storage.profiles.get(user_id))
 
 

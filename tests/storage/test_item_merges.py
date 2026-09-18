@@ -13,7 +13,7 @@ from src.models.content import (
     get_enum_value,
 )
 from src.storage.enrichment_status import EnrichmentStore
-from src.storage.field_writes import FieldWriter, WriterBand
+from src.storage.field_writes import LEGACY_WRITER, FieldWriter, WriterBand
 from src.storage.item_merges import MergeError, MergeEvidence
 from src.storage.schema import (
     get_enrichment_stats,
@@ -655,6 +655,37 @@ def test_a_merge_recorded_when_the_snapshot_held_detail_columns_still_undoes(
     assert _merged_into(db, absorbed_id) is None
 
 
+def test_undoing_a_merge_older_than_the_ledger_leaves_neither_row_holding_the_carry(
+    db: SQLiteDB,
+) -> None:
+    """The upgrade recorded the carried value as the survivor's own, so nothing
+    says it came off the absorbed row: both rows drop to what a writer is named
+    for and the next run refills them."""
+    survivor_id = _save(db, "steam", "620", title="Portal 2")
+    absorbed_id = _save(db, "gog", "1207658961", title="Portal Two")
+    survivor = db.get_content_item(survivor_id)
+    assert survivor is not None
+    db.save_enrichment_metadata(
+        survivor_id, survivor, LEGACY_WRITER, {"description": "A GOG blurb"}
+    )
+    _enrich(db, survivor_id)
+
+    record = db.merge_content_items(survivor_id, absorbed_id, MergeEvidence.MANUAL)
+    _as_the_old_snapshot_wrote_it(db, record.id)
+    merged = db.get_content_item(survivor_id)
+    assert merged is not None and merged.metadata["description"] == "A GOG blurb"
+
+    db.unmerge_content_items(record.id)
+
+    unmerged = db.get_content_item(survivor_id)
+    assert unmerged is not None
+    assert unmerged.metadata.get("description") is None
+    assert sorted(db_id for db_id, _item in db.get_items_needing_enrichment()) == [
+        survivor_id,
+        absorbed_id,
+    ]
+
+
 def test_undoing_two_merges_into_one_survivor_newest_first_leaves_it_as_it_began(
     db: SQLiteDB,
 ) -> None:
@@ -851,8 +882,9 @@ def test_a_requeue_neither_reaches_nor_counts_the_row_behind_a_merge(
     before = _snapshot(db, absorbed_id)
 
     with db.connection() as conn:
-        assert requeue_enrichment_status(conn) == 1
+        requeue_enrichment_status(conn)
 
+    assert EnrichmentStore(db).reset_count() == 1
     assert [db_id for db_id, _item in db.get_items_needing_enrichment()] == [
         survivor_id
     ]

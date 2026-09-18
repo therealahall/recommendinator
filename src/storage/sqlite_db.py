@@ -80,6 +80,7 @@ from src.storage.item_merges import (
     MergeRecord,
     absorb_item,
     list_merges,
+    merge_predates_the_ledger,
     unmerge_item,
 )
 from src.storage.merge import (
@@ -90,7 +91,12 @@ from src.storage.merge import (
     resolve_status_forward,
     stated_region,
 )
-from src.storage.schema import REBUILD_FUNCTION, create_schema, get_default_user_id
+from src.storage.schema import (
+    REBUILD_FUNCTION,
+    create_schema,
+    get_default_user_id,
+    requeue_enrichment_status,
+)
 from src.utils.dates import local_today, merge_seasons_watched_dates, utc_now
 from src.utils.series import (
     all_seasons_watched,
@@ -485,9 +491,9 @@ class SQLiteDB:
         return conn
 
     def _rebuilding_fields(self) -> int:
-        """Thread-scoped, not instance-scoped: sync, enrichment and the cover
-        backfill are daemon threads on one manager, and one clearing the flag
-        between another's set and its guarded write reopens the guard.
+        """Thread-scoped, not instance-scoped: sync and enrichment are daemon
+        threads on one manager, and one clearing the flag between another's set
+        and its guarded write reopens the guard.
         """
         return int(getattr(self._local, "rebuilding", False))
 
@@ -1786,6 +1792,7 @@ class SQLiteDB:
     ) -> MergeRecord | None:
         with self.connection() as conn:
             cursor = conn.cursor()
+            uncomputable = merge_predates_the_ledger(cursor, merge_id)
             record = unmerge_item(cursor, merge_id, user_id=user_id)
             if record is not None:
                 self._rebuild_from_ledger(
@@ -1796,7 +1803,20 @@ class SQLiteDB:
                     ),
                 )
             conn.commit()
-            return record
+        if record is not None and uncomputable:
+            self._reset_to_what_the_ledger_can_say(record)
+        return record
+
+    def _reset_to_what_the_ledger_can_say(self, record: MergeRecord) -> None:
+        """Nothing records which side of a pre-ledger merge supplied what, so
+        the absorbed row's values would stay on the survivor. Both rows drop to
+        the words a writer is still named for, and are queued for a refill.
+        """
+        rows = [record.survivor_id, record.absorbed_id]
+        self.reset_provider_writes(rows, legacy=True)
+        with self.connection() as conn:
+            for db_id in rows:
+                requeue_enrichment_status(conn, content_item_id=db_id)
 
     def _rebuild_from_ledger(
         self,
@@ -1956,26 +1976,6 @@ class SQLiteDB:
         # Batch-fetch all items in a single query (outside the first connection)
         items = self.get_content_items_by_db_ids(db_ids)
         return [(item.db_id, item) for item in items if item.db_id is not None]
-
-    def count_settled_without_cover(self, user_id: int) -> int:
-        """``not_found`` is excluded: no provider held those items at all, and
-        retrying them is what ``--retry-not-found`` is for.
-        """
-        with self.connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT COUNT(*) FROM content_items ci"
-                " JOIN enrichment_status es ON es.content_item_id = ci.id"
-                " WHERE ci.user_id = ? AND ci.merged_into IS NULL"
-                " AND ci.cover_url IS NULL AND es.needs_enrichment = 0"
-                " AND (es.enrichment_quality IS NULL"
-                "      OR es.enrichment_quality != 'not_found')"
-                " AND NOT EXISTS (SELECT 1 FROM content_item_dead_covers d"
-                "                  WHERE d.content_item_id = ci.id)",
-                (user_id,),
-            )
-            row = cursor.fetchone()
-            return int(row[0]) if row else 0
 
     def count_items_needing_enrichment(
         self,

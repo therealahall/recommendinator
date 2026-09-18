@@ -77,8 +77,8 @@ def fetch_cover(
             return _read_image(response, deadline)
     except RedirectRefused as refused:
         # The walk refuses a hop off the origin, a chain past the hop cap and one
-        # that outlives the deadline, and the backfill lists this reason: one
-        # wording for the three names the wrong cause for two of them.
+        # that outlives the deadline, and the run lists this reason: one wording
+        # for the three names the wrong cause for two of them.
         return CoverUnavailable(str(refused), permanent=False)
     except requests.RequestException:
         # Not the exception's words: they quote the URL and the headers.
@@ -122,8 +122,9 @@ def _is_private(host: str) -> bool:
 def _resolve(host: str) -> list[ipaddress.IPv4Address | ipaddress.IPv6Address]:
     try:
         infos = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
-    except OSError:
-        # A name that will not resolve cannot be connected to either.
+    except (OSError, ValueError):
+        # A name that will not resolve cannot be connected to either, and a host
+        # a provider handed over may be one the IDNA encoder refuses outright.
         return []
     resolved = []
     for info in infos:

@@ -61,9 +61,6 @@ class EnrichmentStore:
             content_item_id=content_item_id,
         )
 
-    def settled_without_cover(self, user_id: int) -> int:
-        return self._sqlite_db.count_settled_without_cover(user_id)
-
     def not_found_ids(
         self,
         content_type: ContentType | None = None,
@@ -130,11 +127,11 @@ class EnrichmentStore:
             scope = enrichment_scope_ids(
                 conn, provider, content_type_str, user_id, content_item_id
             )
-            requeued = requeue_enrichment_status(
+            requeue_enrichment_status(
                 conn, provider, content_type_str, user_id, content_item_id
             )
         stripped = self._sqlite_db.reset_provider_writes(scope, provider, legacy=hard)
-        return ResetCounts(requeued=requeued, stripped=len(stripped))
+        return ResetCounts(requeued=len(scope), stripped=len(stripped))
 
     def reset_count(
         self,

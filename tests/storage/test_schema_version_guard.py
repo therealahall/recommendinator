@@ -1,5 +1,6 @@
 import json
 import sqlite3
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -7,6 +8,13 @@ from unittest.mock import patch
 import pytest
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.models.detail_fields import (
+    DETAIL_FIELDS,
+    ContentTypeFields,
+    DetailField,
+    FieldKind,
+    FieldOwner,
+)
 from src.storage import schema
 from src.storage.item_merges import MergeEvidence, absorb_item
 from src.storage.schema import _SCHEMA_VERSION, create_schema
@@ -1058,9 +1066,86 @@ class TestWhatTheRenormalizationRewrites:
         ]
 
 
+def _a_movie(external_id: str, title: str) -> ContentItem:
+    return ContentItem(
+        id=external_id,
+        title=title,
+        content_type=ContentType.MOVIE,
+        status=ConsumptionStatus.UNREAD,
+        source="radarr",
+    )
+
+
+def _movie_declaring_one_more_column(column: str) -> ContentTypeFields:
+    spec = DETAIL_FIELDS["movie"]
+    return replace(
+        spec,
+        fields=(
+            *spec.fields,
+            DetailField(column, FieldKind.TEXT, FieldOwner.WRITER, column=column),
+        ),
+    )
+
+
+def _add_column(db_path: Path, table: str, column: str) -> None:
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} TEXT")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _runtime(db_path: Path, db_id: int) -> Any:
+    conn = sqlite3.connect(db_path)
+    try:
+        return conn.execute(
+            "SELECT runtime FROM movie_details WHERE content_item_id = ?", (db_id,)
+        ).fetchone()[0]
+    finally:
+        conn.close()
+
+
 class TestTheLedgerWriteGuardOnAnUpgrade:
     """The triggers are created after every repair, because the repairs rewrite
     the very columns they refuse."""
+
+    def test_a_detail_column_declared_after_the_guard_is_refused_too(
+        self, tmp_path: Path
+    ) -> None:
+        db_path = tmp_path / "later-column.db"
+        db_id = SQLiteDB(db_path).save_content_item(_a_movie("tmdb:603", "The Matrix"))
+        _add_column(db_path, "movie_details", "mood")
+
+        with patch.dict(
+            DETAIL_FIELDS, {"movie": _movie_declaring_one_more_column("mood")}
+        ):
+            with SQLiteDB(db_path).connection() as upgraded:
+                with pytest.raises(
+                    sqlite3.IntegrityError, match="only the rebuild writes it"
+                ):
+                    upgraded.execute(
+                        "UPDATE movie_details SET mood = 'bleak'"
+                        " WHERE content_item_id = ?",
+                        (db_id,),
+                    )
+
+    def test_a_repair_may_rewrite_a_detail_column_on_an_existing_library(
+        self, tmp_path: Path
+    ) -> None:
+        db_path = tmp_path / "repairing.db"
+        db_id = SQLiteDB(db_path).save_content_item(_a_movie("tmdb:603", "The Matrix"))
+
+        def repair(cursor: sqlite3.Cursor) -> None:
+            cursor.execute(
+                "UPDATE movie_details SET runtime = 136 WHERE content_item_id = ?",
+                (db_id,),
+            )
+
+        with patch.object(schema, "backfill_derived_columns", repair):
+            SQLiteDB(db_path)
+
+        assert _runtime(db_path, db_id) == 136
 
     def test_an_upgraded_library_refuses_a_detail_column_written_directly(
         self, tmp_path: Path

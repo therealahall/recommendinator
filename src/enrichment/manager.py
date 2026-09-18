@@ -7,7 +7,7 @@ import time
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import requests
 
@@ -25,11 +25,13 @@ from src.enrichment.provider_base import (
 )
 from src.enrichment.rate_limiter import RateLimiter
 from src.enrichment.registry import EnrichmentRegistry, get_enrichment_registry
+from src.ingestion.urls import RedirectRefused
 from src.models.content import ContentItem, ContentType, get_enum_value
-from src.recommendations.profile import refresh_profile
+from src.recommendations.profile import ProfileGenerator
 from src.storage.enrichment_jobs import EnrichmentJobRecord
 from src.storage.field_writes import FieldWriter, WriterBand
 from src.storage.global_secrets import read_secret
+from src.storage.schema import get_default_user_id
 from src.utils.matching import Candidate
 from src.utils.request_errors import scrub_request_error
 from src.utils.series import (
@@ -55,6 +57,8 @@ _MAX_CONSECUTIVE_REJECTIONS = 5
 
 #: A provider that matched an item, and what it said.
 _Match = tuple[EnrichmentProvider, EnrichmentResult]
+
+_Cause = TypeVar("_Cause", bound=BaseException)
 
 
 class EnrichmentStart(Enum):
@@ -83,12 +87,12 @@ class _ProviderFailure:
         return f"{self.provider}: {self.reason}"
 
 
-def _underlying_request_error(error: Exception) -> requests.RequestException | None:
+def _chained(error: Exception, kind: type[_Cause]) -> _Cause | None:
     """TMDB and RAWG raise ``from None``, so a suppressed chain is still read."""
     seen: set[int] = set()
     current: BaseException | None = error
     while current is not None and id(current) not in seen:
-        if isinstance(current, requests.RequestException):
+        if isinstance(current, kind):
             return current
         seen.add(id(current))
         current = current.__cause__ or current.__context__
@@ -107,9 +111,18 @@ def _classify_failure(provider_name: str, error: Exception) -> _ProviderFailure:
         return _ProviderFailure(
             provider_name, f"refused the credential ({error.codes})", retryable=False
         )
-    request_error = _underlying_request_error(error)
+    request_error = _chained(error, requests.RequestException)
     if request_error is None:
-        return _ProviderFailure(provider_name, type(error).__name__, retryable=True)
+        refused = _chained(error, RedirectRefused)
+        if refused is not None:
+            # The cover fetch calls the same event transient: a captive portal
+            # or a CDN briefly answering off-origin clears on its own.
+            return _ProviderFailure(
+                provider_name, type(refused).__name__, retryable=True
+            )
+        # Nothing was asked of the service: the provider's own code raised, and
+        # the next run raises it again on the same item, forever.
+        return _ProviderFailure(provider_name, type(error).__name__, retryable=False)
     return _ProviderFailure(
         provider_name,
         scrub_request_error(request_error),
@@ -480,6 +493,7 @@ class EnrichmentManager:
             with self._lock:
                 self._status.started_at = time.time()
 
+            owner = user_id if user_id is not None else get_default_user_id()
             enrichment_config = self.config.get("enrichment", {})
             batch_size = enrichment_config.get("batch_size", 50)
 
@@ -552,9 +566,11 @@ class EnrichmentManager:
                 if not fetched and not items:
                     break
 
-                self._process_batch(items)
+                self._process_batch(items, owner)
 
-            refresh_profile(self.storage_manager, user_id)
+            # The generator rather than ``refresh_profile``: a run that leaves
+            # recommendations scoring against a stale profile has not completed.
+            ProfileGenerator(self.storage_manager).regenerate_and_save(owner)
 
             # Uncached, unlike the loop's check: this one decides what the run
             # is recorded as.
@@ -599,11 +615,37 @@ class EnrichmentManager:
             # and the error is what says why. Releasing the claim is the point.
             self._jobs.finish(completed=False, cancelled=False, errors=errors)
 
-    def _process_batch(self, items: list[tuple[int, ContentItem]]) -> None:
+    def _process_batch(
+        self, items: list[tuple[int, ContentItem]], user_id: int
+    ) -> None:
         for db_id, item in items:
             if self._stop_asked():
                 return
             self._process_item(db_id, item)
+            self._cache_cover(db_id, user_id)
+
+    def _cache_cover(self, db_id: int, user_id: int) -> None:
+        """Read back rather than carried from the item above: the ledger decides
+        which stated url wins. Fetching it here is also what buries one that is
+        permanently gone, so no later rebuild offers it again.
+        """
+        # Deferred: covers reach the config service for the cache directory, and
+        # that builds the recommendation engine, which imports this module.
+        from src.covers.service import fill_cover
+
+        # The same boundary the item's own writes get: a cover is not worth the
+        # rest of the library, and the read-back is as much ours as the fetch.
+        try:
+            item = self.storage_manager.get_content_item(db_id, user_id=user_id)
+            if item is not None:
+                fill_cover(self.storage_manager, self.config, item, user_id=user_id)
+        except Exception as error:
+            logger.error(
+                "[ENRICHMENT] Caching the cover for item %d failed",
+                db_id,
+                exc_info=True,
+            )
+            self._record_error(f"cover: {type(error).__name__}")
 
     def _process_item(self, db_id: int, item: ContentItem) -> None:
         with self._lock:
@@ -753,19 +795,23 @@ class EnrichmentManager:
             return
 
         if failures:
-            # Every provider rejected the request itself, so the next run would
-            # be rejected the same way. Settle the item rather than queue the
-            # whole library against a provider that answers none of it.
+            # The next run would be rejected the same way, so dequeue rather than
+            # queue the whole library against it. The error stays on the row:
+            # nobody answered that this item is missing.
             logger.warning(
                 "[ENRICHMENT] Every provider rejected %s, not retrying: %s",
                 safe_title,
                 reported,
             )
-        else:
-            logger.debug(
-                "[ENRICHMENT] No match found for %s: %s", content_type_str, safe_title
-            )
+            self.storage_manager.enrichment.mark_settled_failure(db_id, reported)
+            with self._lock:
+                self._status.items_processed += 1
+                self._status.items_failed += 1
+            return
 
+        logger.debug(
+            "[ENRICHMENT] No match found for %s: %s", content_type_str, safe_title
+        )
         self.storage_manager.enrichment.mark_complete(db_id, "none", "not_found")
         with self._lock:
             self._status.items_processed += 1

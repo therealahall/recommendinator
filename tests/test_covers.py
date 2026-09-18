@@ -1,10 +1,7 @@
 from __future__ import annotations
 
 import itertools
-import sqlite3
-import time
 from collections.abc import Iterator
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -14,14 +11,11 @@ import requests
 
 from src.covers import cache
 from src.covers.fetch import MAX_BYTES, CoverUnavailable
-from src.covers.service import backfill_covers, fill_cover, start_backfill
+from src.covers.service import fill_cover
 from src.ingestion.urls import MAX_SAME_ORIGIN_REDIRECTS
-from src.storage.cover_jobs import CoverBackfillRecord
 from src.storage.field_writes import FieldWriter, WriterBand, read_field_writes
-from src.storage.job_claim import STALE_AFTER
 from src.storage.manager import StorageManager
 from src.storage.schema import create_user
-from src.web.api._covers import CoverBackfillResponse
 from tests.factories import authenticated_client, booted_web_app, make_item
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 32
@@ -75,25 +69,6 @@ def stored_cover(storage: StorageManager, db_id: int) -> str | None:
     item = storage.get_content_item(db_id)
     assert item is not None
     return item.cover_url
-
-
-def finished_backfill(storage: StorageManager) -> CoverBackfillRecord:
-    for _ in range(500):
-        record = storage.cover_jobs.read()
-        if not record.running:
-            return record
-        time.sleep(0.01)
-    raise AssertionError("the backfill never finished")
-
-
-def strand_the_claim(storage: StorageManager) -> None:
-    gone = datetime.now(UTC) - STALE_AFTER - timedelta(seconds=1)
-    with storage.connection() as conn:
-        conn.execute(
-            "UPDATE cover_backfill_job SET heartbeat_at = ?",
-            (gone.isoformat(timespec="microseconds"),),
-        )
-        conn.commit()
 
 
 class TestFillOnlyInvalidation:
@@ -266,15 +241,15 @@ class TestFetcherSafety:
         assert isinstance(outcome, CoverUnavailable) and not outcome.permanent
         assert mock_get.call_count < MAX_SAME_ORIGIN_REDIRECTS
         assert stored_cover(storage, db_id) == REMOTE
-        # The backfill lists this reason, and a refusal sends the operator
-        # hunting a redirect that was followed right up to the clock.
+        # A refusal would send the operator hunting a redirect that was in fact
+        # followed right up to the clock.
         assert "ran out of time" in outcome.reason
 
-    def test_a_location_no_parser_can_read_ends_one_cover_not_the_backfill(
+    def test_a_location_no_parser_can_read_is_answered_rather_than_raised(
         self, library: tuple[StorageManager, dict[str, Any]]
     ) -> None:
-        """An unbalanced bracket raises out of `urljoin`, and `start_backfill`
-        answers any exception by abandoning the whole walk."""
+        """An unbalanced bracket raises out of `urljoin`, and an exception here
+        ends the enrichment run this cover is fetched by."""
         storage, config = library
         db_id = save(storage, REMOTE)
         unreadable = FakeResponse(302, headers={"Location": "http://[::1"})
@@ -296,6 +271,26 @@ class TestFetcherSafety:
 
         assert isinstance(outcome, CoverUnavailable) and not outcome.permanent
         mock_get.assert_not_called()
+
+    def test_a_host_the_resolver_will_not_encode_is_answered_rather_than_raised(
+        self, library: tuple[StorageManager, dict[str, Any]]
+    ) -> None:
+        """``getaddrinfo`` raises ``UnicodeError`` for a label past 63 bytes, and
+        an exception here ends the enrichment run this cover is fetched by."""
+        storage, config = library
+        db_id = save(storage, f"https://{'a' * 64}.test/cover.jpg")
+
+        with (
+            patch(
+                "src.covers.fetch.socket.getaddrinfo",
+                side_effect=UnicodeError("label empty or too long"),
+            ),
+            patch("src.covers.fetch.requests.get", return_value=FakeResponse()),
+        ):
+            outcome = fill_cover(storage, config, storage.get_content_item(db_id))
+
+        assert isinstance(outcome, Path)
+        assert outcome.read_bytes() == PNG
 
     def test_a_body_past_the_cap_is_never_cached(
         self, library: tuple[StorageManager, dict[str, Any]]
@@ -381,142 +376,6 @@ def test_a_cover_is_fetched_with_the_sources_of_the_user_it_was_looked_up_for(
     assert isinstance(as_owner, Path)
 
 
-class TestBackfill:
-    def test_it_counts_each_outcome_and_skips_what_is_already_cached(
-        self, library: tuple[StorageManager, dict[str, Any]]
-    ) -> None:
-        storage, config = library
-        save(storage, REMOTE, title="Cached")
-        save(storage, REMOTE + "?2", title="Gone")
-        save(storage, REMOTE + "?3", title="Later")
-        responses = [FakeResponse(), FakeResponse(404), FakeResponse(503)]
-
-        with patch("src.covers.fetch.requests.get", side_effect=responses):
-            first = backfill_covers(storage, config)
-
-        assert (first.total, first.cached, first.cleared, first.failed) == (3, 1, 1, 1)
-        assert first.errors == ["Later: the cover host answered 503"]
-
-        with patch("src.covers.fetch.requests.get", return_value=FakeResponse(503)):
-            second = backfill_covers(storage, config)
-
-        assert second.total == 1, "the cover cached by the first run was refetched"
-
-    def test_it_counts_the_items_a_settled_enrichment_left_with_no_cover_url(
-        self, library: tuple[StorageManager, dict[str, Any]]
-    ) -> None:
-        storage, config = library
-        artless = storage.save_content_item(make_item(title="Poster-less"))
-        storage.enrichment.mark_complete(artless, "tmdb", "high")
-        storage.save_content_item(make_item(title="Never enriched"))
-
-        record = backfill_covers(storage, config)
-
-        assert (record.total, record.without_cover) == (
-            0,
-            1,
-        ), "an item still queued for enrichment needs no reset to reach it"
-
-    def test_it_never_counts_a_dead_url_or_an_item_settled_as_not_found(
-        self, library: tuple[StorageManager, dict[str, Any]]
-    ) -> None:
-        storage, config = library
-        dead = save(storage, REMOTE, title="Dead url")
-        not_found = storage.save_content_item(make_item(title="Unknown"))
-        storage.enrichment.mark_complete(not_found, "none", "not_found")
-
-        with patch("src.covers.fetch.requests.get", return_value=FakeResponse(404)):
-            backfill_covers(storage, config)
-        storage.enrichment.mark_complete(dead, "rawg", "high")
-
-        assert stored_cover(storage, dead) is None
-        assert backfill_covers(storage, config).without_cover == 0
-
-    def test_both_interfaces_report_a_run_with_the_same_keys(self) -> None:
-        assert set(CoverBackfillRecord().payload()) == set(
-            CoverBackfillResponse.model_fields
-        )
-
-    def test_a_walk_another_interface_claimed_is_refused_a_second_start(
-        self, library: tuple[StorageManager, dict[str, Any]]
-    ) -> None:
-        storage, config = library
-        assert storage.cover_jobs.claim() is True
-
-        assert start_backfill(storage, config) is None
-
-    def test_a_run_killed_mid_walk_stops_blocking_the_next_one(
-        self, library: tuple[StorageManager, dict[str, Any]]
-    ) -> None:
-        storage, config = library
-        storage.cover_jobs.claim()
-        strand_the_claim(storage)
-
-        assert storage.cover_jobs.read().running is False
-        assert start_backfill(storage, config) is not None
-
-    def test_a_heartbeat_landing_after_a_finish_does_not_retake_the_claim(
-        self, library: tuple[StorageManager, dict[str, Any]]
-    ) -> None:
-        storage, _ = library
-        storage.cover_jobs.claim()
-        record = storage.cover_jobs.read()
-        storage.cover_jobs.request_stop()
-        storage.cover_jobs.finish(record)
-
-        storage.cover_jobs.heartbeat(record)
-
-        assert storage.cover_jobs.read().running is False
-        assert storage.cover_jobs.stop_requested() is False
-
-    def test_a_walk_that_raised_reports_the_failure_rather_than_a_clean_run(
-        self, library: tuple[StorageManager, dict[str, Any]]
-    ) -> None:
-        storage, config = library
-
-        with patch.object(
-            storage, "get_content_items", side_effect=sqlite3.OperationalError("locked")
-        ):
-            assert start_backfill(storage, config) is not None
-            record = finished_backfill(storage)
-
-        assert (record.completed, record.cancelled) == (False, False)
-        assert record.errors == ["the backfill stopped on an error"]
-
-    def test_a_stop_ends_the_walk_after_the_item_in_flight_and_frees_the_claim(
-        self, library: tuple[StorageManager, dict[str, Any]]
-    ) -> None:
-        storage, config = library
-        save(storage, REMOTE, title="First")
-        save(storage, REMOTE + "?2", title="Second")
-
-        def stop_once_one_is_in_flight(*_: Any, **__: Any) -> FakeResponse:
-            storage.cover_jobs.request_stop()
-            return FakeResponse()
-
-        with patch(
-            "src.covers.fetch.requests.get", side_effect=stop_once_one_is_in_flight
-        ):
-            assert start_backfill(storage, config) is not None
-            record = finished_backfill(storage)
-
-        assert (record.processed, record.total, record.cached) == (1, 2, 1)
-        assert (record.completed, record.cancelled) == (False, True)
-        assert storage.cover_jobs.claim() is True
-
-    def test_a_finished_walk_reports_its_tally_to_whoever_reads_it_next(
-        self, library: tuple[StorageManager, dict[str, Any]]
-    ) -> None:
-        storage, config = library
-        save(storage, REMOTE, title="Cached")
-
-        with patch("src.covers.fetch.requests.get", return_value=FakeResponse()):
-            assert start_backfill(storage, config) is not None
-            record = finished_backfill(storage)
-
-        assert (record.completed, record.total, record.cached) == (True, 1, 1)
-
-
 class TestCoverRoute:
     def test_it_serves_the_cached_image_from_this_apps_own_origin(
         self, library: tuple[StorageManager, dict[str, Any]]
@@ -545,41 +404,6 @@ class TestCoverRoute:
 
         assert response.status_code == 404
         assert response.json()["detail"] == "this item has no cover art"
-
-    def test_a_backfill_the_cli_started_is_visible_here_and_refuses_a_second(
-        self, library: tuple[StorageManager, dict[str, Any]]
-    ) -> None:
-        storage, config = library
-        storage.cover_jobs.claim()
-        storage.cover_jobs.heartbeat(
-            CoverBackfillRecord(total=9, processed=2, current_item="Dune")
-        )
-
-        with booted_web_app(storage, config) as app:
-            client = authenticated_client(app)
-            again = client.post("/api/covers/backfill")
-            status = client.get("/api/covers/backfill/status")
-
-        assert again.status_code == 409
-        assert status.json()["running"] is True
-        assert status.json()["total_items"] == 9
-
-    def test_a_stop_refuses_when_idle_and_reaches_a_walk_another_process_started(
-        self, library: tuple[StorageManager, dict[str, Any]]
-    ) -> None:
-        storage, config = library
-
-        with booted_web_app(storage, config) as app:
-            client = authenticated_client(app)
-            idle = client.post("/api/covers/backfill/stop")
-            storage.cover_jobs.claim()
-            storage.cover_jobs.heartbeat(CoverBackfillRecord(total=9, processed=2))
-            running = client.post("/api/covers/backfill/stop")
-
-        assert idle.status_code == 400
-        assert idle.json()["detail"] == "No cover backfill is running."
-        assert running.status_code == 200
-        assert storage.cover_jobs.stop_requested() is True
 
 
 def test_a_cover_that_moves_is_a_different_cache_file(tmp_path: Path) -> None:

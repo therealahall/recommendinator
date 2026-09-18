@@ -174,7 +174,9 @@ once the data may have been added upstream, with
 
 ### Items showing as "failed"
 
-Different from "not found". The provider never answered, having timed out, been unreachable, throttled or returned an error. Failed items stay queued: run enrichment again once the provider is healthy, or for one item `enrichment requeue --id <id>` — **Enrich this again** in the edit dialog — which enriches it now with every value it holds standing. `enrichment status` counts each item once, so a failed item reports under **Failed**, not **Pending**, though queued.
+Different from "not found". The provider never answered, having timed out, been unreachable, throttled or returned a server error. Failed items stay queued — unless the provider rejected the request or crashed, both below — so run enrichment again once the provider is healthy, or for one item `enrichment requeue --id <id>` — **Enrich this again** in the edit dialog — which enriches it now with every value it holds standing.
+
+`enrichment status` counts each item once, so a failed item reports under **Failed**, not **Pending**, though queued.
 
 `enrichment reset --id <id>` is the heavier door: it drops what the providers stated about the item before re-enriching, so a field only a provider ever filled is emptied. Reach for it when the stored values are wrong, not when a provider failed.
 
@@ -190,13 +192,18 @@ settled. Run `enrichment start --retry-not-found` once after upgrading to sweep
 them back in.
 
 A rejected request — usually an invalid, revoked or expired API key returning
-401 or 403 — settles that item as "not found", since the next run would be
-rejected the same way. After five rejections in a row the provider is dropped
-for the rest of the run.
+401 or 403 — records that item as failed and takes it out of the queue, since
+the next run would be rejected the same way. It never reports as "not found":
+no provider said it was missing. After five rejections in a row the provider is
+dropped for the rest of the run.
 
 Fix the key and run enrichment again — the run's **Pending** and **Enriched**
-counts say what is still outstanding. Then `--retry-not-found` for the few that
-already settled.
+counts say what is still outstanding. The items that settled while the key was
+bad need `enrichment requeue --id <id>`, or a reset with no provider named:
+`enrichment reset --provider` cannot reach them, since a settled failure records
+no provider.
+
+A crash in the provider's own code settles the item the same way. Requeue those once the provider is fixed.
 
 ### API key errors
 

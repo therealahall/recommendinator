@@ -280,7 +280,7 @@ class TestIGDBEnrichment:
     @pytest.mark.parametrize(
         "url", ["http://images.igdb.com/co1x2y.jpg", {"src": 1}, None]
     )
-    def test_only_an_https_cover_reaches_the_backfill(
+    def test_only_an_https_cover_reaches_the_run_that_dials_it(
         self, provider: IGDBProvider, url: Any
     ) -> None:
         result = _run(_served(_game(cover={"url": url})), provider.enrich)

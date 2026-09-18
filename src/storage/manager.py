@@ -17,7 +17,6 @@ from src.models.content import (
 from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.profile import refresh_profile
 from src.storage.accounts import AccountStore, normalize_account_name
-from src.storage.cover_jobs import CoverBackfillStore
 from src.storage.credentials import CredentialStore
 from src.storage.duplicates import MAX_DECLINE_OTHERS as MAX_DECLINE_OTHERS
 from src.storage.duplicates import SUGGESTION_PAGE_DEFAULT as SUGGESTION_PAGE_DEFAULT
@@ -98,10 +97,6 @@ class StorageManager:
     @functools.cached_property
     def enrichment_jobs(self) -> EnrichmentJobStore:
         return EnrichmentJobStore(self.sqlite_db)
-
-    @functools.cached_property
-    def cover_jobs(self) -> CoverBackfillStore:
-        return CoverBackfillStore(self.sqlite_db)
 
     @functools.cached_property
     def rebuild_jobs(self) -> LibraryRebuildStore:

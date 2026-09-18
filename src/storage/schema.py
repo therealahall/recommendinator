@@ -110,7 +110,7 @@ class SyncRunDict(TypedDict):
 # Changing ``normalize_title_for_matching``, ``get_sort_title`` or
 # ``build_search_text`` needs a bump and a step to rewrite what the old one
 # stored, or dedup lookups stop matching and duplicates accumulate in silence.
-_SCHEMA_VERSION = 29
+_SCHEMA_VERSION = 30
 
 # Rows for these keys are unreachable from the app but would still
 # be overlaid onto config, so they are pruned once on upgrade.
@@ -349,6 +349,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     stored_version = _stored_schema_version(cursor)
+    drop_ledger_write_guard(cursor)
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
@@ -475,6 +476,9 @@ def create_schema(conn: sqlite3.Connection) -> None:
         _record_the_library_as_legacy(cursor)
     if stored_version < 29:
         _name_a_held_creator_as_its_type_does(cursor)
+    if stored_version < 30:
+        # Covers are fetched by the enrichment run now; nothing reads this job.
+        cursor.execute("DROP TABLE IF EXISTS cover_backfill_job")
 
     # Filled after the repair, which recovers a creator that existed only in a
     # blob. Unguarded because the fill selects the rows that need it rather
@@ -573,38 +577,6 @@ def create_schema(conn: sqlite3.Connection) -> None:
         )
         """)
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS cover_backfill_job (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
-            running INTEGER NOT NULL DEFAULT 0,
-            completed INTEGER NOT NULL DEFAULT 0,
-            cancelled INTEGER NOT NULL DEFAULT 0,
-            total_items INTEGER NOT NULL DEFAULT 0,
-            items_processed INTEGER NOT NULL DEFAULT 0,
-            items_cached INTEGER NOT NULL DEFAULT 0,
-            items_cleared INTEGER NOT NULL DEFAULT 0,
-            items_failed INTEGER NOT NULL DEFAULT 0,
-            items_without_cover INTEGER NOT NULL DEFAULT 0,
-            stop_requested INTEGER NOT NULL DEFAULT 0,
-            current_item TEXT NOT NULL DEFAULT '',
-            errors_json TEXT NOT NULL DEFAULT '[]',
-            started_at TIMESTAMP,
-            heartbeat_at TIMESTAMP
-        )
-        """)
-    _add_column_if_not_exists(
-        cursor, "cover_backfill_job", "stop_requested", "INTEGER NOT NULL DEFAULT 0"
-    )
-    _add_column_if_not_exists(
-        cursor, "cover_backfill_job", "cancelled", "INTEGER NOT NULL DEFAULT 0"
-    )
-    _add_column_if_not_exists(
-        cursor,
-        "cover_backfill_job",
-        "items_without_cover",
-        "INTEGER NOT NULL DEFAULT 0",
-    )
-
     cursor.execute(
         "CREATE TABLE IF NOT EXISTS library_rebuild_job ("
         " id INTEGER PRIMARY KEY CHECK (id = 1),"
@@ -655,6 +627,18 @@ def create_schema(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def drop_ledger_write_guard(cursor: sqlite3.Cursor) -> None:
+    """A trigger body is frozen at creation, so the guard is dropped at the top
+    of every open and recreated from the current declaration at the end of it.
+    """
+    cursor.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'trigger'"
+        " AND name LIKE '%_ledger_only'"
+    )
+    for name in [row[0] for row in cursor.fetchall()]:
+        cursor.execute(f"DROP TRIGGER {name}")
+
+
 def _create_ledger_write_guard(cursor: sqlite3.Cursor) -> None:
     """Refuse a resolved column written outside the rebuild, so a later door
     cannot quietly restore the fill-only write path the ledger replaced. The
@@ -662,7 +646,7 @@ def _create_ledger_write_guard(cursor: sqlite3.Cursor) -> None:
     """
     refusal = "is resolved from the field-write ledger, so only the rebuild writes it"
     cursor.execute(
-        "CREATE TRIGGER IF NOT EXISTS content_items_cover_ledger_only"
+        "CREATE TRIGGER content_items_cover_ledger_only"
         " BEFORE UPDATE OF cover_url ON content_items"
         # A cleared cover states nothing: that door buries a dead url and leaves
         # the next rebuild to resolve what replaces it.
@@ -674,7 +658,7 @@ def _create_ledger_write_guard(cursor: sqlite3.Cursor) -> None:
         message = f"{spec.table} {refusal}"
         stated = " OR ".join(f"NEW.{column} IS NOT NULL" for column in spec.columns)
         cursor.execute(
-            f"CREATE TRIGGER IF NOT EXISTS {spec.table}_insert_ledger_only"
+            f"CREATE TRIGGER {spec.table}_insert_ledger_only"
             f" BEFORE INSERT ON {spec.table}"
             # A row carrying the blob alone is the pin door's, which states no
             # column and so needs no rebuild to decide one.
@@ -682,7 +666,7 @@ def _create_ledger_write_guard(cursor: sqlite3.Cursor) -> None:
             f" BEGIN SELECT RAISE(ABORT, '{message}'); END"
         )
         cursor.execute(
-            f"CREATE TRIGGER IF NOT EXISTS {spec.table}_update_ledger_only"
+            f"CREATE TRIGGER {spec.table}_update_ledger_only"
             f" BEFORE UPDATE OF {', '.join(spec.columns)} ON {spec.table}"
             f" WHEN NOT {REBUILD_FUNCTION}()"
             f" BEGIN SELECT RAISE(ABORT, '{message}'); END"
@@ -1726,10 +1710,10 @@ def enrichment_reset_count(
 ) -> int:
     query, params = _enrichment_scope(provider, content_type, user_id, content_item_id)
     cursor = conn.cursor()
-    cursor.execute(
-        f"SELECT COUNT(*) FROM enrichment_status WHERE content_item_id IN ({query})",
-        params,
-    )
+    # The scope itself, not the status rows over it: an item holding provider
+    # writes with no status row is reset like any other, and counting through
+    # ``enrichment_status`` left it out of the confirmation and the result.
+    cursor.execute(f"SELECT COUNT(*) FROM ({query})", params)
     return int(cursor.fetchone()[0])
 
 
@@ -1766,7 +1750,11 @@ def requeue_enrichment_status(
     content_type: str | None = None,
     user_id: int | None = None,
     content_item_id: int | None = None,
-) -> int:
+) -> None:
+    """Counting is :func:`enrichment_reset_count`'s: an item in scope with no
+    status row is queued already, so the rows updated here are fewer than the
+    items re-queued.
+    """
     query, params = _enrichment_scope(provider, content_type, user_id, content_item_id)
     cursor = conn.cursor()
     cursor.execute(
@@ -1776,9 +1764,7 @@ def requeue_enrichment_status(
         f" WHERE content_item_id IN ({query})",
         params,
     )
-    updated = cursor.rowcount
     conn.commit()
-    return updated
 
 
 def _enrichment_count(
@@ -1823,7 +1809,7 @@ def get_enrichment_stats(
 ) -> dict[str, int | dict[str, int]]:
     """``enriched``, ``pending``, ``not_found`` and ``failed`` sum to ``total``:
     untracked counts as pending, failed only as failed. ``resettable`` is
-    the tracked rows an unfiltered reset re-queues.
+    the items an unfiltered reset re-queues.
     """
     cursor = conn.cursor()
 
@@ -1880,7 +1866,7 @@ def get_enrichment_stats(
 
     return {
         "total": total_items,
-        "resettable": tracked_items,
+        "resettable": enrichment_reset_count(conn, user_id=user_id),
         "legacy_items": enrichment_legacy_count(conn, user_id=user_id),
         "resettable_by_provider": resettable_by_provider,
         "legacy_by_provider": {
