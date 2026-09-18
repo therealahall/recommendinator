@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.72.4 (2026-09-18)
+
+### Bug Fixes
+
+- **enrichment**: Take the multilingual label when a series has no English one
+  ([`7cae0f5`](https://github.com/therealahall/recommendinator/commit/7cae0f51715175c873a4919215b3a133d266a77c))
+
+
 ## v0.72.3 (2026-09-18)
 
 ### Bug Fixes
