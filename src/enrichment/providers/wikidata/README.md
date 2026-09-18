@@ -24,8 +24,10 @@ uv run python -m src.cli settings set enrichment.providers.wikidata.enabled true
 ## Behavior
 - Supplies a series only, at `authored` authority, and never an item's match: it
   implements `fetch_series_ordinal` and not `enrich`, so the provider credited with an item is always one that matched it.
-- Names the series from the English label of the `P179` entity, and positions the
-  work in it from that statement's `P1545` qualifier. A statement carrying no
+- Names the series from the English label of the `P179` entity, falling back to
+  the language-agnostic `mul` label Wikidata holds Latin-script names under —
+  Mario Kart has no `en` label at all. Positions the work in it from that
+  statement's `P1545` qualifier. A statement carrying no
   readable ordinal still names the series, unpositioned, and `SeriesOrder` then
   ranks it by release year — counting a `P155`/`P156` chain would invent the rank
   the qualifier exists to state.
