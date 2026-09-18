@@ -16,7 +16,7 @@ PenaltyFraction = NewType("PenaltyFraction", float)
 
 VARIETY_TOP_PENALTY = PenaltyFraction(1.0)
 
-# Number of distinct recently finished clusters the penalty ladder spans.
+# Number of recent completions the penalty ladder spans, one to a rung.
 VARIETY_LADDER_STEPS = 5
 
 
@@ -62,20 +62,22 @@ def build_variety_ladder(
     completed = [item for item in completed_items if _is_completion_event(item)]
     completed.sort(key=_completion_sort_key, reverse=True)
 
+    # One rung per completion, shared by every cluster it reaches: claiming one
+    # of them would leave the rest floating a near-identical title. A completion
+    # adding no new cluster spends no rung.
     ladder: dict[str, float] = {}
+    rung = 0
     for item in completed:
-        if len(ladder) >= steps:
+        if rung >= steps:
             break
         clusters = get_clusters_for_terms(extract_and_normalize_genres(item.metadata))
-        # Sort for deterministic rung assignment when a single item belongs
-        # to several clusters (e.g. a fantasy-adventure novel).
-        for cluster in sorted(clusters):
-            if cluster in ladder:
-                continue
-            rung = len(ladder)
-            ladder[cluster] = top_penalty * (steps - rung) / steps
-            if len(ladder) >= steps:
-                break
+        fresh = [cluster for cluster in clusters if cluster not in ladder]
+        if not fresh:
+            continue
+        penalty = top_penalty * (steps - rung) / steps
+        for cluster in fresh:
+            ladder[cluster] = penalty
+        rung += 1
 
     return ladder
 

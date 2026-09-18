@@ -112,11 +112,16 @@ the genre you just finished. `0.0` turns it off. The value is divided by its
 `5.0` maximum to give the top penalty fraction, so `5.0` zeroes a just-finished
 genre's same-type candidates outright. There is **no score floor**.
 
-Your five most recently finished genre clusters sit on a ladder that decays by
-recency. At `5.0` the rungs are 100%, 80%, 60%, 40%, 20%, then nothing, and a
-lower setting scales the whole ladder down: `2.0` gives 40%, 32%, 24%, 16%, 8%.
-A candidate takes the penalty of its freshest matching cluster, multiplied into
-its final score.
+Your five most recent completions each own a rung on a ladder that decays by
+completion date, and every genre cluster that completion reaches shares its rung:
+finishing a fantasy litrpg adventure fatigues all three. A cluster on two
+completions keeps the fresher one's rung, and a completion whose clusters are all
+on the ladder already spends none — an older completion takes that rung instead.
+
+At `5.0` the rungs are 100%, 80%, 60%, 40%, 20%, then nothing, and a lower
+setting scales the whole ladder down: `2.0` gives 40%, 32%, 24%, 16%, 8%. A
+candidate takes the penalty of its freshest matching cluster, multiplied into its
+final score.
 
 The penalty is **per content type**. Finishing a fantasy *book* varies your book
 recommendations and leaves fantasy *movies* and *games* alone. Every
@@ -128,9 +133,6 @@ genre's penalty like any other title.
 
 A finished **TV season** counts as a completion even while the show is still in
 progress, dated by that season's watched date.
-
-Completions are ordered by completion date, so something you finish today
-outranks an import dated years ago.
 
 The date is the calendar day in the host's timezone, not UTC. See
 [DOCKER.md](DOCKER.md#environment-variables) for setting `TZ` on a container.

@@ -151,6 +151,43 @@ class TestBuildVarietyLadder:
         assert "fantasy" not in ladder
         assert ladder["science_fiction"] == pytest.approx(VARIETY_TOP_PENALTY)
 
+    def test_every_cluster_of_one_completion_shares_its_rung(self) -> None:
+        """A finished book belonging to five clusters used to fill every rung by
+        itself, so nothing finished before it reached the ladder at all."""
+        items = [
+            _completed(
+                "Omnibus",
+                ["Fantasy", "Science Fiction", "Mystery", "Horror", "Western"],
+                completed_on=date(2026, 1, 2),
+            ),
+            _completed("Bio", ["Biography"], completed_on=date(2026, 1, 1)),
+        ]
+        ladder = build_variety_ladder(items)
+
+        assert ladder["fantasy"] == pytest.approx(VARIETY_TOP_PENALTY)
+        assert ladder["western"] == pytest.approx(VARIETY_TOP_PENALTY)
+        assert ladder["nonfiction_documentary"] == pytest.approx(
+            VARIETY_TOP_PENALTY * (VARIETY_LADDER_STEPS - 1) / VARIETY_LADDER_STEPS
+        )
+
+    def test_shared_cluster_keeps_the_fresher_completions_rung(self) -> None:
+        items = [
+            _completed(
+                "New Fantasy", ["Fantasy", "Mystery"], completed_on=date(2026, 1, 2)
+            ),
+            _completed(
+                "Old Fantasy", ["Fantasy", "Western"], completed_on=date(2026, 1, 1)
+            ),
+        ]
+        ladder = build_variety_ladder(items)
+
+        second_rung = pytest.approx(
+            VARIETY_TOP_PENALTY * (VARIETY_LADDER_STEPS - 1) / VARIETY_LADDER_STEPS
+        )
+        assert ladder["fantasy"] == pytest.approx(VARIETY_TOP_PENALTY)
+        assert ladder["crime_thriller"] == pytest.approx(VARIETY_TOP_PENALTY)
+        assert ladder["western"] == second_rung
+
     def test_undated_items_sort_after_dated_items(self) -> None:
         items = [
             _completed("Undated", ["Fantasy"], completed_on=None, db_id=1),
