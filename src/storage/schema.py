@@ -110,7 +110,7 @@ class SyncRunDict(TypedDict):
 # Changing ``normalize_title_for_matching``, ``get_sort_title`` or
 # ``build_search_text`` needs a bump and a step to rewrite what the old one
 # stored, or dedup lookups stop matching and duplicates accumulate in silence.
-_SCHEMA_VERSION = 30
+_SCHEMA_VERSION = 32
 
 # Rows for these keys are unreachable from the app but would still
 # be overlaid onto config, so they are pruned once on upgrade.
@@ -479,6 +479,8 @@ def create_schema(conn: sqlite3.Connection) -> None:
     if stored_version < 30:
         # Covers are fetched by the enrichment run now; nothing reads this job.
         cursor.execute("DROP TABLE IF EXISTS cover_backfill_job")
+    if stored_version < 32:
+        _clear_orphaned_series_guesses(cursor)
 
     # Filled after the repair, which recovers a creator that existed only in a
     # blob. Unguarded because the fill selects the rows that need it rather
@@ -984,6 +986,78 @@ def _drop_retired_series_keys(cursor: sqlite3.Cursor) -> None:
                 and get_series_name_from_metadata(blob) is None
             ):
                 _queue_for_enrichment(cursor, row["content_item_id"])
+
+
+def _stored_blob(raw: str | None) -> dict[str, Any] | None:
+    """Empty rather than absent for a row an earlier rewrite emptied: it still
+    carries the ledger rows that would refill it. None is a blob to leave alone.
+    """
+    if raw is None:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _drop_unbacked_position_writes(
+    cursor: sqlite3.Cursor, db_id: int, blob: dict[str, Any]
+) -> bool:
+    """Drops what would restore a position no series name places: across the
+    merge group only the legacy band holds it, and legacy restates the blob
+    rather than backing it. Keying on the ledger, not the blob, finishes a
+    half-applied upgrade.
+    """
+    if get_series_name_from_metadata(blob):
+        return False
+    group = merge_group_clause("content_item_id", ":id")
+    params: dict[str, Any] = {"id": db_id, "field": SERIES_POSITION_KEY}
+    cursor.execute(
+        f"SELECT 1 FROM content_item_field_writes WHERE {group}"
+        " AND field = :field AND writer_kind <> :legacy",
+        {**params, "legacy": WriterBand.LEGACY.value},
+    )
+    if cursor.fetchone() is not None:
+        return False
+    cursor.execute(
+        f"DELETE FROM content_item_field_writes WHERE {group} AND field = :field",
+        params,
+    )
+    return True
+
+
+def _clear_orphaned_series_guesses(cursor: sqlite3.Cursor) -> None:
+    """A position naming no series places the item in no series at all. Its
+    ledger row goes too, or the next rebuild restores it; only a cleared
+    position asks for the re-fetch that can name the series.
+    """
+    # Survivors only: an absorbed row's blob is the stale one the merge left for
+    # the undo, while its ledger rows found the survivor's position.
+    for spec in DETAIL_FIELDS.values():
+        cursor.execute(
+            f"SELECT d.content_item_id, d.metadata FROM {spec.table} d"
+            " JOIN content_items ci ON ci.id = d.content_item_id"
+            " WHERE ci.merged_into IS NULL"
+        )
+        for row in cursor.fetchall():
+            blob = _stored_blob(row["metadata"])
+            if blob is None:
+                continue
+            db_id = row["content_item_id"]
+            orphaned = blob.keys() & {_FRANCHISE_KEY}
+            unbacked = _drop_unbacked_position_writes(cursor, db_id, blob)
+            if unbacked and SERIES_POSITION_KEY in blob:
+                orphaned |= {SERIES_POSITION_KEY, SERIES_AUTHORITY_KEY}
+                _queue_for_enrichment(cursor, db_id)
+            if not orphaned:
+                continue
+            for key in orphaned:
+                blob.pop(key, None)
+            cursor.execute(
+                f"UPDATE {spec.table} SET metadata = ? WHERE content_item_id = ?",
+                (json.dumps(blob) if blob else None, db_id),
+            )
 
 
 #: The canonical key wins where both are stored: readers already preferred it.

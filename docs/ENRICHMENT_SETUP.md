@@ -63,7 +63,7 @@ identify beyond doubt, by type and release year, is left alone.
 
 ### How providers combine
 
-Every enabled provider for an item's type is asked in the order `enrichment.provider_order` names, whether or not one above it matched, and every answer is recorded whole. Genres and tags from every match are combined; every other field resolves to the highest-ranked writer that stated it, so ranking a provider higher replaces a weaker writer's value rather than filling a gap.
+Every enabled provider for an item's type is asked in the order `enrichment.provider_order` names, whether or not one above it matched, and every answer is recorded whole. The series pass asks the same way, whatever the item already states. Genres and tags from every match are combined; every other field resolves to the highest-ranked writer that stated it, so ranking a provider higher replaces a weaker writer's value rather than filling a gap.
 
 The top match is credited with the item. Every installed provider must be named exactly once, so an order that misspells or omits one is refused.
 

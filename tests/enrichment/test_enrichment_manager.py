@@ -2750,19 +2750,25 @@ class TestTheOrdinalPass:
         assert item.metadata["series_position"] == 3.0
         assert item.metadata["series_position_authority"] == "authored"
 
-    def test_an_ordinal_the_library_stated_is_never_asked_about(
+    def test_an_ordinal_the_library_stated_survives_every_provider_being_asked(
         self, tmp_path: Path
     ) -> None:
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
         db_id = save_movie(
             storage_manager,
-            metadata={"series_position": 4, "series_position_authority": "library"},
+            metadata={
+                "series_name": "The Matrix",
+                "series_position": 4,
+                "series_position_authority": "library",
+            },
         )
 
         provider = self._run(storage_manager)
 
-        assert provider.ordinal_calls == []
-        assert storage_manager.get_content_item(db_id).metadata["series_position"] == 4
+        assert [item.db_id for item in provider.ordinal_calls] == [db_id]
+        item = storage_manager.get_content_item(db_id)
+        assert item.metadata["series_position"] == 4
+        assert item.metadata["series_position_authority"] == "library"
 
     def test_the_stored_series_name_survives_the_ordinal_that_positions_it(
         self, tmp_path: Path
@@ -2889,20 +2895,42 @@ class UnpositionedSeriesProvider(OrdinalOnlyProvider):
 
 
 class TestASeriesStatedWithoutAPosition:
+    @staticmethod
+    def _run(storage_manager: StorageManager) -> UnpositionedSeriesProvider:
+        provider = UnpositionedSeriesProvider()
+        manager = manager_over(storage_manager, provider)
+        manager.start_enrichment(content_type=ContentType.MOVIE)
+        assert manager._wait_for_completion()
+        return provider
+
     def test_the_series_name_lands_and_no_position_is_invented(
         self, tmp_path: Path
     ) -> None:
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
         db_id = save_movie(storage_manager)
-        manager = manager_over(storage_manager, UnpositionedSeriesProvider())
 
-        manager.start_enrichment(content_type=ContentType.MOVIE)
-        assert manager._wait_for_completion()
+        self._run(storage_manager)
 
         item = storage_manager.get_content_item(db_id)
         assert item.metadata["series_name"] == "The Matrix"
         assert "series_position" not in item.metadata
         assert "series_position_authority" not in item.metadata
+
+    def test_the_name_reaches_an_item_whose_stored_position_outranks_the_offer(
+        self, tmp_path: Path
+    ) -> None:
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        db_id = save_movie(
+            storage_manager,
+            metadata={"series_position": 5, "series_position_authority": "library"},
+        )
+
+        provider = self._run(storage_manager)
+
+        assert [item.db_id for item in provider.ordinal_calls] == [db_id]
+        item = storage_manager.get_content_item(db_id)
+        assert item.metadata["series_name"] == "The Matrix"
+        assert item.metadata["series_position"] == 5
 
 
 class StatedOrdinalProvider(OrdinalOnlyProvider):
@@ -2945,7 +2973,7 @@ class TestASeriesOneProviderNamesAndAnotherCounts:
         assert item.metadata["series_position"] == 3.0
         assert item.metadata["series_position_authority"] == "authored"
 
-    def test_a_position_already_stored_spends_no_further_providers_quota(
+    def test_a_name_only_provider_is_asked_after_a_position_is_stored(
         self, tmp_path: Path
     ) -> None:
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
@@ -2956,7 +2984,7 @@ class TestASeriesOneProviderNamesAndAnotherCounts:
             storage_manager, StatedOrdinalProvider("counting", self._COUNTED), naming
         )
 
-        assert naming.ordinal_calls == []
+        assert [item.db_id for item in naming.ordinal_calls] == [db_id]
         item = storage_manager.get_content_item(db_id)
         assert item.metadata["series_name"] == "The Matrix"
         assert item.metadata["series_position"] == 3.0

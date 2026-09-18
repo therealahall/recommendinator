@@ -10,6 +10,7 @@ import pytest
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage import schema
+from src.storage.item_merges import MergeEvidence
 from src.storage.sqlite_db import SQLiteDB
 from src.utils.export import export_items_csv
 from src.utils.item_serialization import item_to_dict
@@ -26,6 +27,7 @@ _STAMPED_BY_AN_EARLIER_BUILD = 15
 _BEFORE_THE_ORDINAL_LADDER = 21
 _BEFORE_THE_SERIES_ALIASES_FOLDED = 22
 _BEFORE_THE_RETIRED_KEYS_WENT = 24
+_BEFORE_THE_ORPHANED_POSITIONS_WENT = 30
 
 
 def _needs_enrichment(db: SQLiteDB, db_id: int) -> int:
@@ -856,6 +858,200 @@ class TestRetiredSeriesKeysLeaveAStoredBlob:
         assert "franchise" not in pinned.metadata
         assert pinned.metadata["enrichment_ids"] == {"rawg": "43"}
         assert pinned.metadata["average_playtime_hours"] == 4
+
+
+class TestAPositionLeftBehindWithoutASeriesName:
+    """Six Mario Party games came back in one run: each held a position, the
+    retired franchise key and no name, so nothing grouped them as a series.
+    """
+
+    def _upgraded(self, tmp_path: Path) -> tuple[SQLiteDB, dict[str, int]]:
+        db_path = tmp_path / "test.db"
+        db = SQLiteDB(db_path)
+        seeded = {
+            "orphaned": db.save_content_item(
+                ContentItem(
+                    id="rawg:5",
+                    title="Mario Party 5",
+                    content_type=ContentType.VIDEO_GAME,
+                    status=ConsumptionStatus.UNREAD,
+                    metadata={
+                        "franchise": "Mario Party",
+                        "series_position": 5.0,
+                        "series_position_authority": "authored",
+                    },
+                )
+            ),
+            "half_applied": db.save_content_item(
+                ContentItem(
+                    id="rawg:9",
+                    title="Mario Party 9",
+                    content_type=ContentType.VIDEO_GAME,
+                    status=ConsumptionStatus.UNREAD,
+                    metadata={
+                        "series_position": 9.0,
+                        "series_position_authority": "authored",
+                    },
+                )
+            ),
+            "stated": db.save_content_item(
+                ContentItem(
+                    id="calibre:12",
+                    title="Ancillary Sword",
+                    content_type=ContentType.BOOK,
+                    status=ConsumptionStatus.UNREAD,
+                    source="calibre_web",
+                    metadata={
+                        "series_position": 2.0,
+                        "series_position_authority": "stated",
+                    },
+                )
+            ),
+            "named": db.save_content_item(
+                ContentItem(
+                    id="rawg:3328",
+                    title="The Witcher III",
+                    content_type=ContentType.VIDEO_GAME,
+                    status=ConsumptionStatus.UNREAD,
+                    source="gog",
+                    metadata={
+                        "franchise": "The Witcher",
+                        "series_name": "The Witcher",
+                        "series_position": 3.0,
+                    },
+                )
+            ),
+            "survivor": db.save_content_item(
+                ContentItem(
+                    id="rawg:8",
+                    title="Mario Party 8",
+                    content_type=ContentType.VIDEO_GAME,
+                    status=ConsumptionStatus.UNREAD,
+                    metadata={"series_name": "Mario Party"},
+                )
+            ),
+            "absorbed": db.save_content_item(
+                ContentItem(
+                    id="gog:8",
+                    title="Mario Party 8 Deluxe",
+                    content_type=ContentType.VIDEO_GAME,
+                    status=ConsumptionStatus.UNREAD,
+                    metadata={
+                        "franchise": "Mario Party",
+                        "series_position": 8.0,
+                        "series_position_authority": "authored",
+                    },
+                )
+            ),
+        }
+        with db.connection() as conn:
+            for db_id in seeded.values():
+                conn.execute(
+                    "INSERT INTO enrichment_status"
+                    " (content_item_id, enrichment_provider, enrichment_quality,"
+                    " needs_enrichment) VALUES (?, 'rawg', 'high', 0)",
+                    (db_id,),
+                )
+            # What the ledger backfill recorded off a blob nobody claimed.
+            conn.execute(
+                "UPDATE content_item_field_writes SET writer_kind = 'legacy',"
+                " writer = '' WHERE content_item_id IN (?, ?)"
+                " AND field = 'series_position'",
+                (seeded["orphaned"], seeded["half_applied"]),
+            )
+            # The same backfill, over the pair a merge later made one work: every
+            # pre-ledger write shares the one legacy writer.
+            conn.execute(
+                "UPDATE content_item_field_writes SET writer_kind = 'legacy',"
+                " writer = '' WHERE content_item_id IN (?, ?)",
+                (seeded["survivor"], seeded["absorbed"]),
+            )
+            # An earlier form of this step emptied the blob and kept the row.
+            conn.execute(
+                "UPDATE video_game_details SET metadata = NULL"
+                " WHERE content_item_id = ?",
+                (seeded["half_applied"],),
+            )
+            conn.commit()
+        db.merge_content_items(
+            seeded["survivor"], seeded["absorbed"], MergeEvidence.MANUAL
+        )
+        with db.connection() as conn:
+            conn.execute(f"PRAGMA user_version = {_BEFORE_THE_ORPHANED_POSITIONS_WENT}")
+            conn.commit()
+        return SQLiteDB(db_path), seeded
+
+    def test_the_orphaned_pair_goes_for_good_and_the_item_is_queued_for_a_re_fetch(
+        self, tmp_path: Path
+    ) -> None:
+        db, seeded = self._upgraded(tmp_path)
+
+        db.rebuild_item(seeded["orphaned"])
+
+        item = db.get_content_item(seeded["orphaned"])
+        assert item is not None
+        assert "franchise" not in item.metadata
+        assert "series_position" not in item.metadata
+        assert _needs_enrichment(db, seeded["orphaned"]) == 1
+
+    def test_a_position_an_earlier_form_left_in_the_ledger_does_not_come_back(
+        self, tmp_path: Path
+    ) -> None:
+        db, seeded = self._upgraded(tmp_path)
+
+        db.rebuild_item(seeded["half_applied"])
+
+        item = db.get_content_item(seeded["half_applied"])
+        assert item is not None
+        assert "series_position" not in item.metadata
+        assert _needs_enrichment(db, seeded["half_applied"]) == 0
+
+    def test_a_position_a_source_stated_survives_the_missing_series_name(
+        self, tmp_path: Path
+    ) -> None:
+        db, seeded = self._upgraded(tmp_path)
+
+        db.rebuild_item(seeded["stated"])
+
+        item = db.get_content_item(seeded["stated"])
+        assert item is not None
+        assert item.metadata["series_position"] == 2.0
+        assert item.metadata["series_position_authority"] == "stated"
+        assert _needs_enrichment(db, seeded["stated"]) == 0
+
+    def test_a_position_stated_beside_its_series_name_outlives_the_retired_key(
+        self, tmp_path: Path
+    ) -> None:
+        db, seeded = self._upgraded(tmp_path)
+
+        item = db.get_content_item(seeded["named"])
+        assert item is not None
+        assert "franchise" not in item.metadata
+        assert item.metadata["series_name"] == "The Witcher"
+        assert item.metadata["series_position"] == 3.0
+        assert _needs_enrichment(db, seeded["named"]) == 0
+
+    def test_a_position_an_absorbed_row_founds_outlives_the_step(
+        self, tmp_path: Path
+    ) -> None:
+        db, seeded = self._upgraded(tmp_path)
+
+        db.rebuild_item(seeded["survivor"])
+
+        # The blob keeps a position no writer states, so only the write the
+        # survivor rebuilds from shows whether the step reached past it.
+        with db.connection() as conn:
+            founding = conn.execute(
+                "SELECT value_json FROM content_item_field_writes"
+                " WHERE content_item_id = ? AND field = 'series_position'",
+                (seeded["absorbed"],),
+            ).fetchall()
+        assert len(founding) == 1
+
+        item = db.get_content_item(seeded["survivor"])
+        assert item is not None
+        assert item.metadata["series_name"] == "Mario Party"
+        assert item.metadata["series_position"] == 8.0
 
 
 class TestSeriesAliasesFoldIntoOnePair:

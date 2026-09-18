@@ -34,12 +34,7 @@ from src.storage.global_secrets import read_secret
 from src.storage.schema import get_default_user_id
 from src.utils.matching import Candidate
 from src.utils.request_errors import scrub_request_error
-from src.utils.series import (
-    SERIES_RECONCILED_KEYS,
-    SeriesAuthority,
-    reconcile_series,
-    stored_series_authority,
-)
+from src.utils.series import SERIES_RECONCILED_KEYS, reconcile_series
 from src.utils.text import sanitize_for_log
 
 if TYPE_CHECKING:
@@ -875,18 +870,13 @@ class EnrichmentManager:
         providers: list[EnrichmentProvider],
     ) -> str | None:
         """Runs after the match loop so an ordinal has the matched provider's
-        series name to agree with, and only while an authored one would replace
-        what is stored. Returns why it ended unanswered, or None when answered.
+        series name to agree with. Every provider stating one is asked whatever
+        is stored; ``reconcile_series`` settles the write. Returns why it ended
+        unanswered, or None.
         """
         settled = False
         unanswered: list[str] = []
         for provider in providers:
-            # Each round, not once: a name-only answer used to end the walk here
-            # and lose the position the next provider states.
-            if not SeriesAuthority.AUTHORED.replaces(
-                stored_series_authority(item.metadata)
-            ):
-                break
             if not states_a_series_ordinal(provider):
                 continue
             if provider.name in self._abandoned_providers:
