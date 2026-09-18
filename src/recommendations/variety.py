@@ -5,7 +5,10 @@ from typing import NewType
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.user_preferences import UserPreferenceConfig
-from src.recommendations.genre_clusters import get_clusters_for_terms
+from src.recommendations.genre_clusters import (
+    cluster_coverage,
+    get_clusters_for_terms,
+)
 from src.recommendations.genre_normalizer import extract_and_normalize_genres
 from src.utils.series import latest_season_watched_date
 
@@ -13,6 +16,9 @@ from src.utils.series import latest_season_watched_date
 #: from the user's ``variety_penalty`` preference, which is a 0.0-5.0 strength:
 #: a strength used unscaled as a fraction would push scores below zero.
 PenaltyFraction = NewType("PenaltyFraction", float)
+
+#: The clusters one completion reached, and the penalty for matching all of them.
+VarietyRung = tuple[frozenset[str], float]
 
 VARIETY_TOP_PENALTY = PenaltyFraction(1.0)
 
@@ -55,9 +61,9 @@ def build_variety_ladder(
     *,
     steps: int = VARIETY_LADDER_STEPS,
     top_penalty: PenaltyFraction = VARIETY_TOP_PENALTY,
-) -> dict[str, float]:
+) -> list[VarietyRung]:
     if steps <= 0:
-        return {}
+        return []
 
     completed = [item for item in completed_items if _is_completion_event(item)]
     completed.sort(key=_completion_sort_key, reverse=True)
@@ -65,27 +71,28 @@ def build_variety_ladder(
     # One rung per completion, shared by every cluster it reaches: claiming one
     # of them would leave the rest floating a near-identical title. A completion
     # adding no new cluster spends no rung.
-    ladder: dict[str, float] = {}
-    rung = 0
+    ladder: list[VarietyRung] = []
+    placed: set[str] = set()
     for item in completed:
-        if rung >= steps:
+        if len(ladder) >= steps:
             break
         clusters = get_clusters_for_terms(extract_and_normalize_genres(item.metadata))
-        fresh = [cluster for cluster in clusters if cluster not in ladder]
-        if not fresh:
+        if clusters <= placed:
             continue
-        penalty = top_penalty * (steps - rung) / steps
-        for cluster in fresh:
-            ladder[cluster] = penalty
-        rung += 1
+        ladder.append(
+            (frozenset(clusters), top_penalty * (steps - len(ladder)) / steps)
+        )
+        placed |= clusters
 
     return ladder
 
 
-def variety_penalty_for(item: ContentItem, ladder: dict[str, float]) -> float:
-    if not ladder:
-        return 0.0
+def variety_penalty_for(item: ContentItem, ladder: list[VarietyRung]) -> float:
     clusters = get_clusters_for_terms(extract_and_normalize_genres(item.metadata))
+    # Coverage of the rung, not similarity to it: a symmetric measure puts the
+    # candidate's own clusters in the denominator, so richer enrichment alone
+    # would soften the penalty for repeating what was just finished.
     return max(
-        (ladder[cluster] for cluster in clusters if cluster in ladder), default=0.0
+        (penalty * cluster_coverage(clusters, rung) for rung, penalty in ladder),
+        default=0.0,
     )

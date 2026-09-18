@@ -637,6 +637,16 @@ def cluster_similarity(
     return len(clusters_a & clusters_b) / len(clusters_a | clusters_b)
 
 
+def cluster_coverage(
+    clusters: frozenset[str] | set[str], reference: frozenset[str] | set[str]
+) -> float:
+    """How much of ``reference`` ``clusters`` covers, ignoring whatever else it holds."""
+    if not reference:
+        return 0.0
+
+    return len(clusters & reference) / len(reference)
+
+
 def cluster_overlap(terms_a: list[str], terms_b: list[str]) -> float:
     return cluster_similarity(
         get_clusters_for_terms(terms_a), get_clusters_for_terms(terms_b)
