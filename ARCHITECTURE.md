@@ -41,6 +41,26 @@ them carry a rule their columns do not say: an unfinished `sync_runs` row claims
 its source, so no two processes sync it at once, and `content_item_dead_covers`
 holds a cover URL that permanently failed, so nothing re-offers it.
 
+#### The field-write ledger
+
+Every value a writer states goes to `content_item_field_writes`, one row per `(content_item_id, field, writer_kind, writer)` holding the value, an optional authority and when that writer first said it. The stored column is whichever row wins by rank, and SQLite triggers refuse a resolved column written by anything but the rebuild.
+
+The bands, weakest first: `legacy` (in a column before the ledger existed, claimed by nobody), `completion` (typed at the completion door), `source`, `provider`, `pinned`, `chosen` (a per-field choice naming a writer), `manual` (the operator's own edit). Within a band, providers order by `enrichment.provider_order`, and one it does not name ranks below those it does. Covers invert the middle pair: a source outranks a provider, and the URL taken is the highest-ranked one not already recorded dead.
+
+`pinned` and `chosen` are ranks the rebuild hands a row at resolve time rather than bands a door writes: a pin names a provider's record and a choice names a writer, and both lift that writer's own statement to the top.
+
+The series name and position are the one family rank does not decide: the first writer to name it keeps the name, and the ordinal goes to the best-founded authority among writers numbering that same series. One naming no series does not count, the operator excepted. Equal standing goes to the highest-ranked writer, not to whoever answered first.
+
+Genres and tags merge across writers, and a manual hold truncates that merge. Season and episode counts take the highest any writer states, so a source listing only the files it holds cannot shrink a show, unless a choice names the writer to believe. A merged item rebuilds from the whole group: the survivor's rows plus every row belonging to an item merged into it.
+
+`drop_provider_writes` takes back one provider's rows or every provider's across that group, `legacy=True` the unclaimed rows with them, and `clear_manual_field` releases a hold. A column the rebuild is left no writer for is cleared, and `fields_leaving_the_group` empties the columns an unmerge takes the only word for.
+
+#### Rebuilding from the ledger
+
+Changing `enrichment.provider_order`, or switching a provider on or off, records that the library owes a rebuild. A background pass then re-resolves every item's stored columns from the ledger and calls no provider, because every value is already on file.
+
+One pass runs at a time: it claims the job, heartbeats the item it is on, and ends after that item when stopped. A change arriving mid-pass leaves a rerun owed, which the pass picks up instead of finishing, and a pass that fails ends with the rerun still owed.
+
 #### User-owned fields
 
 `rating`, `review`, `status`, `date_completed` and `ignored` belong to the user.
@@ -55,12 +75,6 @@ holds a cover URL that permanently failed, so nothing re-offers it.
 | `ignored` | Only a stated `True` or `False` wins, in either direction. `None` leaves the stored flag alone |
 
 `seasons_watched` is the one metadata key the sync door unions.
-
-The series name and position are the one family the rebuild re-decides: the
-first writer to name it keeps the name, and the ordinal goes to the
-best-founded authority among writers numbering that same series. One naming no
-series does not count, the operator excepted. Equal standing goes to the
-highest-ranked writer, not to whoever answered first.
 
 After the upsert, `_handle_tv_season_change` regresses a completed TV show to
 `currently_consuming` when the season count rises above the seasons the user

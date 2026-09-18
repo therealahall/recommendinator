@@ -200,6 +200,20 @@ refuses a name it does not.
 `--format json` emits what `DELETE /api/items/<id>/manual-fields/<field>`
 answers.
 
+### `library field-writers` / `library choose-writer`
+
+```bash
+uv run python -m src.cli library field-writers --id 42
+uv run python -m src.cli library choose-writer --id 42 --field description --writer tmdb
+uv run python -m src.cli library choose-writer --id 42 --field description --clear
+```
+
+`field-writers` lists every field a writer has stated, one row per writer with its band, its value and whether the field follows it; `--field` narrows to one. A field rank does not decide — the series name and position, genres and tags — is listed with a note instead of writers.
+
+`choose-writer` makes a field follow one writer, `--clear` returning it to the default order. The choice outranks the provider order for that field alone and releases your own hold on it, so a writer the field cannot follow is refused before anything is released, naming the ones it can.
+
+`--format json` emits what `GET /api/items/<id>/field-writers` answers, which takes the same `field` query, and `choose-writer` the item `PUT /api/items/<id>/field-writers/<field>` answers.
+
 ### `library ignore` / `library unignore`
 
 Ignored items are excluded from recommendations.
@@ -256,6 +270,18 @@ of them, one short of the largest block offered.
 `undecline-duplicate` lifts one of those refusals, and refuses while a merge
 holds either row, naming the merge to undo first: a refusal is only liftable
 back onto a pair the list can offer.
+
+### `library rebuild`
+
+```bash
+uv run python -m src.cli library rebuild
+uv run python -m src.cli library rebuild-status
+uv run python -m src.cli library rebuild-stop
+```
+
+Re-resolves every item's stored fields from the ledger, calling no provider: every value is already on file, so the pass costs no API quota. It runs by itself whenever the provider order changes or a provider is switched on or off, which leaves this command for asking again by hand.
+
+`rebuild` waits for the pass, reporting progress on stderr, and exits non-zero only when it stopped on an error. One pass runs at a time across both interfaces, and a stop takes effect after the item it is on. `--format json` on `rebuild` and `rebuild-status` emits what `POST /api/library/rebuild` and `GET /api/library/rebuild/status` answer; `rebuild-stop` mirrors `POST /api/library/rebuild/stop`.
 
 ### `library export`
 

@@ -63,9 +63,13 @@ identify beyond doubt, by type and release year, is left alone.
 
 ### How providers combine
 
-Every enabled provider for an item's type is asked in the order `enrichment.provider_order` names, whether or not one above it matched. Genres and tags from every match are combined. Every other field comes from the highest-ranked provider stating it, and that top match is credited with the item. Every installed provider must be named exactly once, so an order that misspells or omits one is refused.
+Every enabled provider for an item's type is asked in the order `enrichment.provider_order` names, whether or not one above it matched, and every answer is recorded whole. Genres and tags from every match are combined; every other field resolves to the highest-ranked writer that stated it, so ranking a provider higher replaces a weaker writer's value rather than filling a gap.
 
-Items enriched before every provider was asked hold only what their first match stated. `enrichment requeue --id` puts one back in front of every provider with what it holds standing, and `enrichment start --retry-not-found` re-asks for items no provider found: either way the next run adds and fills without removing anything. `enrichment reset` reaches them in bulk, at the cost of dropping what the providers stated first.
+The top match is credited with the item. Every installed provider must be named exactly once, so an order that misspells or omits one is refused.
+
+Items enriched before every provider was asked hold only what their first match stated. `enrichment requeue --id` puts one back in front of every provider with every value it holds standing, and `enrichment start --retry-not-found` re-asks for items no provider found: either way the next run files what each provider says and re-resolves each field by rank, so a higher-ranked answer replaces a weaker writer's value while your own edits stand.
+
+`enrichment reset` reaches them in bulk, at the cost of dropping what the providers stated first, and `--hard` drops the values no writer ever claimed with them. Reordering the providers needs neither: the library rebuilds from the ledger on its own, calling nobody and keeping every value on file.
 
 ```bash
 uv run python -m src.cli settings set enrichment.provider_order "openlibrary,hardcover,rawg,tmdb,wikidata,igdb"

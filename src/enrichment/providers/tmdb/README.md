@@ -35,7 +35,7 @@ uv run python -m src.cli settings set-secret enrichment.providers.tmdb.api_key
   year, its release lands within three years; anything else settles as not found
   rather than storing the wrong film. An item carrying a TMDB id skips the search
   and the check.
-- Uses gap-filling — never overwrites existing fields.
+- Every field it states is recorded, and the column takes the highest-ranked writer, so it replaces a weaker one's value and never the operator's own edit.
 - Rate-limited to TMDB's 40 requests/sec ceiling.
 - Enriches genres, description, tags (keywords), and extra metadata. For movies
   this includes runtime, ratings, release date/year, language, studio, the
