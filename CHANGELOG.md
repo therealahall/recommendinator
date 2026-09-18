@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.72.1 (2026-09-18)
+
+### Bug Fixes
+
+- **recommendations**: Spend a variety rung per completion, not per genre
+  ([`4f24860`](https://github.com/therealahall/recommendinator/commit/4f248603b161634d4581d50715cd019e3c6f70ee))
+
+
 ## v0.72.0 (2026-09-18)
 
 ### Documentation
