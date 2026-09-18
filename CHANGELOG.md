@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.72.2 (2026-09-18)
+
+### Bug Fixes
+
+- **recommendations**: Cut a variety rung back to what a candidate shares
+  ([`40565ca`](https://github.com/therealahall/recommendinator/commit/40565ca7cbc6512a369e996ab9ef9c658ef4008c))
+
+
 ## v0.72.1 (2026-09-18)
 
 ### Bug Fixes
