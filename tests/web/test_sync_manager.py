@@ -11,6 +11,7 @@ import requests
 from fastapi import FastAPI
 
 from src.ingestion.sync import ALL_SOURCES_KEY, ALL_SOURCES_LABEL
+from src.library.rebuild import owe_library_rebuild
 from src.sources.service import ResolvedInput
 from src.storage.manager import StorageManager
 from src.storage.schema import SyncRunStatus
@@ -866,6 +867,23 @@ class TestSyncSchedulerLifecycle:
             return booted, scheduler.running, task.done()
 
         assert asyncio.run(boot_then_shut_down()) == (True, False, True)
+
+    def test_the_lifespan_starts_the_rebuild_a_failed_pass_left_owed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        storage = StorageManager(sqlite_path=tmp_path / "owed.db")
+        owe_library_rebuild(storage)
+        monkeypatch.setattr(app_state, "config_path", None)
+        monkeypatch.setattr(app_state, "storage", storage)
+        monkeypatch.setattr("src.web.app.sync_scheduler", SyncScheduler())
+
+        async def boot_then_shut_down() -> None:
+            async with lifespan(MagicMock(spec=FastAPI)):
+                pass
+
+        asyncio.run(boot_then_shut_down())
+
+        assert storage.rebuild_jobs.rerun_requested() is False
 
 
 class TestAutoEnrichGate:

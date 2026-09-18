@@ -352,7 +352,7 @@ class TestHardcoverEnrichment:
         assert len(result.genres) == 10
 
     @pytest.mark.parametrize("url", ["http://assets.hardcover.app/c.jpg", {"src": 1}])
-    def test_only_an_https_string_becomes_a_cover_the_backfill_dials(
+    def test_only_an_https_string_becomes_a_cover_the_run_dials(
         self, provider: HardcoverProvider, url: Any
     ) -> None:
         insecure = _hardcover_book()

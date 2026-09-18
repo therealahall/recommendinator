@@ -142,6 +142,22 @@ class TestEnrichmentStatusMethods:
         assert storage_manager.enrichment.status(db_id1)["needs_enrichment"] is True
         assert storage_manager.enrichment.status(db_id2)["needs_enrichment"] is False
 
+    def test_a_reset_counts_the_item_whose_status_row_a_crash_never_wrote(
+        self, storage_manager: StorageManager
+    ) -> None:
+        """The writes and the status row are committed apart, so a run that died
+        between them leaves provider values behind with no row over them."""
+        db_id = save_unenriched(storage_manager, "item19")
+        provider_enriches(storage_manager, db_id, "tmdb", runtime=137)
+
+        assert storage_manager.enrichment.reset_count() == 1
+        counts = storage_manager.enrichment.reset()
+
+        assert (counts.requeued, counts.stripped) == (1, 1)
+        rebuilt = storage_manager.get_content_item(db_id)
+        assert rebuilt is not None
+        assert rebuilt.metadata.get("runtime") is None
+
     def test_reset_drops_the_settled_miss_that_retry_not_found_reads(
         self, storage_manager: StorageManager, sample_item: ContentItem
     ) -> None:
@@ -431,7 +447,7 @@ class TestHardReset:
 
         counts = storage_manager.enrichment.reset(hard=True)
 
-        assert (counts.requeued, counts.stripped) == (1, 1)
+        assert (counts.requeued, counts.stripped) == (2, 1)
 
 
 class TestGetItemsNeedingEnrichment:
@@ -660,8 +676,8 @@ class TestEnrichmentStats:
 
         stats = storage_manager.enrichment.stats()
 
-        assert (stats["total"], stats["pending"], stats["resettable"]) == (3, 2, 2)
-        assert storage_manager.enrichment.reset().requeued == 2
+        assert (stats["total"], stats["pending"], stats["resettable"]) == (3, 2, 3)
+        assert storage_manager.enrichment.reset().requeued == 3
 
     def test_a_provider_filter_counts_every_item_it_wrote_to_not_the_credited_ones(
         self, storage_manager: StorageManager

@@ -25,6 +25,7 @@ from src.config.service import (
     resolve_bootstrap_web,
     resolve_config_path,
 )
+from src.library.rebuild import start_owed_rebuild
 from src.settings.metadata import default_of
 from src.storage.import_source_cleanup import drop_sources_replaced_by_upload
 from src.storage.schema import get_default_user_id
@@ -102,6 +103,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "Hot-reload is disabled."
         )
     await sync_scheduler.start()
+    # The only consumer a rebuild owed by a pass that died has, short of the
+    # operator writing another setting or pressing Rebuild.
+    if app_state.storage is not None:
+        start_owed_rebuild(app_state.storage)
     yield
     await sync_scheduler.stop()
     await app_state.config_watcher.stop()

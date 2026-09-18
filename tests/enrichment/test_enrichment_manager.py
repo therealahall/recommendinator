@@ -28,7 +28,9 @@ from src.enrichment.provider_base import (
 from src.enrichment.providers.tmdb.tmdb import TMDBProvider
 from src.enrichment.providers.wikidata.wikidata import WikidataProvider
 from src.enrichment.registry import EnrichmentRegistry
+from src.ingestion.urls import RedirectRefused
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.recommendations.profile import ProfileGenerator
 from src.storage.enrichment_status import EnrichmentStore
 from src.storage.field_writes import (
     FieldWriter,
@@ -46,6 +48,9 @@ def job_backed(storage: MagicMock, tmp_path: Path) -> MagicMock:
     storage.enrichment_jobs = StorageManager(
         sqlite_path=tmp_path / "enrichment-job.db"
     ).enrichment_jobs
+    # A run reads each item back to cache its cover, and an unstubbed lookup
+    # answers with a Mock whose cover url is a Mock too.
+    storage.get_content_item.return_value = None
     return storage
 
 
@@ -277,11 +282,12 @@ def save_book(
     source: str = "",
     metadata: dict[str, Any] | None = None,
     cover_url: str | None = None,
+    title: str = "Dune",
 ) -> int:
     return storage_manager.save_content_item(
         ContentItem(
-            id="dune",
-            title="Dune",
+            id=title.lower().replace(" ", "-"),
+            title=title,
             source=source,
             content_type=ContentType.BOOK,
             status=ConsumptionStatus.UNREAD,
@@ -327,7 +333,16 @@ def manager_over(
     enrichment: dict[str, Any] = {"enabled": True, "providers": enabled}
     if order is not None:
         enrichment["provider_order"] = order
-    return EnrichmentManager(storage_manager, {"enrichment": enrichment}, registry)
+    return EnrichmentManager(
+        storage_manager,
+        # Named because a run caches covers beside the database: unnamed, the
+        # cache would be the repository's own data directory.
+        {
+            "enrichment": enrichment,
+            "storage": {"database_path": str(storage_manager.sqlite_db.db_path)},
+        },
+        registry,
+    )
 
 
 def enrichment_buckets(storage_manager: StorageManager) -> dict[str, int]:
@@ -839,10 +854,10 @@ class TestEnrichmentProgressRegression:
         observed_totals: list[int] = []
         original_process_batch = manager._process_batch
 
-        def capture_total(items: list[tuple[int, ContentItem]]) -> None:
+        def capture_total(items: list[tuple[int, ContentItem]], user_id: int) -> None:
             with manager._lock:
                 observed_totals.append(manager._status.total_items)
-            original_process_batch(items)
+            original_process_batch(items, user_id)
 
         with patch.object(manager, "_process_batch", side_effect=capture_total):
             manager.start_enrichment()
@@ -1118,7 +1133,9 @@ class TestTransientProviderFailureIsRetryable:
     ) -> None:
         config["enrichment"]["batch_size"] = 2
         db_ids = {save_movie(storage_manager, f"Movie {index}") for index in range(5)}
-        failing = MockProvider(should_fail=True)
+        failing = RawRequestErrorProvider(
+            requests.ConnectionError("network is unreachable")
+        )
         registry.register(failing)
 
         manager = EnrichmentManager(storage_manager, config, registry)
@@ -1286,7 +1303,9 @@ class TestTransientProviderFailureIsRetryable:
             ) -> EnrichmentResult | None:
                 self.enrich_calls.append(item)
                 if item.title == "Broken Movie":
-                    raise ProviderError(self._name, "upstream 503")
+                    raise ProviderError(
+                        self._name, "upstream 503"
+                    ) from requests.ConnectionError("upstream 503")
                 if item.title == "Missing Movie":
                     return EnrichmentResult(match_quality="not_found")
                 return EnrichmentResult(genres=["Action"], match_quality="high")
@@ -1377,12 +1396,12 @@ class TestPermanentProviderFailureStopsRetrying:
 
         status = storage_manager.enrichment.status(db_id)
         assert status is not None
-        assert status["enrichment_quality"] == "not_found"
+        assert status["enrichment_error"] == f"{provider.name}: HTTP 401"
         assert queued_ids(storage_manager) == set()
 
         job_status = manager.get_status()
-        assert job_status.items_not_found == 1
-        assert job_status.items_failed == 0
+        assert job_status.items_not_found == 0
+        assert job_status.items_failed == 1
         assert any(provider.name in error for error in job_status.errors)
 
     def test_unwrapped_client_error_settles_the_item_regression(
@@ -1399,7 +1418,7 @@ class TestPermanentProviderFailureStopsRetrying:
         assert manager._wait_for_completion()
 
         assert queued_ids(storage_manager) == set()
-        assert manager.get_status().items_not_found == 1
+        assert manager.get_status().items_failed == 1
 
     @pytest.mark.parametrize("provider_class", WRAPPING_PROVIDERS)
     @pytest.mark.parametrize("status_code", [429, 503])
@@ -1462,8 +1481,8 @@ class TestPermanentProviderFailureStopsRetrying:
         assert storage_manager.enrichment.status(db_ids[-1]) is None
         job_status = manager.get_status()
         assert job_status.items_processed == asked
-        assert job_status.items_not_found == asked
-        assert job_status.items_failed == 0
+        assert job_status.items_not_found == 0
+        assert job_status.items_failed == asked
         assert f"{provider.name}: abandoned" in " ".join(job_status.errors[:5]), (
             "the reason the run stopped must not sit behind the duplicate "
             "rejections that caused it"
@@ -1487,8 +1506,8 @@ class TestPermanentProviderFailureStopsRetrying:
         assert asked == _MAX_CONSECUTIVE_REJECTIONS
         assert queued_ids(storage_manager) == set(db_ids[asked:])
         job_status = manager.get_status()
-        assert job_status.items_not_found == asked
-        assert job_status.items_failed == 0
+        assert job_status.items_not_found == 0
+        assert job_status.items_failed == asked
         assert all("invalid-jwt" in error for error in job_status.errors)
 
     def test_abandoning_one_types_providers_ends_a_run_scoped_to_that_type(
@@ -1576,20 +1595,52 @@ class TestPermanentProviderFailureStopsRetrying:
         assert queued_ids(storage_manager) == set()
         assert manager.get_status().items_enriched == 20
 
-    def test_failure_with_no_request_error_stays_retryable(
+    def test_a_crash_in_the_providers_own_code_settles_the_item_as_failed(
         self,
         storage_manager: StorageManager,
         registry: EnrichmentRegistry,
         config: dict[str, Any],
     ) -> None:
+        """The next run raises the same exception on the same item, so it leaves
+        the queue — but as a failure, since no provider said it is missing."""
         db_id = save_movie(storage_manager)
-        registry.register(MockProvider(should_fail=True))
+        provider = MockProvider(should_fail=True)
+        registry.register(provider)
+
+        manager = EnrichmentManager(storage_manager, config, registry)
+        manager.start_enrichment(content_type=ContentType.MOVIE)
+        assert manager._wait_for_completion()
+
+        assert queued_ids(storage_manager) == set()
+        status = storage_manager.enrichment.status(db_id)
+        assert status is not None
+        assert status["enrichment_quality"] != "not_found"
+        assert status["enrichment_error"] is not None
+        assert provider.name in status["enrichment_error"]
+        assert manager.get_status().items_failed == 1
+
+    @pytest.mark.parametrize("provider_class", WRAPPING_PROVIDERS)
+    def test_a_refused_redirect_stays_queued_for_the_next_run(
+        self,
+        storage_manager: StorageManager,
+        registry: EnrichmentRegistry,
+        config: dict[str, Any],
+        provider_class: type[WrappedRequestErrorProvider],
+    ) -> None:
+        """A captive portal answers every request with a hop off the origin, and
+        settling on one buries whatever the portal stood in front of."""
+        db_id = save_movie(storage_manager)
+        provider = provider_class(RedirectRefused("it leaves the origin"))
+        registry.register(provider)
 
         manager = EnrichmentManager(storage_manager, config, registry)
         manager.start_enrichment(content_type=ContentType.MOVIE)
         assert manager._wait_for_completion()
 
         assert queued_ids(storage_manager) == {db_id}
+        status = storage_manager.enrichment.status(db_id)
+        assert status is not None
+        assert status["enrichment_error"] == f"{provider.name}: RedirectRefused"
         assert manager.get_status().items_failed == 1
 
 
@@ -1724,7 +1775,7 @@ class TestEnrichmentFetchWindowRegression:
             "enrichment": {
                 "enabled": True,
                 "batch_size": 2,
-                "providers": {"mock": {"enabled": True}},
+                "providers": {"raw_request": {"enabled": True}},
             }
         }
 
@@ -1736,7 +1787,9 @@ class TestEnrichmentFetchWindowRegression:
     ) -> None:
         for index in range(5):
             save_movie(storage_manager, f"Movie {index}")
-        failing = MockProvider(should_fail=True)
+        failing = RawRequestErrorProvider(
+            requests.ConnectionError("network is unreachable")
+        )
         registry.register(failing)
 
         requested_limits: list[int] = []
@@ -2322,6 +2375,15 @@ class StatedResultProvider(MockProvider):
         return self._result
 
 
+def describing_book_run(storage_manager: StorageManager) -> EnrichmentManager:
+    return manager_over(
+        storage_manager,
+        StatedResultProvider(
+            "openlibrary", EnrichmentResult(description="Set on Arrakis.")
+        ),
+    )
+
+
 class TestTwoProvidersThatBothMatch:
     def test_every_match_contributes_and_the_one_ranked_first_is_credited(
         self, tmp_path: Path
@@ -2448,6 +2510,96 @@ class TestTheRebuildOverARecordedRun:
         assert stored.metadata["genres"] == ["Adventure", "Science Fiction"]
         # The cover is the one field a source outranks a provider on.
         assert stored.cover_url == self._SOURCE_COVER
+
+
+class GoneResponse:
+    """A 404 from the cover host, as much of a response as the fetch reads."""
+
+    status_code = 404
+
+    def __enter__(self) -> "GoneResponse":
+        return self
+
+    def __exit__(self, *_: object) -> bool:
+        return False
+
+
+class TestTheCoverACompletedRunFetches:
+    #: An address rather than a host: resolving one is dialling out.
+    _DEAD = "https://1.2.3.4/dune.jpg"
+
+    def test_a_cover_that_is_permanently_gone_is_buried_and_the_column_cleared(
+        self, tmp_path: Path
+    ) -> None:
+        """Buried, no rebuild offers the url again — which is what keeps the
+        library off a cover that 404s for good."""
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        db_id = save_book(storage_manager, source="calibre_web", cover_url=self._DEAD)
+        manager = describing_book_run(storage_manager)
+
+        with patch("src.covers.fetch.requests.get", return_value=GoneResponse()):
+            manager.start_enrichment(content_type=ContentType.BOOK)
+            assert manager._wait_for_completion()
+
+        assert storage_manager.get_content_item(db_id).cover_url is None
+        with storage_manager.connection() as conn:
+            buried = conn.execute(
+                "SELECT cover_url FROM content_item_dead_covers"
+                " WHERE content_item_id = ?",
+                (db_id,),
+            ).fetchall()
+        assert [row["cover_url"] for row in buried] == [self._DEAD]
+
+    def test_a_cover_write_that_fails_costs_that_item_and_not_the_rest_of_the_run(
+        self, tmp_path: Path
+    ) -> None:
+        """The sync thread shares this database, so a write outlasting the busy
+        timeout on the first dead cover used to abandon every item behind it."""
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        save_book(storage_manager, cover_url=self._DEAD)
+        behind = save_book(storage_manager, title="Children of Dune")
+        manager = describing_book_run(storage_manager)
+
+        with (
+            patch("src.covers.fetch.requests.get", return_value=GoneResponse()),
+            patch.object(
+                StorageManager,
+                "clear_cover_url",
+                side_effect=sqlite3.OperationalError("database is locked"),
+            ),
+        ):
+            manager.start_enrichment(content_type=ContentType.BOOK)
+            assert manager._wait_for_completion()
+
+        job_status = manager.get_status()
+        assert job_status.completed
+        assert "cover: OperationalError" in job_status.errors
+        stored = storage_manager.get_content_item(behind)
+        assert stored is not None
+        assert stored.metadata["description"] == "Set on Arrakis."
+
+
+class TestTheProfileARunLeavesBehind:
+    def test_a_regeneration_that_fails_is_reported_rather_than_completed(
+        self, tmp_path: Path
+    ) -> None:
+        """Every recommendation scores against the profile the run rebuilds, so
+        a run reporting completed over a stale one sends nobody looking."""
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        save_book(storage_manager)
+        manager = describing_book_run(storage_manager)
+
+        with patch.object(
+            ProfileGenerator,
+            "regenerate_and_save",
+            side_effect=sqlite3.OperationalError("database is locked"),
+        ):
+            manager.start_enrichment(content_type=ContentType.BOOK)
+            assert manager._wait_for_completion()
+
+        job_status = manager.get_status()
+        assert not job_status.completed
+        assert "Job error: OperationalError" in job_status.errors
 
 
 class TestTheOrdinalPass:
@@ -3067,7 +3219,10 @@ class TestARunReachesTMDBThroughTheGlobalRegistry:
             )
 
         manager = EnrichmentManager(storage_manager, config)
-        with patch("src.enrichment.providers.tmdb.tmdb.requests.get", fake_get):
+        with (
+            patch("src.enrichment.providers.tmdb.tmdb.requests.get", fake_get),
+            patch("src.covers.service.fill_cover"),
+        ):
             manager.start_enrichment(content_type=ContentType.MOVIE)
             assert manager._wait_for_completion()
 

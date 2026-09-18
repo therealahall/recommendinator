@@ -1,10 +1,8 @@
-"""Filling and reading the cover cache. One walk, so the web action and the CLI
-command run the same backfill."""
+"""Filling and reading the cover cache."""
 
 from __future__ import annotations
 
 import logging
-import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -12,11 +10,9 @@ from typing import TYPE_CHECKING, Any
 from src.config.service import cover_cache_dir
 from src.covers import cache
 from src.covers.fetch import CoverUnavailable, fetch_cover
-from src.ingestion.sync import MAX_REPORTED_ERRORS
 from src.ingestion.urls import UrlOrigin, url_origin
 from src.models.content import ContentItem
 from src.sources.service import resolve_inputs
-from src.storage.cover_jobs import CoverBackfillRecord
 from src.utils.text import sanitize_for_log
 
 if TYPE_CHECKING:
@@ -59,7 +55,6 @@ def fill_cover(
     storage: StorageManager,
     config: dict[str, Any],
     item: ContentItem,
-    sources: dict[UrlOrigin, SourceAccess] | None = None,
     *,
     user_id: int = 1,
 ) -> Path | CoverUnavailable:
@@ -71,9 +66,7 @@ def fill_cover(
     if path.exists():
         return path
 
-    if sources is None:
-        sources = source_access_by_origin(storage, user_id)
-    outcome = _fetch(item.cover_url, sources)
+    outcome = _fetch(item.cover_url, source_access_by_origin(storage, user_id))
     if isinstance(outcome, CoverUnavailable):
         if outcome.permanent and storage.clear_cover_url(item.db_id):
             # The provider that dead cover outranked is what can refill it.
@@ -87,71 +80,6 @@ def fill_cover(
         logger.exception("Could not cache the cover for item %d", item.db_id)
         return CoverUnavailable("the cover could not be cached", permanent=False)
     return path
-
-
-def backfill_covers(
-    storage: StorageManager,
-    config: dict[str, Any],
-    *,
-    user_id: int = 1,
-) -> CoverBackfillRecord:
-    """Fetch every library cover that is not cached yet, publishing as it goes."""
-    record = CoverBackfillRecord(running=True)
-    cache_dir = cover_cache_dir(config)
-    sources = source_access_by_origin(storage, user_id)
-    pending = [
-        item
-        for item in storage.get_content_items(user_id=user_id)
-        if item.db_id is not None
-        and item.cover_url
-        and not cache.cache_path(cache_dir, item.db_id, item.cover_url).exists()
-    ]
-
-    record.total = len(pending)
-    record.without_cover = storage.enrichment.settled_without_cover(user_id)
-    stopped = False
-    for item in pending:
-        if storage.cover_jobs.stop_requested():
-            stopped = True
-            break
-        record.current_item = item.title
-        storage.cover_jobs.heartbeat(record)
-        outcome = fill_cover(storage, config, item, sources, user_id=user_id)
-        record.processed += 1
-        if isinstance(outcome, Path):
-            record.cached += 1
-        elif outcome.permanent:
-            record.cleared += 1
-        else:
-            record.failed += 1
-            if len(record.errors) < MAX_REPORTED_ERRORS:
-                record.errors.append(f"{item.title}: {outcome.reason}")
-    record.current_item = ""
-    record.running = False
-    record.completed = not stopped
-    record.cancelled = stopped
-    return record
-
-
-def start_backfill(
-    storage: StorageManager, config: dict[str, Any], *, user_id: int = 1
-) -> CoverBackfillRecord | None:
-    """None when a backfill is already running, whichever interface started it."""
-    if not storage.cover_jobs.claim():
-        return None
-
-    def run() -> None:
-        try:
-            record = backfill_covers(storage, config, user_id=user_id)
-        except Exception:
-            logger.exception("Cover backfill failed")
-            # Not the exception's words: they reach an HTTP body, with the path.
-            record = storage.cover_jobs.read()
-            record.errors.append("the backfill stopped on an error")
-        storage.cover_jobs.finish(record)
-
-    threading.Thread(target=run, daemon=True).start()
-    return storage.cover_jobs.read()
 
 
 def _fetch(

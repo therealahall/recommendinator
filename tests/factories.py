@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.user_preferences import UserPreferenceConfig
 from src.storage.manager import StorageManager
-from src.storage.schema import UserDict, get_default_user_id
+from src.storage.schema import UserDict, drop_ledger_write_guard, get_default_user_id
 from src.web.app import create_app
 from src.web.auth import SESSION_COOKIE
 from src.web.state import AppState, app_state
@@ -39,15 +39,9 @@ def drop_the_ledger_write_guard(
     """Shape this database like one a build before the guard wrote. Not an
     escape hatch — no door has one — and the next open puts the triggers back.
     """
-    refusing = [
-        row[0]
-        for row in handle.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'trigger'"
-            " AND name LIKE '%_ledger_only'"
-        ).fetchall()
-    ]
-    for name in refusing:
-        handle.execute(f"DROP TRIGGER {name}")
+    drop_ledger_write_guard(
+        handle.cursor() if isinstance(handle, sqlite3.Connection) else handle
+    )
 
 
 def sub_store_specs() -> dict[str, type]:
@@ -145,6 +139,9 @@ def back_mock_settings_store(storage: Any) -> dict[str, Any]:
     _default_return(storage.secrets.has, False)
     _default_return(storage.sources.get, None)
     _default_return(storage.sync_runs.latest_per_source, {})
+    # Unstubbed, the boot's owed-rebuild check reads a truthy Mock, and the pass
+    # it starts then loops on ``take_rerun`` answering the same way.
+    _default_return(storage.rebuild_jobs.rerun_requested, False)
     return store
 
 

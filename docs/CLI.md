@@ -455,9 +455,6 @@ only an installed theme id is accepted. `show` and `set` take `--user`.
 ## Covers
 
 ```bash
-uv run python -m src.cli covers backfill               # cache every uncached cover
-uv run python -m src.cli covers status                 # the live walk, whoever started it
-uv run python -m src.cli covers stop                   # end the walk, whoever started it
 uv run python -m src.cli covers show 42                # where one item's art is cached
 ```
 
@@ -466,19 +463,9 @@ tells a metadata CDN which titles the library holds. A cover that is permanently
 gone is remembered as dead, so no later sync re-offers it, and the item is
 re-queued for enrichment so the next source or provider can name another.
 
-`backfill` only fetches covers the library already holds a URL for. An item
-whose enrichment settled before providers were asked for art has no URL, so
-`backfill` counts it and leaves it: reaching it means asking the providers
-again, which is yours to start with `enrichment requeue --id`, every value the
+Every enrichment run caches the covers of the items it touches, so refreshing
+one means enriching that item again: `enrichment requeue --id`, every value the
 item holds standing.
-
-Not counted: an item settled `not_found`, whose door is `enrichment start
---retry-not-found`, and one whose URL is recorded dead, which clearing already
-re-queued.
-
-One walk runs at a time across both interfaces. A stop takes effect after the
-item the walk is on, and is not a failure: `backfill` exits non-zero only when
-the walk stopped on an error.
 
 ## Enrichment
 

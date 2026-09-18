@@ -178,6 +178,24 @@ def unmerge_item(
     return _to_record(row)
 
 
+def merge_predates_the_ledger(cursor: sqlite3.Cursor, merge_id: int) -> bool:
+    """A record written before the snapshot narrowed to the blob names detail
+    columns the rebuild owns now — which is how an undo tells that no ledger row
+    says which side supplied what this merge carried.
+    """
+    row = _merge_row(cursor, merge_id)
+    if row is None:
+        return False
+    children: dict[str, dict[str, Any] | None] = json.loads(row["restore_json"]).get(
+        "children", {}
+    )
+    return any(
+        set(columns) - set(_snapshot_columns(table))
+        for table, columns in children.items()
+        if columns is not None
+    )
+
+
 def list_merges(cursor: sqlite3.Cursor, user_id: int) -> list[MergeRecord]:
     cursor.execute(
         f"{_MERGE_SELECT} WHERE s.user_id = ? ORDER BY m.merged_at DESC, m.id DESC",
