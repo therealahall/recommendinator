@@ -90,15 +90,11 @@ class TestBuildVarietyLadder:
         ]
         ladder = build_variety_ladder(items)
 
-        rungs = [
-            "nonfiction_documentary",
-            "crime_thriller",
-            "science_fiction",
-            "fantasy",
-            "western",
-        ]
-        for rung, cluster in enumerate(rungs):
-            assert ladder[cluster] == pytest.approx(
+        genres = ["Biography", "Mystery", "Science Fiction", "Fantasy", "Western"]
+        for rung, genre in enumerate(genres):
+            assert variety_penalty_for(
+                _candidate(genre, [genre]), ladder
+            ) == pytest.approx(
                 VARIETY_TOP_PENALTY
                 * (VARIETY_LADDER_STEPS - rung)
                 / VARIETY_LADDER_STEPS
@@ -115,14 +111,7 @@ class TestBuildVarietyLadder:
         ]
         ladder = build_variety_ladder(items)
         assert len(ladder) == VARIETY_LADDER_STEPS
-        assert set(ladder) == {
-            "fantasy",
-            "science_fiction",
-            "crime_thriller",
-            "nonfiction_documentary",
-            "western",
-        }
-        assert "horror_dark" not in ladder
+        assert variety_penalty_for(_candidate("H", ["Horror"]), ladder) == 0.0
 
     def test_duplicate_clusters_collapse_to_one_rung(self) -> None:
         items = [
@@ -132,8 +121,12 @@ class TestBuildVarietyLadder:
         ]
         ladder = build_variety_ladder(items)
         assert len(ladder) == 2
-        assert ladder["fantasy"] == pytest.approx(VARIETY_TOP_PENALTY)
-        assert ladder["science_fiction"] == pytest.approx(
+        assert variety_penalty_for(
+            _candidate("F", ["Fantasy"]), ladder
+        ) == pytest.approx(VARIETY_TOP_PENALTY)
+        assert variety_penalty_for(
+            _candidate("S", ["Science Fiction"]), ladder
+        ) == pytest.approx(
             VARIETY_TOP_PENALTY * (VARIETY_LADDER_STEPS - 1) / VARIETY_LADDER_STEPS
         )
 
@@ -148,25 +141,28 @@ class TestBuildVarietyLadder:
             _completed("Done", ["Science Fiction"], completed_on=date(2026, 1, 1)),
         ]
         ladder = build_variety_ladder(items)
-        assert "fantasy" not in ladder
-        assert ladder["science_fiction"] == pytest.approx(VARIETY_TOP_PENALTY)
+        assert variety_penalty_for(_candidate("F", ["Fantasy"]), ladder) == 0.0
+        assert variety_penalty_for(
+            _candidate("S", ["Science Fiction"]), ladder
+        ) == pytest.approx(VARIETY_TOP_PENALTY)
 
     def test_every_cluster_of_one_completion_shares_its_rung(self) -> None:
         """A finished book belonging to five clusters used to fill every rung by
         itself, so nothing finished before it reached the ladder at all."""
+        omnibus_genres = ["Fantasy", "Science Fiction", "Mystery", "Horror", "Western"]
         items = [
-            _completed(
-                "Omnibus",
-                ["Fantasy", "Science Fiction", "Mystery", "Horror", "Western"],
-                completed_on=date(2026, 1, 2),
-            ),
+            _completed("Omnibus", omnibus_genres, completed_on=date(2026, 1, 2)),
             _completed("Bio", ["Biography"], completed_on=date(2026, 1, 1)),
         ]
         ladder = build_variety_ladder(items)
 
-        assert ladder["fantasy"] == pytest.approx(VARIETY_TOP_PENALTY)
-        assert ladder["western"] == pytest.approx(VARIETY_TOP_PENALTY)
-        assert ladder["nonfiction_documentary"] == pytest.approx(
+        assert len(ladder) == 2
+        assert variety_penalty_for(
+            _candidate("Twin", omnibus_genres), ladder
+        ) == pytest.approx(VARIETY_TOP_PENALTY)
+        assert variety_penalty_for(
+            _candidate("Memoir", ["Biography"]), ladder
+        ) == pytest.approx(
             VARIETY_TOP_PENALTY * (VARIETY_LADDER_STEPS - 1) / VARIETY_LADDER_STEPS
         )
 
@@ -180,13 +176,16 @@ class TestBuildVarietyLadder:
             ),
         ]
         ladder = build_variety_ladder(items)
-
-        second_rung = pytest.approx(
+        older_rung = (
             VARIETY_TOP_PENALTY * (VARIETY_LADDER_STEPS - 1) / VARIETY_LADDER_STEPS
         )
-        assert ladder["fantasy"] == pytest.approx(VARIETY_TOP_PENALTY)
-        assert ladder["crime_thriller"] == pytest.approx(VARIETY_TOP_PENALTY)
-        assert ladder["western"] == second_rung
+
+        shared = variety_penalty_for(_candidate("F", ["Fantasy"]), ladder)
+        older_only = variety_penalty_for(_candidate("W", ["Western"]), ladder)
+
+        assert len(ladder) == 2
+        assert older_only == pytest.approx(older_rung / 2)
+        assert shared > older_only
 
     def test_undated_items_sort_after_dated_items(self) -> None:
         items = [
@@ -194,29 +193,68 @@ class TestBuildVarietyLadder:
             _completed("Dated", ["Science Fiction"], completed_on=date(2026, 1, 1)),
         ]
         ladder = build_variety_ladder(items)
-        assert ladder["science_fiction"] == pytest.approx(VARIETY_TOP_PENALTY)
-        assert ladder["fantasy"] == pytest.approx(
+        assert variety_penalty_for(
+            _candidate("S", ["Science Fiction"]), ladder
+        ) == pytest.approx(VARIETY_TOP_PENALTY)
+        assert variety_penalty_for(
+            _candidate("F", ["Fantasy"]), ladder
+        ) == pytest.approx(
             VARIETY_TOP_PENALTY * (VARIETY_LADDER_STEPS - 1) / VARIETY_LADDER_STEPS
         )
 
 
 class TestVarietyPenaltyFor:
     def test_matching_cluster_returns_its_penalty(self) -> None:
-        ladder = {"fantasy": 0.8}
+        ladder = [(frozenset({"fantasy"}), 0.8)]
         assert variety_penalty_for(
             _candidate("Dragon", ["Fantasy"]), ladder
         ) == pytest.approx(0.8)
 
     def test_candidate_without_genres_returns_zero(self) -> None:
-        ladder = {"fantasy": 0.8}
+        ladder = [(frozenset({"fantasy"}), 0.8)]
         assert variety_penalty_for(_candidate("Unknown", []), ladder) == 0.0
 
-    def test_strongest_matching_cluster_wins(self) -> None:
-        ladder = {"fantasy": 0.32, "science_fiction": 0.8}
+    def test_penalty_scales_with_how_much_of_a_rung_a_candidate_shares(self) -> None:
+        """Every candidate touching one cluster of a densely tagged completion used
+        to take that completion's whole penalty, which flattened most of a library."""
+        ladder = build_variety_ladder(
+            [_completed("Feral Gods", ["LitRPG", "Adventure", "Comedy"])],
+            top_penalty=VARIETY_TOP_PENALTY,
+        )
+
+        def penalty(genres: list[str]) -> float:
+            return variety_penalty_for(_candidate("Next", genres), ladder)
+
+        assert penalty(["LitRPG", "Adventure", "Comedy"]) == pytest.approx(1.0)
+        assert penalty(["LitRPG"]) == pytest.approx(0.5)
+        assert penalty(["Epic Fantasy"]) == pytest.approx(0.25)
+        assert penalty(["Thriller"]) == 0.0
+
+    def test_close_match_on_an_older_rung_beats_a_brush_with_the_newest(self) -> None:
+        ladder = [
+            (
+                frozenset({"fantasy", "science_fiction", "crime_thriller", "western"}),
+                1.0,
+            ),
+            (frozenset({"horror_dark", "comedy_lighthearted"}), 0.8),
+        ]
         penalty = variety_penalty_for(
-            _candidate("Crossover", ["Fantasy", "Science Fiction"]), ladder
+            _candidate("Funny Horror", ["Horror", "Comedy", "Fantasy"]), ladder
         )
         assert penalty == pytest.approx(0.8)
+
+    def test_clusters_outside_a_rung_do_not_soften_it(self) -> None:
+        """The penalty used to fall as a candidate's own cluster count rose, so a
+        sparsely imported book outranked a heavily enriched one on genre alone."""
+        ladder = [(frozenset({"fantasy"}), 1.0)]
+
+        focused = variety_penalty_for(_candidate("Dragons", ["Fantasy"]), ladder)
+        broad = variety_penalty_for(
+            _candidate("Dragons in Love", ["Fantasy", "Romance", "Adventure"]), ladder
+        )
+
+        assert focused == pytest.approx(1.0)
+        assert broad == pytest.approx(focused)
 
 
 class TestOngoingTvShowFinishedSeasons:
@@ -225,7 +263,9 @@ class TestOngoingTvShowFinishedSeasons:
     def test_finished_season_of_ongoing_show_enters_ladder(self) -> None:
         show = _ongoing_show("Wheel", ["Fantasy"], {"1": "2026-05-01T00:00:00+00:00"})
         ladder = build_variety_ladder([show], top_penalty=1.0)
-        assert ladder.get("fantasy") == pytest.approx(1.0)
+        assert variety_penalty_for(
+            _candidate("Dragon", ["Fantasy"]), ladder
+        ) == pytest.approx(1.0)
 
     def test_ongoing_show_without_seasons_does_not_enter_ladder(self) -> None:
         show = ContentItem(
@@ -235,7 +275,7 @@ class TestOngoingTvShowFinishedSeasons:
             status=ConsumptionStatus.CURRENTLY_CONSUMING,
             metadata={"genres": ["Fantasy"], "seasons_watched": []},
         )
-        assert build_variety_ladder([show], top_penalty=1.0) == {}
+        assert build_variety_ladder([show], top_penalty=1.0) == []
 
 
 def _completed_show(
@@ -318,8 +358,6 @@ class TestCompletedTvShowSeasonDateFallbackRegression:
 
         ladder = build_variety_ladder([ducktales, *other_dated])
 
-        assert "animation_family" in ladder
-
         bobs_burgers = _candidate("Bob's Burgers", ["Animation", "Comedy"])
         penalty = variety_penalty_for(bobs_burgers, ladder)
         assert penalty > 0.0
@@ -358,8 +396,9 @@ class TestVarietyLadderUsesInAppCompletions:
 
         ladder = build_variety_ladder(storage.get_content_items())
 
-        assert ladder["science_fiction"] == pytest.approx(VARIETY_TOP_PENALTY)
-        assert ladder["fantasy"] < ladder["science_fiction"]
+        scifi = variety_penalty_for(_candidate("S", ["Science Fiction"]), ladder)
+        assert scifi == pytest.approx(VARIETY_TOP_PENALTY)
+        assert variety_penalty_for(_candidate("F", ["Fantasy"]), ladder) < scifi
 
 
 class TestUndatedCompletionsStillClaimRungs:
@@ -375,7 +414,9 @@ class TestUndatedCompletionsStillClaimRungs:
         ladder = build_variety_ladder(undated)
 
         assert len(ladder) == VARIETY_LADDER_STEPS
-        assert max(ladder.values()) == pytest.approx(VARIETY_TOP_PENALTY)
+        assert max(penalty for _, penalty in ladder) == pytest.approx(
+            VARIETY_TOP_PENALTY
+        )
 
     def test_undated_completion_ranks_below_every_dated_one(self) -> None:
         ladder = build_variety_ladder(
@@ -385,4 +426,6 @@ class TestUndatedCompletionsStillClaimRungs:
             ]
         )
 
-        assert ladder["science_fiction"] > ladder["fantasy"]
+        assert variety_penalty_for(
+            _candidate("S", ["Science Fiction"]), ladder
+        ) > variety_penalty_for(_candidate("F", ["Fantasy"]), ladder)

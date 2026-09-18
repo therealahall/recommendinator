@@ -113,15 +113,16 @@ the genre you just finished. `0.0` turns it off. The value is divided by its
 genre's same-type candidates outright. There is **no score floor**.
 
 Your five most recent completions each own a rung on a ladder that decays by
-completion date, and every genre cluster that completion reaches shares its rung:
-finishing a fantasy litrpg adventure fatigues all three. A cluster on two
-completions keeps the fresher one's rung, and a completion whose clusters are all
-on the ladder already spends none — an older completion takes that rung instead.
+completion date, and every genre cluster that completion reaches sits on its
+rung. A completion whose clusters are all on the ladder already spends no rung —
+an older completion takes it instead.
 
 At `5.0` the rungs are 100%, 80%, 60%, 40%, 20%, then nothing, and a lower
 setting scales the whole ladder down: `2.0` gives 40%, 32%, 24%, 16%, 8%. A
-candidate takes the penalty of its freshest matching cluster, multiplied into its
-final score.
+candidate takes each rung it touches scaled by how much of that rung's clusters
+it shares, and keeps the largest: after a fantasy litrpg adventure, the next book
+in that series takes the full rung, another litrpg most of it, an epic fantasy a
+fraction, a thriller nothing.
 
 The penalty is **per content type**. Finishing a fantasy *book* varies your book
 recommendations and leaves fantasy *movies* and *games* alone. Every

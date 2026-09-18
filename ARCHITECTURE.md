@@ -282,8 +282,9 @@ Invariants:
 - Series filtering with substitution (`series_in_order`) replaces a candidate
   failing the ordering rules with the earliest recommendable entry in its series,
   scored on its own merits, once per series.
-- The variety penalty multiplies a candidate's final score by `1 - penalty`,
-  taking the strongest penalty among its recently finished genre clusters. See
+- The variety penalty multiplies a candidate's final score by `1 - penalty`.
+  Each recent completion's penalty is cut back to the share of that completion's
+  genre clusters the candidate covers, and the largest result wins. See
   [SCORING.md](docs/SCORING.md#variety-after-completion).
 
 **Cross-content-type matching is a lookup, not a model.** Genre clusters
