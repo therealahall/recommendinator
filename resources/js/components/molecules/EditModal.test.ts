@@ -186,6 +186,30 @@ describe('EditModal', () => {
     wrapper.unmount()
   })
 
+  it('a link the provider could not read is announced once, not beside "no record"', async () => {
+    const wrapper = mount(EditModal, {
+      props: {
+        item: defaultItem,
+        saving: false,
+        saveError: '',
+        pinned: {},
+        pinCandidates: [],
+        pinSearching: false,
+      },
+      attachTo: document.body,
+    })
+    await wrapper.get('#edit-pin-query').setValue('https://openlibrary.org/works/OL1W')
+    await wrapper.findAll('button').find(b => b.text() === 'Search providers')!.trigger('click')
+
+    const refused = 'openlibrary: Failed to read an Open Library link: HTTP 500'
+    await wrapper.setProps({ saveError: refused })
+    await vi.runAllTimersAsync()
+
+    expect(wrapper.get('[role="alert"]').text()).toBe(refused)
+    expect(wrapper.get('#edit-pin-note').text()).toBe('')
+    wrapper.unmount()
+  })
+
   it('a dropped pin is announced once, focus landing on the label and not the region', async () => {
     const wrapper = mount(EditModal, {
       props: { item: defaultItem, saving: false, saveError: '', pinned: { rawg: '3328' } },
