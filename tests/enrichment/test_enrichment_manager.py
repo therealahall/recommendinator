@@ -1905,7 +1905,9 @@ class SearchingProvider(MockProvider):
 class LinkReadingProvider(SearchingProvider):
     _HOST = "https://records.test/"
 
-    def candidate_from_url(self, url: str, config: dict[str, Any]) -> Candidate | None:
+    def candidate_from_url(
+        self, item: ContentItem, url: str, config: dict[str, Any]
+    ) -> Candidate | None:
         return (
             Candidate(record_id="9", title=f"linked {self.name}")
             if url.startswith(self._HOST)

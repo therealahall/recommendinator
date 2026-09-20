@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import logging
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, replace
 from typing import Any
+from urllib.parse import urlsplit
+
+from src.ingestion.urls import UrlOrigin, url_origin
 
 # Re-exported: every enrichment provider imports ConfigField from here, the
 # same way source plugins take it from plugin_base.
@@ -52,6 +56,23 @@ def pinned_record(item: ContentItem, provider_name: str) -> str | None:
 def is_numeric_record_id(record_id: str) -> bool:
     """``isdigit()`` alone admits '٣', which ``int()`` then reads as 3."""
     return record_id.isascii() and record_id.isdigit()
+
+
+_LINK_SLUG = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*", re.ASCII)
+
+
+def link_slug(url: str, hosts: frozenset[str], kind: str) -> str | None:
+    """The slug a ``https://<host>/<kind>/<slug>`` link names. One whitelist for
+    every provider, because a slug is spliced into a path or a query body
+    nothing parameterises: '/' addresses another endpoint, '"' ends a statement.
+    """
+    origin = url_origin(url)
+    if not isinstance(origin, UrlOrigin) or origin.host.lower() not in hosts:
+        return None
+    segments = urlsplit(url).path.strip("/").split("/")
+    if len(segments) < 2 or segments[0] != kind:
+        return None
+    return segments[1] if _LINK_SLUG.fullmatch(segments[1]) else None
 
 
 def with_pin(
@@ -207,9 +228,11 @@ class EnrichmentProvider(ABC):
         """
         return []
 
-    def candidate_from_url(self, url: str, config: dict[str, Any]) -> Candidate | None:
-        """The record *url* names, None for a link this provider cannot read —
-        every link, by default. Its ``record_id`` must be one
+    def candidate_from_url(
+        self, item: ContentItem, url: str, config: dict[str, Any]
+    ) -> Candidate | None:
+        """The record *url* names for *item*, None for a link this provider
+        cannot read — every link, by default. Its ``record_id`` must be one
         :meth:`accepts_record_id` admits, or pinning refuses the row just offered.
         """
         return None

@@ -281,7 +281,7 @@ class EnrichmentManager:
             self._get_rate_limiter(provider.name).acquire()
             try:
                 found = provider.candidate_from_url(
-                    url, self._get_provider_config(provider.name)
+                    item, url, self._get_provider_config(provider.name)
                 )
             except ProviderError as error:
                 # One provider failing to read a link it recognises must not

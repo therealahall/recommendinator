@@ -1,6 +1,5 @@
 import logging
 import re
-from dataclasses import replace
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -49,9 +48,11 @@ _WORK_KEY = re.compile(r"OL\d+W", re.ASCII)
 #: and it is spliced into the ``/isbn/<value>`` path the same way.
 _ISBN = re.compile(r"[0-9X]+", re.ASCII | re.IGNORECASE)
 
-#: An Open Library edition key, read off a pasted link and spliced into
-#: ``/books/<key>.json`` exactly as the two above are.
+#: An edition key off a pasted link, spliced into ``/books/<key>.json`` as above.
 _EDITION_KEY = re.compile(r"OL\d+M", re.ASCII)
+
+#: An author key off a work record, spliced into ``/authors/<key>.json`` as above.
+_AUTHOR_KEY = re.compile(r"OL\d+A", re.ASCII)
 
 _OPENLIBRARY_HOST = "openlibrary.org"
 
@@ -80,6 +81,16 @@ def _work_id(key: Any) -> str | None:
     into the request path — so only the last segment, and only a work key."""
     record_id = str(key or "").rsplit("/", 1)[-1]
     return record_id if _WORK_KEY.fullmatch(record_id) else None
+
+
+def _first_author_id(work: dict[str, Any]) -> str | None:
+    for entry in work.get("authors") or []:
+        author = entry.get("author") if isinstance(entry, dict) else None
+        key = author.get("key") if isinstance(author, dict) else None
+        author_id = str(key or "").rsplit("/", 1)[-1]
+        if _AUTHOR_KEY.fullmatch(author_id):
+            return author_id
+    return None
 
 
 def clean_title_for_search(title: str) -> str:
@@ -214,7 +225,9 @@ class OpenLibraryProvider(EnrichmentProvider):
     def accepts_record_id(self, record_id: str) -> bool:
         return _WORK_KEY.fullmatch(record_id) is not None
 
-    def candidate_from_url(self, url: str, config: dict[str, Any]) -> Candidate | None:
+    def candidate_from_url(
+        self, item: ContentItem, url: str, config: dict[str, Any]
+    ) -> Candidate | None:
         named = _link_record(url)
         if named is None:
             return None
@@ -222,16 +235,36 @@ class OpenLibraryProvider(EnrichmentProvider):
             work_id = self._work_from_link(*named)
             if work_id is None:
                 return None
-            docs = self._request_docs({"q": f"key:/works/{work_id}", "limit": 1})
+            response = self._get(f"{OPENLIBRARY_API_BASE}/works/{work_id}.json")
+            if response.status_code == 404:
+                return None
+            response.raise_for_status()
+            work = response.json()
         except requests.RequestException as error:
             raise ProviderError(
                 self.name, f"Failed to read an Open Library link: {error}"
             ) from error
-        # The key the link named is what a pin is looked up by, so it survives
-        # both a search index with no doc for it and one answering with another.
-        if not docs:
-            return Candidate(record_id=work_id, title=work_id)
-        return replace(_doc_candidate(docs[0]), record_id=work_id)
+        # A link is pasted because the search index failed the operator, so the
+        # record itself labels the row, and the key the link named pins it.
+        return Candidate(
+            record_id=work_id,
+            title=str(work.get("title") or work_id),
+            creator=self._author_name(_first_author_id(work)),
+            cover_url=_cover_url(work),
+        )
+
+    def _author_name(self, author_id: str | None) -> str | None:
+        if author_id is None:
+            return None
+        try:
+            response = self._get(f"{OPENLIBRARY_API_BASE}/authors/{author_id}.json")
+            response.raise_for_status()
+            name = response.json().get("name")
+        except (ProviderError, requests.RequestException):
+            # The author is one field of the row: neither a refused redirect nor
+            # an unparseable body may cost the operator the record itself.
+            return None
+        return str(name) if name else None
 
     def _work_from_link(self, kind: str, identifier: str) -> str | None:
         """A works link names its work; an edition or isbn one is asked."""
