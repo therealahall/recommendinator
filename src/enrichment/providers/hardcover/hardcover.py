@@ -12,6 +12,7 @@ from src.enrichment.provider_base import (
     ProviderRefusedError,
     SeriesOrdinal,
     is_numeric_record_id,
+    link_slug,
     log_search_title,
     pinned_record,
 )
@@ -57,6 +58,8 @@ _ONLY_THE_CANONICAL_RECORD = {"canonical_id": {"_is_null": True}}
 _CANDIDATE_LIMIT = 5
 
 _ISBN_FIELDS = {10: "isbn_10", 13: "isbn_13"}
+
+_HARDCOVER_HOSTS = frozenset({"hardcover.app", "www.hardcover.app"})
 
 _LIKE_METACHARACTERS = str.maketrans({"\\": r"\\", "%": r"\%", "_": r"\_"})
 
@@ -296,6 +299,23 @@ class HardcoverProvider(EnrichmentProvider):
     def accepts_record_id(self, record_id: str) -> bool:
         return is_numeric_record_id(record_id)
 
+    def candidate_from_url(
+        self, item: ContentItem, url: str, config: dict[str, Any]
+    ) -> Candidate | None:
+        slug = link_slug(url, _HARDCOVER_HOSTS, "books")
+        api_key = str(config.get("api_key") or "").strip()
+        if slug is None or not api_key:
+            return None
+        try:
+            books = self._books({"slug": {"_eq": slug}}, api_key)
+        except ProviderError as error:
+            logger.warning("Hardcover read no book from that link: %s", error.message)
+            return None
+        if not books:
+            return None
+        offered = _candidate(books[0])
+        return offered if self.accepts_record_id(offered.record_id) else None
+
     def _match(
         self, item: ContentItem, api_key: str
     ) -> tuple[dict[str, Any], str] | None:
@@ -334,12 +354,14 @@ class HardcoverProvider(EnrichmentProvider):
         try:
             response = self._post(payload, api_key)
             response.raise_for_status()
+            # Decoded inside the handler: an edge cache answers 200 with HTML,
+            # and a JSONDecodeError is a RequestException.
+            body = response.json()
         except requests.RequestException as error:
             raise ProviderError(
                 self.name, f"Hardcover request failed: {scrub_request_error(error)}"
             ) from error
 
-        body = response.json()
         if body.get("errors"):
             codes = _refusal_codes(body["errors"])
             named = ", ".join(sorted(codes))

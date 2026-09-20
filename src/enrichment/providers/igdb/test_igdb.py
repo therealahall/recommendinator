@@ -39,10 +39,17 @@ def _response(
     response = MagicMock(
         spec=requests.Response, status_code=status, headers=headers or {}
     )
-    response.json.return_value = payload
+    if isinstance(payload, Exception):
+        response.json.side_effect = payload
+    else:
+        response.json.return_value = payload
     if status >= 400:
         response.raise_for_status.side_effect = requests.HTTPError(response=response)
     return response
+
+
+#: What an edge cache answers 200 with while the API behind it is down.
+_HTML_INTERSTITIAL = requests.exceptions.JSONDecodeError("Expecting value", "<html>", 0)
 
 
 def _game(name: str = "Planescape: Torment", **stated: Any) -> dict[str, Any]:
@@ -553,3 +560,95 @@ class TestIGDBFailures:
                 provider.enrich(_item(), _CONFIG)
 
         assert "ConnectionError" in str(raised.value)
+
+
+def _from_url(
+    transport: _Transport, provider: IGDBProvider, url: str
+) -> Candidate | None:
+    with patch(
+        "src.enrichment.providers.igdb.igdb.requests.post", side_effect=transport
+    ):
+        return provider.candidate_from_url(_item(), url, _CONFIG)
+
+
+class TestIGDBCandidateFromUrl:
+    def test_a_game_link_offers_the_numeric_id_a_pin_can_name(
+        self, provider: IGDBProvider
+    ) -> None:
+        transport = _served(_game())
+
+        offered = _from_url(
+            transport, provider, "https://www.igdb.com/games/planescape-torment"
+        )
+
+        assert transport.game_requests[0]["data"].startswith(
+            'where slug = "planescape-torment"; fields '
+        )
+        assert transport.game_requests[0]["data"].endswith("limit 1;")
+        assert offered is not None
+        assert offered.record_id == "8"
+        assert offered.title == "Planescape: Torment"
+        assert provider.accepts_record_id(offered.record_id) is True
+
+    @pytest.mark.parametrize(
+        "slug",
+        ['a" ; drop', "a%22%20;%20drop", "..%2Fgames"],
+        ids=[
+            "apicalypse-metacharacters",
+            "their-percent-encoded-form",
+            "a-slug-that-would-leave-the-games-path",
+        ],
+    )
+    def test_a_slug_that_could_start_a_second_statement_never_reaches_the_query(
+        self, provider: IGDBProvider, slug: str
+    ) -> None:
+        transport = _served(_game())
+
+        offered = _from_url(transport, provider, f"https://www.igdb.com/games/{slug}")
+
+        assert offered is None
+        assert transport.game_requests == []
+        assert transport.token_requests == 0
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com/games/planescape-torment",
+            "https://www.igdb.com.evil.test/games/planescape-torment",
+            "https://www.igdb.com/collections/planescape",
+            "https://www.igdb.com/games",
+        ],
+        ids=[
+            "another-host",
+            "a-host-igdb-com-is-only-a-prefix-of",
+            "a-record-kind-no-pin-names",
+            "a-link-naming-no-record",
+        ],
+    )
+    def test_a_link_igdb_does_not_own_is_refused_without_a_request(
+        self, provider: IGDBProvider, url: str
+    ) -> None:
+        transport = _served(_game())
+
+        assert _from_url(transport, provider, url) is None
+        assert transport.game_requests == []
+
+    @pytest.mark.parametrize(
+        "answered",
+        [_response([], status=400), _response([]), _response(_HTML_INTERSTITIAL)],
+        ids=[
+            "an-api-that-will-not-filter-on-slug",
+            "a-slug-it-holds-no-game-for",
+            "a-body-that-is-not-json",
+        ],
+    )
+    def test_no_game_read_from_a_link_offers_no_candidate_rather_than_raising(
+        self, provider: IGDBProvider, answered: MagicMock
+    ) -> None:
+        transport = _Transport(answered)
+
+        offered = _from_url(
+            transport, provider, "https://www.igdb.com/games/planescape-torment"
+        )
+
+        assert offered is None

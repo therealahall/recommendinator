@@ -10,6 +10,7 @@ from src.enrichment.provider_base import (
     EnrichmentResult,
     ProviderError,
     is_numeric_record_id,
+    link_slug,
     log_search_title,
     pinned_record,
 )
@@ -26,6 +27,8 @@ from src.utils.text import clean_game_title_for_search
 logger = logging.getLogger(__name__)
 
 RAWG_API_BASE = "https://api.rawg.io/api"
+
+_RAWG_HOSTS = frozenset({"rawg.io", "www.rawg.io"})
 
 
 def _https_cover(background_image: Any) -> str | None:
@@ -113,6 +116,25 @@ class RAWGProvider(EnrichmentProvider):
     def accepts_record_id(self, record_id: str) -> bool:
         return is_numeric_record_id(record_id)
 
+    def candidate_from_url(
+        self, item: ContentItem, url: str, config: dict[str, Any]
+    ) -> Candidate | None:
+        slug = link_slug(url, _RAWG_HOSTS, "games")
+        if slug is None:
+            return None
+        try:
+            game = self._game_payload(slug, config.get("api_key", ""))
+        except ProviderError as error:
+            logger.warning("RAWG read no game from that link: %s", error.message)
+            return None
+        offered = Candidate(
+            record_id=str(game.get("id") or ""),
+            title=str(game.get("name") or ""),
+            year=year_of(game.get("released")),
+            cover_url=_https_cover(game.get("background_image")),
+        )
+        return offered if self.accepts_record_id(offered.record_id) else None
+
     def _get(self, url: str, params: dict[str, Any]) -> requests.Response:
         try:
             return request_within_origin(
@@ -170,73 +192,79 @@ class RAWGProvider(EnrichmentProvider):
                 self.name, f"Failed to search RAWG: {scrub_request_error(error)}"
             ) from None
 
-    def _fetch_game_details(self, game_id: int, api_key: str) -> EnrichmentResult:
+    def _game_payload(self, game_id: int | str, api_key: str) -> dict[str, Any]:
         try:
             response = self._get(
                 f"{RAWG_API_BASE}/games/{game_id}", params={"key": api_key}
             )
             response.raise_for_status()
-            game = response.json()
-
-            genres = [genre["name"] for genre in game.get("genres", [])]
-
-            tags = [tag["name"] for tag in game.get("tags", [])[:20]]
-
-            description = self._clean_description(game.get("description"))
-
-            extra_metadata: dict[str, Any] = {}
-
-            if game.get("released"):
-                extra_metadata["release_date"] = game["released"]
-                year = year_of(game["released"])
-                if year:
-                    extra_metadata["release_year"] = year
-
-            if game.get("developers"):
-                developers = [dev["name"] for dev in game["developers"][:2]]
-                if developers:
-                    extra_metadata["developer"] = developers[0]
-
-            if game.get("publishers"):
-                publishers = [pub["name"] for pub in game["publishers"][:2]]
-                if publishers:
-                    extra_metadata["publisher"] = publishers[0]
-
-            if game.get("platforms"):
-                platforms = [
-                    plat["platform"]["name"]
-                    for plat in game["platforms"]
-                    if plat.get("platform")
-                ]
-                if platforms:
-                    extra_metadata["platforms"] = platforms
-
-            if game.get("rating"):
-                extra_metadata["rawg_rating"] = game["rating"]
-
-            if game.get("metacritic"):
-                extra_metadata["metacritic"] = game["metacritic"]
-
-            if game.get("playtime"):
-                extra_metadata["average_playtime_hours"] = game["playtime"]
-
-            if game.get("esrb_rating"):
-                extra_metadata["esrb_rating"] = game["esrb_rating"]["name"]
-
-            return EnrichmentResult(
-                genres=genres if genres else None,
-                tags=tags if tags else None,
-                description=description,
-                cover_url=_https_cover(game.get("background_image")),
-                extra_metadata=extra_metadata,
-                match_quality="high",
-            )
-
+            # Decoded inside the handler: an edge cache answers 200 with HTML,
+            # and a JSONDecodeError is a RequestException.
+            payload = response.json()
         except requests.RequestException as error:
             raise ProviderError(
                 self.name,
                 f"Failed to fetch game details: {scrub_request_error(error)}",
             ) from None
+
+        return payload if isinstance(payload, dict) else {}
+
+    def _fetch_game_details(self, game_id: int | str, api_key: str) -> EnrichmentResult:
+        game = self._game_payload(game_id, api_key)
+
+        genres = [genre["name"] for genre in game.get("genres", [])]
+
+        tags = [tag["name"] for tag in game.get("tags", [])[:20]]
+
+        description = self._clean_description(game.get("description"))
+
+        extra_metadata: dict[str, Any] = {}
+
+        if game.get("released"):
+            extra_metadata["release_date"] = game["released"]
+            year = year_of(game["released"])
+            if year:
+                extra_metadata["release_year"] = year
+
+        if game.get("developers"):
+            developers = [dev["name"] for dev in game["developers"][:2]]
+            if developers:
+                extra_metadata["developer"] = developers[0]
+
+        if game.get("publishers"):
+            publishers = [pub["name"] for pub in game["publishers"][:2]]
+            if publishers:
+                extra_metadata["publisher"] = publishers[0]
+
+        if game.get("platforms"):
+            platforms = [
+                plat["platform"]["name"]
+                for plat in game["platforms"]
+                if plat.get("platform")
+            ]
+            if platforms:
+                extra_metadata["platforms"] = platforms
+
+        if game.get("rating"):
+            extra_metadata["rawg_rating"] = game["rating"]
+
+        if game.get("metacritic"):
+            extra_metadata["metacritic"] = game["metacritic"]
+
+        if game.get("playtime"):
+            extra_metadata["average_playtime_hours"] = game["playtime"]
+
+        if game.get("esrb_rating"):
+            extra_metadata["esrb_rating"] = game["esrb_rating"]["name"]
+
+        return EnrichmentResult(
+            genres=genres if genres else None,
+            tags=tags if tags else None,
+            description=description,
+            cover_url=_https_cover(game.get("background_image")),
+            extra_metadata=extra_metadata,
+            match_quality="high",
+        )
 
     def _clean_description(self, description: str | None) -> str | None:
         if not description:
