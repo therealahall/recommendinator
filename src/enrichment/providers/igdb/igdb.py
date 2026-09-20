@@ -13,6 +13,7 @@ from src.enrichment.provider_base import (
     ProviderError,
     SeriesOrdinal,
     is_numeric_record_id,
+    link_slug,
     log_search_title,
     pinned_record,
 )
@@ -41,6 +42,8 @@ _CANDIDATE_LIMIT = 10
 # Apicalypse ends a statement at `;` and a string at `"`, either of which a
 # title carries. Dropped, not escaped: the hits are scored on similarity after.
 _UNQUOTABLE = re.compile(r'["\\;\n\r]')
+
+_IGDB_HOSTS = frozenset({"igdb.com", "www.igdb.com"})
 
 _THUMBNAIL_IN_PATH = "t_thumb"
 _FULL_SIZE_IN_PATH = "t_cover_big"
@@ -131,6 +134,13 @@ def _search_body(title: str) -> str:
 
 def _record_body(record_id: str) -> str:
     return f"where id = {record_id}; fields {_GAME_FIELDS}; limit 1;"
+
+
+def _slug_body(slug: str) -> str:
+    return (
+        f'where slug = "{_UNQUOTABLE.sub("", slug)}"; '
+        f"fields {_GAME_FIELDS}; limit 1;"
+    )
 
 
 def _credentials(config: dict[str, Any]) -> tuple[str, str] | None:
@@ -249,6 +259,23 @@ class IGDBProvider(EnrichmentProvider):
     def accepts_record_id(self, record_id: str) -> bool:
         return is_numeric_record_id(record_id)
 
+    def candidate_from_url(
+        self, item: ContentItem, url: str, config: dict[str, Any]
+    ) -> Candidate | None:
+        slug = link_slug(url, _IGDB_HOSTS, "games")
+        credentials = _credentials(config)
+        if slug is None or credentials is None:
+            return None
+        try:
+            games = self._games(_slug_body(slug), credentials)
+        except ProviderError as error:
+            logger.warning("IGDB read no game from that link: %s", error.message)
+            return None
+        if not games:
+            return None
+        offered = _candidate(games[0])
+        return offered if self.accepts_record_id(offered.record_id) else None
+
     def _credentials_for(
         self, item: ContentItem, config: dict[str, Any]
     ) -> tuple[str, str] | None:
@@ -296,9 +323,7 @@ class IGDBProvider(EnrichmentProvider):
         response = self._query(body, credentials, fresh_token=False)
         if response.status_code == 401:
             response = self._query(body, credentials, fresh_token=True)
-        self._checked(response, "IGDB request failed")
-
-        payload = response.json()
+        payload = self._payload(response, "IGDB request failed")
         if not isinstance(payload, list):
             return []
         return [game for game in payload if isinstance(game, dict)]
@@ -338,9 +363,7 @@ class IGDBProvider(EnrichmentProvider):
             {"Accept": "application/json"},
             "Twitch",
         )
-        self._checked(response, "Twitch refused the client credentials")
-
-        payload = response.json()
+        payload = self._payload(response, "Twitch refused the client credentials")
         stated = payload if isinstance(payload, dict) else {}
         token = str(stated.get("access_token") or "")
         if not token:
@@ -352,9 +375,13 @@ class IGDBProvider(EnrichmentProvider):
         )
         return token
 
-    def _checked(self, response: requests.Response, failure: str) -> None:
+    def _payload(self, response: requests.Response, failure: str) -> Any:
+        """The decoded body. Decoded here rather than at the call site: an edge
+        cache answers 200 with HTML, and a JSONDecodeError is a RequestException.
+        """
         try:
             response.raise_for_status()
+            return response.json()
         except requests.RequestException as error:
             raise ProviderError(
                 self.name, f"{failure}: {scrub_request_error(error)}"

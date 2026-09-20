@@ -420,3 +420,117 @@ class TestSearchTitleCannotForgeALogLineRegression:
 
         assert "Real Game\\nWARNING" in caplog.text
         assert self._FORGED not in caplog.text
+
+
+class TestRAWGCandidateFromUrl:
+    _CONFIG = {"api_key": "test-api-key"}
+
+    _GAME = ContentItem(
+        id="game1",
+        title="Portal 2",
+        content_type=ContentType.VIDEO_GAME,
+        status=ConsumptionStatus.UNREAD,
+    )
+
+    _PORTAL_2 = {
+        "id": 4200,
+        "name": "Portal 2",
+        "released": "2011-04-18",
+        "background_image": "https://media.rawg.io/media/games/portal2.jpg",
+    }
+
+    @pytest.fixture
+    def provider(self) -> RAWGProvider:
+        return RAWGProvider()
+
+    def test_a_game_link_offers_the_numeric_id_the_detail_payload_states(
+        self, provider: RAWGProvider
+    ) -> None:
+        with patch("src.enrichment.providers.rawg.rawg.requests.get") as mock_get:
+            mock_get.return_value = MagicMock(
+                spec=requests.Response, status_code=200, json=lambda: self._PORTAL_2
+            )
+
+            offered = provider.candidate_from_url(
+                self._GAME, "https://rawg.io/games/portal-2", self._CONFIG
+            )
+
+        assert mock_get.call_args.args[0] == "https://api.rawg.io/api/games/portal-2"
+        assert offered is not None
+        assert offered.record_id == "4200"
+        assert offered.title == "Portal 2"
+        assert offered.year == 2011
+        assert provider.accepts_record_id(offered.record_id) is True
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com/games/portal-2",
+            "https://rawg.io.evil.test/games/portal-2",
+            "https://rawg.io/creators/valve",
+            "https://rawg.io/games",
+            "https://rawg.io/games/..%2F..%2Fapi%2Fgames%2F1",
+        ],
+        ids=[
+            "another-host",
+            "a-host-rawg-io-is-only-a-prefix-of",
+            "a-record-kind-no-pin-names",
+            "a-link-naming-no-record",
+            "a-slug-that-would-leave-the-games-path",
+        ],
+    )
+    def test_a_link_rawg_does_not_own_is_refused_without_a_request(
+        self, provider: RAWGProvider, url: str
+    ) -> None:
+        with patch("src.enrichment.providers.rawg.rawg.requests.get") as mock_get:
+            assert provider.candidate_from_url(self._GAME, url, self._CONFIG) is None
+
+        assert mock_get.call_count == 0
+
+    def test_a_slug_rawg_holds_no_game_for_offers_no_candidate_rather_than_raising(
+        self, provider: RAWGProvider
+    ) -> None:
+        missing = MagicMock(spec=requests.Response, status_code=404)
+        missing.raise_for_status.side_effect = requests.HTTPError(response=missing)
+
+        with patch("src.enrichment.providers.rawg.rawg.requests.get") as mock_get:
+            mock_get.return_value = missing
+
+            offered = provider.candidate_from_url(
+                self._GAME, "https://rawg.io/games/portal-2", self._CONFIG
+            )
+
+        assert offered is None
+
+    def test_a_detail_body_that_is_not_json_offers_no_candidate_rather_than_raising(
+        self, provider: RAWGProvider
+    ) -> None:
+        unparseable = MagicMock(spec=requests.Response, status_code=200)
+        unparseable.json.side_effect = requests.exceptions.JSONDecodeError(
+            "Expecting value", "<html>upstream is down</html>", 0
+        )
+
+        with patch("src.enrichment.providers.rawg.rawg.requests.get") as mock_get:
+            mock_get.return_value = unparseable
+
+            offered = provider.candidate_from_url(
+                self._GAME, "https://rawg.io/games/portal-2", self._CONFIG
+            )
+
+        assert offered is None
+
+    def test_a_detail_payload_stating_no_id_offers_nothing_a_pin_could_name(
+        self, provider: RAWGProvider
+    ) -> None:
+        with patch("src.enrichment.providers.rawg.rawg.requests.get") as mock_get:
+            mock_get.return_value = MagicMock(
+                spec=requests.Response,
+                status_code=200,
+                json=lambda: {"name": "Portal 2"},
+            )
+
+            offered = provider.candidate_from_url(
+                self._GAME, "https://rawg.io/games/portal-2", self._CONFIG
+            )
+
+        assert offered is None
