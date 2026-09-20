@@ -4,11 +4,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
+from src.enrichment.provider_base import ProviderError
 from src.enrichment.providers.openlibrary.openlibrary import (
     OpenLibraryProvider,
     clean_title_for_search,
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.utils.matching import Candidate
 
 
 class TestCleanTitleForSearch:
@@ -230,6 +232,203 @@ class TestOpenLibraryProviderSearch:
 
         assert result is not None
         assert result.genres == ["Fiction"]
+
+
+class TestOpenLibraryCandidateFromUrl:
+    _WORK_DOCS = {
+        "docs": [
+            {
+                "key": "/works/OL1955041W",
+                "title": "The Norse Myths",
+                "author_name": ["Kevin Crossley-Holland"],
+                "first_publish_year": 1980,
+                "cover_i": 8231856,
+            }
+        ]
+    }
+
+    @pytest.fixture
+    def provider(self) -> OpenLibraryProvider:
+        return OpenLibraryProvider()
+
+    def test_a_work_link_resolves_without_asking_open_library_for_the_key(
+        self, provider: OpenLibraryProvider
+    ) -> None:
+        with patch(
+            "src.enrichment.providers.openlibrary.openlibrary.requests.get"
+        ) as mock_get:
+            mock_get.return_value = MagicMock(
+                spec=requests.Response, status_code=200, json=lambda: self._WORK_DOCS
+            )
+
+            candidate = provider.candidate_from_url(
+                "https://openlibrary.org/works/OL1955041W/The_Norse_Myths"
+                "?edition=key%3A/books/OL14949379M",
+                {},
+            )
+
+        assert candidate is not None
+        assert candidate.record_id == "OL1955041W"
+        assert candidate.title == "The Norse Myths"
+        assert candidate.creator == "Kevin Crossley-Holland"
+        assert candidate.year == 1980
+        # Offering a record no pin could name would refuse the row the picker
+        # just showed, so the two gates are asserted against each other.
+        assert provider.accepts_record_id(candidate.record_id) is True
+        assert mock_get.call_count == 1
+        assert mock_get.call_args.args[0] == "https://openlibrary.org/search.json"
+
+    @pytest.mark.parametrize(
+        ("url", "endpoint"),
+        [
+            (
+                "https://openlibrary.org/books/OL14949379M",
+                "https://openlibrary.org/books/OL14949379M.json",
+            ),
+            (
+                "https://openlibrary.org/isbn/9780140447552",
+                "https://openlibrary.org/isbn/9780140447552.json",
+            ),
+        ],
+        ids=["an-edition-link", "an-isbn-link"],
+    )
+    def test_an_edition_link_resolves_to_the_work_the_edition_belongs_to(
+        self, provider: OpenLibraryProvider, url: str, endpoint: str
+    ) -> None:
+        edition = {"works": [{"key": "/works/OL1955041W"}]}
+
+        with patch(
+            "src.enrichment.providers.openlibrary.openlibrary.requests.get"
+        ) as mock_get:
+            mock_get.side_effect = [
+                MagicMock(
+                    spec=requests.Response, status_code=200, json=lambda: edition
+                ),
+                MagicMock(
+                    spec=requests.Response,
+                    status_code=200,
+                    json=lambda: self._WORK_DOCS,
+                ),
+            ]
+
+            candidate = provider.candidate_from_url(url, {})
+
+        assert candidate is not None
+        assert candidate.record_id == "OL1955041W"
+        assert mock_get.call_args_list[0].args[0] == endpoint
+
+    def test_a_work_the_search_index_answers_nothing_for_is_still_offered(
+        self, provider: OpenLibraryProvider
+    ) -> None:
+        with patch(
+            "src.enrichment.providers.openlibrary.openlibrary.requests.get"
+        ) as mock_get:
+            mock_get.return_value = MagicMock(
+                spec=requests.Response, status_code=200, json=lambda: {"docs": []}
+            )
+
+            candidate = provider.candidate_from_url(
+                "https://openlibrary.org/works/OL1955041W", {}
+            )
+
+        assert candidate == Candidate(record_id="OL1955041W", title="OL1955041W")
+
+    def test_a_doc_naming_another_work_cannot_replace_the_key_the_link_named(
+        self, provider: OpenLibraryProvider
+    ) -> None:
+        docs = {"docs": [{"key": "/works/OL99W", "title": "Another Book"}]}
+
+        with patch(
+            "src.enrichment.providers.openlibrary.openlibrary.requests.get"
+        ) as mock_get:
+            mock_get.return_value = MagicMock(
+                spec=requests.Response, status_code=200, json=lambda: docs
+            )
+
+            candidate = provider.candidate_from_url(
+                "https://openlibrary.org/works/OL1955041W", {}
+            )
+
+        assert candidate is not None
+        assert candidate.record_id == "OL1955041W"
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com/works/OL1955041W",
+            "https://openlibrary.evil.test/works/OL1955041W",
+            "https://openlibrary.org/works/../search.json",
+            "https://openlibrary.org/authors/OL23919A",
+            "https://openlibrary.org/works",
+        ],
+        ids=[
+            "another-host",
+            "a-host-openlibrary-is-only-a-prefix-of",
+            "a-key-that-would-leave-the-works-path",
+            "a-record-kind-no-pin-names",
+            "a-link-naming-no-record",
+        ],
+    )
+    def test_a_link_this_provider_cannot_read_is_refused_without_a_request(
+        self, provider: OpenLibraryProvider, url: str
+    ) -> None:
+        with patch(
+            "src.enrichment.providers.openlibrary.openlibrary.requests.get"
+        ) as mock_get:
+            assert provider.candidate_from_url(url, {}) is None
+
+        assert mock_get.call_count == 0
+
+    def test_an_edition_open_library_does_not_hold_offers_no_candidate(
+        self, provider: OpenLibraryProvider
+    ) -> None:
+        with patch(
+            "src.enrichment.providers.openlibrary.openlibrary.requests.get"
+        ) as mock_get:
+            mock_get.return_value = MagicMock(spec=requests.Response, status_code=404)
+
+            candidate = provider.candidate_from_url(
+                "https://openlibrary.org/books/OL14949379M", {}
+            )
+
+        assert candidate is None
+
+    def test_a_failed_lookup_is_raised_as_a_provider_error_the_picker_skips(
+        self, provider: OpenLibraryProvider
+    ) -> None:
+        with patch(
+            "src.enrichment.providers.openlibrary.openlibrary.requests.get",
+            side_effect=requests.ConnectionError("no route"),
+        ):
+            with pytest.raises(ProviderError):
+                provider.candidate_from_url(
+                    "https://openlibrary.org/works/OL1955041W", {}
+                )
+
+
+class TestOpenLibraryStaysOnItsOwnOrigin:
+    def test_a_redirect_off_openlibrary_is_refused_rather_than_followed(self) -> None:
+        item = ContentItem(
+            id="book1",
+            title="1984",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        )
+
+        with patch(
+            "src.enrichment.providers.openlibrary.openlibrary.requests.get"
+        ) as mock_get:
+            mock_get.return_value = MagicMock(
+                spec=requests.Response,
+                status_code=302,
+                headers={"Location": "https://evil.test/search.json"},
+            )
+
+            with pytest.raises(ProviderError) as refused:
+                OpenLibraryProvider().enrich(item, {})
+
+        assert "evil.test" in str(refused.value)
+        assert mock_get.call_count == 1
 
 
 class TestOpenLibraryProviderSubjectFiltering:

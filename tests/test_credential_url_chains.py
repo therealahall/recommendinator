@@ -71,9 +71,6 @@ _HTTP_VERBS = frozenset({"delete", "get", "head", "patch", "post", "put", "reque
 #: the origin replays nothing. A new entry has to argue it sends no credential.
 _UNCREDENTIALED_CALLERS = frozenset(
     {
-        ("src/enrichment/providers/openlibrary/openlibrary.py", "_fetch_work_details"),
-        ("src/enrichment/providers/openlibrary/openlibrary.py", "_lookup_by_isbn"),
-        ("src/enrichment/providers/openlibrary/openlibrary.py", "_request_docs"),
         ("src/enrichment/providers/wikidata/wikidata.py", "_get"),
         ("src/ingestion/sources/goodreads_rss/goodreads_rss.py", "_fetch_page"),
     }

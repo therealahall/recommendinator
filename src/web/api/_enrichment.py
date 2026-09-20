@@ -251,7 +251,9 @@ def get_enrichment_candidates(
     query: str | None = Query(
         None,
         max_length=MAX_SEARCH_LENGTH,
-        description="Title to search under, in place of the item's own",
+        description=(
+            "Title to search under, or a link to a provider's own page for the record"
+        ),
     ),
     user_id: int = Query(1, ge=1, description="User ID for authorization"),
 ) -> EnrichmentCandidatesResponse:

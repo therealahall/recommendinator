@@ -386,7 +386,7 @@ function searchRecords() {
         type="search"
         class="field"
         :maxlength="MAX_SEARCH_LENGTH"
-        placeholder="Leave empty to search this item's own title..."
+        placeholder="A title or a provider link; empty searches this item's own title..."
         @keydown.enter.prevent="searchRecords"
       >
       <div class="edit-pin-actions">

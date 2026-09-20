@@ -327,7 +327,7 @@ def _item_or_abort(storage: StorageManager, item_id: int, user_id: int) -> Conte
 @click.option(
     "--query",
     default=None,
-    help="Title to search under, in place of the item's own",
+    help="Title to search under, or a link to a provider's own page for the record",
 )
 @click.option("--user", "user_id", type=int, default=1, help="User ID")
 @click.option(
