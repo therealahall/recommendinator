@@ -1,5 +1,6 @@
 import asyncio
 import threading
+import time
 from collections.abc import AsyncIterator, Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import fields
@@ -278,10 +279,10 @@ class TestSettingsWritesStillRunUnderTheConfigLock:
         lock_held = threading.Event()
         release = threading.Event()
 
-        def hold_the_lock() -> None:
+        def hold_the_lock(blocked_seconds: float) -> None:
             with locked_running_config():
                 lock_held.set()
-                release.wait(timeout=_LOCK_TIMEOUT_SECONDS)
+                release.wait(timeout=blocked_seconds + _LOCK_TIMEOUT_SECONDS)
 
         def save(count: int) -> None:
             update_settings(
@@ -290,14 +291,17 @@ class TestSettingsWritesStillRunUnderTheConfigLock:
             )
 
         with ThreadPoolExecutor(max_workers=2) as pool:
-            pool.submit(save, 8).result(timeout=_BLOCKED_SECONDS)
+            started = time.perf_counter()
+            pool.submit(save, 8).result(timeout=_LOCK_TIMEOUT_SECONDS)
+            uncontended = time.perf_counter() - started
+            blocked_seconds = max(_BLOCKED_SECONDS, uncontended * 5)
 
-            holder = pool.submit(hold_the_lock)
+            holder = pool.submit(hold_the_lock, blocked_seconds)
             assert lock_held.wait(timeout=_LOCK_TIMEOUT_SECONDS)
             saver = pool.submit(save, 14)
 
             with pytest.raises(TimeoutError):
-                saver.result(timeout=_BLOCKED_SECONDS)
+                saver.result(timeout=blocked_seconds)
 
             release.set()
             holder.result(timeout=_LOCK_TIMEOUT_SECONDS)
