@@ -819,6 +819,19 @@ class TestTMDBProviderUnsupportedTypes:
         assert result is None
 
 
+_UNPARSEABLE = MagicMock(spec=requests.Response, status_code=200)
+_UNPARSEABLE.json.side_effect = requests.exceptions.JSONDecodeError(
+    "Expecting value", "<html>", 0
+)
+
+_NOT_A_RECORD = MagicMock(
+    spec=requests.Response, status_code=200, json=lambda: ["not a record"]
+)
+
+_MISSING = MagicMock(spec=requests.Response, status_code=404)
+_MISSING.raise_for_status.side_effect = requests.HTTPError(response=_MISSING)
+
+
 class TestTMDBCandidateFromUrl:
     _MOVIE_DETAIL = {
         "id": 27205,
@@ -912,17 +925,16 @@ class TestTMDBCandidateFromUrl:
         assert candidate is None
         assert mock_get.call_count == 0
 
-    def test_a_body_that_is_not_json_reaches_the_picker_as_a_provider_error(
-        self, provider: TMDBProvider
+    @pytest.mark.parametrize(
+        "answered",
+        [_UNPARSEABLE, _NOT_A_RECORD],
+        ids=["a-body-that-is-not-json", "a-body-that-is-json-but-not-a-record"],
+    )
+    def test_a_body_that_names_no_record_reaches_the_picker_as_a_provider_error(
+        self, provider: TMDBProvider, answered: MagicMock
     ) -> None:
-        unparseable = MagicMock(spec=requests.Response, status_code=200)
-        unparseable.json.side_effect = requests.exceptions.JSONDecodeError(
-            "Expecting value", "<html>", 0
-        )
-
         with patch(
-            "src.enrichment.providers.tmdb.tmdb.requests.get",
-            return_value=unparseable,
+            "src.enrichment.providers.tmdb.tmdb.requests.get", return_value=answered
         ):
             with pytest.raises(ProviderError):
                 provider.candidate_from_url(
@@ -930,6 +942,20 @@ class TestTMDBCandidateFromUrl:
                     "https://www.themoviedb.org/movie/27205-inception",
                     {"api_key": "test-key"},
                 )
+
+    def test_a_link_naming_a_record_tmdb_does_not_have_offers_nothing_to_pin(
+        self, provider: TMDBProvider
+    ) -> None:
+        with patch(
+            "src.enrichment.providers.tmdb.tmdb.requests.get", return_value=_MISSING
+        ):
+            offered = provider.candidate_from_url(
+                self._item(ContentType.MOVIE),
+                "https://www.themoviedb.org/movie/27205-inception",
+                {"api_key": "test-key"},
+            )
+
+        assert offered is None
 
 
 class TestTMDBApiKeyScrubbingRegression:

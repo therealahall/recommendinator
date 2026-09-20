@@ -9,7 +9,7 @@ from src.enrichment.manager import (
     PinRefused,
     job_status,
 )
-from src.enrichment.provider_base import pins_of
+from src.enrichment.provider_base import ProviderError, pins_of
 from src.models.content import ContentItem, ContentType
 from src.storage.manager import StorageManager
 from src.utils.item_serialization import (
@@ -262,9 +262,11 @@ def get_enrichment_candidates(
     manager = EnrichmentManager(storage, config)
     if not manager.can_offer_candidates(item.content_type):
         raise HTTPException(status_code=400, detail=CANDIDATES_UNAVAILABLE)
-    payload = enrichment_candidates_to_dict(
-        item_id, manager.candidates(item, query), pins_of(item.metadata)
-    )
+    try:
+        offered = manager.candidates(item, query)
+    except ProviderError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    payload = enrichment_candidates_to_dict(item_id, offered, pins_of(item.metadata))
     return EnrichmentCandidatesResponse.model_validate(payload)
 
 

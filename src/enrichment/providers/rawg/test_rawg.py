@@ -430,6 +430,10 @@ _HTML_INTERSTITIAL.json.side_effect = requests.exceptions.JSONDecodeError(
     "Expecting value", "<html>upstream is down</html>", 0
 )
 
+_NOT_A_RECORD = MagicMock(
+    spec=requests.Response, status_code=200, json=lambda: ["not a record"]
+)
+
 
 class TestRAWGCandidateFromUrl:
     _CONFIG = {"api_key": "test-api-key"}
@@ -488,29 +492,50 @@ class TestRAWGCandidateFromUrl:
             "a-slug-that-would-leave-the-games-path",
         ],
     )
-    def test_a_link_rawg_does_not_own_is_refused_without_a_request(
+    def test_a_link_rawg_does_not_own_is_left_for_another_provider_to_claim(
         self, provider: RAWGProvider, url: str
     ) -> None:
-        with patch("src.enrichment.providers.rawg.rawg.requests.get") as mock_get:
-            assert provider.candidate_from_url(self._GAME, url, self._CONFIG) is None
+        assert provider.claims_url(url) is False
 
-        assert mock_get.call_count == 0
-
-    @pytest.mark.parametrize(
-        "answered",
-        [_MISSING_GAME, _HTML_INTERSTITIAL],
-        ids=["a-404-from-the-detail-endpoint", "a-body-that-is-not-json"],
-    )
-    def test_a_link_rawg_could_not_read_raises_rather_than_reading_as_unowned(
-        self, provider: RAWGProvider, answered: MagicMock
+    def test_a_link_naming_a_game_rawg_does_not_have_offers_nothing_to_pin(
+        self, provider: RAWGProvider
     ) -> None:
-        with patch("src.enrichment.providers.rawg.rawg.requests.get") as mock_get:
-            mock_get.return_value = answered
+        with patch(
+            "src.enrichment.providers.rawg.rawg.requests.get",
+            return_value=_MISSING_GAME,
+        ):
+            offered = provider.candidate_from_url(
+                self._GAME, "https://rawg.io/games/portal-2", self._CONFIG
+            )
 
+        assert offered is None
+
+    def test_a_body_rawg_could_not_read_raises_rather_than_reading_as_unowned(
+        self, provider: RAWGProvider
+    ) -> None:
+        with patch(
+            "src.enrichment.providers.rawg.rawg.requests.get",
+            return_value=_HTML_INTERSTITIAL,
+        ):
             with pytest.raises(ProviderError):
                 provider.candidate_from_url(
                     self._GAME, "https://rawg.io/games/portal-2", self._CONFIG
                 )
+
+    def test_a_game_body_that_is_not_a_record_fails_the_run_rather_than_settling_it(
+        self, provider: RAWGProvider
+    ) -> None:
+        """It was written back as a high-quality RAWG match holding no fields."""
+        pinned = self._GAME.model_copy(
+            update={"metadata": {"enrichment_ids": {"rawg": "4200"}}}
+        )
+
+        with patch(
+            "src.enrichment.providers.rawg.rawg.requests.get",
+            return_value=_NOT_A_RECORD,
+        ):
+            with pytest.raises(ProviderError):
+                provider.enrich(pinned, self._CONFIG)
 
     def test_a_detail_payload_stating_no_id_offers_nothing_a_pin_could_name(
         self, provider: RAWGProvider

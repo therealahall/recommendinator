@@ -61,18 +61,19 @@ def is_numeric_record_id(record_id: str) -> bool:
 _LINK_SLUG = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*", re.ASCII)
 
 
-def link_slug(url: str, hosts: frozenset[str], kind: str) -> str | None:
-    """The slug a ``https://<host>/<kind>/<slug>`` link names. One whitelist for
-    every provider, because a slug is spliced into a path or a query body
-    nothing parameterises: '/' addresses another endpoint, '"' ends a statement.
-    """
+def link_record(
+    url: str, hosts: frozenset[str], kinds: frozenset[str]
+) -> tuple[str, str] | None:
+    """The host is matched whole — a substring test hands ``rawg.io.evil.test``
+    the api key — and the ``<segment>`` against one whitelist, since it is
+    spliced into a path nothing parameterises."""
     origin = url_origin(url)
     if not isinstance(origin, UrlOrigin) or origin.host.lower() not in hosts:
         return None
     segments = urlsplit(url).path.strip("/").split("/")
-    if len(segments) < 2 or segments[0] != kind:
+    if len(segments) < 2 or segments[0] not in kinds:
         return None
-    return segments[1] if _LINK_SLUG.fullmatch(segments[1]) else None
+    return (segments[0], segments[1]) if _LINK_SLUG.fullmatch(segments[1]) else None
 
 
 def with_pin(
@@ -228,13 +229,19 @@ class EnrichmentProvider(ABC):
         """
         return []
 
+    def claims_url(self, url: str) -> bool:
+        """Whether *url* is a link this provider owns. Asked of every provider
+        before any spends a request, so it sends none and reads no credential.
+        """
+        return False
+
     def candidate_from_url(
         self, item: ContentItem, url: str, config: dict[str, Any]
     ) -> Candidate | None:
-        """The record *url* names for *item*; None for a link this provider
-        cannot read — every link, by default — and ``ProviderError`` where
-        reading it failed. Its ``record_id`` must be one
-        :meth:`accepts_record_id` admits, or the pin is refused.
+        """The record *url* names for *item*, asked only of its claiming
+        provider. None means no such record; anything that went wrong raises
+        ``ProviderError``, so a failure never reads as an absence. Its
+        ``record_id`` must be one :meth:`accepts_record_id` admits.
         """
         return None
 
@@ -265,6 +272,15 @@ class EnrichmentProvider(ABC):
 
 def _overrides(provider_class: type[EnrichmentProvider], method: str) -> bool:
     return getattr(provider_class, method) is not getattr(EnrichmentProvider, method)
+
+
+def no_credential(provider: EnrichmentProvider) -> ProviderError:
+    """Raised, never returned: a link pasted onto an unconfigured provider says
+    so rather than reading as a record that is not there."""
+    return ProviderError(
+        provider.name,
+        f"no credential is stored, so a {provider.display_name} link cannot be read",
+    )
 
 
 def flags_no_credential(provider: EnrichmentProvider) -> bool:
@@ -303,11 +319,6 @@ def offers_candidates(provider: EnrichmentProvider) -> bool:
     that searches has whether or not it can enrich from one.
     """
     return _overrides(type(provider), "search")
-
-
-def recognises_urls(provider: EnrichmentProvider) -> bool:
-    """Whether a pasted link is worth spending this provider's rate limit on."""
-    return _overrides(type(provider), "candidate_from_url")
 
 
 def accepts_a_pin(provider: EnrichmentProvider) -> bool:

@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.enrichment.manager import EnrichmentManager, EnrichmentStart, PinRefused
+from src.enrichment.provider_base import ProviderError
 from src.enrichment.providers.hardcover.hardcover import HardcoverProvider
 from src.enrichment.registry import EnrichmentRegistry, get_enrichment_registry
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
@@ -303,6 +304,24 @@ class TestEnrichmentPinning:
 
         assert response.status_code == 200
         assert response.json()["candidates"][0]["record_id"] == "1234"
+
+    def test_a_link_its_own_provider_could_not_read_is_reported_not_left_empty(
+        self,
+    ) -> None:
+        manager = MagicMock(spec=EnrichmentManager)
+        manager.candidates.side_effect = ProviderError("rawg", "HTTP 401")
+
+        with (
+            patch("src.web.api._enrichment.EnrichmentManager", return_value=manager),
+            _client(self._storage(), {}) as client,
+        ):
+            response = client.get(
+                "/api/enrichment/candidates",
+                params={"item_id": 7, "query": "https://rawg.io/games/prey"},
+            )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "rawg: HTTP 401"
 
     def test_candidates_reach_no_provider_with_enrichment_switched_off(self) -> None:
         config = {

@@ -15,6 +15,7 @@ from src.enrichment.manager import (
     EnrichmentStart,
     PinRefused,
 )
+from src.enrichment.provider_base import ProviderError
 from src.enrichment.providers.hardcover.hardcover import HardcoverProvider
 from src.enrichment.registry import get_enrichment_registry
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
@@ -529,6 +530,22 @@ class TestEnrichmentPinning:
 
         assert result.exit_code == 0, result.output
         assert json.loads(result.stdout)["candidates"][0]["record_id"] == "1234"
+
+    def test_a_link_its_own_provider_could_not_read_is_reported_not_left_empty(
+        self, cli_runner: CliRunner
+    ) -> None:
+        manager = MagicMock(spec=EnrichmentManager)
+        manager.candidates.side_effect = ProviderError("rawg", "HTTP 401")
+
+        result = _invoke_with_enrichment_manager(
+            cli_runner,
+            ["enrichment", "candidates", "--id", "7", "--query", "https://rawg.io/x"],
+            self._storage(),
+            manager,
+        )
+
+        assert result.exit_code != 0
+        assert "rawg: HTTP 401" in result.output
 
     def test_candidates_reach_no_provider_with_enrichment_switched_off(
         self, cli_runner: CliRunner
