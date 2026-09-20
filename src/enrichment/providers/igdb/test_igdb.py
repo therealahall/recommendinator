@@ -623,8 +623,16 @@ class TestIGDBCandidateFromUrl:
 
     @pytest.mark.parametrize(
         "answered",
-        [_response([], status=400), _response(_HTML_INTERSTITIAL)],
-        ids=["an-api-that-will-not-filter-on-slug", "a-body-that-is-not-json"],
+        [
+            _response([], status=400),
+            _response(_HTML_INTERSTITIAL),
+            _response({"message": "service unavailable"}),
+        ],
+        ids=[
+            "an-api-that-will-not-filter-on-slug",
+            "a-body-that-is-not-json",
+            "a-body-that-is-json-but-not-a-list-of-records",
+        ],
     )
     def test_a_link_igdb_could_not_read_raises_rather_than_reading_as_unowned(
         self, provider: IGDBProvider, answered: MagicMock

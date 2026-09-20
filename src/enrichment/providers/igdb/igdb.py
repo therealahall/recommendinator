@@ -334,7 +334,7 @@ class IGDBProvider(EnrichmentProvider):
             response = self._query(body, credentials, fresh_token=True)
         payload = self._payload(response, "IGDB request failed")
         if not isinstance(payload, list):
-            return []
+            raise ProviderError(self.name, "IGDB answered a query with no records")
         return [game for game in payload if isinstance(game, dict)]
 
     def _query(

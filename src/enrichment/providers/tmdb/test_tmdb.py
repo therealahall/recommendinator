@@ -819,17 +819,19 @@ class TestTMDBProviderUnsupportedTypes:
         assert result is None
 
 
-_UNPARSEABLE = MagicMock(spec=requests.Response, status_code=200)
-_UNPARSEABLE.json.side_effect = requests.exceptions.JSONDecodeError(
-    "Expecting value", "<html>", 0
-)
+def _response(payload: Any, status: int = 200) -> MagicMock:
+    """Per test, never shared: a reused mock accumulates another test's calls."""
+    response = MagicMock(spec=requests.Response, status_code=status)
+    if isinstance(payload, Exception):
+        response.json.side_effect = payload
+    else:
+        response.json.return_value = payload
+    if status >= 400:
+        response.raise_for_status.side_effect = requests.HTTPError(response=response)
+    return response
 
-_NOT_A_RECORD = MagicMock(
-    spec=requests.Response, status_code=200, json=lambda: ["not a record"]
-)
 
-_MISSING = MagicMock(spec=requests.Response, status_code=404)
-_MISSING.raise_for_status.side_effect = requests.HTTPError(response=_MISSING)
+_UNPARSEABLE = requests.exceptions.JSONDecodeError("Expecting value", "<html>", 0)
 
 
 class TestTMDBCandidateFromUrl:
@@ -927,14 +929,15 @@ class TestTMDBCandidateFromUrl:
 
     @pytest.mark.parametrize(
         "answered",
-        [_UNPARSEABLE, _NOT_A_RECORD],
+        [_UNPARSEABLE, ["not a record"]],
         ids=["a-body-that-is-not-json", "a-body-that-is-json-but-not-a-record"],
     )
     def test_a_body_that_names_no_record_reaches_the_picker_as_a_provider_error(
-        self, provider: TMDBProvider, answered: MagicMock
+        self, provider: TMDBProvider, answered: Any
     ) -> None:
         with patch(
-            "src.enrichment.providers.tmdb.tmdb.requests.get", return_value=answered
+            "src.enrichment.providers.tmdb.tmdb.requests.get",
+            return_value=_response(answered),
         ):
             with pytest.raises(ProviderError):
                 provider.candidate_from_url(
@@ -947,7 +950,8 @@ class TestTMDBCandidateFromUrl:
         self, provider: TMDBProvider
     ) -> None:
         with patch(
-            "src.enrichment.providers.tmdb.tmdb.requests.get", return_value=_MISSING
+            "src.enrichment.providers.tmdb.tmdb.requests.get",
+            return_value=_response(None, 404),
         ):
             offered = provider.candidate_from_url(
                 self._item(ContentType.MOVIE),

@@ -223,7 +223,7 @@ _AUTH_CODES = frozenset({"access-denied", "invalid-headers", "invalid-jwt"})
 def _refusal_codes(errors: Any) -> set[str]:
     codes = {
         sanitize_for_log(str((error.get("extensions") or {}).get("code") or "unknown"))
-        for error in errors
+        for error in (errors if isinstance(errors, list) else [])
         if isinstance(error, dict)
     }
     return codes or {"unknown"}
@@ -372,8 +372,9 @@ class HardcoverProvider(EnrichmentProvider):
                 self.name, f"Hardcover request failed: {scrub_request_error(error)}"
             ) from error
 
-        if body.get("errors"):
-            codes = _refusal_codes(body["errors"])
+        stated: dict[str, Any] = body if isinstance(body, dict) else {}
+        if stated.get("errors"):
+            codes = _refusal_codes(stated["errors"])
             named = ", ".join(sorted(codes))
             auth = codes & _AUTH_CODES
             if auth:
@@ -385,8 +386,11 @@ class HardcoverProvider(EnrichmentProvider):
                     codes=", ".join(sorted(auth)),
                 )
             raise ProviderError(self.name, f"Hardcover failed the query: {named}")
-        books = (body.get("data") or {}).get("books")
-        return books if isinstance(books, list) else []
+        data = stated.get("data")
+        books = data.get("books") if isinstance(data, dict) else None
+        if not isinstance(books, list):
+            raise ProviderError(self.name, "Hardcover answered a query with no records")
+        return books
 
     def _post(self, payload: dict[str, Any], api_key: str) -> requests.Response:
         try:

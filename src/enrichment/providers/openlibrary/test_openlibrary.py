@@ -457,6 +457,26 @@ class TestOpenLibraryCandidateFromUrl:
 
         assert candidate is None
 
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://openlibrary.org/works/OL1955041W",
+            "https://openlibrary.org/books/OL14949379M",
+        ],
+        ids=["a-work-link", "an-edition-link"],
+    )
+    def test_a_body_that_is_not_a_record_raises_rather_than_reading_as_absent(
+        self, provider: OpenLibraryProvider, url: str
+    ) -> None:
+        with patch(
+            "src.enrichment.providers.openlibrary.openlibrary.requests.get",
+            return_value=MagicMock(
+                spec=requests.Response, status_code=200, json=lambda: ["not a record"]
+            ),
+        ):
+            with pytest.raises(ProviderError):
+                provider.candidate_from_url(self._BOOK, url, {})
+
     def test_a_failed_lookup_is_raised_rather_than_read_as_a_record_that_is_absent(
         self, provider: OpenLibraryProvider
     ) -> None:
@@ -493,6 +513,41 @@ class TestOpenLibraryStaysOnItsOwnOrigin:
 
         assert "evil.test" in str(refused.value)
         assert mock_get.call_count == 1
+
+    def test_an_isbn_redirected_off_origin_falls_back_to_the_title_search(self) -> None:
+        item = ContentItem(
+            id="book1",
+            title="1984",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"isbn": "9780451524935"},
+        )
+
+        with patch(
+            "src.enrichment.providers.openlibrary.openlibrary.requests.get"
+        ) as mock_get:
+            mock_get.side_effect = [
+                MagicMock(
+                    spec=requests.Response,
+                    status_code=302,
+                    headers={"Location": "https://evil.test/isbn.json"},
+                ),
+                MagicMock(
+                    spec=requests.Response,
+                    status_code=200,
+                    json=lambda: {"docs": [{"key": "/works/OL1168083W"}]},
+                ),
+                MagicMock(
+                    spec=requests.Response,
+                    status_code=200,
+                    json=lambda: {"subjects": ["Fiction"]},
+                ),
+            ]
+
+            result = OpenLibraryProvider().enrich(item, {})
+
+        assert result is not None
+        assert result.genres == ["Fiction"]
 
 
 class TestOpenLibraryProviderSubjectFiltering:

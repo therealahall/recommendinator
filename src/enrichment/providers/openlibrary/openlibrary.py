@@ -27,7 +27,6 @@ logger = logging.getLogger(__name__)
 
 OPENLIBRARY_API_BASE = "https://openlibrary.org"
 
-# Pattern to match series info in titles like "(Series Name, #1)" or "(Series Name #1)"
 SERIES_PATTERN = re.compile(r"\s*\([^)]*#\d+[^)]*\)\s*$")
 
 # Keeps broad categories ("mystery") while filtering verbose library subject headings.
@@ -72,6 +71,14 @@ def _work_id(key: Any) -> str | None:
     return record_id if _WORK_KEY.fullmatch(record_id) else None
 
 
+def _first_work_id(works: Any) -> str | None:
+    for entry in works if isinstance(works, list) else []:
+        work_id = _work_id(entry.get("key")) if isinstance(entry, dict) else None
+        if work_id:
+            return work_id
+    return None
+
+
 def _first_author_id(work: dict[str, Any]) -> str | None:
     for entry in work.get("authors") or []:
         author = entry.get("author") if isinstance(entry, dict) else None
@@ -103,6 +110,12 @@ def _doc_candidate(doc: dict[str, Any]) -> Candidate:
         creator=str(authors[0]) if authors else None,
         cover_url=_cover_from_id(doc.get("cover_i")),
     )
+
+
+def _stated(error: ProviderError | requests.RequestException) -> str:
+    if isinstance(error, ProviderError):
+        return error.message
+    return scrub_request_error(error)
 
 
 def _cover_url(payload: dict[str, Any]) -> str | None:
@@ -186,25 +199,22 @@ class OpenLibraryProvider(EnrichmentProvider):
                 return None
 
             response.raise_for_status()
-            edition = response.json()
+            edition = self._record(response)
 
-            works = edition.get("works", [])
-            if works:
-                work_id = _work_id(works[0].get("key"))
-                if work_id:
-                    return self._fetch_work_details(work_id, edition)
-
-            return self._build_result_from_edition(edition)
-
-        except requests.RequestException as error:
+        except (ProviderError, requests.RequestException) as error:
             # The isbn is an imported metadata column, and the error embeds the
             # URL built from it, so neither reaches the log as written.
             logger.warning(
                 "ISBN lookup failed for %s: %s",
                 sanitize_for_log(isbn),
-                scrub_request_error(error),
+                _stated(error),
             )
             return None
+
+        work_id = _first_work_id(edition.get("works"))
+        if work_id:
+            return self._fetch_work_details(work_id, edition)
+        return self._build_result_from_edition(edition)
 
     def search(self, item: ContentItem, config: dict[str, Any]) -> list[Candidate]:
         if get_enum_value(item.content_type) != ContentType.BOOK.value:
@@ -231,7 +241,7 @@ class OpenLibraryProvider(EnrichmentProvider):
             if response.status_code == 404:
                 return None
             response.raise_for_status()
-            work = response.json()
+            work = self._record(response)
         except requests.RequestException as error:
             raise ProviderError(
                 self.name,
@@ -253,7 +263,7 @@ class OpenLibraryProvider(EnrichmentProvider):
         try:
             response = self._get(f"{OPENLIBRARY_API_BASE}/authors/{author_id}.json")
             response.raise_for_status()
-            name = response.json().get("name")
+            name = self._record(response).get("name")
         except (ProviderError, requests.RequestException):
             # The author is one field of the row: neither a refused redirect nor
             # an unparseable body may cost the operator the record itself.
@@ -268,8 +278,15 @@ class OpenLibraryProvider(EnrichmentProvider):
         if response.status_code == 404:
             return None
         response.raise_for_status()
-        works = response.json().get("works") or []
-        return _work_id(works[0].get("key")) if works else None
+        return _first_work_id(self._record(response).get("works"))
+
+    def _record(self, response: requests.Response) -> dict[str, Any]:
+        """A 200 whose body is valid JSON but not an object — an edge cache's
+        error page — is a failure, not a record Open Library does not hold."""
+        payload = response.json()
+        if not isinstance(payload, dict):
+            raise ProviderError(self.name, "Open Library answered with no record")
+        return payload
 
     def _get(self, url: str, params: dict[str, Any] | None = None) -> requests.Response:
         try:
@@ -317,14 +334,17 @@ class OpenLibraryProvider(EnrichmentProvider):
 
         except requests.RequestException as error:
             raise ProviderError(
-                self.name, f"Failed to search Open Library: {error}"
+                self.name,
+                f"Failed to search Open Library: {scrub_request_error(error)}",
             ) from error
 
     def _request_docs(self, params: dict[str, Any]) -> list[dict[str, Any]]:
         response = self._get(f"{OPENLIBRARY_API_BASE}/search.json", params)
         response.raise_for_status()
-        docs = response.json().get("docs", [])
-        return docs if isinstance(docs, list) else []
+        docs = self._record(response).get("docs")
+        if not isinstance(docs, list):
+            return []
+        return [doc for doc in docs if isinstance(doc, dict)]
 
     def _fetch_work_details(
         self,
@@ -334,7 +354,7 @@ class OpenLibraryProvider(EnrichmentProvider):
         try:
             response = self._get(f"{OPENLIBRARY_API_BASE}/works/{work_id}.json")
             response.raise_for_status()
-            work = response.json()
+            work = self._record(response)
 
             subjects = work.get("subjects", [])
             genres = self._filter_subjects(subjects)
@@ -376,7 +396,7 @@ class OpenLibraryProvider(EnrichmentProvider):
 
         except requests.RequestException as error:
             raise ProviderError(
-                self.name, f"Failed to fetch work details: {error}"
+                self.name, f"Failed to fetch work details: {scrub_request_error(error)}"
             ) from error
 
     def _build_result_from_edition(self, edition: dict[str, Any]) -> EnrichmentResult:
