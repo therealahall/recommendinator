@@ -63,7 +63,7 @@ def _hardcover_book(
 
 
 def _response(
-    payload: dict[str, Any] | Exception,
+    payload: Any,
     status: int = 200,
     headers: dict[str, str] | None = None,
 ) -> MagicMock:
@@ -567,8 +567,13 @@ class TestHardcoverCandidateFromUrl:
         [
             _response({"errors": [{"extensions": {"code": "validation-failed"}}]}),
             _response(_HTML_INTERSTITIAL),
+            _response(["not a records object"]),
         ],
-        ids=["a-gateway-that-will-not-filter-on-slug", "a-body-that-is-not-json"],
+        ids=[
+            "a-gateway-that-will-not-filter-on-slug",
+            "a-body-that-is-not-json",
+            "a-body-that-is-json-but-names-no-records",
+        ],
     )
     def test_a_link_hardcover_could_not_read_raises_rather_than_reading_as_unowned(
         self, provider: HardcoverProvider, answered: MagicMock

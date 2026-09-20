@@ -74,7 +74,6 @@ class RAWGProvider(EnrichmentProvider):
 
     @property
     def rate_limit_requests_per_second(self) -> float:
-        # RAWG free tier: 5 requests per second
         return 5.0
 
     def get_config_schema(self) -> list[ConfigField]:

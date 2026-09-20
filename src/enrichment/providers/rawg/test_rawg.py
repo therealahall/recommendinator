@@ -422,16 +422,20 @@ class TestSearchTitleCannotForgeALogLineRegression:
         assert self._FORGED not in caplog.text
 
 
-_MISSING_GAME = MagicMock(spec=requests.Response, status_code=404)
-_MISSING_GAME.raise_for_status.side_effect = requests.HTTPError(response=_MISSING_GAME)
+def _response(payload: Any, status: int = 200) -> MagicMock:
+    """Per test, never shared: a reused mock accumulates another test's calls."""
+    response = MagicMock(spec=requests.Response, status_code=status)
+    if isinstance(payload, Exception):
+        response.json.side_effect = payload
+    else:
+        response.json.return_value = payload
+    if status >= 400:
+        response.raise_for_status.side_effect = requests.HTTPError(response=response)
+    return response
 
-_HTML_INTERSTITIAL = MagicMock(spec=requests.Response, status_code=200)
-_HTML_INTERSTITIAL.json.side_effect = requests.exceptions.JSONDecodeError(
+
+_HTML_INTERSTITIAL = requests.exceptions.JSONDecodeError(
     "Expecting value", "<html>upstream is down</html>", 0
-)
-
-_NOT_A_RECORD = MagicMock(
-    spec=requests.Response, status_code=200, json=lambda: ["not a record"]
 )
 
 
@@ -502,7 +506,7 @@ class TestRAWGCandidateFromUrl:
     ) -> None:
         with patch(
             "src.enrichment.providers.rawg.rawg.requests.get",
-            return_value=_MISSING_GAME,
+            return_value=_response(None, 404),
         ):
             offered = provider.candidate_from_url(
                 self._GAME, "https://rawg.io/games/portal-2", self._CONFIG
@@ -515,7 +519,7 @@ class TestRAWGCandidateFromUrl:
     ) -> None:
         with patch(
             "src.enrichment.providers.rawg.rawg.requests.get",
-            return_value=_HTML_INTERSTITIAL,
+            return_value=_response(_HTML_INTERSTITIAL),
         ):
             with pytest.raises(ProviderError):
                 provider.candidate_from_url(
@@ -532,7 +536,7 @@ class TestRAWGCandidateFromUrl:
 
         with patch(
             "src.enrichment.providers.rawg.rawg.requests.get",
-            return_value=_NOT_A_RECORD,
+            return_value=_response(["not a record"]),
         ):
             with pytest.raises(ProviderError):
                 provider.enrich(pinned, self._CONFIG)

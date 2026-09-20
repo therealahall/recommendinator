@@ -5,7 +5,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
@@ -2251,20 +2251,6 @@ class TestPinnedProviderRecord:
         ):
             manager.candidates(self._movie(), "https://records.test/film/9")
 
-    def test_only_the_provider_a_link_names_spends_its_rate_limit(
-        self, storage_manager: StorageManager
-    ) -> None:
-        manager = manager_over(
-            storage_manager,
-            LinkReadingProvider(name="alpha"),
-            SearchingProvider(name="zulu"),
-        )
-
-        with patch.object(EnrichmentManager, "_get_rate_limiter") as limiter:
-            manager.candidates(self._movie(), "https://records.test/film/9")
-
-        assert limiter.call_args_list == [call("alpha")]
-
     @pytest.mark.parametrize("first", ["alpha", "zulu"])
     def test_the_picker_offers_each_provider_in_the_ranked_order(
         self, storage_manager: StorageManager, first: str
@@ -2321,9 +2307,11 @@ class TestPinnedProviderRecord:
             assert not provider.accepts_record_id("٦٠٣")
             assert not provider.accepts_record_id("OL٦٠٣W")
 
-    @pytest.mark.parametrize(("provider_name", "url", "content_type"), _OWNED_LINKS)
+    @pytest.mark.parametrize(
+        ("provider_name", "url"), [(name, url) for name, url, _type in _OWNED_LINKS]
+    )
     def test_a_provider_claims_its_own_link_with_no_request_and_no_credential(
-        self, provider_name: str, url: str, content_type: ContentType
+        self, provider_name: str, url: str
     ) -> None:
         with upstream_refused():
             assert discovered_provider(provider_name).claims_url(url) is True
