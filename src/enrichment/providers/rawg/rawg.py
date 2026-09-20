@@ -122,11 +122,7 @@ class RAWGProvider(EnrichmentProvider):
         slug = link_slug(url, _RAWG_HOSTS, "games")
         if slug is None:
             return None
-        try:
-            game = self._game_payload(slug, config.get("api_key", ""))
-        except ProviderError as error:
-            logger.warning("RAWG read no game from that link: %s", error.message)
-            return None
+        game = self._game_payload(slug, config.get("api_key", ""))
         offered = Candidate(
             record_id=str(game.get("id") or ""),
             title=str(game.get("name") or ""),

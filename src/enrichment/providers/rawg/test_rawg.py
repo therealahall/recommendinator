@@ -422,6 +422,15 @@ class TestSearchTitleCannotForgeALogLineRegression:
         assert self._FORGED not in caplog.text
 
 
+_MISSING_GAME = MagicMock(spec=requests.Response, status_code=404)
+_MISSING_GAME.raise_for_status.side_effect = requests.HTTPError(response=_MISSING_GAME)
+
+_HTML_INTERSTITIAL = MagicMock(spec=requests.Response, status_code=200)
+_HTML_INTERSTITIAL.json.side_effect = requests.exceptions.JSONDecodeError(
+    "Expecting value", "<html>upstream is down</html>", 0
+)
+
+
 class TestRAWGCandidateFromUrl:
     _CONFIG = {"api_key": "test-api-key"}
 
@@ -487,37 +496,21 @@ class TestRAWGCandidateFromUrl:
 
         assert mock_get.call_count == 0
 
-    def test_a_slug_rawg_holds_no_game_for_offers_no_candidate_rather_than_raising(
-        self, provider: RAWGProvider
+    @pytest.mark.parametrize(
+        "answered",
+        [_MISSING_GAME, _HTML_INTERSTITIAL],
+        ids=["a-404-from-the-detail-endpoint", "a-body-that-is-not-json"],
+    )
+    def test_a_link_rawg_could_not_read_raises_rather_than_reading_as_unowned(
+        self, provider: RAWGProvider, answered: MagicMock
     ) -> None:
-        missing = MagicMock(spec=requests.Response, status_code=404)
-        missing.raise_for_status.side_effect = requests.HTTPError(response=missing)
-
         with patch("src.enrichment.providers.rawg.rawg.requests.get") as mock_get:
-            mock_get.return_value = missing
+            mock_get.return_value = answered
 
-            offered = provider.candidate_from_url(
-                self._GAME, "https://rawg.io/games/portal-2", self._CONFIG
-            )
-
-        assert offered is None
-
-    def test_a_detail_body_that_is_not_json_offers_no_candidate_rather_than_raising(
-        self, provider: RAWGProvider
-    ) -> None:
-        unparseable = MagicMock(spec=requests.Response, status_code=200)
-        unparseable.json.side_effect = requests.exceptions.JSONDecodeError(
-            "Expecting value", "<html>upstream is down</html>", 0
-        )
-
-        with patch("src.enrichment.providers.rawg.rawg.requests.get") as mock_get:
-            mock_get.return_value = unparseable
-
-            offered = provider.candidate_from_url(
-                self._GAME, "https://rawg.io/games/portal-2", self._CONFIG
-            )
-
-        assert offered is None
+            with pytest.raises(ProviderError):
+                provider.candidate_from_url(
+                    self._GAME, "https://rawg.io/games/portal-2", self._CONFIG
+                )
 
     def test_a_detail_payload_stating_no_id_offers_nothing_a_pin_could_name(
         self, provider: RAWGProvider

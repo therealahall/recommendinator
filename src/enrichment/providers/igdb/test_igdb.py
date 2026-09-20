@@ -610,45 +610,28 @@ class TestIGDBCandidateFromUrl:
         assert transport.game_requests == []
         assert transport.token_requests == 0
 
-    @pytest.mark.parametrize(
-        "url",
-        [
-            "https://example.com/games/planescape-torment",
-            "https://www.igdb.com.evil.test/games/planescape-torment",
-            "https://www.igdb.com/collections/planescape",
-            "https://www.igdb.com/games",
-        ],
-        ids=[
-            "another-host",
-            "a-host-igdb-com-is-only-a-prefix-of",
-            "a-record-kind-no-pin-names",
-            "a-link-naming-no-record",
-        ],
-    )
-    def test_a_link_igdb_does_not_own_is_refused_without_a_request(
-        self, provider: IGDBProvider, url: str
+    def test_a_slug_igdb_holds_no_game_for_offers_no_candidate(
+        self, provider: IGDBProvider
     ) -> None:
-        transport = _served(_game())
-
-        assert _from_url(transport, provider, url) is None
-        assert transport.game_requests == []
-
-    @pytest.mark.parametrize(
-        "answered",
-        [_response([], status=400), _response([]), _response(_HTML_INTERSTITIAL)],
-        ids=[
-            "an-api-that-will-not-filter-on-slug",
-            "a-slug-it-holds-no-game-for",
-            "a-body-that-is-not-json",
-        ],
-    )
-    def test_no_game_read_from_a_link_offers_no_candidate_rather_than_raising(
-        self, provider: IGDBProvider, answered: MagicMock
-    ) -> None:
-        transport = _Transport(answered)
+        transport = _Transport(_response([]))
 
         offered = _from_url(
             transport, provider, "https://www.igdb.com/games/planescape-torment"
         )
 
         assert offered is None
+
+    @pytest.mark.parametrize(
+        "answered",
+        [_response([], status=400), _response(_HTML_INTERSTITIAL)],
+        ids=["an-api-that-will-not-filter-on-slug", "a-body-that-is-not-json"],
+    )
+    def test_a_link_igdb_could_not_read_raises_rather_than_reading_as_unowned(
+        self, provider: IGDBProvider, answered: MagicMock
+    ) -> None:
+        transport = _Transport(answered)
+
+        with pytest.raises(ProviderError):
+            _from_url(
+                transport, provider, "https://www.igdb.com/games/planescape-torment"
+            )

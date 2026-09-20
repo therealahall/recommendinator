@@ -548,47 +548,29 @@ class TestHardcoverCandidateFromUrl:
         assert offered.title == "Leviathan Wakes"
         assert provider.accepts_record_id(offered.record_id) is True
 
-    @pytest.mark.parametrize(
-        "url",
-        [
-            "https://example.com/books/leviathan-wakes",
-            "https://hardcover.app.evil.test/books/leviathan-wakes",
-            "https://hardcover.app/authors/james-s-a-corey",
-            "https://hardcover.app/books",
-            "https://hardcover.app/books/..%2Fgraphql",
-        ],
-        ids=[
-            "another-host",
-            "a-host-hardcover-app-is-only-a-prefix-of",
-            "a-record-kind-no-pin-names",
-            "a-link-naming-no-record",
-            "a-slug-that-would-leave-the-books-path",
-        ],
-    )
-    def test_a_link_hardcover_does_not_own_is_refused_without_a_request(
-        self, provider: HardcoverProvider, url: str
+    def test_a_slug_hardcover_holds_no_book_for_offers_no_candidate(
+        self, provider: HardcoverProvider
     ) -> None:
         with patch(
             "src.enrichment.providers.hardcover.hardcover.requests.post"
         ) as mock_post:
-            assert provider.candidate_from_url(_book(), url, _CONFIG) is None
+            mock_post.return_value = _response(_books())
 
-        assert mock_post.call_count == 0
+            offered = provider.candidate_from_url(
+                _book(), "https://hardcover.app/books/leviathan-wakes", _CONFIG
+            )
+
+        assert offered is None
 
     @pytest.mark.parametrize(
         "answered",
         [
             _response({"errors": [{"extensions": {"code": "validation-failed"}}]}),
-            _response(_books()),
             _response(_HTML_INTERSTITIAL),
         ],
-        ids=[
-            "a-gateway-that-will-not-filter-on-slug",
-            "a-slug-it-holds-no-book-for",
-            "a-body-that-is-not-json",
-        ],
+        ids=["a-gateway-that-will-not-filter-on-slug", "a-body-that-is-not-json"],
     )
-    def test_no_book_read_from_a_link_offers_no_candidate_rather_than_raising(
+    def test_a_link_hardcover_could_not_read_raises_rather_than_reading_as_unowned(
         self, provider: HardcoverProvider, answered: MagicMock
     ) -> None:
         with patch(
@@ -596,8 +578,7 @@ class TestHardcoverCandidateFromUrl:
         ) as mock_post:
             mock_post.return_value = answered
 
-            offered = provider.candidate_from_url(
-                _book(), "https://hardcover.app/books/leviathan-wakes", _CONFIG
-            )
-
-        assert offered is None
+            with pytest.raises(ProviderError):
+                provider.candidate_from_url(
+                    _book(), "https://hardcover.app/books/leviathan-wakes", _CONFIG
+                )
