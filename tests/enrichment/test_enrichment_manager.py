@@ -2,9 +2,10 @@ import logging
 import sqlite3
 import threading
 from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 import requests
@@ -1902,17 +1903,49 @@ class SearchingProvider(MockProvider):
         return [Candidate(record_id="1", title=self.name)]
 
 
+#: One link each shipped provider owns, and the item type it is pasted onto.
+_OWNED_LINKS = [
+    ("hardcover", "https://hardcover.app/books/the-fifth-season", ContentType.BOOK),
+    ("igdb", "https://www.igdb.com/games/portal-2", ContentType.VIDEO_GAME),
+    ("openlibrary", "https://openlibrary.org/works/OL45804W", ContentType.BOOK),
+    ("rawg", "https://rawg.io/games/portal-2", ContentType.VIDEO_GAME),
+    ("tmdb", "https://themoviedb.org/movie/27205-inception", ContentType.MOVIE),
+]
+
+#: Open Library reads its links keylessly, so it has no credential to be missing.
+_CREDENTIALED_LINKS = [row for row in _OWNED_LINKS if row[0] != "openlibrary"]
+
+
+def discovered_provider(name: str) -> EnrichmentProvider:
+    registry = EnrichmentRegistry()
+    registry.discover_providers()
+    provider = registry.get_provider(name)
+    assert provider is not None, f"{name} stopped importing"
+    return provider
+
+
+@contextmanager
+def upstream_refused() -> Iterator[None]:
+    """Unpatched, a keyless request is stopped by the conftest's loopback guard
+    and arrives as the very ProviderError the assertion is looking for."""
+    asked = AssertionError("asked upstream")
+    with (
+        patch.object(requests, "get", side_effect=asked),
+        patch.object(requests, "post", side_effect=asked),
+    ):
+        yield
+
+
 class LinkReadingProvider(SearchingProvider):
     _HOST = "https://records.test/"
+
+    def claims_url(self, url: str) -> bool:
+        return url.startswith(self._HOST)
 
     def candidate_from_url(
         self, item: ContentItem, url: str, config: dict[str, Any]
     ) -> Candidate | None:
-        return (
-            Candidate(record_id="9", title=f"linked {self.name}")
-            if url.startswith(self._HOST)
-            else None
-        )
+        return Candidate(record_id="9", title=f"linked {self.name}")
 
 
 class TestPinnedProviderRecord:
@@ -2203,27 +2236,34 @@ class TestPinnedProviderRecord:
 
         assert manager.candidates(self._movie(), "https://records.test/film/9") == []
 
-    def test_one_provider_failing_on_a_link_does_not_empty_the_picker(
+    def test_a_link_its_own_provider_could_not_read_is_raised_not_left_empty(
+        self, storage_manager: StorageManager
+    ) -> None:
+        manager = manager_over(storage_manager, LinkReadingProvider(name="alpha"))
+
+        with (
+            patch.object(
+                LinkReadingProvider,
+                "candidate_from_url",
+                side_effect=ProviderError("alpha", "HTTP 401"),
+            ),
+            pytest.raises(ProviderError, match="HTTP 401"),
+        ):
+            manager.candidates(self._movie(), "https://records.test/film/9")
+
+    def test_only_the_provider_a_link_names_spends_its_rate_limit(
         self, storage_manager: StorageManager
     ) -> None:
         manager = manager_over(
             storage_manager,
             LinkReadingProvider(name="alpha"),
-            LinkReadingProvider(name="zulu"),
-            order=["alpha", "zulu"],
+            SearchingProvider(name="zulu"),
         )
 
-        with patch.object(
-            LinkReadingProvider,
-            "candidate_from_url",
-            side_effect=[
-                ProviderError("alpha", "HTTP 401"),
-                Candidate(record_id="9", title="linked zulu"),
-            ],
-        ):
-            offered = manager.candidates(self._movie(), "https://records.test/film/9")
+        with patch.object(EnrichmentManager, "_get_rate_limiter") as limiter:
+            manager.candidates(self._movie(), "https://records.test/film/9")
 
-        assert offered == [("zulu", Candidate(record_id="9", title="linked zulu"))]
+        assert limiter.call_args_list == [call("alpha")]
 
     @pytest.mark.parametrize("first", ["alpha", "zulu"])
     def test_the_picker_offers_each_provider_in_the_ranked_order(
@@ -2280,6 +2320,29 @@ class TestPinnedProviderRecord:
         for provider in providers.values():
             assert not provider.accepts_record_id("٦٠٣")
             assert not provider.accepts_record_id("OL٦٠٣W")
+
+    @pytest.mark.parametrize(("provider_name", "url", "content_type"), _OWNED_LINKS)
+    def test_a_provider_claims_its_own_link_with_no_request_and_no_credential(
+        self, provider_name: str, url: str, content_type: ContentType
+    ) -> None:
+        with upstream_refused():
+            assert discovered_provider(provider_name).claims_url(url) is True
+
+    @pytest.mark.parametrize(
+        ("provider_name", "url", "content_type"), _CREDENTIALED_LINKS
+    )
+    def test_a_link_on_a_provider_holding_no_credential_says_so_rather_than_sending(
+        self, provider_name: str, url: str, content_type: ContentType
+    ) -> None:
+        item = ContentItem(
+            id="1",
+            title="Prey",
+            content_type=content_type,
+            status=ConsumptionStatus.UNREAD,
+        )
+
+        with upstream_refused(), pytest.raises(ProviderError, match="no credential"):
+            discovered_provider(provider_name).candidate_from_url(item, url, {})
 
     def test_a_provider_that_never_reads_a_pin_is_refused_and_left_unlisted(
         self, storage_manager: StorageManager

@@ -10,8 +10,9 @@ from src.enrichment.provider_base import (
     EnrichmentResult,
     ProviderError,
     is_numeric_record_id,
-    link_slug,
+    link_record,
     log_search_title,
+    no_credential,
     pinned_record,
 )
 from src.ingestion.urls import (
@@ -29,6 +30,13 @@ logger = logging.getLogger(__name__)
 RAWG_API_BASE = "https://api.rawg.io/api"
 
 _RAWG_HOSTS = frozenset({"rawg.io", "www.rawg.io"})
+
+_RAWG_LINKS = frozenset({"games"})
+
+
+def _named_slug(url: str) -> str | None:
+    named = link_record(url, _RAWG_HOSTS, _RAWG_LINKS)
+    return None if named is None else named[1]
 
 
 def _https_cover(background_image: Any) -> str | None:
@@ -116,13 +124,21 @@ class RAWGProvider(EnrichmentProvider):
     def accepts_record_id(self, record_id: str) -> bool:
         return is_numeric_record_id(record_id)
 
+    def claims_url(self, url: str) -> bool:
+        return _named_slug(url) is not None
+
     def candidate_from_url(
         self, item: ContentItem, url: str, config: dict[str, Any]
     ) -> Candidate | None:
-        slug = link_slug(url, _RAWG_HOSTS, "games")
+        slug = _named_slug(url)
         if slug is None:
             return None
-        game = self._game_payload(slug, config.get("api_key", ""))
+        api_key = str(config.get("api_key") or "").strip()
+        if not api_key:
+            raise no_credential(self)
+        game = self._game_payload(slug, api_key)
+        if game is None:
+            return None
         offered = Candidate(
             record_id=str(game.get("id") or ""),
             title=str(game.get("name") or ""),
@@ -188,14 +204,16 @@ class RAWGProvider(EnrichmentProvider):
                 self.name, f"Failed to search RAWG: {scrub_request_error(error)}"
             ) from None
 
-    def _game_payload(self, game_id: int | str, api_key: str) -> dict[str, Any]:
+    def _game_payload(self, game_id: int | str, api_key: str) -> dict[str, Any] | None:
+        """None only where RAWG has no such game: an unreadable body once wrote
+        the item back as a high-quality match holding no fields at all."""
         try:
             response = self._get(
                 f"{RAWG_API_BASE}/games/{game_id}", params={"key": api_key}
             )
+            if response.status_code == 404:
+                return None
             response.raise_for_status()
-            # Decoded inside the handler: an edge cache answers 200 with HTML,
-            # and a JSONDecodeError is a RequestException.
             payload = response.json()
         except requests.RequestException as error:
             raise ProviderError(
@@ -203,10 +221,14 @@ class RAWGProvider(EnrichmentProvider):
                 f"Failed to fetch game details: {scrub_request_error(error)}",
             ) from None
 
-        return payload if isinstance(payload, dict) else {}
+        if not isinstance(payload, dict):
+            raise ProviderError(self.name, "RAWG answered a game with no record")
+        return payload
 
     def _fetch_game_details(self, game_id: int | str, api_key: str) -> EnrichmentResult:
         game = self._game_payload(game_id, api_key)
+        if game is None:
+            return EnrichmentResult(match_quality="not_found")
 
         genres = [genre["name"] for genre in game.get("genres", [])]
 

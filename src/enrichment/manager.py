@@ -18,7 +18,6 @@ from src.enrichment.provider_base import (
     ProviderRefusedError,
     accepts_a_pin,
     offers_candidates,
-    recognises_urls,
     states_a_match,
     states_a_series_ordinal,
     stored_config_schema,
@@ -270,31 +269,26 @@ class EnrichmentManager:
     def _candidate_from_link(
         self, item: ContentItem, url: str
     ) -> list[tuple[str, Candidate]]:
-        """Only providers covering the item's own type are asked, so a link
-        pasted onto the wrong item reaches none of them.
+        """Ownership is settled offline, so only the provider the link names
+        spends a request — and its ``ProviderError`` reaches the operator rather
+        than the log, no other provider being able to answer for that link.
         """
-        for provider in self.registry.get_enabled_providers(self.config):
-            if not recognises_urls(provider):
-                continue
-            if item.content_type not in provider.content_types:
-                continue
-            self._get_rate_limiter(provider.name).acquire()
-            try:
-                found = provider.candidate_from_url(
-                    item, url, self._get_provider_config(provider.name)
-                )
-            except ProviderError as error:
-                # One provider failing to read a link it recognises must not
-                # empty the picker of whatever the next one makes of it.
-                logger.warning(
-                    "[ENRICHMENT] %s offered no candidate for that link: %s",
-                    provider.name,
-                    error.message,
-                )
-                continue
-            if found is not None:
-                return [(provider.name, found)]
-        return []
+        owner = next(
+            (
+                provider
+                for provider in self.registry.get_enabled_providers(self.config)
+                if item.content_type in provider.content_types
+                and provider.claims_url(url)
+            ),
+            None,
+        )
+        if owner is None:
+            return []
+        self._get_rate_limiter(owner.name).acquire()
+        found = owner.candidate_from_url(
+            item, url, self._get_provider_config(owner.name)
+        )
+        return [] if found is None else [(owner.name, found)]
 
     def pin(
         self,

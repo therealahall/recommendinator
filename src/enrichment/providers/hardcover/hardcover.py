@@ -12,8 +12,9 @@ from src.enrichment.provider_base import (
     ProviderRefusedError,
     SeriesOrdinal,
     is_numeric_record_id,
-    link_slug,
+    link_record,
     log_search_title,
+    no_credential,
     pinned_record,
 )
 from src.ingestion.urls import (
@@ -61,9 +62,12 @@ _ISBN_FIELDS = {10: "isbn_10", 13: "isbn_13"}
 
 _HARDCOVER_HOSTS = frozenset({"hardcover.app", "www.hardcover.app"})
 
+_HARDCOVER_LINKS = frozenset({"books"})
+
 _LIKE_METACHARACTERS = str.maketrans({"\\": r"\\", "%": r"\%", "_": r"\_"})
 
 _AUTHOR_SEPARATORS = re.compile(r"\s*(?:[,;&]|\band\b)\s*")
+
 
 #: ``cached_tags`` is keyed by category. The others — "Mood", "Tag" and
 #: "Content Warning" — rate a reading experience rather than name a genre, and
@@ -73,6 +77,11 @@ _GENRE_CATEGORY = "Genre"
 #: OpenLibrary's cap, so neither provider's books carry the longer genre list
 #: the overlap scorer rewards.
 _MAX_GENRES = 10
+
+
+def _named_slug(url: str) -> str | None:
+    named = link_record(url, _HARDCOVER_HOSTS, _HARDCOVER_LINKS)
+    return None if named is None else named[1]
 
 
 def _normalized_isbn(raw: Any) -> str:
@@ -299,13 +308,18 @@ class HardcoverProvider(EnrichmentProvider):
     def accepts_record_id(self, record_id: str) -> bool:
         return is_numeric_record_id(record_id)
 
+    def claims_url(self, url: str) -> bool:
+        return _named_slug(url) is not None
+
     def candidate_from_url(
         self, item: ContentItem, url: str, config: dict[str, Any]
     ) -> Candidate | None:
-        slug = link_slug(url, _HARDCOVER_HOSTS, "books")
-        api_key = str(config.get("api_key") or "").strip()
-        if slug is None or not api_key:
+        slug = _named_slug(url)
+        if slug is None:
             return None
+        api_key = str(config.get("api_key") or "").strip()
+        if not api_key:
+            raise no_credential(self)
         books = self._books({"slug": {"_eq": slug}}, api_key)
         if not books:
             return None

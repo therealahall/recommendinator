@@ -13,8 +13,9 @@ from src.enrichment.provider_base import (
     ProviderError,
     SeriesOrdinal,
     is_numeric_record_id,
-    link_slug,
+    link_record,
     log_search_title,
+    no_credential,
     pinned_record,
 )
 from src.ingestion.urls import (
@@ -45,8 +46,15 @@ _UNQUOTABLE = re.compile(r'["\\;\n\r]')
 
 _IGDB_HOSTS = frozenset({"igdb.com", "www.igdb.com"})
 
+_IGDB_LINKS = frozenset({"games"})
+
 _THUMBNAIL_IN_PATH = "t_thumb"
 _FULL_SIZE_IN_PATH = "t_cover_big"
+
+
+def _named_slug(url: str) -> str | None:
+    named = link_record(url, _IGDB_HOSTS, _IGDB_LINKS)
+    return None if named is None else named[1]
 
 
 def _names(value: Any) -> list[str]:
@@ -259,13 +267,18 @@ class IGDBProvider(EnrichmentProvider):
     def accepts_record_id(self, record_id: str) -> bool:
         return is_numeric_record_id(record_id)
 
+    def claims_url(self, url: str) -> bool:
+        return _named_slug(url) is not None
+
     def candidate_from_url(
         self, item: ContentItem, url: str, config: dict[str, Any]
     ) -> Candidate | None:
-        slug = link_slug(url, _IGDB_HOSTS, "games")
-        credentials = _credentials(config)
-        if slug is None or credentials is None:
+        slug = _named_slug(url)
+        if slug is None:
             return None
+        credentials = _credentials(config)
+        if credentials is None:
+            raise no_credential(self)
         games = self._games(_slug_body(slug), credentials)
         if not games:
             return None

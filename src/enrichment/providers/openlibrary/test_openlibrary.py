@@ -247,6 +247,7 @@ class TestOpenLibraryCandidateFromUrl:
         "title": "The Norse Myths",
         "authors": [{"author": {"key": "/authors/OL23919A"}}],
         "covers": [8231856],
+        "first_publish_date": "1980",
     }
     _AUTHOR = {"name": "Kevin Crossley-Holland"}
 
@@ -285,6 +286,9 @@ class TestOpenLibraryCandidateFromUrl:
         assert candidate is not None
         assert candidate.record_id == "OL1955041W"
         assert candidate.title == "The Norse Myths"
+        # A pasted row sits in the same column as a searched one, which carries
+        # the year off the search index.
+        assert candidate.year == 1980
         assert candidate.creator == "Kevin Crossley-Holland"
         assert (
             candidate.cover_url == "https://covers.openlibrary.org/b/id/8231856-L.jpg"
@@ -371,6 +375,7 @@ class TestOpenLibraryCandidateFromUrl:
         assert candidate == Candidate(
             record_id="OL1955041W",
             title="The Norse Myths",
+            year=1980,
             cover_url="https://covers.openlibrary.org/b/id/8231856-L.jpg",
         )
 
@@ -427,15 +432,10 @@ class TestOpenLibraryCandidateFromUrl:
             "a-link-naming-no-record",
         ],
     )
-    def test_a_link_this_provider_cannot_read_is_refused_without_a_request(
+    def test_a_link_this_provider_cannot_read_is_left_for_another_to_claim(
         self, provider: OpenLibraryProvider, url: str
     ) -> None:
-        with patch(
-            "src.enrichment.providers.openlibrary.openlibrary.requests.get"
-        ) as mock_get:
-            assert provider.candidate_from_url(self._BOOK, url, {}) is None
-
-        assert mock_get.call_count == 0
+        assert provider.claims_url(url) is False
 
     @pytest.mark.parametrize(
         "url",
@@ -457,7 +457,7 @@ class TestOpenLibraryCandidateFromUrl:
 
         assert candidate is None
 
-    def test_a_failed_lookup_is_raised_as_a_provider_error_the_picker_skips(
+    def test_a_failed_lookup_is_raised_rather_than_read_as_a_record_that_is_absent(
         self, provider: OpenLibraryProvider
     ) -> None:
         with patch(

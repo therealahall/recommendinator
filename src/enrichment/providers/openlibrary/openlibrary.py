@@ -1,7 +1,6 @@
 import logging
 import re
 from typing import Any
-from urllib.parse import urlsplit
 
 import requests
 
@@ -10,15 +9,14 @@ from src.enrichment.provider_base import (
     EnrichmentProvider,
     EnrichmentResult,
     ProviderError,
+    link_record,
     log_search_title,
     pinned_record,
 )
 from src.ingestion.urls import (
     RedirectRefused,
-    UrlOrigin,
     fixed_endpoint_refusal,
     request_within_origin,
-    url_origin,
 )
 from src.models.content import ContentItem, ContentType, get_enum_value
 from src.utils.matching import Candidate, year_of
@@ -54,26 +52,17 @@ _EDITION_KEY = re.compile(r"OL\d+M", re.ASCII)
 #: An author key off a work record, spliced into ``/authors/<key>.json`` as above.
 _AUTHOR_KEY = re.compile(r"OL\d+A", re.ASCII)
 
-_OPENLIBRARY_HOST = "openlibrary.org"
+_OPENLIBRARY_HOSTS = frozenset({"openlibrary.org"})
 
-#: The link paths that name a record, each mapped to the pattern its id must
-#: match whole. The path is also the endpoint that resolves the id.
+#: Each link path is also the endpoint resolving the id it names.
 _LINK_IDS = {"works": _WORK_KEY, "books": _EDITION_KEY, "isbn": _ISBN}
 
 
-def _link_record(url: str) -> tuple[str, str] | None:
-    """The kind of record an openlibrary.org link names, and its id."""
-    origin = url_origin(url)
-    if not isinstance(origin, UrlOrigin) or origin.host.lower() != _OPENLIBRARY_HOST:
+def _named_record(url: str) -> tuple[str, str] | None:
+    named = link_record(url, _OPENLIBRARY_HOSTS, frozenset(_LINK_IDS))
+    if named is None or not _LINK_IDS[named[0]].fullmatch(named[1]):
         return None
-    segments = urlsplit(url).path.strip("/").split("/")
-    if len(segments) < 2:
-        return None
-    kind, identifier = segments[0], segments[1]
-    pattern = _LINK_IDS.get(kind)
-    if pattern is None or not pattern.fullmatch(identifier):
-        return None
-    return kind, identifier
+    return named
 
 
 def _work_id(key: Any) -> str | None:
@@ -225,10 +214,13 @@ class OpenLibraryProvider(EnrichmentProvider):
     def accepts_record_id(self, record_id: str) -> bool:
         return _WORK_KEY.fullmatch(record_id) is not None
 
+    def claims_url(self, url: str) -> bool:
+        return _named_record(url) is not None
+
     def candidate_from_url(
         self, item: ContentItem, url: str, config: dict[str, Any]
     ) -> Candidate | None:
-        named = _link_record(url)
+        named = _named_record(url)
         if named is None:
             return None
         try:
@@ -242,13 +234,15 @@ class OpenLibraryProvider(EnrichmentProvider):
             work = response.json()
         except requests.RequestException as error:
             raise ProviderError(
-                self.name, f"Failed to read an Open Library link: {error}"
-            ) from error
+                self.name,
+                f"Failed to read an Open Library link: {scrub_request_error(error)}",
+            ) from None
         # A link is pasted because the search index failed the operator, so the
         # record itself labels the row, and the key the link named pins it.
         return Candidate(
             record_id=work_id,
             title=str(work.get("title") or work_id),
+            year=year_of(work.get("first_publish_date")),
             creator=self._author_name(_first_author_id(work)),
             cover_url=_cover_url(work),
         )

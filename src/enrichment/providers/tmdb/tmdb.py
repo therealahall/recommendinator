@@ -1,7 +1,6 @@
 import logging
 import re
 from typing import Any
-from urllib.parse import urlsplit
 
 import requests
 
@@ -11,15 +10,15 @@ from src.enrichment.provider_base import (
     EnrichmentResult,
     ProviderError,
     is_numeric_record_id,
+    link_record,
     log_search_title,
+    no_credential,
     pinned_record,
 )
 from src.ingestion.urls import (
     RedirectRefused,
-    UrlOrigin,
     fixed_endpoint_refusal,
     request_within_origin,
-    url_origin,
 )
 from src.models.content import ContentItem, ContentType, get_enum_value
 from src.utils.matching import Candidate, best_match, year_of
@@ -84,22 +83,20 @@ _SEARCH_ROUTES = {
     "tv_show": ("search/tv", "first_air_date_year"),
 }
 
-_TMDB_SITE_HOST = "www.themoviedb.org"
+_TMDB_SITE_HOSTS = frozenset({"themoviedb.org", "www.themoviedb.org"})
 
 _LINK_TYPES = {"movie": ContentType.MOVIE, "tv": ContentType.TV_SHOW}
 
+#: TMDB writes its own links as ``/movie/<id>-<slug>``, the slug decorative.
 _LINK_ID = re.compile(r"(\d+)(?:-[^/]*)?", re.ASCII)
 
 
-def _link_record(url: str) -> tuple[str, str] | None:
-    origin = url_origin(url)
-    if not isinstance(origin, UrlOrigin) or origin.host.lower() != _TMDB_SITE_HOST:
+def _named_record(url: str) -> tuple[str, str] | None:
+    named = link_record(url, _TMDB_SITE_HOSTS, frozenset(_LINK_TYPES))
+    if named is None:
         return None
-    segments = urlsplit(url).path.strip("/").split("/")
-    if len(segments) < 2 or segments[0] not in _LINK_TYPES:
-        return None
-    named = _LINK_ID.fullmatch(segments[1])
-    return (segments[0], named.group(1)) if named else None
+    record = _LINK_ID.fullmatch(named[1])
+    return (named[0], record.group(1)) if record else None
 
 
 class TMDBProvider(EnrichmentProvider):
@@ -247,32 +244,40 @@ class TMDBProvider(EnrichmentProvider):
     def accepts_record_id(self, record_id: str) -> bool:
         return is_numeric_record_id(record_id)
 
+    def claims_url(self, url: str) -> bool:
+        return _named_record(url) is not None
+
     def candidate_from_url(
         self, item: ContentItem, url: str, config: dict[str, Any]
     ) -> Candidate | None:
-        named = _link_record(url)
+        named = _named_record(url)
         if named is None:
             return None
         media_type, record_id = named
         if get_enum_value(item.content_type) != _LINK_TYPES[media_type].value:
             return None
+        api_key = str(config.get("api_key") or "").strip()
+        if not api_key:
+            raise no_credential(self)
         try:
             response = self._get(
                 f"{TMDB_API_BASE}/{media_type}/{record_id}",
                 params={
-                    "api_key": config.get("api_key", ""),
+                    "api_key": api_key,
                     "language": config.get("language", _DEFAULT_LANGUAGE),
                 },
             )
+            if response.status_code == 404:
+                return None
             response.raise_for_status()
-            # Decoded inside the handler: an edge cache answers 200 with HTML,
-            # and a JSONDecodeError is a RequestException.
             payload = response.json()
         except requests.RequestException as error:
             raise ProviderError(
                 self.name,
                 f"Failed to read a TMDB link: {scrub_request_error(error)}",
             ) from None
+        if not isinstance(payload, dict):
+            raise ProviderError(self.name, "TMDB answered a link with no record")
         return _candidate({**payload, "id": record_id})
 
     def _get(self, url: str, params: dict[str, Any]) -> requests.Response:
