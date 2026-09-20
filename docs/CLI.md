@@ -484,13 +484,15 @@ uv run python -m src.cli enrichment reset --id 42             # drop one item's 
 uv run python -m src.cli enrichment reset --hard              # also drop the values no writer claimed
 uv run python -m src.cli enrichment requeue --id 42           # enrich one item again, keeping what it holds
 uv run python -m src.cli enrichment candidates --id 42        # what each provider offers
+uv run python -m src.cli enrichment candidates --id 42 --query https://rawg.io/games/portal-2
 uv run python -m src.cli enrichment pin --id 42 --provider rawg --record 41494
 uv run python -m src.cli enrichment pin --id 42 --provider rawg --clear
 ```
 
 An item whose title matches nothing, or the wrong thing, is pointed at a record
 by hand: `candidates` searches every enabled provider (add `--query` to search
-under a different title), `pin` binds the item to one of them, and `--clear`
+under a different title, or to paste one provider's own record link, which is
+read instead of searched), `pin` binds the item to one of them, and `--clear`
 hands it back to title matching. `candidates` needs enrichment on with a
 provider that searches the item's type. A pin then enriches the item and waits
 for the run; a clear rebuilds it at once and leaves it queued.
