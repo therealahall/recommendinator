@@ -1,6 +1,8 @@
 import logging
 import re
+from dataclasses import replace
 from typing import Any
+from urllib.parse import urlsplit
 
 import requests
 
@@ -11,6 +13,13 @@ from src.enrichment.provider_base import (
     ProviderError,
     log_search_title,
     pinned_record,
+)
+from src.ingestion.urls import (
+    RedirectRefused,
+    UrlOrigin,
+    fixed_endpoint_refusal,
+    request_within_origin,
+    url_origin,
 )
 from src.models.content import ContentItem, ContentType, get_enum_value
 from src.utils.matching import Candidate, year_of
@@ -39,6 +48,31 @@ _WORK_KEY = re.compile(r"OL\d+W", re.ASCII)
 #: An imported `isbn` column holds whatever the operator's catalogue exported,
 #: and it is spliced into the ``/isbn/<value>`` path the same way.
 _ISBN = re.compile(r"[0-9X]+", re.ASCII | re.IGNORECASE)
+
+#: An Open Library edition key, read off a pasted link and spliced into
+#: ``/books/<key>.json`` exactly as the two above are.
+_EDITION_KEY = re.compile(r"OL\d+M", re.ASCII)
+
+_OPENLIBRARY_HOST = "openlibrary.org"
+
+#: The link paths that name a record, each mapped to the pattern its id must
+#: match whole. The path is also the endpoint that resolves the id.
+_LINK_IDS = {"works": _WORK_KEY, "books": _EDITION_KEY, "isbn": _ISBN}
+
+
+def _link_record(url: str) -> tuple[str, str] | None:
+    """The kind of record an openlibrary.org link names, and its id."""
+    origin = url_origin(url)
+    if not isinstance(origin, UrlOrigin) or origin.host.lower() != _OPENLIBRARY_HOST:
+        return None
+    segments = urlsplit(url).path.strip("/").split("/")
+    if len(segments) < 2:
+        return None
+    kind, identifier = segments[0], segments[1]
+    pattern = _LINK_IDS.get(kind)
+    if pattern is None or not pattern.fullmatch(identifier):
+        return None
+    return kind, identifier
 
 
 def _work_id(key: Any) -> str | None:
@@ -146,10 +180,7 @@ class OpenLibraryProvider(EnrichmentProvider):
             return None
 
         try:
-            response = requests.get(
-                f"{OPENLIBRARY_API_BASE}/isbn/{clean_isbn}.json",
-                timeout=10,
-            )
+            response = self._get(f"{OPENLIBRARY_API_BASE}/isbn/{clean_isbn}.json")
 
             if response.status_code == 404:
                 return None
@@ -182,6 +213,48 @@ class OpenLibraryProvider(EnrichmentProvider):
 
     def accepts_record_id(self, record_id: str) -> bool:
         return _WORK_KEY.fullmatch(record_id) is not None
+
+    def candidate_from_url(self, url: str, config: dict[str, Any]) -> Candidate | None:
+        named = _link_record(url)
+        if named is None:
+            return None
+        try:
+            work_id = self._work_from_link(*named)
+            if work_id is None:
+                return None
+            docs = self._request_docs({"q": f"key:/works/{work_id}", "limit": 1})
+        except requests.RequestException as error:
+            raise ProviderError(
+                self.name, f"Failed to read an Open Library link: {error}"
+            ) from error
+        # The key the link named is what a pin is looked up by, so it survives
+        # both a search index with no doc for it and one answering with another.
+        if not docs:
+            return Candidate(record_id=work_id, title=work_id)
+        return replace(_doc_candidate(docs[0]), record_id=work_id)
+
+    def _work_from_link(self, kind: str, identifier: str) -> str | None:
+        """A works link names its work; an edition or isbn one is asked."""
+        if kind == "works":
+            return identifier
+        response = self._get(f"{OPENLIBRARY_API_BASE}/{kind}/{identifier}.json")
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+        works = response.json().get("works") or []
+        return _work_id(works[0].get("key")) if works else None
+
+    def _get(self, url: str, params: dict[str, Any] | None = None) -> requests.Response:
+        try:
+            return request_within_origin(
+                requests.get,
+                url,
+                self.display_name,
+                fixed_endpoint_refusal,
+                params=params,
+            )
+        except RedirectRefused as refused:
+            raise ProviderError(self.name, str(refused)) from None
 
     def _search_book(self, item: ContentItem) -> EnrichmentResult:
         docs = self._search_docs(item)
@@ -221,11 +294,7 @@ class OpenLibraryProvider(EnrichmentProvider):
             ) from error
 
     def _request_docs(self, params: dict[str, Any]) -> list[dict[str, Any]]:
-        response = requests.get(
-            f"{OPENLIBRARY_API_BASE}/search.json",
-            params=params,
-            timeout=15,
-        )
+        response = self._get(f"{OPENLIBRARY_API_BASE}/search.json", params)
         response.raise_for_status()
         docs = response.json().get("docs", [])
         return docs if isinstance(docs, list) else []
@@ -236,10 +305,7 @@ class OpenLibraryProvider(EnrichmentProvider):
         edition: dict[str, Any] | None = None,
     ) -> EnrichmentResult:
         try:
-            response = requests.get(
-                f"{OPENLIBRARY_API_BASE}/works/{work_id}.json",
-                timeout=10,
-            )
+            response = self._get(f"{OPENLIBRARY_API_BASE}/works/{work_id}.json")
             response.raise_for_status()
             work = response.json()
 

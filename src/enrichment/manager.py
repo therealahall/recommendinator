@@ -18,6 +18,7 @@ from src.enrichment.provider_base import (
     ProviderRefusedError,
     accepts_a_pin,
     offers_candidates,
+    recognises_urls,
     states_a_match,
     states_a_series_ordinal,
     stored_config_schema,
@@ -25,7 +26,7 @@ from src.enrichment.provider_base import (
 )
 from src.enrichment.rate_limiter import RateLimiter
 from src.enrichment.registry import EnrichmentRegistry, get_enrichment_registry
-from src.ingestion.urls import RedirectRefused
+from src.ingestion.urls import RedirectRefused, source_url_error
 from src.models.content import ContentItem, ContentType, get_enum_value
 from src.recommendations.profile import ProfileGenerator
 from src.storage.enrichment_jobs import EnrichmentJobRecord
@@ -240,10 +241,12 @@ class EnrichmentManager:
     def candidates(
         self, item: ContentItem, query: str | None = None
     ) -> list[tuple[str, Candidate]]:
-        """What every enabled provider offers for *item*, each paired with the
-        provider that offered it. *query* searches under a title of the
-        operator's choosing, which is the only way past a title nothing matches.
+        """What every enabled provider offers for *item*, paired with the
+        provider offering it. *query* is the way past a title nothing matches:
+        another title, or a link to one provider's own page.
         """
+        if query and source_url_error(query) is None:
+            return self._candidate_from_link(item, query)
         searched = item.model_copy(update={"title": query}) if query else item
         offered: list[tuple[str, Candidate]] = []
         for provider in self.registry.get_enabled_providers(self.config):
@@ -263,6 +266,35 @@ class EnrichmentManager:
                 continue
             offered.extend((provider.name, candidate) for candidate in found)
         return offered
+
+    def _candidate_from_link(
+        self, item: ContentItem, url: str
+    ) -> list[tuple[str, Candidate]]:
+        """Only providers covering the item's own type are asked, so a link
+        pasted onto the wrong item reaches none of them.
+        """
+        for provider in self.registry.get_enabled_providers(self.config):
+            if not recognises_urls(provider):
+                continue
+            if item.content_type not in provider.content_types:
+                continue
+            self._get_rate_limiter(provider.name).acquire()
+            try:
+                found = provider.candidate_from_url(
+                    url, self._get_provider_config(provider.name)
+                )
+            except ProviderError as error:
+                # One provider failing to read a link it recognises must not
+                # empty the picker of whatever the next one makes of it.
+                logger.warning(
+                    "[ENRICHMENT] %s offered no candidate for that link: %s",
+                    provider.name,
+                    error.message,
+                )
+                continue
+            if found is not None:
+                return [(provider.name, found)]
+        return []
 
     def pin(
         self,

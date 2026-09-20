@@ -207,6 +207,13 @@ class EnrichmentProvider(ABC):
         """
         return []
 
+    def candidate_from_url(self, url: str, config: dict[str, Any]) -> Candidate | None:
+        """The record *url* names, None for a link this provider cannot read —
+        every link, by default. Its ``record_id`` must be one
+        :meth:`accepts_record_id` admits, or pinning refuses the row just offered.
+        """
+        return None
+
     def accepts_record_id(self, record_id: str) -> bool:
         """Whether a pin naming this record is one :meth:`enrich` can look up.
         Refusing by default, so a provider that never reads
@@ -272,6 +279,11 @@ def offers_candidates(provider: EnrichmentProvider) -> bool:
     that searches has whether or not it can enrich from one.
     """
     return _overrides(type(provider), "search")
+
+
+def recognises_urls(provider: EnrichmentProvider) -> bool:
+    """Whether a pasted link is worth spending this provider's rate limit on."""
+    return _overrides(type(provider), "candidate_from_url")
 
 
 def accepts_a_pin(provider: EnrichmentProvider) -> bool:

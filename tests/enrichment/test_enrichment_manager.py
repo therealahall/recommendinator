@@ -1902,6 +1902,17 @@ class SearchingProvider(MockProvider):
         return [Candidate(record_id="1", title=self.name)]
 
 
+class LinkReadingProvider(SearchingProvider):
+    _HOST = "https://records.test/"
+
+    def candidate_from_url(self, url: str, config: dict[str, Any]) -> Candidate | None:
+        return (
+            Candidate(record_id="9", title=f"linked {self.name}")
+            if url.startswith(self._HOST)
+            else None
+        )
+
+
 class TestPinnedProviderRecord:
     _MERGED_COVER = "https://example.test/absorbed.jpg"
     _RECORDS_COVER = "https://example.test/pinned-record.jpg"
@@ -2163,6 +2174,54 @@ class TestPinnedProviderRecord:
             found = manager.candidates(self._movie())
 
         assert found == [("other", offered[0])]
+
+    def test_a_pasted_link_offers_the_one_record_it_names_and_runs_no_search(
+        self, storage_manager: StorageManager
+    ) -> None:
+        manager = manager_over(storage_manager, LinkReadingProvider(name="alpha"))
+
+        offered = manager.candidates(self._movie(), "https://records.test/film/9")
+
+        assert offered == [("alpha", Candidate(record_id="9", title="linked alpha"))]
+
+    def test_a_link_no_provider_recognises_offers_nothing_rather_than_searching(
+        self, storage_manager: StorageManager
+    ) -> None:
+        manager = manager_over(storage_manager, LinkReadingProvider(name="alpha"))
+
+        assert manager.candidates(self._movie(), "https://example.com/nope") == []
+
+    def test_a_link_pasted_onto_a_type_a_provider_does_not_cover_is_not_offered(
+        self, storage_manager: StorageManager
+    ) -> None:
+        manager = manager_over(
+            storage_manager,
+            LinkReadingProvider(name="alpha", content_types=[ContentType.BOOK]),
+        )
+
+        assert manager.candidates(self._movie(), "https://records.test/film/9") == []
+
+    def test_one_provider_failing_on_a_link_does_not_empty_the_picker(
+        self, storage_manager: StorageManager
+    ) -> None:
+        manager = manager_over(
+            storage_manager,
+            LinkReadingProvider(name="alpha"),
+            LinkReadingProvider(name="zulu"),
+            order=["alpha", "zulu"],
+        )
+
+        with patch.object(
+            LinkReadingProvider,
+            "candidate_from_url",
+            side_effect=[
+                ProviderError("alpha", "HTTP 401"),
+                Candidate(record_id="9", title="linked zulu"),
+            ],
+        ):
+            offered = manager.candidates(self._movie(), "https://records.test/film/9")
+
+        assert offered == [("zulu", Candidate(record_id="9", title="linked zulu"))]
 
     @pytest.mark.parametrize("first", ["alpha", "zulu"])
     def test_the_picker_offers_each_provider_in_the_ranked_order(
