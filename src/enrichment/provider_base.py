@@ -231,9 +231,10 @@ class EnrichmentProvider(ABC):
     def candidate_from_url(
         self, item: ContentItem, url: str, config: dict[str, Any]
     ) -> Candidate | None:
-        """The record *url* names for *item*, None for a link this provider
-        cannot read — every link, by default. Its ``record_id`` must be one
-        :meth:`accepts_record_id` admits, or pinning refuses the row just offered.
+        """The record *url* names for *item*; None for a link this provider
+        cannot read — every link, by default — and ``ProviderError`` where
+        reading it failed. Its ``record_id`` must be one
+        :meth:`accepts_record_id` admits, or the pin is refused.
         """
         return None
 

@@ -306,11 +306,7 @@ class HardcoverProvider(EnrichmentProvider):
         api_key = str(config.get("api_key") or "").strip()
         if slug is None or not api_key:
             return None
-        try:
-            books = self._books({"slug": {"_eq": slug}}, api_key)
-        except ProviderError as error:
-            logger.warning("Hardcover read no book from that link: %s", error.message)
-            return None
+        books = self._books({"slug": {"_eq": slug}}, api_key)
         if not books:
             return None
         offered = _candidate(books[0])

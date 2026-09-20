@@ -266,11 +266,7 @@ class IGDBProvider(EnrichmentProvider):
         credentials = _credentials(config)
         if slug is None or credentials is None:
             return None
-        try:
-            games = self._games(_slug_body(slug), credentials)
-        except ProviderError as error:
-            logger.warning("IGDB read no game from that link: %s", error.message)
-            return None
+        games = self._games(_slug_body(slug), credentials)
         if not games:
             return None
         offered = _candidate(games[0])
