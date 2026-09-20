@@ -1,6 +1,7 @@
 import logging
 import re
 from typing import Any
+from urllib.parse import urlsplit
 
 import requests
 
@@ -15,8 +16,10 @@ from src.enrichment.provider_base import (
 )
 from src.ingestion.urls import (
     RedirectRefused,
+    UrlOrigin,
     fixed_endpoint_refusal,
     request_within_origin,
+    url_origin,
 )
 from src.models.content import ContentItem, ContentType, get_enum_value
 from src.utils.matching import Candidate, best_match, year_of
@@ -80,6 +83,23 @@ _SEARCH_ROUTES = {
     "movie": ("search/movie", "year"),
     "tv_show": ("search/tv", "first_air_date_year"),
 }
+
+_TMDB_SITE_HOST = "www.themoviedb.org"
+
+_LINK_TYPES = {"movie": ContentType.MOVIE, "tv": ContentType.TV_SHOW}
+
+_LINK_ID = re.compile(r"(\d+)(?:-[^/]*)?", re.ASCII)
+
+
+def _link_record(url: str) -> tuple[str, str] | None:
+    origin = url_origin(url)
+    if not isinstance(origin, UrlOrigin) or origin.host.lower() != _TMDB_SITE_HOST:
+        return None
+    segments = urlsplit(url).path.strip("/").split("/")
+    if len(segments) < 2 or segments[0] not in _LINK_TYPES:
+        return None
+    named = _LINK_ID.fullmatch(segments[1])
+    return (segments[0], named.group(1)) if named else None
 
 
 class TMDBProvider(EnrichmentProvider):
@@ -227,6 +247,34 @@ class TMDBProvider(EnrichmentProvider):
     def accepts_record_id(self, record_id: str) -> bool:
         return is_numeric_record_id(record_id)
 
+    def candidate_from_url(
+        self, item: ContentItem, url: str, config: dict[str, Any]
+    ) -> Candidate | None:
+        named = _link_record(url)
+        if named is None:
+            return None
+        media_type, record_id = named
+        if get_enum_value(item.content_type) != _LINK_TYPES[media_type].value:
+            return None
+        try:
+            response = self._get(
+                f"{TMDB_API_BASE}/{media_type}/{record_id}",
+                params={
+                    "api_key": config.get("api_key", ""),
+                    "language": config.get("language", _DEFAULT_LANGUAGE),
+                },
+            )
+            response.raise_for_status()
+            # Decoded inside the handler: an edge cache answers 200 with HTML,
+            # and a JSONDecodeError is a RequestException.
+            payload = response.json()
+        except requests.RequestException as error:
+            raise ProviderError(
+                self.name,
+                f"Failed to read a TMDB link: {scrub_request_error(error)}",
+            ) from None
+        return _candidate({**payload, "id": record_id})
+
     def _get(self, url: str, params: dict[str, Any]) -> requests.Response:
         try:
             return request_within_origin(
@@ -292,13 +340,14 @@ class TMDBProvider(EnrichmentProvider):
                 params={"api_key": api_key, **params},
             )
             response.raise_for_status()
+            results = response.json().get("results", [])
         except requests.RequestException as error:
             # ``from None``: the api_key is a query parameter, so the URL on
             # ``__cause__`` is a credential a caller's traceback would print.
             raise ProviderError(
                 self.name, f"Failed to search TMDB: {scrub_request_error(error)}"
             ) from None
-        return [_candidate(result) for result in response.json().get("results", [])]
+        return [_candidate(result) for result in results]
 
     def _matched_id(
         self,

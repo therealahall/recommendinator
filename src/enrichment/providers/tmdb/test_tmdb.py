@@ -11,6 +11,7 @@ from src.enrichment.providers.tmdb.tmdb import (
     clean_media_title_for_search,
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.utils.matching import Candidate
 
 
 class TestCleanTitleForSearch:
@@ -816,6 +817,119 @@ class TestTMDBProviderUnsupportedTypes:
 
         result = provider.enrich(item, {"api_key": "test"})
         assert result is None
+
+
+class TestTMDBCandidateFromUrl:
+    _MOVIE_DETAIL = {
+        "id": 27205,
+        "title": "Inception",
+        "release_date": "2010-07-15",
+        "poster_path": "/inception.jpg",
+    }
+
+    @pytest.fixture
+    def provider(self) -> TMDBProvider:
+        return TMDBProvider()
+
+    @staticmethod
+    def _item(content_type: ContentType) -> ContentItem:
+        return ContentItem(
+            id="item1",
+            title="Whatever The Row Says",
+            content_type=content_type,
+            status=ConsumptionStatus.UNREAD,
+        )
+
+    def test_a_movie_link_offers_the_record_its_path_names(
+        self, provider: TMDBProvider
+    ) -> None:
+        with patch("src.enrichment.providers.tmdb.tmdb.requests.get") as mock_get:
+            mock_get.return_value = MagicMock(
+                spec=requests.Response,
+                status_code=200,
+                json=lambda: self._MOVIE_DETAIL,
+            )
+
+            candidate = provider.candidate_from_url(
+                self._item(ContentType.MOVIE),
+                "https://www.themoviedb.org/movie/27205-inception",
+                {"api_key": "test-key"},
+            )
+
+        assert candidate is not None
+        assert candidate.record_id == "27205"
+        assert candidate.title == "Inception"
+        assert candidate.year == 2010
+        assert candidate.cover_url == "https://image.tmdb.org/t/p/w500/inception.jpg"
+        assert provider.accepts_record_id(candidate.record_id) is True
+        assert mock_get.call_count == 1
+        assert mock_get.call_args.args[0] == "https://api.themoviedb.org/3/movie/27205"
+
+    def test_a_tv_link_reads_the_show_off_the_tv_route(
+        self, provider: TMDBProvider
+    ) -> None:
+        show = {"id": 1399, "name": "Game of Thrones", "first_air_date": "2011-04-17"}
+        with patch("src.enrichment.providers.tmdb.tmdb.requests.get") as mock_get:
+            mock_get.return_value = MagicMock(
+                spec=requests.Response, status_code=200, json=lambda: show
+            )
+            candidate = provider.candidate_from_url(
+                self._item(ContentType.TV_SHOW),
+                "https://www.themoviedb.org/tv/1399-game-of-thrones",
+                {"api_key": "test-key"},
+            )
+
+        assert candidate == Candidate(
+            record_id="1399", title="Game of Thrones", year=2011
+        )
+        assert mock_get.call_args.args[0] == "https://api.themoviedb.org/3/tv/1399"
+
+    @pytest.mark.parametrize(
+        ("url", "content_type"),
+        [
+            ("https://www.themoviedb.org/tv/1399-game-of-thrones", ContentType.MOVIE),
+            ("https://www.themoviedb.org/movie/27205-inception", ContentType.TV_SHOW),
+            ("https://www.themoviedb.org.evil.test/movie/27205", ContentType.MOVIE),
+            ("https://www.themoviedb.org/person/525-nolan", ContentType.MOVIE),
+            ("https://www.themoviedb.org/movie", ContentType.MOVIE),
+        ],
+        ids=[
+            "a-tv-link-on-a-movie",
+            "a-movie-link-on-a-tv-show",
+            "a-non-tmdb-host-themoviedb-is-only-a-prefix-of",
+            "a-record-kind-no-pin-names",
+            "a-link-naming-no-record",
+        ],
+    )
+    def test_a_link_this_row_cannot_be_pinned_by_is_refused_without_a_request(
+        self, provider: TMDBProvider, url: str, content_type: ContentType
+    ) -> None:
+        with patch("src.enrichment.providers.tmdb.tmdb.requests.get") as mock_get:
+            candidate = provider.candidate_from_url(
+                self._item(content_type), url, {"api_key": "test-key"}
+            )
+
+        assert candidate is None
+        assert mock_get.call_count == 0
+
+    def test_a_body_that_is_not_json_reaches_the_picker_as_a_provider_error(
+        self, provider: TMDBProvider
+    ) -> None:
+        unparseable = MagicMock(spec=requests.Response, status_code=200)
+        unparseable.json.side_effect = requests.exceptions.JSONDecodeError(
+            "Expecting value", "<html>", 0
+        )
+
+        with patch(
+            "src.enrichment.providers.tmdb.tmdb.requests.get",
+            return_value=unparseable,
+        ):
+            with pytest.raises(ProviderError):
+                provider.candidate_from_url(
+                    self._item(ContentType.MOVIE),
+                    "https://www.themoviedb.org/movie/27205-inception",
+                    {"api_key": "test-key"},
+                )
 
 
 class TestTMDBApiKeyScrubbingRegression:

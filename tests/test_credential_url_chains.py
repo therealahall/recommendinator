@@ -52,12 +52,13 @@ _SCANNED_TREES = (Path("private/plugins"), Path("src"))
 _FUNCTION_NODES = (ast.FunctionDef, ast.AsyncFunctionDef)
 
 _CREDENTIAL_URL_FUNCTIONS = (
-    ("src/enrichment/providers/rawg/rawg.py", "_fetch_game_details"),
+    ("src/enrichment/providers/rawg/rawg.py", "_game_payload"),
     ("src/enrichment/providers/rawg/rawg.py", "_search_game"),
     ("src/enrichment/providers/tmdb/tmdb.py", "_fetch_keywords"),
     ("src/enrichment/providers/tmdb/tmdb.py", "_fetch_movie_details"),
     ("src/enrichment/providers/tmdb/tmdb.py", "_fetch_tv_details"),
     ("src/enrichment/providers/tmdb/tmdb.py", "_request_candidates"),
+    ("src/enrichment/providers/tmdb/tmdb.py", "candidate_from_url"),
     ("src/ingestion/sources/gog/gog.py", "exchange_code_for_tokens"),
     ("src/ingestion/sources/gog/gog.py", "refresh_access_token"),
     ("src/ingestion/sources/steam/steam.py", "get_owned_games"),
