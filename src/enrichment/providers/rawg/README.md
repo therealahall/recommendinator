@@ -37,6 +37,8 @@ uv run python -m src.cli settings set-secret enrichment.providers.rawg.api_key
   wrong: a name guessed from the members called the 1941/1942/1943 shooters
   "194", and grouping on the set itself merged series that shared one member.
   Wikidata and IGDB state a name instead.
+- Reads a `https://rawg.io/games/<slug>` link pasted in the picker, offering the
+  game that slug names.
 - Gap-fills every field it writes.
 
 ## Development

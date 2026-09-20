@@ -22,6 +22,7 @@ uv run python -m src.cli settings set enrichment.providers.openlibrary.enabled t
 
 ## Behavior
 - Searches by title (and author when available) with series-suffix cleanup applied to improve match quality.
+- Reads a `https://openlibrary.org/works/OL…W`, `/books/OL…M` or `/isbn/<isbn>` link pasted in the picker, offering the work each one belongs to.
 - Every field it states is recorded, and the column takes the highest-ranked writer, so it replaces a weaker one's value and never the operator's own edit.
 
 ## Development

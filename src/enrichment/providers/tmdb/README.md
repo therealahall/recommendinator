@@ -35,6 +35,8 @@ uv run python -m src.cli settings set-secret enrichment.providers.tmdb.api_key
   year, its release lands within three years; anything else settles as not found
   rather than storing the wrong film. An item carrying a TMDB id skips the search
   and the check.
+- Reads a `https://www.themoviedb.org/movie/<id>` or `/tv/<id>` link pasted in
+  the picker, and offers the record it names for the matching content type.
 - Every field it states is recorded, and the column takes the highest-ranked writer, so it replaces a weaker one's value and never the operator's own edit.
 - Rate-limited to TMDB's 40 requests/sec ceiling.
 - Enriches genres, description, tags (keywords), and extra metadata. For movies

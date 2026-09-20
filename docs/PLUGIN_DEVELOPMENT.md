@@ -693,6 +693,10 @@ The re-check in `enrich` is what repairs an install: tightening
 `accepts_record_id` leaves a bad pin stored, and only the read drops it. Accept
 only ids you offered — one reaching a URL path is operator-typed.
 
+`candidate_from_url` reads a link the operator pasted, and refuses every link until you override it. Return `None` for a link you do not recognise or a record that is not there; raise `ProviderError` where reading it failed, so a broken provider is not mistaken for one that does not own the link. The `Candidate` you return must carry a `record_id` your own `accepts_record_id` admits, or the pin the picker just offered is refused.
+
+Compare the host exactly — `link_slug` does, and a substring test hands `rawg.io.evil.test` your api key. Nothing off the URL or out of a response reaches a request unvalidated: ids are matched whole against a pattern, slugs against a whitelist. `tmdb`, `openlibrary`, `hardcover`, `igdb` and `rawg` each read their own site's links.
+
 Every request carrying the api key goes through `request_within_origin`, since
 `requests` replays the key onto whatever host a `Location` names.
 `tests/test_credential_url_chains.py` fails a provider calling `requests`

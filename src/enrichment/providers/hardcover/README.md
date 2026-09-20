@@ -40,6 +40,8 @@ uv run python -m src.cli settings set-secret enrichment.providers.hardcover.api_
   Merged duplicate records are filtered out, and a title still matching two books
   is refused rather than guessed: an `authored` position replaces a title marker,
   and nothing later corrects a wrong one.
+- Reads a `https://hardcover.app/books/<slug>` link pasted in the picker,
+  offering the book that slug names.
 - Held to one request a second, inside the free tier's 60 a minute.
 
 ## Development
