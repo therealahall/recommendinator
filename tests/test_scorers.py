@@ -29,12 +29,14 @@ def _build_context(
     consumed: list[ContentItem] | None = None,
     unconsumed: list[ContentItem] | None = None,
     content_type: ContentType = ContentType.BOOK,
+    in_progress: list[ContentItem] | None = None,
 ) -> ScoringContext:
     consumed = consumed or []
     unconsumed = unconsumed or []
+    in_progress = in_progress or []
     analyzer = PreferenceAnalyzer(min_rating=4)
     preferences = analyzer.analyze(consumed)
-    series_order = SeriesOrder([*consumed, *unconsumed])
+    series_order = SeriesOrder([*consumed, *unconsumed, *in_progress])
     series_tracking = build_series_tracking(consumed, series_order)
     return ScoringContext(
         preferences=preferences,
@@ -43,6 +45,7 @@ def _build_context(
         content_type=content_type,
         all_unconsumed_items=unconsumed,
         series_order=series_order,
+        in_progress_positions=build_series_tracking(in_progress, series_order),
     )
 
 
@@ -638,26 +641,71 @@ class TestContentLengthScorer:
         assert scorer.score(candidate, context) == 0.4
 
 
-class TestContinuationScorer:
-    def test_currently_consuming_scores_1(self) -> None:
-        candidate = make_item(
-            title="Breaking Bad (Season 3)",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.CURRENTLY_CONSUMING,
-        )
-        context = _build_context(consumed=[])
-        scorer = ContinuationScorer()
-        assert scorer.score(candidate, context) == 1.0
+def _season(title: str, season: int, status: ConsumptionStatus) -> ContentItem:
+    return make_item(
+        title=f"{title} (Season {season})",
+        content_type=ContentType.TV_SHOW,
+        status=status,
+        metadata={"series_name": title, "season": season},
+    )
 
-    def test_an_unstarted_item_does_not_apply(self) -> None:
-        candidate = make_item(
-            title="The Wire (Season 1)",
+
+class TestContinuationScorer:
+    def test_a_later_season_of_a_show_in_flight_is_demoted(self) -> None:
+        candidate = _season("Breaking Bad", 3, ConsumptionStatus.UNREAD)
+        context = _build_context(
+            unconsumed=[candidate],
+            in_progress=[
+                _season("Breaking Bad", 2, ConsumptionStatus.CURRENTLY_CONSUMING)
+            ],
             content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.UNREAD,
         )
-        context = _build_context(consumed=[])
         scorer = ContinuationScorer()
-        assert scorer.applies(candidate, context) is False
+        assert scorer.applies(candidate, context) is True
+        assert scorer.score(candidate, context) < 0.5
+
+    def test_an_earlier_season_than_the_one_in_flight_does_not_apply(self) -> None:
+        candidate = _season("Breaking Bad", 1, ConsumptionStatus.UNREAD)
+        context = _build_context(
+            unconsumed=[candidate],
+            in_progress=[
+                _season("Breaking Bad", 2, ConsumptionStatus.CURRENTLY_CONSUMING)
+            ],
+            content_type=ContentType.TV_SHOW,
+        )
+        assert ContinuationScorer().applies(candidate, context) is False
+
+    def test_another_show_is_untouched(self) -> None:
+        candidate = _season("The Wire", 2, ConsumptionStatus.UNREAD)
+        context = _build_context(
+            unconsumed=[candidate],
+            in_progress=[
+                _season("Breaking Bad", 1, ConsumptionStatus.CURRENTLY_CONSUMING)
+            ],
+            content_type=ContentType.TV_SHOW,
+        )
+        assert ContinuationScorer().applies(candidate, context) is False
+
+    def test_a_standalone_candidate_does_not_apply(self) -> None:
+        candidate = make_item(title="Piranesi", status=ConsumptionStatus.UNREAD)
+        context = _build_context(unconsumed=[candidate])
+        assert ContinuationScorer().applies(candidate, context) is False
+
+    def test_the_next_book_after_one_being_read_is_demoted(self) -> None:
+        reading = make_item(
+            title="Hyperion",
+            status=ConsumptionStatus.CURRENTLY_CONSUMING,
+            metadata={"series_name": "Hyperion Cantos", "series_number": 1},
+        )
+        candidate = make_item(
+            title="The Fall of Hyperion",
+            status=ConsumptionStatus.UNREAD,
+            metadata={"series_name": "Hyperion Cantos", "series_number": 2},
+        )
+        context = _build_context(unconsumed=[candidate], in_progress=[reading])
+        scorer = ContinuationScorer()
+        assert scorer.applies(candidate, context) is True
+        assert scorer.score(candidate, context) < 0.5
 
 
 class TestSeriesAffinityScorer:
