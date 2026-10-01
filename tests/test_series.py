@@ -16,7 +16,8 @@ from src.utils.series import (
     expand_tv_shows_to_seasons,
     find_earliest_recommendable,
     get_series_name,
-    inject_seasons_watched_tracking,
+    in_progress_seasons,
+    inject_season_progress_tracking,
     is_first_item_in_series,
     is_next_after_consumed,
     latest_season_watched_date,
@@ -380,6 +381,93 @@ class TestExpandTvShowsSkipsWatchedSeasons:
         assert len(expanded) == 3
 
 
+class TestExpandTvShowsMarksTheSeasonInFlight:
+    def _show(self, **metadata: object) -> ContentItem:
+        return ContentItem(
+            id="show1",
+            title="The Show",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.CURRENTLY_CONSUMING,
+            metadata={"total_seasons": 3, **metadata},
+        )
+
+    def test_episode_counts_name_the_season_in_flight(self) -> None:
+        show = self._show(
+            seasons_watched=[1],
+            episodes_watched_by_season={"2": 4},
+            plex_season_episode_counts={"2": 10},
+        )
+        by_season = {
+            item.metadata["season"]: item.status
+            for item in expand_tv_shows_to_seasons([show])
+        }
+        assert by_season == {
+            2: ConsumptionStatus.CURRENTLY_CONSUMING,
+            3: ConsumptionStatus.UNREAD,
+        }
+
+    def test_without_episode_counts_the_lowest_unfinished_season_is_in_flight(
+        self,
+    ) -> None:
+        by_season = {
+            item.metadata["season"]: item.status
+            for item in expand_tv_shows_to_seasons([self._show(seasons_watched=[1])])
+        }
+        assert by_season == {
+            2: ConsumptionStatus.CURRENTLY_CONSUMING,
+            3: ConsumptionStatus.UNREAD,
+        }
+
+    def test_a_show_not_in_progress_marks_no_season_in_flight(self) -> None:
+        show = self._show()
+        show.status = ConsumptionStatus.UNREAD
+        assert all(
+            item.status == ConsumptionStatus.UNREAD
+            for item in expand_tv_shows_to_seasons([show])
+        )
+
+
+class TestInProgressSeasons:
+    def _show(self, status: ConsumptionStatus, **metadata: object) -> ContentItem:
+        return ContentItem(
+            id="show1",
+            title="The Show",
+            content_type=ContentType.TV_SHOW,
+            status=status,
+            metadata=dict(metadata),
+        )
+
+    def test_a_season_part_way_through_wins_over_the_lowest_unfinished(self) -> None:
+        show = self._show(
+            ConsumptionStatus.CURRENTLY_CONSUMING,
+            total_seasons=4,
+            episodes_watched_by_season={"3": 2},
+        )
+        assert in_progress_seasons(show) == {3}
+
+    def test_a_finished_season_is_not_in_flight(self) -> None:
+        show = self._show(
+            ConsumptionStatus.CURRENTLY_CONSUMING,
+            total_seasons=2,
+            seasons_watched=[1],
+            episodes_watched_by_season={"1": 10},
+            plex_season_episode_counts={"1": 10},
+        )
+        assert in_progress_seasons(show) == {2}
+
+    def test_a_show_with_every_season_watched_has_none_in_flight(self) -> None:
+        show = self._show(
+            ConsumptionStatus.CURRENTLY_CONSUMING,
+            total_seasons=2,
+            seasons_watched=[1, 2],
+        )
+        assert in_progress_seasons(show) == set()
+
+    def test_an_unstated_season_count_leaves_the_season_unknown(self) -> None:
+        show = self._show(ConsumptionStatus.CURRENTLY_CONSUMING)
+        assert in_progress_seasons(show) == set()
+
+
 class TestSeasonItemsCarryTheShow:
     def _show(self) -> ContentItem:
         return ContentItem(
@@ -427,7 +515,7 @@ class TestSeasonItemsCarryTheShow:
         assert season.metadata["season"] == 1
 
 
-class TestInjectSeasonsWatchedTracking:
+class TestInjectSeasonProgressTracking:
     def test_does_not_mutate_original(self) -> None:
         items = [
             ContentItem(
@@ -439,9 +527,25 @@ class TestInjectSeasonsWatchedTracking:
             ),
         ]
         original = {"The Show": {1, 2}}
-        result = inject_seasons_watched_tracking(items, original)
+        result = inject_season_progress_tracking(items, original)
         assert original["The Show"] == {1, 2}
         assert result["The Show"] == {1, 2, 5, 6}
+
+    def test_the_season_in_flight_holds_its_slot(self) -> None:
+        items = [
+            ContentItem(
+                id="show1",
+                title="The Show",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.CURRENTLY_CONSUMING,
+                metadata={
+                    "seasons_watched": [1],
+                    "episodes_watched_by_season": {"2": 3},
+                    "plex_season_episode_counts": {"2": 10},
+                },
+            ),
+        ]
+        assert inject_season_progress_tracking(items, {})["The Show"] == {1, 2}
 
     def test_ignores_non_tv_items(self) -> None:
         items = [
@@ -453,7 +557,7 @@ class TestInjectSeasonsWatchedTracking:
                 metadata={"seasons_watched": [1, 2]},
             ),
         ]
-        result = inject_seasons_watched_tracking(items, {})
+        result = inject_season_progress_tracking(items, {})
         assert "The Book" not in result
 
 
@@ -1033,7 +1137,7 @@ class TestSeasonBoundsRegression:
         assert expanded[-1].title == f"Endless Show (Season {MAX_SEASONS})"
 
     def test_inject_drops_out_of_range_seasons_regression(self) -> None:
-        """Bug reported: ``inject_seasons_watched_tracking`` added raw season ints
+        """Bug reported: ``inject_season_progress_tracking`` added raw season ints
         into series tracking with no bound, so a value like 2_000_000 became
         ``max_consumed`` and exploded the gap-ladder ``range()`` in
         ``should_recommend_item``."""
@@ -1046,7 +1150,7 @@ class TestSeasonBoundsRegression:
                 "seasons_watched": [1, 5, MAX_SEASONS, MAX_SEASONS + 1, 2_000_000]
             },
         )
-        tracking = inject_seasons_watched_tracking([show], {})
+        tracking = inject_season_progress_tracking([show], {})
         assert tracking["The Show"] == {1, 5, MAX_SEASONS}
 
 

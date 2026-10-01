@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.models.content import ContentItem, ContentType
 from src.recommendations.content_length import score_length_match
 from src.recommendations.genre_clusters import get_clusters_for_terms
 from src.recommendations.genre_normalizer import extract_and_normalize_genres
@@ -54,6 +54,10 @@ class ScoringContext:
     ratings_by_genre: dict[str, list[int]] = field(default_factory=dict)
     series_ratings: dict[str, list[int]] = field(default_factory=dict)
     unconsumed_series_positions: dict[str, set[float]] = field(default_factory=dict)
+
+    #: Series positions the user is part-way through, keyed by series. Supplied
+    #: rather than derived: what is in progress is never itself a candidate.
+    in_progress_positions: dict[str, set[float]] = field(default_factory=dict)
 
     # Cross-media adaptations the user rated well, keyed by candidate key
     adaptations: dict[str, list[ContentItem]] = field(default_factory=dict)
@@ -288,15 +292,31 @@ class CustomPreferenceScorer(Scorer):
         return 0.5  # Neutral when no rules match
 
 
+#: Low rather than zero: a later season is still worth offering eventually, it
+#: just must not outrank something that starts nothing.
+_CONTINUATION_SCORE = 0.15
+
+
 class ContinuationScorer(Scorer):
+    """Demote what follows something in progress. The in-progress entry itself
+    never reaches scoring — the engine drops it from the candidate set.
+    """
+
     def __init__(self, weight: float = 2.0) -> None:
         super().__init__(weight)
 
     def applies(self, candidate: ContentItem, context: ScoringContext) -> bool:
-        return candidate.status == ConsumptionStatus.CURRENTLY_CONSUMING
+        located = context.series_order.locate(candidate)
+        if located is None:
+            return False
+        series, position = located
+        return any(
+            earlier < position
+            for earlier in context.in_progress_positions.get(series, ())
+        )
 
     def score(self, candidate: ContentItem, context: ScoringContext) -> float:
-        return 1.0
+        return _CONTINUATION_SCORE
 
 
 class SeriesAffinityScorer(Scorer):

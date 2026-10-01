@@ -1687,13 +1687,13 @@ class TestPositionlessSeriesOfferedInReleaseOrder:
 
 
 class TestContinuationScorerExclusion:
-    """ContinuationScorer is excluded when no candidates are actively consumed."""
+    """ContinuationScorer is excluded where nothing precedes the candidate."""
 
     def test_no_active_items_excludes_continuation_from_breakdown(
         self, engine, mock_storage
     ):
-        """When no candidates have CURRENTLY_CONSUMING status, 'continuation' must
-        not appear in score_breakdown (it would be all zeros)."""
+        """When nothing in the candidate's series is in progress, 'continuation'
+        must not appear in score_breakdown (it would be all zeros)."""
         consumed = ContentItem(
             id="c1",
             title="Dune",
@@ -1722,9 +1722,49 @@ class TestContinuationScorerExclusion:
         assert len(recommendations) == 1
         assert "continuation" not in recommendations[0].score_breakdown
 
-    def test_active_item_retains_continuation_in_breakdown(self, engine, mock_storage):
-        """When a candidate has CURRENTLY_CONSUMING status, 'continuation' must
-        appear in score_breakdown and the active item must score 1.0."""
+    def test_the_book_after_one_being_read_follows_a_finished_first(
+        self, real_engine, real_storage
+    ):
+        """Real storage, because the in-progress entry holding its slot rests on
+        the completed-items accessor returning it, which a mock skips."""
+
+        def entry(number):
+            return {"series_name": "Hyperion Cantos", "series_number": number}
+
+        _save_book(
+            real_storage,
+            item_id="h1",
+            title="Hyperion",
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            metadata=entry(1),
+        )
+        _save_book(
+            real_storage,
+            item_id="h2",
+            title="The Fall of Hyperion",
+            status=ConsumptionStatus.CURRENTLY_CONSUMING,
+            metadata=entry(2),
+        )
+        _save_book(
+            real_storage,
+            item_id="h3",
+            title="Endymion",
+            status=ConsumptionStatus.UNREAD,
+            metadata=entry(3),
+        )
+
+        recommendations = real_engine.generate_recommendations(
+            content_type=ContentType.BOOK, count=5
+        )
+
+        (endymion,) = recommendations
+        assert endymion.item.title == "Endymion"
+        assert endymion.score_breakdown["continuation"] < 0.5
+
+    def test_the_next_in_a_series_being_read_is_offered_and_demoted(
+        self, engine, mock_storage
+    ):
         consumed = ContentItem(
             id="c1",
             title="Dune",
@@ -1733,15 +1773,30 @@ class TestContinuationScorerExclusion:
             rating=5,
             metadata={"genres": ["Science Fiction"]},
         )
-        active_book = ContentItem(
+        reading = ContentItem(
             id="u1",
             title="Hyperion",
             content_type=ContentType.BOOK,
             status=ConsumptionStatus.CURRENTLY_CONSUMING,
-            metadata={"genres": ["Science Fiction"]},
+            metadata={
+                "genres": ["Science Fiction"],
+                "series_name": "Hyperion Cantos",
+                "series_number": 1,
+            },
         )
-        idle_book = ContentItem(
+        sequel = ContentItem(
             id="u2",
+            title="The Fall of Hyperion",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={
+                "genres": ["Science Fiction"],
+                "series_name": "Hyperion Cantos",
+                "series_number": 2,
+            },
+        )
+        standalone = ContentItem(
+            id="u3",
             title="Foundation",
             content_type=ContentType.BOOK,
             status=ConsumptionStatus.UNREAD,
@@ -1751,17 +1806,20 @@ class TestContinuationScorerExclusion:
         mock_storage.get_completed_items = Mock(
             side_effect=lambda content_type=None, **kwargs: [consumed]
         )
-        mock_storage.get_unconsumed_items = Mock(return_value=[active_book, idle_book])
+        mock_storage.get_unconsumed_items = Mock(
+            return_value=[reading, sequel, standalone]
+        )
 
         recommendations = engine.generate_recommendations(
             content_type=ContentType.BOOK, count=5
         )
 
-        assert len(recommendations) >= 1
-        breakdowns = {rec.item.title: rec.score_breakdown for rec in recommendations}
-        assert "continuation" in breakdowns["Hyperion"]
-        assert breakdowns["Hyperion"]["continuation"] == 1.0
-        assert "continuation" not in breakdowns["Foundation"]
+        titles = [rec.item.title for rec in recommendations]
+        assert "Hyperion" not in titles
+        assert titles.index("Foundation") < titles.index("The Fall of Hyperion")
+        scored = {rec.item.title: rec for rec in recommendations}
+        assert scored["The Fall of Hyperion"].score_breakdown["continuation"] < 0.5
+        assert "continuation" not in scored["Foundation"].score_breakdown
 
     def test_an_idle_book_scores_the_same_whether_or_not_anything_is_in_progress(
         self, engine, mock_storage
@@ -2717,7 +2775,7 @@ class TestIdlessCandidateIdentityRegression:
             real_storage,
             item_id=None,
             title="The Silent Patient",
-            status=ConsumptionStatus.CURRENTLY_CONSUMING,
+            status=ConsumptionStatus.UNREAD,
             genre="Mystery",
         )
 
@@ -2733,8 +2791,86 @@ class TestIdlessCandidateIdentityRegression:
         assert {
             item.title for item in by_title["The Silent Patient"].contributing_items
         } == {"Knives Out"}
-        assert "continuation" not in by_title["Hyperion"].score_breakdown
-        assert by_title["The Silent Patient"].score_breakdown["continuation"] == 1.0
+
+
+class TestShowInFlightRegression:
+    """Bug reported: a one-season show being watched was recommended back as
+    "(Season 1)", because only a season in ``seasons_watched`` was skipped and a
+    part-watched season never reaches that list."""
+
+    def _watch(self, real_storage, *, title, total_seasons, episodes_watched):
+        real_storage.save_content_item(
+            ContentItem(
+                id=f"show:{title}",
+                title=title,
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.CURRENTLY_CONSUMING,
+                metadata={
+                    "genre": "Drama",
+                    "total_seasons": total_seasons,
+                    "episodes_watched_by_season": {"1": episodes_watched},
+                    "plex_season_episode_counts": {"1": 12},
+                },
+            )
+        )
+
+    def _recommend(self, real_engine):
+        return [
+            rec.item.title
+            for rec in real_engine.generate_recommendations(
+                content_type=ContentType.TV_SHOW, count=10
+            )
+        ]
+
+    def test_the_only_season_of_a_show_being_watched_is_not_offered_regression(
+        self, real_engine, real_storage
+    ):
+        real_storage.save_content_item(
+            ContentItem(
+                id="seen",
+                title="Watched Show",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+                metadata={"genre": "Drama"},
+            )
+        )
+        self._watch(
+            real_storage, title="Death Note", total_seasons=1, episodes_watched=5
+        )
+
+        assert self._recommend(real_engine) == []
+
+    def test_a_later_season_of_a_show_being_watched_is_offered_last(
+        self, real_engine, real_storage
+    ):
+        real_storage.save_content_item(
+            ContentItem(
+                id="seen",
+                title="Watched Show",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+                metadata={"genre": "Drama"},
+            )
+        )
+        real_storage.save_content_item(
+            ContentItem(
+                id="fresh",
+                title="Fresh Show",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.UNREAD,
+                metadata={"genre": "Drama"},
+            )
+        )
+        self._watch(
+            real_storage, title="Ongoing Show", total_seasons=2, episodes_watched=5
+        )
+
+        titles = self._recommend(real_engine)
+
+        assert "Ongoing Show (Season 1)" not in titles
+        assert titles == ["Fresh Show", "Ongoing Show (Season 2)"]
 
 
 class TestSeasonCandidateIdentityRegression:
@@ -3036,11 +3172,9 @@ class TestCrossTypeRun:
 
         recommendations = engine.generate_recommendations(count=8)
 
-        idle = [rec for rec in recommendations if rec.item.title != "Active book"]
-        active = next(rec for rec in recommendations if rec.item.title == "Active book")
-        assert len({frozenset(rec.score_breakdown) for rec in idle}) == 1
-        assert all("continuation" not in rec.score_breakdown for rec in idle)
-        assert active.score_breakdown["continuation"] == 1.0
+        assert "Active book" not in {rec.item.title for rec in recommendations}
+        assert len({frozenset(rec.score_breakdown) for rec in recommendations}) == 1
+        assert all("continuation" not in rec.score_breakdown for rec in recommendations)
 
     def test_naming_a_type_scores_on_that_type_s_own_signals(
         self, engine, mock_storage

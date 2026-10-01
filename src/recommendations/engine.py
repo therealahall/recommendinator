@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any, TypeVar
 
 from src.models.content import (
+    ConsumptionStatus,
     ContentItem,
     ContentType,
     get_enum_value,
@@ -43,7 +44,7 @@ from src.utils.series import (
     build_series_tracking,
     expand_tv_shows_to_seasons,
     find_earliest_recommendable,
-    inject_seasons_watched_tracking,
+    inject_season_progress_tracking,
     should_recommend_item,
 )
 
@@ -232,7 +233,7 @@ class RecommendationEngine:
         series_tracking = build_series_tracking(consumed_items_of_type, series_order)
 
         if content_type == ContentType.TV_SHOW:
-            series_tracking = inject_seasons_watched_tracking(
+            series_tracking = inject_season_progress_tracking(
                 show_level_unconsumed, series_tracking
             )
 
@@ -275,9 +276,31 @@ class RecommendationEngine:
             content_type.value,
         )
 
+        # What the user is part-way through is not something to recommend back
+        # to them, so it leaves the candidate set — but its series position is
+        # kept, to demote whatever follows it.
+        in_progress_positions = build_series_tracking(
+            [
+                item
+                for item in unconsumed_items
+                if item.status == ConsumptionStatus.CURRENTLY_CONSUMING
+            ],
+            series_order,
+        )
+        candidates = [
+            item
+            for item in unconsumed_items
+            if item.status != ConsumptionStatus.CURRENTLY_CONSUMING
+        ]
+        if not candidates:
+            logger.info(
+                "Every unconsumed %s is already in progress", content_type.value
+            )
+            return []
+
         # Detect cross-media adaptations before scoring: AdaptationScorer reads
         # them from the context, and the formatted output cites them as reasons.
-        adaptations = self._build_adaptations(unconsumed_items, taste.index)
+        adaptations = self._build_adaptations(candidates, taste.index)
 
         content_length_preferences = (
             user_preference_config.content_length_preferences
@@ -290,10 +313,11 @@ class RecommendationEngine:
             consumed_items=taste.items,
             series_tracking=series_tracking,
             content_type=content_type,
-            all_unconsumed_items=unconsumed_items,
+            all_unconsumed_items=candidates,
             series_order=series_order,
             content_length_preferences=content_length_preferences,
             adaptations=adaptations,
+            in_progress_positions=in_progress_positions,
         )
 
         active_pipeline = self._build_active_pipeline(
@@ -301,7 +325,7 @@ class RecommendationEngine:
         )
 
         pipeline_scored = active_pipeline.score_candidates_with_breakdown(
-            unconsumed_items, scoring_context
+            candidates, scoring_context
         )
 
         apply_series_rules = (
@@ -310,7 +334,7 @@ class RecommendationEngine:
 
         if apply_series_rules:
             filtered_candidates = self._apply_series_filtering(
-                pipeline_scored, series_tracking, unconsumed_items, series_order
+                pipeline_scored, series_tracking, candidates, series_order
             )
         else:
             logger.info("Series ordering disabled by user preference")

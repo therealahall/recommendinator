@@ -251,7 +251,7 @@ RecommendationEngine
   |     |-- SeriesOrderScorer       next in sequence
   |     |-- RatingPatternScorer     rating history in matching genres
   |     |-- ContentLengthScorer     soft penalty for length mismatch
-  |     |-- ContinuationScorer      actively consumed items (dropped when none exist)
+  |     |-- ContinuationScorer      demotes successors of in-progress entries
   |     |-- SeriesAffinityScorer    well-rated franchises (avg >= 4)
   |     |-- AdaptationScorer        cross-media adaptations (dropped when none exist)
   |     |-- [CustomPreferenceScorer]    when the user has natural language rules
@@ -279,6 +279,9 @@ Invariants:
   multiplies the final score rather than contributing to it.
 - Ignored items are filtered from the candidate pool at fetch time, as they are
   from the signal set.
+- Items in progress leave the candidate pool after TV season expansion, which
+  marks only the season in flight as in progress. Their series positions are
+  kept, so `ContinuationScorer` demotes what follows them.
 - Series filtering with substitution (`series_in_order`) replaces a candidate
   failing the ordering rules with the earliest recommendable entry in its series,
   scored on its own merits, once per series.

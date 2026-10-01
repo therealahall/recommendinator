@@ -379,29 +379,87 @@ def _order_over(
     return SeriesOrder(items) if series_order is None else series_order
 
 
-def inject_seasons_watched_tracking(
+def _watched_seasons(item: ContentItem) -> set[int]:
+    raw = item.metadata.get("seasons_watched")
+    if not isinstance(raw, list):
+        return set()
+    return {
+        season
+        for season in raw
+        if isinstance(season, int) and 1 <= season <= MAX_SEASONS
+    }
+
+
+def total_seasons_of(item: ContentItem) -> int | None:
+    """None where no source states a count, which is not the same as a show with
+    no seasons: the caller must not expand it into season-level candidates.
+    """
+    for key in ("total_seasons", "seasons", "number_of_seasons"):
+        value = item.metadata.get(key)
+        if value is None:
+            continue
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            continue
+    return None
+
+
+def in_progress_seasons(item: ContentItem) -> set[int]:
+    """A source that counts episodes names the season in flight outright. One
+    that only reports the show as in progress does not, and the lowest season
+    still unfinished is where a viewer who started at the beginning is.
+    """
+    if (
+        item.content_type != ContentType.TV_SHOW
+        or item.status != ConsumptionStatus.CURRENTLY_CONSUMING
+    ):
+        return set()
+
+    watched = _watched_seasons(item)
+    begun = {
+        season
+        for season, episodes in _season_counts(
+            item.metadata.get("episodes_watched_by_season")
+        ).items()
+        if episodes > 0
+    }
+    if started := begun - watched:
+        return started
+
+    total = total_seasons_of(item)
+    if not total or total < 1:
+        return set()
+    unfinished = (
+        season
+        for season in range(1, min(total, MAX_SEASONS) + 1)
+        if season not in watched
+    )
+    first = next(unfinished, None)
+    return set() if first is None else {first}
+
+
+def inject_season_progress_tracking(
     unconsumed_items: list[ContentItem],
     series_tracking: dict[str, set[float]],
 ) -> dict[str, set[float]]:
+    """Seasons begun, not seasons finished: the one in flight holds its slot, so
+    the next season reads as the next thing rather than as a skipped one.
+    """
     merged = dict(series_tracking)
 
     for item in unconsumed_items:
         if item.content_type != ContentType.TV_SHOW:
             continue
 
-        seasons_watched = item.metadata.get("seasons_watched")
-        if not isinstance(seasons_watched, list) or not seasons_watched:
+        begun = _watched_seasons(item) | in_progress_seasons(item)
+        if not begun:
             continue
 
         show_title = item.title
-        if show_title not in merged:
-            merged[show_title] = set()
-        else:
-            merged[show_title] = set(merged[show_title])
-
-        for season_num in seasons_watched:
-            if isinstance(season_num, int) and 1 <= season_num <= MAX_SEASONS:
-                merged[show_title].add(season_num)
+        merged[show_title] = set(merged.get(show_title, ())) | {
+            float(season) for season in begun
+        }
 
     return merged
 
@@ -542,16 +600,7 @@ def expand_tv_shows_to_seasons(items: list[ContentItem]) -> list[ContentItem]:
             expanded.append(item)
             continue
 
-        total_seasons = None
-        for key in ["total_seasons", "seasons", "number_of_seasons"]:
-            val = item.metadata.get(key)
-            if val is not None:
-                try:
-                    total_seasons = int(val)
-                    break
-                except (ValueError, TypeError):
-                    continue
-
+        total_seasons = total_seasons_of(item)
         if total_seasons is None or total_seasons < 1:
             expanded.append(item)
             continue
@@ -563,14 +612,10 @@ def expand_tv_shows_to_seasons(items: list[ContentItem]) -> list[ContentItem]:
         base_id = item.id or ""
         show_title = item.title
 
-        seasons_watched_raw = item.metadata.get("seasons_watched")
-        watched_set: set[int] = set()
-        if isinstance(seasons_watched_raw, list):
-            watched_set = {
-                season
-                for season in seasons_watched_raw
-                if isinstance(season, int) and 1 <= season <= MAX_SEASONS
-            }
+        watched_set = _watched_seasons(item)
+        # The show's status describes whichever season is in flight, so copying
+        # it onto all of them would mark seasons never started as in progress.
+        active_seasons = in_progress_seasons(item)
 
         for season_num in range(1, total_seasons + 1):
             if season_num in watched_set:
@@ -595,6 +640,11 @@ def expand_tv_shows_to_seasons(items: list[ContentItem]) -> list[ContentItem]:
                         "id": season_id,
                         "title": season_title,
                         "parent_id": item.id,
+                        "status": (
+                            ConsumptionStatus.CURRENTLY_CONSUMING.value
+                            if season_num in active_seasons
+                            else ConsumptionStatus.UNREAD.value
+                        ),
                         "metadata": season_metadata,
                     }
                 )
