@@ -143,7 +143,7 @@ its own rewrites nothing. Set the zone before the import that matters.
 
 ## Items you are part-way through
 
-Something in progress is not offered back to you. A book you are reading, a game you are playing and the season of a show you are mid-way through all leave the candidate set, and what follows them is demoted rather than dropped: the next season or the next entry in the series still appears, below things that start nothing.
+Something in progress is not offered back to you. A book you are reading, a game you are playing and the season of a show you are mid-way through all leave the candidate set, and what follows them is demoted rather than dropped: the next season or the next entry in the series still appears, its score pulled down by the `continuation` row. A strong match can still outrank a weak one with nothing in progress before it.
 
 A show with a known season count is expanded to season-level candidates for scoring while the library stays show-level, so the season in flight is excluded on its own without taking its siblings with it. Which season that is comes from per-season episode counts where a source reports them, and otherwise from the lowest season you have not finished. A show in progress with no season count from any source cannot be split, and leaves the candidate set whole.
 
