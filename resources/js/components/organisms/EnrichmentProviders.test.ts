@@ -51,6 +51,7 @@ interface Options {
   on?: string[]
   orderSetting?: SettingViewValue | null
   disabled?: boolean
+  open?: string[]
 }
 
 function enabledKey(name: string): string {
@@ -69,17 +70,23 @@ function render(options: Options = {}): VueWrapper {
   // Mutated in place rather than replaced: the child holds the reference, and a
   // reassignment here would not reach it the way the real buffer does.
   const order = reactive<string[]>([...(options.order ?? ['hardcover', 'rawg', 'tmdb'])])
+  const providers = providerGroups(settings).providers
+  const expanded = Object.fromEntries(
+    providers
+      .filter((provider) => options.open?.includes(provider.name))
+      .map((provider) => [provider.id, true]),
+  )
   return mount(EnrichmentProviders, {
     attachTo: document.body,
     props: {
-      providers: providerGroups(settings).providers,
+      providers,
       order,
       orderSetting: options.orderSetting === undefined ? ORDER_SETTING : options.orderSetting,
       values,
       errors: {},
       resetting: {},
       secretBusy: {},
-      expanded: {},
+      expanded,
       disabled: options.disabled ?? false,
       'onUpdate:order': (next: string[]) => {
         order.splice(0, order.length, ...next)
@@ -274,7 +281,9 @@ describe('EnrichmentProviders', () => {
   })
 
   it('keeps focus on the switch that moved its own row between the two lists', async () => {
-    const wrapper = render({ on: ['hardcover', 'rawg'] })
+    // Open, because a switch is only pressed in an open panel, and a browser will
+    // not focus one inside a collapsed panel's hidden region.
+    const wrapper = render({ on: ['hardcover', 'rawg'], open: ['rawg'] })
     const key = enabledKey('rawg')
     const toggle = wrapper.get(`[data-testid="setting-${key}"] [role="switch"]`)
     ;(toggle.element as HTMLButtonElement).focus()
