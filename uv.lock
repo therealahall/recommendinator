@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.11, <3.15"
 
 [[package]]
@@ -1360,7 +1360,7 @@ wheels = [
 
 [[package]]
 name = "recommendinator"
-version = "0.72.4"
+version = "0.73.0"
 source = { editable = "." }
 dependencies = [
     { name = "click" },

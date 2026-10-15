@@ -1,6 +1,82 @@
 # CHANGELOG
 
 
+## v0.73.0 (2026-10-15)
+
+### Bug Fixes
+
+- **deps**: Bump urllib3 to 2.8.0 for three streaming and proxy TLS advisories
+  ([`de0bd0e`](https://github.com/therealahall/recommendinator/commit/de0bd0edaa3348504b6457b45b3850ed0b438e57))
+
+- **enrichment**: Raise from a body a provider cannot read as a record
+  ([`33c547c`](https://github.com/therealahall/recommendinator/commit/33c547c75157c752133c02433ab3f19c6874d0da))
+
+- **enrichment**: Raise from a link a provider could not read
+  ([`f9cac7e`](https://github.com/therealahall/recommendinator/commit/f9cac7e66f31ba31d3f7691402f0ff48b519f716))
+
+- **enrichment**: Tell a link nobody owns from one its owner could not read
+  ([`3d0982a`](https://github.com/therealahall/recommendinator/commit/3d0982a36842b46694d35055fb83baf56a7ada71))
+
+- **recommendations**: Stop recommending what is already in progress
+  ([`77a77ac`](https://github.com/therealahall/recommendinator/commit/77a77acc01f13bc6b4780c3b3933d9ff2f30cbb9))
+
+- **web**: Stop the picker calling a failed link an empty search
+  ([`3bade47`](https://github.com/therealahall/recommendinator/commit/3bade4787374bcdfc4fdc053a4331869c74d9878))
+
+### Chores
+
+- Bump python from `cad9a2c` to `a2b82f3` in the base-images group
+  ([`5d78b5b`](https://github.com/therealahall/recommendinator/commit/5d78b5b80e2d7992e548f0250039ac978d99dd97))
+
+- Bump the actions group across 1 directory with 4 updates
+  ([`32a133a`](https://github.com/therealahall/recommendinator/commit/32a133afaac659d0dbc3517976f98ef4d6e74148))
+
+- Bump the actions group with 2 updates
+  ([`51988dc`](https://github.com/therealahall/recommendinator/commit/51988dcb31196b5f16901bbc9b2131749c8c4454))
+
+- Bump the frontend group across 1 directory with 8 updates
+  ([`8d3afdb`](https://github.com/therealahall/recommendinator/commit/8d3afdb8cc68e9667d6b11c071142764134d243d))
+
+- Bump the frontend group with 5 updates
+  ([`68b120b`](https://github.com/therealahall/recommendinator/commit/68b120bd10464c386f8f4db060c87a11bf20fba7))
+
+- Bump the python group across 1 directory with 10 updates
+  ([`54ff849`](https://github.com/therealahall/recommendinator/commit/54ff8492c75edc76b70c34f5d59a598b313bc030))
+
+- Bump the python group with 6 updates
+  ([`054396d`](https://github.com/therealahall/recommendinator/commit/054396d43a7ac61f31c851a01752c685e6db9b05))
+
+### Documentation
+
+- **enrichment**: State the link contract a provider implements
+  ([`e7bc80d`](https://github.com/therealahall/recommendinator/commit/e7bc80d52dc28c8c47d85aa68c576da958e3f156))
+
+- **scoring**: Say continuation lowers a successor's score, not its rank
+  ([`7afabfd`](https://github.com/therealahall/recommendinator/commit/7afabfd6d6700fa69c21a198b7215d3262a91a99))
+
+### Features
+
+- **enrichment**: Read a Hardcover, IGDB or RAWG link in the record picker
+  ([`435803a`](https://github.com/therealahall/recommendinator/commit/435803ad686fabd72cb4dd2b9e9ed1be344c3645))
+
+- **enrichment**: Read a TMDB link in the record picker
+  ([`827f233`](https://github.com/therealahall/recommendinator/commit/827f2333db14b78b1fdf1795a58b50f4c08ac76a))
+
+- **enrichment**: Read an Open Library link from the work record
+  ([`6e0e694`](https://github.com/therealahall/recommendinator/commit/6e0e694e2dd6e2f50effe1f7399db4151278927a))
+
+- **enrichment**: Take a provider link in the record picker
+  ([`444bc90`](https://github.com/therealahall/recommendinator/commit/444bc90d9110d7130c28ab4467d606561437aaef))
+
+### Testing
+
+- **web**: Open the provider panel before testing focus survives its move
+  ([`d82c81f`](https://github.com/therealahall/recommendinator/commit/d82c81f4b89ec0793f09d026b3a41717c8211d8c))
+
+- **web**: Time the blocked settings save against the machine it runs on
+  ([`1e37fd3`](https://github.com/therealahall/recommendinator/commit/1e37fd335223f1fea04c68841578cf478be179d4))
+
+
 ## v0.72.4 (2026-09-18)
 
 ### Bug Fixes
