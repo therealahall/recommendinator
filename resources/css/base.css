@@ -1417,6 +1417,13 @@ button.badge[aria-checked='true']:hover {
   font-style: italic;
 }
 
+.rec-score-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  flex: 0 0 auto;
+}
+
 .rec-score {
   display: flex;
   align-items: center;
@@ -1514,6 +1521,18 @@ button.rec-score {
 
 .rec-score[aria-expanded='true'] .rec-score-cue .icon {
   transform: rotate(180deg);
+}
+
+/* No width of its own, then the score's as a floor: a long series name wraps
+   under the score instead of widening the column and narrowing the title. */
+.rec-score-lead {
+  width: 0;
+  min-width: 100%;
+  padding-inline: var(--space-2);
+  font-size: var(--text-sm);
+  font-style: italic;
+  line-height: var(--leading-snug);
+  color: var(--text-secondary);
 }
 
 .rec-reasoning {
@@ -2224,6 +2243,12 @@ button.rec-score {
 
   .rec-score {
     margin-top: 0;
+  }
+
+  /* The score shrinks to its number here, too narrow to wrap a series name
+     in, and the column has the row to itself. */
+  .rec-score-lead {
+    width: auto;
   }
 
   .rec-spine,

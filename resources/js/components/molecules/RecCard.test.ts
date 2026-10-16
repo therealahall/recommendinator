@@ -35,6 +35,34 @@ function related(overrides: Partial<RelatedItemResponse> = {}): RelatedItemRespo
   }
 }
 
+// What a screen reader hears: text, minus every aria-hidden subtree.
+function heard(node: Node): string {
+  if (node instanceof Element && node.getAttribute('aria-hidden') === 'true') return ''
+  if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? ''
+  return [...node.childNodes].map(heard).join('')
+}
+
+function spoken(node: Node): string {
+  return heard(node).replace(/\s+/g, ' ').trim()
+}
+
+// What the eye reads: text, minus every visually hidden subtree.
+function shown(node: Node): string {
+  if (node instanceof Element && node.classList.contains('sr-only')) return ''
+  if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? ''
+  return [...node.childNodes].map(shown).join('')
+}
+
+function seen(node: Node): string {
+  return shown(node).replace(/\s+/g, ' ').trim()
+}
+
+function buttonNamed(root: Element, name: RegExp): Element {
+  const found = [...root.querySelectorAll('button')].find((button) => name.test(spoken(button)))
+  if (!found) throw new Error(`no button named ${name}`)
+  return found
+}
+
 describe('RecCard', () => {
   it('emits ignore with the db_id when the ignore button is clicked', async () => {
     const wrapper = mount(RecCard, {
@@ -76,8 +104,47 @@ describe('RecCard', () => {
       },
     })
 
-    expect(wrapper.text()).toContain('Up next in Final Fantasy - 75%')
+    expect(seen(wrapper.element)).toContain('Up next in Final Fantasy - 75%')
     expect(wrapper.get('.rec-score').text()).toContain('61%')
+  })
+
+  it('speaks the series lead in the score control\'s name, so the out-of-order percentage is never heard without its reason', () => {
+    const wrapper = mount(RecCard, {
+      props: {
+        rec: makeRec({
+          score: 0.61,
+          score_breakdown: { genre_match: 0.8 },
+          series_lead: { series: 'Final Fantasy', score: 0.75 },
+        }),
+        rank: 1,
+      },
+    })
+
+    const score = buttonNamed(wrapper.element, /^Why this:/)
+    expect(spoken(score)).toContain('61 percent match. Up next in Final Fantasy - 75%.')
+    expect(spoken(wrapper.element).split('Up next in Final Fantasy').length - 1).toBe(1)
+  })
+
+  it('speaks the series lead with a score that has no breakdown to open', () => {
+    const wrapper = mount(RecCard, {
+      props: {
+        rec: makeRec({ score: 0.61, series_lead: { series: 'Final Fantasy', score: 0.75 } }),
+        rank: 1,
+      },
+    })
+
+    expect(spoken(wrapper.element)).toContain('61 percent match. Up next in Final Fantasy - 75%')
+  })
+
+  it('names the score control by its percentage alone when no series is waiting on it', () => {
+    const wrapper = mount(RecCard, {
+      props: { rec: makeRec({ score_breakdown: { genre_match: 0.8 } }), rank: 1 },
+    })
+
+    expect(spoken(buttonNamed(wrapper.element, /^Why this:/))).toBe(
+      'Why this: 50 percent match. Show the score breakdown.',
+    )
+    expect(wrapper.text()).not.toContain('Up next')
   })
 
   it('omits the action buttons when there is no db_id', () => {

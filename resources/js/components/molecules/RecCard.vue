@@ -88,12 +88,14 @@ const evidenceToggleLabel = computed(() =>
   evidenceOpen.value ? 'Show fewer' : `+${hiddenEvidence.value} more`,
 )
 
-// Leads on the visible words, so speech input reaches it (WCAG 2.5.3).
-const scoreLabel = computed(() =>
-  hasBreakdown.value
-    ? `Why this: ${percent.value} percent match. ${expanded.value ? 'Hide' : 'Show'} the score breakdown.`
-    : `${percent.value} percent match`,
-)
+// Leads on the visible words, so speech input reaches it (WCAG 2.5.3). The
+// lead rides in the name so an out-of-order percentage is never heard bare.
+const scoreLabel = computed(() => {
+  const lead = seriesLead.value ? `. ${seriesLead.value}` : ''
+  return hasBreakdown.value
+    ? `Why this: ${percent.value} percent match${lead}. ${expanded.value ? 'Hide' : 'Show'} the score breakdown.`
+    : `${percent.value} percent match${lead}`
+})
 
 function toggleBreakdown() {
   if (hasBreakdown.value) expanded.value = !expanded.value
@@ -121,39 +123,44 @@ function toggleBreakdown() {
             <span aria-hidden="true">{{ series.shown }}</span>
             <span class="sr-only">{{ series.spoken }}</span>
           </div>
-          <div v-if="seriesLead" class="rec-series">{{ seriesLead }}</div>
           <div v-if="rec.author" class="rec-author">by {{ rec.author }}</div>
         </div>
 
-        <component
-          :is="hasBreakdown ? 'button' : 'span'"
-          class="rec-score"
-          :type="hasBreakdown ? 'button' : undefined"
-          :aria-expanded="hasBreakdown ? String(expanded) : undefined"
-          :aria-controls="hasBreakdown ? detailsId : undefined"
-          @click="toggleBreakdown"
-        >
-          <span class="rec-score-number" aria-hidden="true">
-            <b>{{ percent }}%</b>
-            <span class="rec-score-caption">match</span>
-          </span>
-          <span v-if="spine.length > 0" class="rec-spine" aria-hidden="true">
-            <i
-              v-for="segment in spine"
-              :key="segment.key"
-              class="rec-spine-segment"
-              :class="{
-                'rec-spine-segment--rest': segment.tone === 'rest',
-                'rec-spine-segment--penalty': segment.tone === 'penalty',
-              }"
-              :style="{ width: `${segment.percent}%` }"
-            />
-          </span>
-          <span v-if="hasBreakdown" class="rec-score-cue" aria-hidden="true">
-            <span class="rec-score-cue-label">Why this</span><AppIcon name="chevron" />
-          </span>
-          <span class="sr-only">{{ scoreLabel }}</span>
-        </component>
+        <!-- Beside the button, not in it: inside, it would stretch the hit
+             target and unseat the number from the title line. Its words are
+             spoken in the score's name, so the visible copy is hidden. -->
+        <div class="rec-score-stack">
+          <component
+            :is="hasBreakdown ? 'button' : 'span'"
+            class="rec-score"
+            :type="hasBreakdown ? 'button' : undefined"
+            :aria-expanded="hasBreakdown ? String(expanded) : undefined"
+            :aria-controls="hasBreakdown ? detailsId : undefined"
+            @click="toggleBreakdown"
+          >
+            <span class="rec-score-number" aria-hidden="true">
+              <b>{{ percent }}%</b>
+              <span class="rec-score-caption">match</span>
+            </span>
+            <span v-if="spine.length > 0" class="rec-spine" aria-hidden="true">
+              <i
+                v-for="segment in spine"
+                :key="segment.key"
+                class="rec-spine-segment"
+                :class="{
+                  'rec-spine-segment--rest': segment.tone === 'rest',
+                  'rec-spine-segment--penalty': segment.tone === 'penalty',
+                }"
+                :style="{ width: `${segment.percent}%` }"
+              />
+            </span>
+            <span v-if="hasBreakdown" class="rec-score-cue" aria-hidden="true">
+              <span class="rec-score-cue-label">Why this</span><AppIcon name="chevron" />
+            </span>
+            <span class="sr-only">{{ scoreLabel }}</span>
+          </component>
+          <p v-if="seriesLead" class="rec-score-lead" aria-hidden="true">{{ seriesLead }}</p>
+        </div>
       </div>
 
       <!-- Directly under its trigger, so what the reader just opened cannot
