@@ -1763,6 +1763,43 @@ class TestSubstituteRanksAtTheBlockedEntrysScoreRegression:
 
         assert rec.item.title == "Mystic Quest"
 
+    @pytest.mark.parametrize(
+        ("scores", "expected"),
+        [
+            pytest.param(
+                {"FF IV": 0.75, "SteamWorld": 0.72, "FF V": 0.7, "Mystic Quest": 0.61},
+                [
+                    ("Mystic Quest", SeriesLead("Final Fantasy", 0.75)),
+                    ("SteamWorld", None),
+                ],
+                id="two-blocked-lead-at-the-higher",
+            ),
+            pytest.param(
+                {"Mystic Quest": 0.8, "SteamWorld": 0.78, "FF IV": 0.75, "FF V": 0.7},
+                [("Mystic Quest", None), ("SteamWorld", None)],
+                id="already-above-carries-no-lead",
+            ),
+        ],
+    )
+    def test_a_series_leads_at_most_once_and_only_from_below_regression(
+        self, mock_storage, scores, expected
+    ):
+        game = ContentType.VIDEO_GAME
+        engine = self._engine(
+            mock_storage,
+            scores,
+            [
+                self._entry(game, "Mystic Quest", "Final Fantasy", 1),
+                self._entry(game, "FF IV", "Final Fantasy", 2),
+                self._entry(game, "FF V", "Final Fantasy", 3),
+                self._standalone(game, "SteamWorld"),
+            ],
+        )
+
+        recs = engine.generate_recommendations(content_type=game, count=5)
+
+        assert [(rec.item.title, rec.series_lead) for rec in recs] == expected
+
 
 class TestPositionlessSeriesOfferedInReleaseOrder:
     """A franchise whose titles carry no number at all, so release year is the
