@@ -1,6 +1,22 @@
 # CHANGELOG
 
 
+## v0.73.1 (2026-10-16)
+
+### Bug Fixes
+
+- **recommendations**: Rank a series stand-in at the score of the entry it replaces
+  ([`63853c6`](https://github.com/therealahall/recommendinator/commit/63853c69d95c78ef3d5d29afa4d8b5dca94cb96c))
+
+- **web**: Put a series stand-in's reason under its score
+  ([`e3aed3c`](https://github.com/therealahall/recommendinator/commit/e3aed3c48a86a71def691dc5aef05da3c58a4290))
+
+### Testing
+
+- **recommendations**: A series leads once, and only from below
+  ([`796145b`](https://github.com/therealahall/recommendinator/commit/796145b349e33df77ef97af5feaf4dd55d391995))
+
+
 ## v0.73.0 (2026-10-15)
 
 ### Bug Fixes
