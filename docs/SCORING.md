@@ -62,7 +62,9 @@ weight nothing.
 ## Series filtering
 
 With **"Recommend series in order"** on, the default, a book 3 you cannot yet
-read is replaced by the earliest available entry in its series.
+read is replaced by the earliest available entry in its series. That entry takes
+book 3's place in the list and shows its own score, marked "Up next in" the series
+with the score it is ranked at.
 
 Both the series and the position come from what a source states: series
 metadata, or a marker still naming the series in the title, such as

@@ -44,6 +44,11 @@ const series = computed(() => formatSeries(props.rec.series, props.rec.series_in
 const typeLabel = computed(() => formatContentType(props.rec.content_type))
 const glyph = computed(() => contentTypeGlyph(props.rec.content_type))
 const percent = computed(() => formatScore(props.rec.score))
+const seriesLead = computed(() =>
+  props.rec.series_lead
+    ? `Up next in ${props.rec.series_lead.series} - ${formatScore(props.rec.series_lead.score)}%`
+    : null,
+)
 const spine = computed(() =>
   scoreSpine(
     scoreShares(props.rec.score_breakdown, props.rec.scorer_weights),
@@ -116,6 +121,7 @@ function toggleBreakdown() {
             <span aria-hidden="true">{{ series.shown }}</span>
             <span class="sr-only">{{ series.spoken }}</span>
           </div>
+          <div v-if="seriesLead" class="rec-series">{{ seriesLead }}</div>
           <div v-if="rec.author" class="rec-author">by {{ rec.author }}</div>
         </div>
 

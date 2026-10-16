@@ -147,6 +147,12 @@ def recommend(
                 item = rec.item
                 author = item.author or "N/A"
                 reasoning = rec.reasoning
+                lead = rec.series_lead
+                if lead is not None:
+                    reasoning = (
+                        f"Up next in {lead.series} - {round(lead.score * 100)}%"
+                        f"\n{reasoning}"
+                    )
                 penalty = rec.variety_penalty
                 if penalty > 0:
                     # Surface the stepped variety penalty inline so CLI users

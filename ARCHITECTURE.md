@@ -284,7 +284,8 @@ Invariants:
   kept, so `ContinuationScorer` demotes what follows them.
 - Series filtering with substitution (`series_in_order`) replaces a candidate
   failing the ordering rules with the earliest recommendable entry in its series,
-  scored on its own merits, once per series.
+  once per series. The substitute ranks at the replaced entry's score but shows
+  its own, and carries a `series_lead` naming the series and the score it holds.
 - The variety penalty multiplies a candidate's final score by `1 - penalty`.
   Each recent completion's penalty is cut back to the share of that completion's
   genre clusters the candidate covers, and the largest result wins. See

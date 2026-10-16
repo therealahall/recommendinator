@@ -14,12 +14,13 @@ from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.engine import (
     RecommendationEngine,
     _collapse_duplicate_db_ids,
+    _RankedCandidate,
 )
 from src.recommendations.identity import candidate_key
 from src.recommendations.preferences import PreferenceAnalyzer
-from src.recommendations.record import Recommendation
+from src.recommendations.record import Recommendation, SeriesLead
 from src.recommendations.reference_index import SignalIndex, _shuffle_close_scores
-from src.recommendations.scorers import SCORER_NAME_MAP
+from src.recommendations.scorers import SCORER_NAME_MAP, Scorer, ScoringContext
 from src.recommendations.scoring_pipeline import ScoredCandidate, tiebreaker_key
 from src.recommendations.variety import (
     VARIETY_LADDER_STEPS,
@@ -1587,6 +1588,182 @@ class TestEngineSeriesSubstitutionRegression:
         ), f"FF X should appear exactly once; got {recommended_ids}"
 
 
+class _ScoreByTitle(Scorer):
+    """Pins each candidate's aggregate, so a test states the scores it ranks."""
+
+    def __init__(self, scores: dict[str, float]) -> None:
+        super().__init__()
+        self.scores = scores
+
+    def score(self, candidate: ContentItem, context: ScoringContext) -> float:
+        return self.scores[candidate.title]
+
+
+class TestSubstituteRanksAtTheBlockedEntrysScoreRegression:
+    """Bug reported: the games list read 76, 75, 61, 62, 74%. A series entry
+    standing in for a later one took its slot but showed its own lower score,
+    with nothing saying why it sat above higher ones."""
+
+    @staticmethod
+    def _engine(mock_storage, scores, unconsumed, consumed_genres=None):
+        consumed = make_item(
+            item_id="consumed",
+            title="Chrono Trigger",
+            content_type=ContentType.VIDEO_GAME,
+            rating=5,
+            metadata={"genres": consumed_genres or ["Puzzle"]},
+        )
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: [consumed]
+        )
+        mock_storage.get_unconsumed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: [
+                item
+                for item in unconsumed
+                if content_type is None
+                or get_enum_value(item.content_type) == get_enum_value(content_type)
+            ]
+        )
+        return RecommendationEngine(
+            storage_manager=mock_storage, scorers=[_ScoreByTitle(scores)]
+        )
+
+    @staticmethod
+    def _entry(content_type, title, series, position, genres=("RPG",)):
+        return make_item(
+            item_id=title,
+            title=title,
+            content_type=content_type,
+            status=ConsumptionStatus.UNREAD,
+            metadata={
+                "series_name": series,
+                "series_position": position,
+                "genres": list(genres),
+            },
+        )
+
+    @staticmethod
+    def _standalone(content_type, title):
+        return make_item(
+            item_id=title,
+            title=title,
+            content_type=content_type,
+            status=ConsumptionStatus.UNREAD,
+        )
+
+    @pytest.mark.parametrize(
+        ("content_type", "series", "earliest", "later"),
+        [
+            (ContentType.VIDEO_GAME, "Final Fantasy", "Mystic Quest", "FF IV"),
+            (ContentType.BOOK, "The Expanse", "Leviathan Wakes", "Caliban's War"),
+            (ContentType.MOVIE, "Alien", "Alien", "Aliens"),
+        ],
+    )
+    def test_the_substitute_holds_the_slot_and_names_the_series_regression(
+        self, mock_storage, content_type, series, earliest, later
+    ):
+        engine = self._engine(
+            mock_storage,
+            {"A": 0.76, "B": 0.752, later: 0.75, earliest: 0.61, "SteamWorld": 0.74},
+            [
+                self._standalone(content_type, "A"),
+                self._standalone(content_type, "B"),
+                self._entry(content_type, later, series, 2),
+                self._entry(content_type, earliest, series, 1),
+                self._standalone(content_type, "SteamWorld"),
+            ],
+        )
+
+        recs = engine.generate_recommendations(content_type=content_type, count=5)
+
+        assert [rec.item.title for rec in recs] == ["A", "B", earliest, "SteamWorld"]
+        assert [rec.score for rec in recs] == pytest.approx([0.76, 0.752, 0.61, 0.74])
+        assert [rec.series_lead for rec in recs] == [
+            None,
+            None,
+            SeriesLead(series, 0.75),
+            None,
+        ]
+
+    def test_a_season_stands_in_under_its_show_name_regression(self, mock_storage):
+        shows = [
+            make_item(
+                item_id="severance",
+                db_id=1,
+                title="Severance",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.UNREAD,
+                metadata={"total_seasons": 2},
+            ),
+            self._standalone(ContentType.TV_SHOW, "Andor"),
+        ]
+        engine = self._engine(
+            mock_storage,
+            {
+                "Severance (Season 2)": 0.75,
+                "Andor": 0.7,
+                "Severance (Season 1)": 0.61,
+            },
+            shows,
+        )
+
+        recs = engine.generate_recommendations(content_type=ContentType.TV_SHOW)
+
+        assert [(rec.item.title, rec.series_lead) for rec in recs] == [
+            ("Severance (Season 1)", SeriesLead("Severance", 0.75)),
+            ("Andor", None),
+        ]
+
+    def test_the_variety_penalty_moves_the_slot_with_the_score_regression(
+        self, mock_storage
+    ):
+        game = ContentType.VIDEO_GAME
+        engine = self._engine(
+            mock_storage,
+            {"FF IV": 0.75, "Standalone": 0.5, "Mystic Quest": 0.4},
+            [
+                self._entry(game, "FF IV", "Final Fantasy", 2),
+                self._standalone(game, "Standalone"),
+                self._entry(game, "Mystic Quest", "Final Fantasy", 1),
+            ],
+            consumed_genres=["RPG"],
+        )
+
+        substitute, standalone = engine.generate_recommendations(
+            content_type=game,
+            count=5,
+            user_preference_config=UserPreferenceConfig(
+                variety_penalty=0.2 * UserPreferenceConfig.MAX_VARIETY_PENALTY
+            ),
+        )
+
+        kept = 1.0 - substitute.variety_penalty
+        assert substitute.variety_penalty > 0.0
+        assert standalone.item.title == "Standalone"
+        assert substitute.score == pytest.approx(0.4 * kept)
+        assert substitute.series_lead == SeriesLead(
+            "Final Fantasy", pytest.approx(0.75 * kept)
+        )
+
+    def test_the_cut_to_count_keeps_the_substitute_across_types_regression(
+        self, mock_storage
+    ):
+        game = ContentType.VIDEO_GAME
+        engine = self._engine(
+            mock_storage,
+            {"FF IV": 0.75, "Hyperion": 0.7, "Mystic Quest": 0.4},
+            [
+                self._entry(game, "FF IV", "Final Fantasy", 2),
+                self._standalone(ContentType.BOOK, "Hyperion"),
+                self._entry(game, "Mystic Quest", "Final Fantasy", 1),
+            ],
+        )
+
+        (rec,) = engine.generate_recommendations(content_type=None, count=1)
+
+        assert rec.item.title == "Mystic Quest"
+
+
 class TestPositionlessSeriesOfferedInReleaseOrder:
     """A franchise whose titles carry no number at all, so release year is the
     only order there is.
@@ -2938,7 +3115,7 @@ class TestSeasonSiblingsStayDistinctInEveryMap:
         )
 
         recommendations = engine._format_recommendations(
-            [(first, 1.0, 0.0), (second, 0.5, 0.0)],
+            [_RankedCandidate(first, 1.0), _RankedCandidate(second, 0.5)],
             {
                 candidate_key(first): {"series_order": 0.8},
                 candidate_key(second): {"series_order": 0.2},

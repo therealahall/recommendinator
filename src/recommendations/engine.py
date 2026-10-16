@@ -1,7 +1,7 @@
 import logging
 import random
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, TypeVar
 
 from src.models.content import (
@@ -17,7 +17,7 @@ from src.recommendations.preference_interpreter import (
     PatternBasedInterpreter,
 )
 from src.recommendations.preferences import PreferenceAnalyzer, UserPreferences
-from src.recommendations.record import Recommendation
+from src.recommendations.record import Recommendation, SeriesLead
 from src.recommendations.reference_index import SignalIndex
 from src.recommendations.scorers import (
     DEFAULT_SCORERS,
@@ -52,9 +52,25 @@ logger = logging.getLogger(__name__)
 
 _T = TypeVar("_T")
 
-#: A candidate after ranking: the item, its score, and the variety penalty
-#: fraction applied to it (0.0 when the penalty is off or did not bite).
-_RankedCandidate = tuple[ContentItem, float, float]
+
+@dataclass(frozen=True)
+class _RankedCandidate:
+    item: ContentItem
+    score: float
+    #: 0.0 when the penalty is off or did not bite.
+    variety_penalty: float = 0.0
+    series_lead: SeriesLead | None = None
+
+    @property
+    def rank_score(self) -> float:
+        return self.score if self.series_lead is None else self.series_lead.score
+
+
+def _unfiltered(pipeline_scored: list[ScoredCandidate]) -> list[_RankedCandidate]:
+    return [
+        _RankedCandidate(scored.item, scored.aggregate_score)
+        for scored in pipeline_scored
+    ]
 
 
 def _collapse_duplicate_db_ids(
@@ -332,26 +348,20 @@ class RecommendationEngine:
             user_preference_config is None or user_preference_config.series_in_order
         )
 
+        # Ranking drops the breakdowns, so the rows behind each score are kept
+        # here for the formatting step to look up.
+        breakdown_by_key = {
+            candidate_key(scored.item): scored.score_breakdown
+            for scored in pipeline_scored
+        }
+
         if apply_series_rules:
-            filtered_candidates = self._apply_series_filtering(
+            ranked_items = self._apply_series_filtering(
                 pipeline_scored, series_tracking, candidates, series_order
             )
         else:
             logger.info("Series ordering disabled by user preference")
-            filtered_candidates = pipeline_scored
-
-        # Ranking drops down to (item, score, penalty), so the rows behind each
-        # score are kept here for the formatting step to look up.
-        breakdown_by_key = {
-            candidate_key(scored.item): scored.score_breakdown
-            for scored in filtered_candidates
-        }
-
-        # The pipeline aggregate is the score, and the pipeline already sorted
-        # on it, so ranking is the filtered order with no penalty applied yet.
-        ranked_items: list[_RankedCandidate] = [
-            (scored.item, scored.aggregate_score, 0.0) for scored in filtered_candidates
-        ]
+            ranked_items = _unfiltered(pipeline_scored)
 
         if (
             user_preference_config is not None
@@ -372,7 +382,7 @@ class RecommendationEngine:
         # down to their single highest-ranked representative (issue #44).  This
         # runs before the slice so freed slots backfill with other content.
         ranked_items = _collapse_duplicate_db_ids(
-            ranked_items, lambda entry: entry[0].db_id
+            ranked_items, lambda entry: entry.item.db_id
         )
 
         return self._format_recommendations(
@@ -403,7 +413,7 @@ class RecommendationEngine:
         ]
         # The pipeline's own tiebreaker: on score alone an exact tie falls to
         # ContentType declaration order, where books always come first.
-        candidates.sort(key=lambda rec: (-rec.score, tiebreaker_key(rec.item)))
+        candidates.sort(key=lambda rec: (-rec.rank_score, tiebreaker_key(rec.item)))
         return candidates[:count]
 
     def _apply_series_filtering(
@@ -412,14 +422,17 @@ class RecommendationEngine:
         series_tracking: dict[str, set[float]],
         unconsumed_items: list[ContentItem],
         series_order: SeriesOrder,
-    ) -> list[ScoredCandidate]:
+    ) -> list[_RankedCandidate]:
+        """A substitute takes the blocked entry's slot and ranks at its score, so
+        the result stays in pipeline order; it shows its own score, which its
+        breakdown explains, and the lead says why it sits above it."""
         scored_by_key: dict[str, ScoredCandidate] = {
             candidate_key(scored.item): scored for scored in pipeline_scored
         }
         substituted_series: set[str] = set()
         seen_keys: set[str] = set()
 
-        filtered_candidates: list[ScoredCandidate] = []
+        filtered_candidates: list[_RankedCandidate] = []
         for scored_candidate in pipeline_scored:
             if should_recommend_item(
                 scored_candidate.item,
@@ -429,7 +442,11 @@ class RecommendationEngine:
             ):
                 key = candidate_key(scored_candidate.item)
                 if key not in seen_keys:
-                    filtered_candidates.append(scored_candidate)
+                    filtered_candidates.append(
+                        _RankedCandidate(
+                            scored_candidate.item, scored_candidate.aggregate_score
+                        )
+                    )
                     seen_keys.add(key)
             else:
                 candidate_series = series_order.series_of(scored_candidate.item)
@@ -448,7 +465,16 @@ class RecommendationEngine:
                                 substitute_key not in seen_keys
                                 and substitute_scored is not None
                             ):
-                                filtered_candidates.append(substitute_scored)
+                                filtered_candidates.append(
+                                    _RankedCandidate(
+                                        substitute,
+                                        substitute_scored.aggregate_score,
+                                        series_lead=SeriesLead(
+                                            candidate_series,
+                                            scored_candidate.aggregate_score,
+                                        ),
+                                    )
+                                )
                                 seen_keys.add(substitute_key)
                                 logger.debug(
                                     "Substituted %s with %s (earliest in %s)",
@@ -467,7 +493,7 @@ class RecommendationEngine:
             logger.warning(
                 "Series filtering removed all candidates, using original candidates"
             )
-            return pipeline_scored
+            return _unfiltered(pipeline_scored)
 
         return filtered_candidates
 
@@ -523,11 +549,22 @@ class RecommendationEngine:
         # No series exemption: the series scorers already rank a continuation
         # first, so a softer penalty only widened its lead as variety went up.
         penalised: list[_RankedCandidate] = []
-        for item, score, _ in ranked_items:
-            penalty = variety_penalty_for(item, ladder)
-            penalised.append((item, score * (1.0 - penalty), penalty))
+        for entry in ranked_items:
+            penalty = variety_penalty_for(entry.item, ladder)
+            kept = 1.0 - penalty
+            lead = entry.series_lead
+            penalised.append(
+                _RankedCandidate(
+                    item=entry.item,
+                    score=entry.score * kept,
+                    variety_penalty=penalty,
+                    series_lead=(
+                        None if lead is None else replace(lead, score=lead.score * kept)
+                    ),
+                )
+            )
 
-        penalised.sort(key=lambda entry: entry[1], reverse=True)
+        penalised.sort(key=lambda entry: entry.rank_score, reverse=True)
         return penalised
 
     def _format_recommendations(
@@ -540,7 +577,8 @@ class RecommendationEngine:
         preferences: UserPreferences,
     ) -> list[Recommendation]:
         recommendations: list[Recommendation] = []
-        for item, score, variety_penalty in ranked_items:
+        for entry in ranked_items:
+            item = entry.item
             key = candidate_key(item)
             item_adaptations = adaptations.get(key, [])
             contributing_items = signal_index.references_for(item, self.rng)
@@ -548,7 +586,7 @@ class RecommendationEngine:
             recommendations.append(
                 Recommendation(
                     item=item,
-                    score=score,
+                    score=entry.score,
                     reasoning=self._generate_reasoning(
                         item,
                         preferences,
@@ -557,9 +595,10 @@ class RecommendationEngine:
                     ),
                     score_breakdown=breakdown_by_key[key],
                     scorer_weights=scorer_weights,
-                    variety_penalty=variety_penalty,
+                    variety_penalty=entry.variety_penalty,
                     contributing_items=contributing_items,
                     adaptations=item_adaptations,
+                    series_lead=entry.series_lead,
                 )
             )
 
