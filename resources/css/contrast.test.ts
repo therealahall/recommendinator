@@ -534,6 +534,7 @@ const TINTED_TEXT: [string, string, string, string][] = [
   ['the Reload button on it', BASE, '.btn-secondary', '--bg-primary'],
   ['the type glyph standing in for a missing cover', BASE, '.cover-art--none', '--bg-card'],
   ['a recommendation set aside', BASE, '.rec-aside-body', '--bg-primary'],
+  ['why a series entry outranks its own score', BASE, '.rec-score-lead', '--bg-card'],
   ['the heading over a breakdown', BASE, '.score-details-title', '--bg-primary'],
   ['a scorer in a breakdown', BASE, '.score-label', '--bg-primary'],
   ['how far that scorer reached', BASE, '.score-value', '--bg-primary'],
