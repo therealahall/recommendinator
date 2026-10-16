@@ -23,6 +23,11 @@ class RelatedItemResponse(BaseModel):
     cover_url: str | None = None
 
 
+class SeriesLeadResponse(BaseModel):
+    series: str
+    score: float
+
+
 class RecommendationResponse(BaseModel):
     db_id: int | None = None  # Database ID for actions like ignore
     title: str
@@ -39,6 +44,7 @@ class RecommendationResponse(BaseModel):
     variety_penalty: float = Field(0.0, ge=0.0, le=1.0)
     contributing_items: list[RelatedItemResponse] = Field(default_factory=list)
     adaptations: list[RelatedItemResponse] = Field(default_factory=list)
+    series_lead: SeriesLeadResponse | None = None
 
 
 @router.get("/recommendations", response_model=list[RecommendationResponse])

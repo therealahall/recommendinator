@@ -12,6 +12,20 @@ from src.utils.series import (
 )
 
 
+class SeriesLeadPayload(TypedDict):
+    series: str
+    score: float
+
+
+@dataclass(frozen=True)
+class SeriesLead:
+    """A series entry standing in for a later one it must be read before: it
+    ranks at that entry's ``score`` while showing, and explaining, its own."""
+
+    series: str
+    score: float
+
+
 class RecommendationPayload(TypedDict):
     """The JSON shape both interfaces emit for one recommendation."""
 
@@ -29,6 +43,7 @@ class RecommendationPayload(TypedDict):
     variety_penalty: float
     contributing_items: list[RelatedItemPayload]
     adaptations: list[RelatedItemPayload]
+    series_lead: SeriesLeadPayload | None
 
 
 @dataclass(frozen=True)
@@ -41,6 +56,11 @@ class Recommendation:
     variety_penalty: float = 0.0
     contributing_items: list[ContentItem] = field(default_factory=list)
     adaptations: list[ContentItem] = field(default_factory=list)
+    series_lead: SeriesLead | None = None
+
+    @property
+    def rank_score(self) -> float:
+        return self.score if self.series_lead is None else self.series_lead.score
 
     def to_payload(self) -> RecommendationPayload:
         return {
@@ -60,4 +80,12 @@ class Recommendation:
                 related_item_to_dict(item) for item in self.contributing_items
             ],
             "adaptations": [related_item_to_dict(item) for item in self.adaptations],
+            "series_lead": (
+                None
+                if self.series_lead is None
+                else {
+                    "series": self.series_lead.series,
+                    "score": self.series_lead.score,
+                }
+            ),
         }

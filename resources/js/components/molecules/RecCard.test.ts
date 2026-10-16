@@ -19,6 +19,7 @@ function makeRec(overrides: Partial<RecommendationResponse> = {}): Recommendatio
     variety_penalty: 0,
     contributing_items: [],
     adaptations: [],
+    series_lead: null,
     ...overrides,
   }
 }
@@ -65,6 +66,18 @@ describe('RecCard', () => {
       props: { rec: makeRec({ series: 'The Expanse', series_index: 2 }), rank: 1 },
     })
     expect(wrapper.find('.rec-series').text()).toContain('The Expanse #2')
+  })
+
+  it('explains a series entry ranked above its own score by the series and the score it holds', () => {
+    const wrapper = mount(RecCard, {
+      props: {
+        rec: makeRec({ score: 0.61, series_lead: { series: 'Final Fantasy', score: 0.75 } }),
+        rank: 1,
+      },
+    })
+
+    expect(wrapper.text()).toContain('Up next in Final Fantasy - 75%')
+    expect(wrapper.get('.rec-score').text()).toContain('61%')
   })
 
   it('omits the action buttons when there is no db_id', () => {

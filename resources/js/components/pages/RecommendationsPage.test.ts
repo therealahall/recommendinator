@@ -23,6 +23,7 @@ function makeRec(overrides: Partial<RecommendationResponse> = {}): Recommendatio
     variety_penalty: 0,
     contributing_items: [],
     adaptations: [],
+    series_lead: null,
     ...overrides,
   }
 }

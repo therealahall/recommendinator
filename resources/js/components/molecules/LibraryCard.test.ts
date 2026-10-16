@@ -215,6 +215,7 @@ describe('LibraryCard', () => {
           variety_penalty: 0,
           contributing_items: [],
           adaptations: [],
+          series_lead: null,
         },
       },
     })

@@ -6,7 +6,7 @@ from click.testing import CliRunner
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.recommendations.engine import RecommendationEngine
-from src.recommendations.record import Recommendation
+from src.recommendations.record import Recommendation, SeriesLead
 from tests.factories import make_storage_mock
 
 from .conftest import _invoke_with_mocks
@@ -191,6 +191,7 @@ class TestRecommendJsonOutput:
             "variety_penalty",
             "contributing_items",
             "adaptations",
+            "series_lead",
         }
         assert rec["db_id"] == 42
         assert rec["score_breakdown"] == {"genre": 0.5, "theme": 0.4}
@@ -306,6 +307,7 @@ class TestRecommendProgressLineOnStdoutRegression:
                 "variety_penalty": 0.0,
                 "contributing_items": [],
                 "adaptations": [],
+                "series_lead": None,
             }
         ]
         assert self.PROGRESS in result.stderr
@@ -401,6 +403,31 @@ class TestRecommendTableOutput:
         assert result.exit_code == 0
         assert "From your library: Neuromancer (book)" in result.stdout
         assert "Adaptations: Dune (book)" in result.stdout
+
+    def test_a_series_entry_ranked_above_its_score_says_which_series_holds_it(
+        self,
+    ) -> None:
+        engine = _engine_returning(
+            Recommendation(
+                item=_book("Leviathan Wakes", db_id=1),
+                score=0.61,
+                reasoning="Great match",
+                series_lead=SeriesLead("The Expanse", 0.75),
+            )
+        )
+
+        table = _invoke_recommend_with_engine(
+            CliRunner(), ["recommend", "--type", "book"], engine
+        )
+        document = _invoke_recommend_with_engine(
+            CliRunner(), ["recommend", "--type", "book", "--format", "json"], engine
+        )
+
+        assert "Up next in The Expanse - 75%" in table.stdout
+        assert json.loads(document.stdout)[0]["series_lead"] == {
+            "series": "The Expanse",
+            "score": 0.75,
+        }
 
     def test_an_unknown_author_renders_a_placeholder(self) -> None:
         result = _invoke_recommend_with_engine(

@@ -78,6 +78,13 @@ export interface RecommendationResponse {
   variety_penalty: number
   contributing_items: RelatedItemResponse[]
   adaptations: RelatedItemResponse[]
+  /** Set on a series entry ranked at the score of the later entry it must precede. */
+  series_lead: SeriesLeadResponse | null
+}
+
+export interface SeriesLeadResponse {
+  series: string
+  score: number
 }
 
 export interface UserResponse {
