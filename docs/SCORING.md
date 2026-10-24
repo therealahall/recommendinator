@@ -6,9 +6,9 @@ settings < per-user preferences**.
 
 | Weight key | What the scorer does | Default |
 |------------|----------------------|---------|
-| `genre_match` | Boosts genres you rate highly, and sinks ones you rate badly | 2.0 |
+| `genre_match` | Averages how you rate the item's genres, so one you dislike pulls down one you love. Genres you have not rated do not count | 2.0 |
 | `creator_match` | Prefers authors, directors and developers you have enjoyed, and demotes ones you have not | 1.5 |
-| `tag_overlap` | Threshold tag matching, bridged by thematic genre clusters | 1.0 |
+| `tag_overlap` | The share of an item's tags you have consumed. An item sharing no tag falls back to the share of its thematic genre clusters you have consumed | 1.0 |
 | `series_order` | Prioritises the next entry in a series you are partway through | 1.5 |
 | `rating_pattern` | Learns from your rating history within a genre | 1.0 |
 | `content_length` | Soft penalty for a length mismatch | 1.0 |

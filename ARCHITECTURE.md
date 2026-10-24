@@ -247,7 +247,7 @@ RecommendationEngine
   |-- ScoringPipeline (always runs; its aggregate IS the emitted score)
   |     |-- GenreMatchScorer        genre preference, dislike included
   |     |-- CreatorMatchScorer      author/director/creators/developer
-  |     |-- TagOverlapScorer        threshold and cluster tag overlap
+  |     |-- TagOverlapScorer        share of tags consumed, clusters as fallback
   |     |-- SeriesOrderScorer       next in sequence
   |     |-- RatingPatternScorer     rating history in matching genres
   |     |-- ContentLengthScorer     soft penalty for length mismatch

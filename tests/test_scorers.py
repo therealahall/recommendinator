@@ -119,6 +119,25 @@ class TestGenreMatchScorer:
         scorer = GenreMatchScorer()
         assert scorer.score(candidate, context) == 0.5
 
+    def test_a_disliked_term_offsets_a_loved_one_and_an_unrated_one_counts_for_nothing(
+        self,
+    ) -> None:
+        consumed = [
+            make_item(rating=5, metadata={"genre": "Crime"}),
+            make_item(rating=1, metadata={"genre": "Western"}),
+        ]
+        context = _build_context(consumed=consumed)
+        scorer = GenreMatchScorer()
+
+        def score(*genres: str) -> float:
+            candidate = make_item(
+                status=ConsumptionStatus.UNREAD, metadata={"genres": list(genres)}
+            )
+            return scorer.score(candidate, context)
+
+        assert score("Drama", "Crime") == 1.0
+        assert score("Drama", "Crime", "Western") == 0.5
+
 
 class TestCreatorMatchScorer:
     def test_preferred_author_scores_high(self) -> None:
@@ -142,15 +161,43 @@ class TestTagOverlapScorer:
         scorer = TagOverlapScorer()
         assert scorer.score(candidate, context) == 0.0
 
-    def test_two_matches_scores_medium(self) -> None:
-        consumed = [make_item(metadata={"genres": ["Fantasy", "Action"]}, rating=5)]
-        context = _build_context(consumed=consumed)
+    def test_the_score_is_the_share_of_terms_matched_not_a_capped_count(
+        self,
+    ) -> None:
+        terms = [
+            "hard science fiction",
+            "soft science fiction",
+            "military science fiction",
+            "space opera",
+            "space warfare",
+            "space western",
+            "cyberpunk",
+            "steampunk",
+            "biopunk",
+            "dieselpunk",
+            "solarpunk",
+            "atompunk",
+            "nanopunk",
+            "clockpunk",
+            "post-cyberpunk",
+            "afrofuturism",
+            "retrofuturism",
+            "climate fiction",
+            "science fantasy",
+            "alternate history",
+        ]
         candidate = make_item(
-            status=ConsumptionStatus.UNREAD,
-            metadata={"genres": ["Action", "Fantasy", "Horror"]},
+            status=ConsumptionStatus.UNREAD, metadata={"genres": terms}
         )
         scorer = TagOverlapScorer()
-        assert scorer.score(candidate, context) == 0.5
+
+        def direct_score(matched: int) -> float:
+            consumed = [make_item(metadata={"genres": terms[:matched]}, rating=5)]
+            context = _build_context(consumed=consumed)
+            return scorer.score(candidate, context)
+
+        assert direct_score(5) == 0.25
+        assert direct_score(15) == 0.75
 
     def test_cluster_match_provides_semantic_floor(self) -> None:
         consumed = [make_item(metadata={"genres": ["War"]}, rating=5)]

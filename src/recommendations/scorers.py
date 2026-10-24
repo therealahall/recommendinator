@@ -119,17 +119,16 @@ class GenreMatchScorer(Scorer):
         super().__init__(weight)
 
     def score(self, candidate: ContentItem, context: ScoringContext) -> float:
-        candidate_genres = extract_genres(candidate)
-        if not candidate_genres:
-            return 0.5  # neutral when no genre info
-
-        genre_scores = [
-            context.preferences.get_genre_score(genre) for genre in candidate_genres
+        # Only terms the user has an opinion on count: an unrated broad term like
+        # drama would otherwise dilute every mean, and max() let it hide a dislike.
+        known = [
+            score
+            for genre in extract_genres(candidate)
+            if (score := context.preferences.get_genre_score(genre)) != 0.0
         ]
-        # Use the best matching genre (genre_scores is non-empty since candidate_genres is)
-        best = max(genre_scores)
-        # Map [-1, 1] -> [0, 1]
-        return (best + 1.0) / 2.0
+        if not known:
+            return 0.5
+        return (sum(known) / len(known) + 1.0) / 2.0
 
 
 class CreatorMatchScorer(Scorer):
@@ -154,36 +153,24 @@ class TagOverlapScorer(Scorer):
     def __init__(self, weight: float = 1.0) -> None:
         super().__init__(weight)
 
-    @staticmethod
-    def _threshold_score(matches: int) -> float:
-        if matches >= 5:
-            return 1.0
-        if matches == 4:
-            return 0.9
-        if matches == 3:
-            return 0.8
-        if matches == 2:
-            return 0.5
-        if matches == 1:
-            return 0.3
-        return 0.0
-
     def score(self, candidate: ContentItem, context: ScoringContext) -> float:
         candidate_genres = set(extract_genres(candidate))
         if not candidate_genres or not context.consumed_genres:
             return 0.0
 
-        direct_matches = len(candidate_genres & context.consumed_genres)
-        direct_score = self._threshold_score(direct_matches)
+        matched = candidate_genres & context.consumed_genres
+        if matched:
+            return len(matched) / len(candidate_genres)
 
+        # A fallback, never a competitor: the few coarse clusters span a whole
+        # library, so their share is nearly always 1.0 and max() would flatten
+        # every direct share back into one plateau.
         candidate_clusters = get_clusters_for_terms(list(candidate_genres))
-        if candidate_clusters and context.consumed_clusters:
-            cluster_matches = len(candidate_clusters & context.consumed_clusters)
-            cluster_score = self._threshold_score(cluster_matches)
-        else:
-            cluster_score = 0.0
-
-        return max(direct_score, cluster_score)
+        if not candidate_clusters:
+            return 0.0
+        return len(candidate_clusters & context.consumed_clusters) / len(
+            candidate_clusters
+        )
 
 
 class SeriesOrderScorer(Scorer):
