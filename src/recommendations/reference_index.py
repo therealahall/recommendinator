@@ -16,7 +16,7 @@ from src.recommendations.genre_clusters import (
     cluster_similarity,
     get_clusters_for_terms,
 )
-from src.recommendations.scorers import extract_creator, extract_genres
+from src.recommendations.scorers import extract_creators, extract_genres
 from src.utils.series import get_series_name
 from src.utils.sorting import get_sort_title, titles_similar
 
@@ -74,7 +74,7 @@ class _SignalRecord:
     sort_author: str | None
     genre_set: frozenset[str]
     clusters: frozenset[str]
-    creator: str | None
+    creators: frozenset[str]
     series_keys: frozenset[str]
 
     @property
@@ -87,7 +87,7 @@ class _CandidateProfile:
     content_type: str
     genre_set: frozenset[str]
     clusters: frozenset[str]
-    creator: str | None
+    creators: frozenset[str]
     series_key: str | None
 
 
@@ -106,8 +106,8 @@ class _TypeBucket:
             self.by_genre.setdefault(genre, []).append(record)
         for cluster in record.clusters:
             self.by_cluster.setdefault(cluster, []).append(record)
-        if record.creator:
-            self.by_creator.setdefault(record.creator, []).append(record)
+        for creator in record.creators:
+            self.by_creator.setdefault(creator, []).append(record)
         if record.liked:
             self.liked.append(record)
 
@@ -130,7 +130,7 @@ def _record_for(item: ContentItem, ordinal: int) -> _SignalRecord:
         sort_author=get_sort_title(item.author) if item.author else None,
         genre_set=frozenset(genres),
         clusters=frozenset(get_clusters_for_terms(genres)),
-        creator=extract_creator(item),
+        creators=extract_creators(item),
         series_keys=frozenset(series_keys),
     )
 
@@ -142,7 +142,7 @@ def _profile_of(candidate: ContentItem) -> _CandidateProfile:
         content_type=get_enum_value(candidate.content_type),
         genre_set=frozenset(genres),
         clusters=frozenset(get_clusters_for_terms(genres)),
-        creator=extract_creator(candidate),
+        creators=extract_creators(candidate),
         series_key=series_name.lower() if series_name is not None else None,
     )
 
@@ -160,7 +160,7 @@ def _pair_overlap(
         else:
             overlap += cluster_similarity(profile.clusters, record.clusters)
 
-    if profile.creator and record.creator and profile.creator == record.creator:
+    if profile.creators & record.creators:
         overlap += _SHARED_CREATOR_OVERLAP
 
     if record.liked:
@@ -270,8 +270,8 @@ class SignalIndex:
             for term in terms:
                 for record in index.get(term, ()):
                     reachable[record.ordinal] = record
-        if profile.creator:
-            for record in bucket.by_creator.get(profile.creator, ()):
+        for creator in profile.creators:
+            for record in bucket.by_creator.get(creator, ()):
                 reachable[record.ordinal] = record
 
         minimum = 0.0 if same_type else CROSS_TYPE_MIN_OVERLAP
