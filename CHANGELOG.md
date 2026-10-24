@@ -1,6 +1,53 @@
 # CHANGELOG
 
 
+## v0.73.2 (2026-10-24)
+
+### Bug Fixes
+
+- **recommendations**: Keep S.A., AB and Pty Ltd on the studio name
+  ([`c8f52ca`](https://github.com/therealahall/recommendinator/commit/c8f52caf98d2d0c3e553b1f99fd3968281d26193))
+
+- **recommendations**: Let rich metadata separate candidates
+  ([`391b21d`](https://github.com/therealahall/recommendinator/commit/391b21d3945f89bb9c85c43958e215439a8dd770))
+
+- **recommendations**: Match a candidate's tags against each thing consumed
+  ([`62676b7`](https://github.com/therealahall/recommendinator/commit/62676b7f5688fdc35dbaa9f0a1fd4dcbc37a1484))
+
+- **recommendations**: Match each creator of a co-credited work
+  ([`0b2328e`](https://github.com/therealahall/recommendinator/commit/0b2328e6785ab71a0eb2f2f0f729b63d4834f03b))
+
+- **recommendations**: Nudge what continues a series instead of demoting it
+  ([`bd74fbb`](https://github.com/therealahall/recommendinator/commit/bd74fbbb23cb8780a8fd898273631262153242e7))
+
+- **recommendations**: Offer the next season of a show between seasons
+  ([`173814d`](https://github.com/therealahall/recommendinator/commit/173814d675e34f8dcafef1fa829bd265f0b37bbe))
+
+- **settings**: Describe continuation and tag_overlap as they now score
+  ([`c8b720f`](https://github.com/therealahall/recommendinator/commit/c8b720f0b83cec4d2e7eb82c7458a52cc1486ed2))
+
+- **trakt**: Keep each show's per-season episode counts
+  ([`789b1f2`](https://github.com/therealahall/recommendinator/commit/789b1f2a64b389b9e7cb60b7f1153b8372c7c9df))
+
+### Chores
+
+- Bump the frontend group with 5 updates
+  ([`d6023ae`](https://github.com/therealahall/recommendinator/commit/d6023ae98b4479c80400efa31fefefb264c4cc48))
+
+- Bump the python group with 4 updates
+  ([`d622780`](https://github.com/therealahall/recommendinator/commit/d6227806bdee29c42c2274893716832fb939ab2e))
+
+### Documentation
+
+- **scoring**: Tighten the part-way-through section
+  ([`ef0408d`](https://github.com/therealahall/recommendinator/commit/ef0408d96b4cff89d7aadff669c598cde99596d0))
+
+### Testing
+
+- **recommendations**: Drop engine tests the scorer tests already cover
+  ([`a83a192`](https://github.com/therealahall/recommendinator/commit/a83a19270d82a7df93a5e27a660f45b90d8dcb03))
+
+
 ## v0.73.1 (2026-10-16)
 
 ### Bug Fixes
