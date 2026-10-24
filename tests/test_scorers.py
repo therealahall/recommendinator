@@ -1,4 +1,6 @@
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.recommendations.genre_clusters import get_clusters_for_terms
+from src.recommendations.genre_normalizer import ALLOWED_TERMS
 from src.recommendations.identity import candidate_key
 from src.recommendations.preferences import PreferenceAnalyzer
 from src.recommendations.scorers import (
@@ -92,11 +94,17 @@ class TestExtractCreator:
         }
 
     def test_a_suffix_stays_on_the_name_it_follows(self) -> None:
-        item = make_item(author="CAPCOM Co., Ltd., Sammy Davis, Jr., Atlus Co.,LTD")
+        item = make_item(
+            author="CAPCOM Co., Ltd., Sammy Davis, Jr., Atlus Co.,LTD, Ubisoft, S.A., "
+            "Mojang, AB, Halfbrick, Pty. Ltd."
+        )
         assert extract_creators(item) == {
             "capcom co., ltd.",
             "sammy davis, jr.",
             "atlus co., ltd",
+            "ubisoft, s.a.",
+            "mojang, ab",
+            "halfbrick, pty. ltd.",
         }
 
 
@@ -169,18 +177,11 @@ class TestCreatorMatchScorer:
         assert score > 0.5
 
     def test_a_cowritten_show_matches_as_well_as_a_solo_one(self) -> None:
-        consumed = [
-            make_item(
-                author="Taylor Sheridan", rating=5, content_type=ContentType.TV_SHOW
-            )
-        ]
-        context = _build_context(consumed=consumed, content_type=ContentType.TV_SHOW)
+        context = _build_context(
+            consumed=[make_item(author="Taylor Sheridan", rating=5)]
+        )
         solo, cowritten = (
-            make_item(
-                author=author,
-                status=ConsumptionStatus.UNREAD,
-                content_type=ContentType.TV_SHOW,
-            )
+            make_item(author=author, status=ConsumptionStatus.UNREAD)
             for author in ("Taylor Sheridan", "Taylor Sheridan, Hugh Dillon")
         )
         scorer = CreatorMatchScorer()
@@ -195,20 +196,6 @@ class TestCreatorMatchScorer:
         candidate = make_item(author="Ben Nedivi", status=ConsumptionStatus.UNREAD)
         assert CreatorMatchScorer().score(candidate, context) == 0.7
 
-    def test_studios_sharing_only_a_company_suffix_do_not_match(self) -> None:
-        consumed = [
-            make_item(
-                author="CAPCOM Co., Ltd.", rating=5, content_type=ContentType.VIDEO_GAME
-            )
-        ]
-        context = _build_context(consumed=consumed, content_type=ContentType.VIDEO_GAME)
-        candidate = make_item(
-            author="KOEI TECMO GAMES CO., LTD.",
-            status=ConsumptionStatus.UNREAD,
-            content_type=ContentType.VIDEO_GAME,
-        )
-        assert CreatorMatchScorer().score(candidate, context) == 0.5
-
 
 class TestTagOverlapScorer:
     def test_no_overlap(self) -> None:
@@ -220,65 +207,52 @@ class TestTagOverlapScorer:
         scorer = TagOverlapScorer()
         assert scorer.score(candidate, context) == 0.0
 
-    def test_the_score_is_the_share_of_terms_matched_not_a_capped_count(
+    @staticmethod
+    def _score(consumed: list[ContentItem], *genres: str) -> float:
+        candidate = make_item(status=ConsumptionStatus.UNREAD, genres=", ".join(genres))
+        return TagOverlapScorer().score(candidate, _build_context(consumed=consumed))
+
+    def test_the_score_is_the_best_share_of_a_consumed_items_terms_not_the_candidates(
         self,
     ) -> None:
-        terms = [
-            "hard science fiction",
-            "soft science fiction",
-            "military science fiction",
-            "space opera",
-            "space warfare",
-            "space western",
-            "cyberpunk",
-            "steampunk",
-            "biopunk",
-            "dieselpunk",
-            "solarpunk",
-            "atompunk",
-            "nanopunk",
-            "clockpunk",
-            "post-cyberpunk",
-            "afrofuturism",
-            "retrofuturism",
-            "climate fiction",
-            "science fantasy",
-            "alternate history",
-        ]
-        candidate = make_item(
-            status=ConsumptionStatus.UNREAD, metadata={"genres": terms}
-        )
-        scorer = TagOverlapScorer()
+        consumed = [make_item(genres="Battle, War, Drama", rating=5)]
+        reached = get_clusters_for_terms(["battle", "war", "drama"])
+        unrelated = sorted(
+            term
+            for term in ALLOWED_TERMS - {"battle", "war", "drama"}
+            if not get_clusters_for_terms([term]) & reached
+        )[:55]
+        assert self._score(consumed, "Battle") == self._score(consumed, "War") == 2 / 7
+        assert self._score(consumed, "Battle", "War") == 3 / 7
+        assert self._score(consumed, "Battle", "War", "Drama") == 5 / 7
+        assert self._score(consumed, "Battle", *unrelated) == 2 / 7
+        consumed.append(make_item(genres="War", rating=5))
+        assert self._score(consumed, "War") == 2 / 4
 
-        def direct_score(matched: int) -> float:
-            consumed = [make_item(metadata={"genres": terms[:matched]}, rating=5)]
-            context = _build_context(consumed=consumed)
-            return scorer.score(candidate, context)
+    def test_a_one_tag_item_never_gives_full_marks_and_a_richer_one_reaches_higher(
+        self,
+    ) -> None:
+        magic = [make_item(genres="Magic", rating=5)]
+        rich = [make_item(genres="Magic, Wizards, Sorcery", rating=5)]
+        assert self._score(magic, "Magic") == 2 / 4
+        assert self._score(rich, "Magic") == 2 / 6
+        assert self._score(rich, "Magic", "Wizards", "Sorcery") == 4 / 6
 
-        assert direct_score(5) == 0.25
-        assert direct_score(15) == 0.75
+    def test_a_shared_cluster_counts_but_never_as_much_as_the_term_it_comes_from(
+        self,
+    ) -> None:
+        consumed = [make_item(genres="Space Warfare, Science Fiction", rating=5)]
+        assert self._score(consumed, "War") == 1 / 7
+        assert self._score(consumed, "War", "Science Fiction") == 3 / 7
+        assert self._score(consumed, "Space Warfare") == 4 / 7
+        fantasy = [make_item(genres="Fantasy", rating=5)]
+        assert self._score(fantasy, "Epic Fantasy") < self._score(fantasy, "Fantasy")
 
-    def test_cluster_match_provides_semantic_floor(self) -> None:
-        consumed = [make_item(metadata={"genres": ["War"]}, rating=5)]
-        context = _build_context(consumed=consumed)
-        candidate = make_item(
-            status=ConsumptionStatus.UNREAD,
-            metadata={"genres": ["Space Warfare"]},
-        )
-        scorer = TagOverlapScorer()
-        score = scorer.score(candidate, context)
-        assert score > 0.0
+    def test_a_one_star_match_scores_half_a_five_star_one(self) -> None:
+        def score(rating: int) -> float:
+            return self._score([make_item(genres="War", rating=rating)], "War")
 
-
-class TestScoringContextClusters:
-    def test_consumed_clusters_populated(self) -> None:
-        consumed = [
-            make_item(rating=5, metadata={"genre": "Science Fiction"}),
-            make_item(rating=5, metadata={"genre": "Fantasy"}),
-        ]
-        context = _build_context(consumed=consumed)
-        assert "science_fiction" in context.consumed_clusters
-        assert "fantasy" in context.consumed_clusters
+        assert score(1) == score(5) / 2 == 0.25
 
 
 class TestSeriesOrderScorer:

@@ -187,7 +187,7 @@ _REGISTRY: tuple[SettingMetadata, ...] = (
     _entry(
         "recommendations.scorer_weights.tag_overlap",
         label="Tag overlap weight",
-        help="Weight for the share of a candidate's tags and genres you have consumed, falling back to genre clusters when none match (0 disables).",
+        help="Weight for how closely an item's tags and genre clusters match something you've consumed, scaled by how you rated it (0 disables).",
         type="float",
         default=1.0,
         validation=Validation(min=0.0),

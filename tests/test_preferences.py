@@ -367,17 +367,8 @@ class TestCreatorNamespaceIsFlatAcrossTypes:
         assert preferences.get_author_score("Alex Garland") == 0.0
 
     def test_each_cowriter_is_keyed_on_their_own(self):
-        analyzer = PreferenceAnalyzer(min_rating=4)
-
-        preferences = analyzer.analyze(
-            [
-                self._rated(
-                    "1",
-                    creator="Taylor Sheridan, Hugh Dillon",
-                    rating=5,
-                    content_type=ContentType.TV_SHOW,
-                )
-            ]
+        preferences = PreferenceAnalyzer(min_rating=4).analyze(
+            [_rated_book("1", "Taylor Sheridan, Hugh Dillon", 5, "Drama")]
         )
 
         assert preferences.preferred_authors == {
@@ -388,14 +379,7 @@ class TestCreatorNamespaceIsFlatAcrossTypes:
     def test_a_joined_creator_string_scores_its_best_creator(self):
         """The "because you enjoy works by" reasoning looks up the whole column."""
         preferences = PreferenceAnalyzer(min_rating=4).analyze(
-            [
-                self._rated(
-                    "1",
-                    creator="Taylor Sheridan",
-                    rating=5,
-                    content_type=ContentType.TV_SHOW,
-                )
-            ]
+            [_rated_book("1", "Taylor Sheridan", 5, "Drama")]
         )
 
         assert preferences.get_author_score("Hugh Dillon, Taylor Sheridan") == 1.0
