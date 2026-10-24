@@ -145,9 +145,9 @@ its own rewrites nothing. Set the zone before the import that matters.
 
 ## Items you are part-way through
 
-Something in progress is not offered back to you. A book you are reading, a game you are playing and the season of a show you are mid-way through all leave the candidate set. What follows them still appears, scored without a `continuation` row, so the next season cannot jump the queue while one is in flight. Once nothing in the series is in progress, what follows an entry you have finished carries the `continuation` boost, lifting a show you are between seasons of above one you never started.
+Something in progress is not offered back to you: the book you are reading, the game you are playing, the season you are mid-way through. What follows still appears, without a `continuation` row, so the next season cannot jump the queue. Once nothing in the series is in progress, what follows a finished entry carries the `continuation` boost.
 
-A show with a known season count is expanded to season-level candidates for scoring while the library stays show-level, so the season in flight is excluded on its own without taking its siblings with it. Which season that is comes from per-season episode counts where a source reports them. Without them, a show with a season finished is between seasons, so its next season is offered and nudged rather than held back, and a show with none finished is in season 1. A show in progress with no season count from any source cannot be split, and leaves the candidate set whole.
+A show with a known season count is scored season by season, so the season in flight leaves on its own. Per-season episode counts name that season where a source reports them. Without them, a show with a season finished is between seasons and its next season is offered, while one with none finished is in season 1. A show with no season count from any source cannot be split, and leaves whole while in progress.
 
 ## Ignored items
 
