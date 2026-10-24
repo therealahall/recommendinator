@@ -247,7 +247,7 @@ RecommendationEngine
   |-- ScoringPipeline (always runs; its aggregate IS the emitted score)
   |     |-- GenreMatchScorer        genre preference, dislike included
   |     |-- CreatorMatchScorer      author/director/creators/developer
-  |     |-- TagOverlapScorer        share of tags consumed, clusters as fallback
+  |     |-- TagOverlapScorer        closest tag and cluster match to a consumed item, by rating
   |     |-- SeriesOrderScorer       next in sequence
   |     |-- RatingPatternScorer     rating history in matching genres
   |     |-- ContentLengthScorer     soft penalty for length mismatch
@@ -292,8 +292,9 @@ Invariants:
   [SCORING.md](docs/SCORING.md#variety-after-completion).
 
 **Cross-content-type matching is a lookup, not a model.** Genre clusters
-(`genre_clusters.py`) map raw genre and tag terms onto a fixed set of thematic
-clusters, so a book tagged "space warfare" reaches a TV show tagged "war".
+(`genre_clusters.py`) map genre and tag terms onto a fixed set of thematic
+clusters, which tag overlap counts as extra tags, so a book tagged "space
+warfare" reaches a TV show tagged "war".
 Compound terms like "Sci-Fi & Fantasy" split first (`genre_normalizer.py`).
 
 **Adaptations and reference items are matched through an index**

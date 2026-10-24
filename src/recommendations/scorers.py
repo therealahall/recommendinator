@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 
 from src.models.content import ContentItem, ContentType
@@ -31,6 +31,21 @@ def extract_creators(item: ContentItem) -> frozenset[str]:
     return frozenset()
 
 
+#: Added to a consumed item's term count, so richer items reach higher and a
+#: one-tag item can't give every candidate sharing that tag full marks.
+_TAG_SET_PADDING = 2
+
+
+def _tag_terms(genres: list[str]) -> frozenset[str]:
+    # Prefixed: unprefixed, the fantasy cluster would count as the fantasy term.
+    clusters = get_clusters_for_terms(genres)
+    return frozenset(genres) | {f"cluster:{cluster}" for cluster in clusters}
+
+
+def _rating_lift(rating: int) -> float:
+    return 0.5 + 0.5 * (rating - 1) / 4
+
+
 def _average_series_rating(series_ratings: list[int]) -> float | None:
     if not series_ratings:
         return None
@@ -48,8 +63,9 @@ class ScoringContext:
     series_order: SeriesOrder
 
     # Pre-computed lookups (populated by __post_init__)
-    consumed_genres: set[str] = field(default_factory=set)
-    consumed_clusters: set[str] = field(default_factory=set)
+    tag_set_divisors: list[int] = field(default_factory=list)
+    tag_set_lifts: list[float] = field(default_factory=list)
+    tag_sets_by_term: dict[str, list[int]] = field(default_factory=dict)
     consumed_creators: set[str] = field(default_factory=set)
     ratings_by_genre: dict[str, list[int]] = field(default_factory=dict)
     series_ratings: dict[str, list[int]] = field(default_factory=dict)
@@ -68,15 +84,18 @@ class ScoringContext:
     def __post_init__(self) -> None:
         genre_ratings: dict[str, list[int]] = defaultdict(list)
         series_ratings: dict[str, list[int]] = defaultdict(list)
+        best_lifts: dict[frozenset[str], float] = {}
+        tag_sets_by_term: dict[str, list[int]] = defaultdict(list)
         creators: set[str] = set()
-        genres: set[str] = set()
 
         for item in self.consumed_items:
             item_genres = extract_genres(item)
-            genres.update(item_genres)
             if item.rating is not None:
                 for genre in item_genres:
                     genre_ratings[genre].append(item.rating)
+                terms = _tag_terms(item_genres)
+                lift = _rating_lift(item.rating)
+                best_lifts[terms] = max(best_lifts.get(terms, lift), lift)
 
             creators.update(extract_creators(item))
 
@@ -84,8 +103,13 @@ class ScoringContext:
             if series is not None and item.rating is not None:
                 series_ratings[series].append(item.rating)
 
-        self.consumed_genres = genres
-        self.consumed_clusters = get_clusters_for_terms(list(genres))
+        for ordinal, terms in enumerate(best_lifts):
+            for term in terms:
+                tag_sets_by_term[term].append(ordinal)
+
+        self.tag_set_divisors = [len(terms) + _TAG_SET_PADDING for terms in best_lifts]
+        self.tag_set_lifts = list(best_lifts.values())
+        self.tag_sets_by_term = dict(tag_sets_by_term)
         self.consumed_creators = creators
         self.ratings_by_genre = dict(genre_ratings)
         self.series_ratings = dict(series_ratings)
@@ -158,22 +182,21 @@ class TagOverlapScorer(Scorer):
         super().__init__(weight)
 
     def score(self, candidate: ContentItem, context: ScoringContext) -> float:
-        candidate_genres = set(extract_genres(candidate))
-        if not candidate_genres or not context.consumed_genres:
-            return 0.0
-
-        matched = candidate_genres & context.consumed_genres
-        if matched:
-            return len(matched) / len(candidate_genres)
-
-        # A fallback, never a competitor: the few coarse clusters span a whole
-        # library, so their share is nearly always 1.0 and max() would flatten
-        # every direct share back into one plateau.
-        candidate_clusters = get_clusters_for_terms(list(candidate_genres))
-        if not candidate_clusters:
-            return 0.0
-        return len(candidate_clusters & context.consumed_clusters) / len(
-            candidate_clusters
+        # Divided by the consumed item's terms, not the candidate's: tags the
+        # candidate adds beyond the match cost it nothing here.
+        hits = Counter(
+            ordinal
+            for term in _tag_terms(extract_genres(candidate))
+            for ordinal in context.tag_sets_by_term.get(term, ())
+        )
+        return max(
+            (
+                count
+                / context.tag_set_divisors[ordinal]
+                * context.tag_set_lifts[ordinal]
+                for ordinal, count in hits.items()
+            ),
+            default=0.0,
         )
 
 

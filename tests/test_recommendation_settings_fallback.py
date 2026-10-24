@@ -97,7 +97,7 @@ def _seed_split_taste_library(storage: StorageManager) -> None:
     unread = ConsumptionStatus.UNREAD
     for item_id, title, author, genre, status, rating in (
         ("liked", "Ash Harbour", "Vera Lang", "Science Fiction", completed, 5),
-        ("disliked", "Grey Ledger", "Miles Crane", "Romance", completed, 1),
+        ("disliked", "Grey Ledger", "Miles Crane", "Romance", completed, 2),
         ("genre-led", "Neon Divide", "Miles Crane", "Science Fiction", unread, None),
         ("creator-led", "Quiet Harvest", "Vera Lang", "Romance", unread, None),
     ):
