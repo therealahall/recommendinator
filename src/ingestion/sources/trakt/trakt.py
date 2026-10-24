@@ -197,20 +197,26 @@ def fetch_show_season_totals(
     return totals
 
 
-def _show_season_progress(
-    seasons: list[dict[str, Any]],
-    season_totals: dict[int, int],
-    fully_watched: bool,
-) -> tuple[list[int], int]:
-    """Season 0 (specials) is excluded from both values."""
-    watched: list[int] = []
+def _episodes_watched_by_season(seasons: list[dict[str, Any]]) -> dict[int, int]:
+    """Season 0 (specials) is excluded, as is a season with nothing watched."""
+    counts: dict[int, int] = {}
     for season in seasons:
         number = season.get("number")
         if not isinstance(number, int) or number < 1:
             continue
         watched_count = len(season.get("episodes") or [])
-        if watched_count == 0:
-            continue
+        if watched_count:
+            counts[number] = watched_count
+    return counts
+
+
+def _show_season_progress(
+    episodes_watched: dict[int, int],
+    season_totals: dict[int, int],
+    fully_watched: bool,
+) -> tuple[list[int], int]:
+    watched: list[int] = []
+    for number, watched_count in episodes_watched.items():
         if fully_watched:
             watched.append(number)
             continue
@@ -249,17 +255,6 @@ def _season_watched_dates(
         if latest is not None:
             result[str(number)] = latest.isoformat()
     return result
-
-
-def _watched_episode_count(seasons: list[dict[str, Any]]) -> int:
-    """Count watched episodes across real seasons (excluding specials)."""
-    count = 0
-    for season in seasons:
-        number = season.get("number")
-        if not isinstance(number, int) or number < 1:
-            continue
-        count += len(season.get("episodes") or [])
-    return count
 
 
 def _media_metadata(media: dict[str, Any]) -> dict[str, Any]:
@@ -592,8 +587,10 @@ class TraktPlugin(SourcePlugin):
 
             seasons = entry.get("seasons") or []
             aired_episodes = show.get("aired_episodes") or 0
-            watched_episodes = _watched_episode_count(seasons)
-            fully_watched = aired_episodes > 0 and watched_episodes >= aired_episodes
+            episodes_watched = _episodes_watched_by_season(seasons)
+            fully_watched = (
+                aired_episodes > 0 and sum(episodes_watched.values()) >= aired_episodes
+            )
 
             # The sync endpoint reports only watched episodes with no per-season
             # totals, so an in-progress show needs the per-season episode counts
@@ -607,7 +604,7 @@ class TraktPlugin(SourcePlugin):
                 )
 
             seasons_watched, highest_watched_season = _show_season_progress(
-                seasons, season_totals, fully_watched
+                episodes_watched, season_totals, fully_watched
             )
             total_seasons = (
                 highest_watched_season if fully_watched else len(season_totals)
@@ -616,6 +613,9 @@ class TraktPlugin(SourcePlugin):
             metadata = _media_metadata(show)
             metadata["seasons_watched"] = seasons_watched
             metadata["total_seasons"] = total_seasons
+            metadata["episodes_watched_by_season"] = {
+                str(number): count for number, count in sorted(episodes_watched.items())
+            }
             season_dates = _season_watched_dates(seasons, seasons_watched)
             if season_dates:
                 metadata["seasons_watched_dates"] = season_dates

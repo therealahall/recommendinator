@@ -407,8 +407,8 @@ def total_seasons_of(item: ContentItem) -> int | None:
 
 def in_progress_seasons(item: ContentItem) -> set[int]:
     """A source that counts episodes names the season in flight outright. Without
-    counts, a show with a season finished is between seasons, since Trakt marks
-    any part-watched show in progress; one with none finished is mid season 1.
+    counts, as after an import or a seasons-watched edit, a show with a season
+    finished is between seasons; one with none finished is mid season 1.
     """
     if (
         item.content_type != ContentType.TV_SHOW

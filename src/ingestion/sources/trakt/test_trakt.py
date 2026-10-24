@@ -578,6 +578,45 @@ class TestTraktSeasonExpansionHandoff:
         assert seasons == [3, 4, 5]
         assert all(item.parent_id == "trakt:20" for item in expanded)
 
+    def test_a_season_part_watched_after_finished_ones_stays_in_flight_regression(
+        self,
+    ) -> None:
+        """Trakt dropped its per-season counts, so a show four episodes into
+        season 3 read as between seasons and season 3 came back recommended."""
+        watched = {1: 10, 2: 13, 3: 4}
+        payloads = _all_lists(
+            watched_shows=[
+                {
+                    "last_watched_at": "2022-06-01T00:00:00.000Z",
+                    "show": _show(20, "The Expanse", aired_episodes=62),
+                    "seasons": [
+                        {
+                            "number": season,
+                            "episodes": [{"number": n} for n in range(count)],
+                        }
+                        for season, count in watched.items()
+                    ],
+                }
+            ]
+        )
+        items = _run_fetch(
+            payloads, _config(), season_totals={20: {1: 10, 2: 13, 3: 13, 4: 13}}
+        )
+
+        assert items[0].metadata["episodes_watched_by_season"] == {
+            "1": 10,
+            "2": 13,
+            "3": 4,
+        }
+        statuses = {
+            season.metadata["season"]: season.status
+            for season in expand_tv_shows_to_seasons(items)
+        }
+        assert statuses == {
+            3: ConsumptionStatus.CURRENTLY_CONSUMING,
+            4: ConsumptionStatus.UNREAD,
+        }
+
     def test_partially_watched_first_season_still_surfaces_regression(self) -> None:
         payloads = _all_lists(
             watched_shows=[

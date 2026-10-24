@@ -409,7 +409,7 @@ class TestExpandTvShowsMarksTheSeasonInFlight:
     def test_without_episode_counts_a_show_between_seasons_has_none_in_flight(
         self,
     ) -> None:
-        """Trakt marks a show with season 1 finished in progress, which hid season 2."""
+        """A show in progress with season 1 ticked off by hand hid season 2."""
         by_season = {
             item.metadata["season"]: item.status
             for item in expand_tv_shows_to_seasons([self._show(seasons_watched=[1])])

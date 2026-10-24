@@ -12,7 +12,7 @@ settings < per-user preferences**.
 | `series_order` | Prioritises the next entry in a series you are partway through | 1.5 |
 | `rating_pattern` | Learns from your rating history within a genre | 1.0 |
 | `content_length` | Soft penalty for a length mismatch | 1.0 |
-| `continuation` | Boosts the next entry or season of a series you have begun. Counts only where an earlier entry is finished or begun, and not while any entry of that series is in progress | 2.0 |
+| `continuation` | Boosts the later entries and seasons of a series you have begun. Counts only where an earlier entry is finished or begun, and not while any entry of that series is in progress | 2.0 |
 | `series_affinity` | Boosts franchises you have rated well | 1.0 |
 | `adaptation` | Boosts a film, show or game adapting something you rated well, and the source behind an adaptation you loved. Counts only for an item that adapts something | 1.5 |
 | `custom_preference` | Applies your natural language rules, "avoid X" and "prefer Y". Only in the pipeline when you have rules | 1.0 |
@@ -147,7 +147,7 @@ its own rewrites nothing. Set the zone before the import that matters.
 
 Something in progress is not offered back to you: the book you are reading, the game you are playing, the season you are mid-way through. What follows still appears, without a `continuation` row, so the next season cannot jump the queue. Once nothing in the series is in progress, what follows a finished entry carries the `continuation` boost.
 
-A show with a known season count is scored season by season, so the season in flight leaves on its own. Per-season episode counts name that season where a source reports them. Without them, a show with a season finished is between seasons and its next season is offered, while one with none finished is in season 1. A show with no season count from any source cannot be split, and leaves whole while in progress.
+A show with a known season count is scored season by season, so the season in flight leaves on its own. Trakt and Tautulli count episodes per season, which names it. Without counts, as after an import, a show with a season finished is between seasons and its next season is offered, while one with none finished is in season 1. A show with no season count cannot be split, and leaves whole while in progress.
 
 ## Ignored items
 
