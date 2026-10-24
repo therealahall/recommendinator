@@ -12,7 +12,7 @@ settings < per-user preferences**.
 | `series_order` | Prioritises the next entry in a series you are partway through | 1.5 |
 | `rating_pattern` | Learns from your rating history within a genre | 1.0 |
 | `content_length` | Soft penalty for a length mismatch | 1.0 |
-| `continuation` | Demotes a candidate whose predecessor in its series you have started but not finished. Counts only where such a predecessor exists | 2.0 |
+| `continuation` | Boosts the next entry or season of a series you have begun. Counts only where an earlier entry is finished or begun, and not while any entry of that series is in progress | 2.0 |
 | `series_affinity` | Boosts franchises you have rated well | 1.0 |
 | `adaptation` | Boosts a film, show or game adapting something you rated well, and the source behind an adaptation you loved. Counts only for an item that adapts something | 1.5 |
 | `custom_preference` | Applies your natural language rules, "avoid X" and "prefer Y". Only in the pipeline when you have rules | 1.0 |
@@ -25,7 +25,7 @@ the number beside them. Nothing is added outside that budget, and there is no
 second combination stage.
 
 A scorer that structurally cannot fire for an item is left out of both the panel
-and the weight the mean divides by: `continuation` on something no in-progress entry precedes,
+and the weight the mean divides by: `continuation` on an entry nothing begun precedes or whose series is in progress,
 `adaptation` on something that adapts nothing. Neither can cost an item
 score it had no way to earn. A neutral `0.5` for want of evidence is a real
 contribution and keeps its weight.
@@ -145,7 +145,7 @@ its own rewrites nothing. Set the zone before the import that matters.
 
 ## Items you are part-way through
 
-Something in progress is not offered back to you. A book you are reading, a game you are playing and the season of a show you are mid-way through all leave the candidate set, and what follows them is demoted rather than dropped: the next season or the next entry in the series still appears, its score pulled down by the `continuation` row. A strong match can still outrank a weak one with nothing in progress before it.
+Something in progress is not offered back to you. A book you are reading, a game you are playing and the season of a show you are mid-way through all leave the candidate set. What follows them still appears, scored without a `continuation` row, so the next season cannot jump the queue while one is in flight. Once nothing in the series is in progress, what follows an entry you have finished carries the `continuation` boost, lifting a show you are between seasons of above one you never started.
 
 A show with a known season count is expanded to season-level candidates for scoring while the library stays show-level, so the season in flight is excluded on its own without taking its siblings with it. Which season that is comes from per-season episode counts where a source reports them, and otherwise from the lowest season you have not finished. A show in progress with no season count from any source cannot be split, and leaves the candidate set whole.
 
