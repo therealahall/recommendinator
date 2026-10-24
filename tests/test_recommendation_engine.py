@@ -1905,7 +1905,7 @@ class TestContinuationScorerExclusion:
     breakdown everywhere else."""
 
     @staticmethod
-    def _show(item_id, title, status, total_seasons, seasons_watched=()):
+    def _show(item_id, title, status, total_seasons, seasons_watched=(), **metadata):
         return ContentItem(
             id=item_id,
             title=title,
@@ -1916,6 +1916,7 @@ class TestContinuationScorerExclusion:
                 "genres": ["Drama"],
                 "total_seasons": total_seasons,
                 "seasons_watched": list(seasons_watched),
+                **metadata,
             },
         )
 
@@ -1955,12 +1956,51 @@ class TestContinuationScorerExclusion:
     ):
         """Season 6 jumped the queue while season 5 was still being watched."""
         show = self._show(
-            "x", "Show X", ConsumptionStatus.CURRENTLY_CONSUMING, 6, (1, 2, 3, 4)
+            "x",
+            "Show X",
+            ConsumptionStatus.CURRENTLY_CONSUMING,
+            6,
+            (1, 2, 3, 4),
+            episodes_watched_by_season={"5": 3},
         )
 
         scored = self._recommend_shows(engine, mock_storage, [show])
 
+        assert "Show X (Season 5)" not in scored
         assert "continuation" not in scored["Show X (Season 6)"].score_breakdown
+
+    def test_a_show_between_seasons_offers_and_nudges_its_next_one(
+        self, engine, mock_storage
+    ):
+        """Trakt marks a part-watched show in progress with no episode counts,
+        which read as mid season 3 and hid it from the candidates."""
+        show = self._show(
+            "t", "Show T", ConsumptionStatus.CURRENTLY_CONSUMING, 4, (1, 2)
+        )
+
+        scored = self._recommend_shows(
+            engine, mock_storage, [show], UserPreferenceConfig(series_in_order=False)
+        )
+
+        assert {"Show T (Season 3)", "Show T (Season 4)"} <= scored.keys()
+        assert scored["Show T (Season 3)"].score_breakdown["continuation"] == 1.0
+
+    def test_a_show_begun_with_nothing_finished_holds_back_season_1(
+        self, engine, mock_storage
+    ):
+        """With no episode counts, a show being watched came back as its own
+        season 1."""
+        show = self._show("n", "Show N", ConsumptionStatus.CURRENTLY_CONSUMING, 3)
+
+        scored = self._recommend_shows(
+            engine, mock_storage, [show], UserPreferenceConfig(series_in_order=False)
+        )
+
+        assert "Show N (Season 1)" not in scored
+        assert all(
+            "continuation" not in scored[f"Show N (Season {season})"].score_breakdown
+            for season in (2, 3)
+        )
 
     def test_the_next_season_of_a_begun_show_outranks_an_unstarted_one(
         self, engine, mock_storage

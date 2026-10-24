@@ -406,15 +406,16 @@ class TestExpandTvShowsMarksTheSeasonInFlight:
             3: ConsumptionStatus.UNREAD,
         }
 
-    def test_without_episode_counts_the_lowest_unfinished_season_is_in_flight(
+    def test_without_episode_counts_a_show_between_seasons_has_none_in_flight(
         self,
     ) -> None:
+        """Trakt marks a show with season 1 finished in progress, which hid season 2."""
         by_season = {
             item.metadata["season"]: item.status
             for item in expand_tv_shows_to_seasons([self._show(seasons_watched=[1])])
         }
         assert by_season == {
-            2: ConsumptionStatus.CURRENTLY_CONSUMING,
+            2: ConsumptionStatus.UNREAD,
             3: ConsumptionStatus.UNREAD,
         }
 
@@ -453,7 +454,7 @@ class TestInProgressSeasons:
             episodes_watched_by_season={"1": 10},
             plex_season_episode_counts={"1": 10},
         )
-        assert in_progress_seasons(show) == {2}
+        assert in_progress_seasons(show) == set()
 
     def test_a_show_with_every_season_watched_has_none_in_flight(self) -> None:
         show = self._show(
