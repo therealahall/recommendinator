@@ -187,7 +187,7 @@ _REGISTRY: tuple[SettingMetadata, ...] = (
     _entry(
         "recommendations.scorer_weights.tag_overlap",
         label="Tag overlap weight",
-        help="Weight for overlap between candidate and liked-item tags (0 disables).",
+        help="Weight for the share of a candidate's tags and genres you have consumed, falling back to genre clusters when none match (0 disables).",
         type="float",
         default=1.0,
         validation=Validation(min=0.0),
@@ -219,7 +219,7 @@ _REGISTRY: tuple[SettingMetadata, ...] = (
     _entry(
         "recommendations.scorer_weights.continuation",
         label="Continuation weight",
-        help="Weight boosting the next entry of a series you have begun, while none of it is in progress (0 disables).",
+        help="Weight boosting the later entries of a series you have begun, while none of it is in progress (0 disables).",
         type="float",
         default=2.0,
         validation=Validation(min=0.0),

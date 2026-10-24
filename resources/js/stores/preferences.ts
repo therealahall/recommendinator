@@ -38,7 +38,7 @@ export const SCORER_TOOLTIPS: Record<string, string> = {
   series_order: "Prioritizes the next item in a series you've started (e.g. Fallout 1, then Fallout 2). Scores higher when you rated earlier entries well. Default: 1.5",
   rating_pattern: "Uses your rating history per genre to predict how much you'd enjoy a recommendation. Genres you rate highly get boosted. Default: 1.0",
   content_length: 'Soft-penalizes items that don\'t match your preferred content length (short/medium/long) per content type. Default: 1.0',
-  continuation: "Boosts the next entry of a series you've begun (e.g. season 3 of a show you watched two seasons of). Holds off while you're part-way through an entry of that series. Default: 2.0",
+  continuation: "Boosts the later entries of a series you've begun (e.g. seasons 3 and 4 of a show you watched two seasons of). Holds off while you're part-way through an entry of that series. Default: 2.0",
   series_affinity: "Boosts items from franchises you've rated highly (avg 4+ stars). Keeps recommending series you love. Default: 1.0",
   adaptation: 'Boosts a film, show or game that adapts something you rated well, and the book behind an adaptation you loved. Default: 1.5',
   custom_preference: 'Applies your natural language rules, the "avoid X" and "prefer Y" ones, from the Rules section below. Default: 1.0',
