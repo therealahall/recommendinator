@@ -406,9 +406,9 @@ def total_seasons_of(item: ContentItem) -> int | None:
 
 
 def in_progress_seasons(item: ContentItem) -> set[int]:
-    """A source that counts episodes names the season in flight outright. One
-    that only reports the show as in progress does not, and the lowest season
-    still unfinished is where a viewer who started at the beginning is.
+    """A source that counts episodes names the season in flight outright. Without
+    counts, a show with a season finished is between seasons, since Trakt marks
+    any part-watched show in progress; one with none finished is mid season 1.
     """
     if (
         item.content_type != ContentType.TV_SHOW
@@ -426,17 +426,11 @@ def in_progress_seasons(item: ContentItem) -> set[int]:
     }
     if started := begun - watched:
         return started
+    if watched:
+        return set()
 
     total = total_seasons_of(item)
-    if not total or total < 1:
-        return set()
-    unfinished = (
-        season
-        for season in range(1, min(total, MAX_SEASONS) + 1)
-        if season not in watched
-    )
-    first = next(unfinished, None)
-    return set() if first is None else {first}
+    return {1} if total and total >= 1 else set()
 
 
 def inject_season_progress_tracking(
