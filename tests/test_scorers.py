@@ -651,22 +651,24 @@ def _season(title: str, season: int, status: ConsumptionStatus) -> ContentItem:
 
 
 class TestContinuationScorer:
-    def test_a_later_season_of_a_show_in_flight_is_demoted(self) -> None:
+    def test_the_season_after_watched_ones_is_nudged_to_the_top(self) -> None:
         candidate = _season("Breaking Bad", 3, ConsumptionStatus.UNREAD)
         context = _build_context(
-            unconsumed=[candidate],
-            in_progress=[
-                _season("Breaking Bad", 2, ConsumptionStatus.CURRENTLY_CONSUMING)
+            consumed=[
+                _season("Breaking Bad", season, ConsumptionStatus.COMPLETED)
+                for season in (1, 2)
             ],
+            unconsumed=[candidate],
             content_type=ContentType.TV_SHOW,
         )
         scorer = ContinuationScorer()
         assert scorer.applies(candidate, context) is True
-        assert scorer.score(candidate, context) < 0.5
+        assert scorer.score(candidate, context) == 1.0
 
-    def test_an_earlier_season_than_the_one_in_flight_does_not_apply(self) -> None:
-        candidate = _season("Breaking Bad", 1, ConsumptionStatus.UNREAD)
+    def test_a_later_season_is_silent_while_one_is_in_flight(self) -> None:
+        candidate = _season("Breaking Bad", 3, ConsumptionStatus.UNREAD)
         context = _build_context(
+            consumed=[_season("Breaking Bad", 1, ConsumptionStatus.COMPLETED)],
             unconsumed=[candidate],
             in_progress=[
                 _season("Breaking Bad", 2, ConsumptionStatus.CURRENTLY_CONSUMING)
@@ -675,13 +677,20 @@ class TestContinuationScorer:
         )
         assert ContinuationScorer().applies(candidate, context) is False
 
-    def test_another_show_is_untouched(self) -> None:
+    def test_an_earlier_season_than_the_one_watched_does_not_apply(self) -> None:
+        candidate = _season("Breaking Bad", 1, ConsumptionStatus.UNREAD)
+        context = _build_context(
+            consumed=[_season("Breaking Bad", 2, ConsumptionStatus.COMPLETED)],
+            unconsumed=[candidate],
+            content_type=ContentType.TV_SHOW,
+        )
+        assert ContinuationScorer().applies(candidate, context) is False
+
+    def test_a_show_never_started_is_untouched(self) -> None:
         candidate = _season("The Wire", 2, ConsumptionStatus.UNREAD)
         context = _build_context(
+            consumed=[_season("Breaking Bad", 1, ConsumptionStatus.COMPLETED)],
             unconsumed=[candidate],
-            in_progress=[
-                _season("Breaking Bad", 1, ConsumptionStatus.CURRENTLY_CONSUMING)
-            ],
             content_type=ContentType.TV_SHOW,
         )
         assert ContinuationScorer().applies(candidate, context) is False
@@ -690,22 +699,6 @@ class TestContinuationScorer:
         candidate = make_item(title="Piranesi", status=ConsumptionStatus.UNREAD)
         context = _build_context(unconsumed=[candidate])
         assert ContinuationScorer().applies(candidate, context) is False
-
-    def test_the_next_book_after_one_being_read_is_demoted(self) -> None:
-        reading = make_item(
-            title="Hyperion",
-            status=ConsumptionStatus.CURRENTLY_CONSUMING,
-            metadata={"series_name": "Hyperion Cantos", "series_number": 1},
-        )
-        candidate = make_item(
-            title="The Fall of Hyperion",
-            status=ConsumptionStatus.UNREAD,
-            metadata={"series_name": "Hyperion Cantos", "series_number": 2},
-        )
-        context = _build_context(unconsumed=[candidate], in_progress=[reading])
-        scorer = ContinuationScorer()
-        assert scorer.applies(candidate, context) is True
-        assert scorer.score(candidate, context) < 0.5
 
 
 class TestSeriesAffinityScorer:

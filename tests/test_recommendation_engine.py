@@ -1901,40 +1901,79 @@ class TestPositionlessSeriesOfferedInReleaseOrder:
 
 
 class TestContinuationScorerExclusion:
-    """ContinuationScorer is excluded where nothing precedes the candidate."""
+    """Continuation nudges what follows a begun series, and is absent from the
+    breakdown everywhere else."""
 
-    def test_no_active_items_excludes_continuation_from_breakdown(
+    @staticmethod
+    def _show(item_id, title, status, total_seasons, seasons_watched=()):
+        return ContentItem(
+            id=item_id,
+            title=title,
+            content_type=ContentType.TV_SHOW,
+            status=status,
+            rating=5 if status == ConsumptionStatus.COMPLETED else None,
+            metadata={
+                "genres": ["Drama"],
+                "total_seasons": total_seasons,
+                "seasons_watched": list(seasons_watched),
+            },
+        )
+
+    def _recommend_shows(self, engine, mock_storage, shows, config=None):
+        watched = self._show("seen", "Watched Show", ConsumptionStatus.COMPLETED, 1)
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: [watched]
+        )
+        mock_storage.get_unconsumed_items = Mock(return_value=shows)
+        return {
+            rec.item.title: rec
+            for rec in engine.generate_recommendations(
+                content_type=ContentType.TV_SHOW,
+                count=10,
+                user_preference_config=config,
+            )
+        }
+
+    def test_a_zero_continuation_weight_adds_nothing_to_the_next_season(
         self, engine, mock_storage
     ):
-        """When nothing in the candidate's series is in progress, 'continuation'
-        must not appear in score_breakdown (it would be all zeros)."""
-        consumed = ContentItem(
-            id="c1",
-            title="Dune",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-            metadata={"genres": ["Science Fiction"]},
-        )
-        unconsumed = ContentItem(
-            id="u1",
-            title="Hyperion",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"genres": ["Science Fiction"]},
+        begun = self._show("y", "Show Y", ConsumptionStatus.UNREAD, 3, (1, 2))
+        neutral_only = UserPreferenceConfig(
+            scorer_weights={
+                key: 0.0 for key in SCORER_NAME_MAP if key != "content_length"
+            }
         )
 
-        mock_storage.get_completed_items = Mock(
-            side_effect=lambda content_type=None, **kwargs: [consumed]
-        )
-        mock_storage.get_unconsumed_items = Mock(return_value=[unconsumed])
+        scored = self._recommend_shows(engine, mock_storage, [begun], neutral_only)
 
-        recommendations = engine.generate_recommendations(
-            content_type=ContentType.BOOK, count=1
+        next_season = scored["Show Y (Season 3)"]
+        assert next_season.score_breakdown["continuation"] == 1.0
+        assert next_season.score == pytest.approx(0.5)
+
+    def test_the_season_after_one_in_flight_carries_no_continuation_row(
+        self, engine, mock_storage
+    ):
+        """Season 6 jumped the queue while season 5 was still being watched."""
+        show = self._show(
+            "x", "Show X", ConsumptionStatus.CURRENTLY_CONSUMING, 6, (1, 2, 3, 4)
         )
 
-        assert len(recommendations) == 1
-        assert "continuation" not in recommendations[0].score_breakdown
+        scored = self._recommend_shows(engine, mock_storage, [show])
+
+        assert "continuation" not in scored["Show X (Season 6)"].score_breakdown
+
+    def test_the_next_season_of_a_begun_show_outranks_an_unstarted_one(
+        self, engine, mock_storage
+    ):
+        """Continuation demoted every next season below shows nobody had begun."""
+        begun = self._show("y", "Show Y", ConsumptionStatus.UNREAD, 3, (1, 2))
+        fresh = self._show("z", "Show Z", ConsumptionStatus.UNREAD, 3)
+
+        scored = self._recommend_shows(engine, mock_storage, [begun, fresh])
+
+        next_season = scored["Show Y (Season 3)"]
+        assert next_season.score_breakdown["continuation"] == 1.0
+        assert next_season.score > scored["Show Z (Season 1)"].score
 
     def test_the_book_after_one_being_read_follows_a_finished_first(
         self, real_engine, real_storage
@@ -1974,24 +2013,17 @@ class TestContinuationScorerExclusion:
 
         (endymion,) = recommendations
         assert endymion.item.title == "Endymion"
-        assert endymion.score_breakdown["continuation"] < 0.5
+        assert "continuation" not in endymion.score_breakdown
 
-    def test_the_next_in_a_series_being_read_is_offered_and_demoted(
+    def test_the_book_after_a_finished_one_is_nudged_and_a_standalone_is_not(
         self, engine, mock_storage
     ):
-        consumed = ContentItem(
-            id="c1",
-            title="Dune",
+        finished = ContentItem(
+            id="h1",
+            title="Hyperion",
             content_type=ContentType.BOOK,
             status=ConsumptionStatus.COMPLETED,
             rating=5,
-            metadata={"genres": ["Science Fiction"]},
-        )
-        reading = ContentItem(
-            id="u1",
-            title="Hyperion",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.CURRENTLY_CONSUMING,
             metadata={
                 "genres": ["Science Fiction"],
                 "series_name": "Hyperion Cantos",
@@ -2018,21 +2050,16 @@ class TestContinuationScorerExclusion:
         )
 
         mock_storage.get_completed_items = Mock(
-            side_effect=lambda content_type=None, **kwargs: [consumed]
+            side_effect=lambda content_type=None, **kwargs: [finished]
         )
-        mock_storage.get_unconsumed_items = Mock(
-            return_value=[reading, sequel, standalone]
-        )
+        mock_storage.get_unconsumed_items = Mock(return_value=[sequel, standalone])
 
         recommendations = engine.generate_recommendations(
             content_type=ContentType.BOOK, count=5
         )
 
-        titles = [rec.item.title for rec in recommendations]
-        assert "Hyperion" not in titles
-        assert titles.index("Foundation") < titles.index("The Fall of Hyperion")
         scored = {rec.item.title: rec for rec in recommendations}
-        assert scored["The Fall of Hyperion"].score_breakdown["continuation"] < 0.5
+        assert scored["The Fall of Hyperion"].score_breakdown["continuation"] == 1.0
         assert "continuation" not in scored["Foundation"].score_breakdown
 
     def test_an_idle_book_scores_the_same_whether_or_not_anything_is_in_progress(
@@ -3055,7 +3082,7 @@ class TestShowInFlightRegression:
 
         assert self._recommend(real_engine) == []
 
-    def test_a_later_season_of_a_show_being_watched_is_offered_last(
+    def test_a_later_season_of_a_show_being_watched_is_still_offered(
         self, real_engine, real_storage
     ):
         real_storage.save_content_item(
@@ -3084,7 +3111,7 @@ class TestShowInFlightRegression:
         titles = self._recommend(real_engine)
 
         assert "Ongoing Show (Season 1)" not in titles
-        assert titles == ["Fresh Show", "Ongoing Show (Season 2)"]
+        assert sorted(titles) == ["Fresh Show", "Ongoing Show (Season 2)"]
 
 
 class TestSeasonCandidateIdentityRegression:

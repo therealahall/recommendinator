@@ -294,7 +294,7 @@ class RecommendationEngine:
 
         # What the user is part-way through is not something to recommend back
         # to them, so it leaves the candidate set — but its series position is
-        # kept, to demote whatever follows it.
+        # kept, so continuation holds off nudging the rest of that series.
         in_progress_positions = build_series_tracking(
             [
                 item

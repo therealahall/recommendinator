@@ -292,14 +292,9 @@ class CustomPreferenceScorer(Scorer):
         return 0.5  # Neutral when no rules match
 
 
-#: Low rather than zero: a later season is still worth offering eventually, it
-#: just must not outrank something that starts nothing.
-_CONTINUATION_SCORE = 0.15
-
-
 class ContinuationScorer(Scorer):
-    """Demote what follows something in progress. The in-progress entry itself
-    never reaches scoring — the engine drops it from the candidate set.
+    """Nudge what continues a series already begun. Silent while an entry of
+    the series is in flight, so season 6 cannot jump the queue mid season 5.
     """
 
     def __init__(self, weight: float = 2.0) -> None:
@@ -310,13 +305,14 @@ class ContinuationScorer(Scorer):
         if located is None:
             return False
         series, position = located
+        if context.in_progress_positions.get(series):
+            return False
         return any(
-            earlier < position
-            for earlier in context.in_progress_positions.get(series, ())
+            earlier < position for earlier in context.series_tracking.get(series, ())
         )
 
     def score(self, candidate: ContentItem, context: ScoringContext) -> float:
-        return _CONTINUATION_SCORE
+        return 1.0
 
 
 class SeriesAffinityScorer(Scorer):

@@ -219,7 +219,7 @@ _REGISTRY: tuple[SettingMetadata, ...] = (
     _entry(
         "recommendations.scorer_weights.continuation",
         label="Continuation weight",
-        help="Weight demoting the next entry after something you are part-way through (0 disables).",
+        help="Weight boosting the next entry of a series you have begun, while none of it is in progress (0 disables).",
         type="float",
         default=2.0,
         validation=Validation(min=0.0),
