@@ -8,7 +8,26 @@ logger = logging.getLogger(__name__)
 
 
 _NAME_SUFFIXES = frozenset(
-    {"inc", "ltd", "llc", "co", "corp", "plc", "gmbh", "jr", "sr", "ii", "iii"}
+    {
+        "inc",
+        "ltd",
+        "llc",
+        "co",
+        "corp",
+        "plc",
+        "gmbh",
+        "sa",
+        "limited",
+        "lp",
+        "pty",
+        "pty ltd",
+        "ab",
+        "oy",
+        "jr",
+        "sr",
+        "ii",
+        "iii",
+    }
 )
 
 
