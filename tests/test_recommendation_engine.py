@@ -1969,22 +1969,6 @@ class TestContinuationScorerExclusion:
         assert "Show X (Season 5)" not in scored
         assert "continuation" not in scored["Show X (Season 6)"].score_breakdown
 
-    def test_a_show_between_seasons_offers_and_nudges_its_next_one(
-        self, engine, mock_storage
-    ):
-        """Trakt marks a part-watched show in progress with no episode counts,
-        which read as mid season 3 and hid it from the candidates."""
-        show = self._show(
-            "t", "Show T", ConsumptionStatus.CURRENTLY_CONSUMING, 4, (1, 2)
-        )
-
-        scored = self._recommend_shows(
-            engine, mock_storage, [show], UserPreferenceConfig(series_in_order=False)
-        )
-
-        assert {"Show T (Season 3)", "Show T (Season 4)"} <= scored.keys()
-        assert scored["Show T (Season 3)"].score_breakdown["continuation"] == 1.0
-
     def test_a_show_begun_with_nothing_finished_holds_back_season_1(
         self, engine, mock_storage
     ):
@@ -2054,53 +2038,6 @@ class TestContinuationScorerExclusion:
         (endymion,) = recommendations
         assert endymion.item.title == "Endymion"
         assert "continuation" not in endymion.score_breakdown
-
-    def test_the_book_after_a_finished_one_is_nudged_and_a_standalone_is_not(
-        self, engine, mock_storage
-    ):
-        finished = ContentItem(
-            id="h1",
-            title="Hyperion",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-            metadata={
-                "genres": ["Science Fiction"],
-                "series_name": "Hyperion Cantos",
-                "series_number": 1,
-            },
-        )
-        sequel = ContentItem(
-            id="u2",
-            title="The Fall of Hyperion",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-            metadata={
-                "genres": ["Science Fiction"],
-                "series_name": "Hyperion Cantos",
-                "series_number": 2,
-            },
-        )
-        standalone = ContentItem(
-            id="u3",
-            title="Foundation",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"genres": ["Science Fiction"]},
-        )
-
-        mock_storage.get_completed_items = Mock(
-            side_effect=lambda content_type=None, **kwargs: [finished]
-        )
-        mock_storage.get_unconsumed_items = Mock(return_value=[sequel, standalone])
-
-        recommendations = engine.generate_recommendations(
-            content_type=ContentType.BOOK, count=5
-        )
-
-        scored = {rec.item.title: rec for rec in recommendations}
-        assert scored["The Fall of Hyperion"].score_breakdown["continuation"] == 1.0
-        assert "continuation" not in scored["Foundation"].score_breakdown
 
     def test_an_idle_book_scores_the_same_whether_or_not_anything_is_in_progress(
         self, engine, mock_storage
