@@ -843,6 +843,28 @@ class TestAuthorAffinities:
 
         assert profile.author_affinities == {"Terry Brooks": 4.0}
 
+    def test_a_cowritten_item_counts_toward_each_creator(
+        self, profile_generator: ProfileGenerator, storage_manager: StorageManager
+    ) -> None:
+        _save_rated(
+            storage_manager,
+            "drama",
+            [5],
+            ContentType.TV_SHOW,
+            author="Taylor Sheridan, Hugh Dillon",
+        )
+        _save_rated(
+            storage_manager,
+            "western",
+            [3],
+            ContentType.TV_SHOW,
+            author="Taylor Sheridan",
+        )
+
+        profile = profile_generator.generate_profile(user_id=1)
+
+        assert profile.author_affinities == {"Taylor Sheridan": 4.0}
+
     def test_a_film_director_and_a_show_creator_are_authors(
         self, profile_generator: ProfileGenerator, storage_manager: StorageManager
     ) -> None:

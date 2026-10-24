@@ -23,7 +23,7 @@ from src.recommendations.engine import RecommendationEngine
 from src.recommendations.reference_index import SignalIndex
 from tests.factories import make_item, make_storage_mock
 
-_DERIVERS = ("extract_genres", "extract_creator", "get_series_name", "get_sort_title")
+_DERIVERS = ("extract_genres", "extract_creators", "get_series_name", "get_sort_title")
 
 
 def _signal_item(index: int, *, genre: str, content_type: ContentType) -> ContentItem:
@@ -124,7 +124,7 @@ class TestDerivedValuesComputedOncePerItemRegression:
         assert all(rec.contributing_items for rec in recommendations)
         for item in signal_items:
             assert counted_derivers["extract_genres", item.id] == 1
-            assert counted_derivers["extract_creator", item.id] == 1
+            assert counted_derivers["extract_creators", item.id] == 1
             assert counted_derivers["get_series_name", item.id] == 1
             assert counted_derivers["get_sort_title", item.title] == 1
             assert counted_derivers["get_sort_title", item.author] == 1
@@ -273,14 +273,17 @@ class TestAShowIsNeverCitedForItsOwnSeasons:
 class TestCrossTypeReferencesReachedByCreator:
     """A shared creator is a way in that owes nothing to genres or clusters."""
 
-    def test_a_shared_creator_cites_an_item_of_another_type(self) -> None:
+    @pytest.mark.parametrize("credited", ["Mira Vale", "Otto Krane, Mira Vale"])
+    def test_a_shared_creator_cites_an_item_of_another_type(
+        self, credited: str
+    ) -> None:
         consumed = make_item(
             item_id="dust-roads",
             title="Dust Roads",
             content_type=ContentType.BOOK,
             status=ConsumptionStatus.COMPLETED,
             rating=5,
-            author="Mira Vale",
+            author=credited,
             metadata={"genres": ["Western"]},
         )
         candidate = make_item(

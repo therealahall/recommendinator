@@ -7,6 +7,31 @@ from src.recommendations.genre_normalizer import extract_and_normalize_genres
 logger = logging.getLogger(__name__)
 
 
+_NAME_SUFFIXES = frozenset(
+    {"inc", "ltd", "llc", "co", "corp", "plc", "gmbh", "jr", "sr", "ii", "iii"}
+)
+
+
+def creator_names(names: str) -> list[str]:
+    """Storage joins a work's creators with commas, in whatever order its source
+    listed them. A suffix stays on its name: split off, "Ltd." would match every
+    other studio ending in it."""
+    split: list[str] = []
+    for part in names.split(","):
+        name = part.strip()
+        if not name:
+            continue
+        if split and name.replace(".", "").lower() in _NAME_SUFFIXES:
+            split[-1] = f"{split[-1]}, {name}"
+        else:
+            split.append(name)
+    return split
+
+
+def split_creators(names: str) -> frozenset[str]:
+    return frozenset(name.lower() for name in creator_names(names))
+
+
 class UserPreferences:
     def __init__(
         self,
@@ -27,10 +52,14 @@ class UserPreferences:
     def get_author_score(self, author: str | None) -> float:
         if not author:
             return 0.0
-        author_lower = author.lower()
-        positive = self.preferred_authors.get(author_lower, 0.0)
-        negative = self.disliked_authors.get(author_lower, 0.0)
-        return positive - negative
+        return max(
+            (
+                self.preferred_authors.get(name, 0.0)
+                - self.disliked_authors.get(name, 0.0)
+                for name in split_creators(author)
+            ),
+            default=0.0,
+        )
 
     def get_genre_score(self, genre: str | None) -> float:
         if not genre:
@@ -53,9 +82,10 @@ class PreferenceAnalyzer:
         avg_rating = sum(ratings) / len(ratings) if ratings else 0.0
 
         author_ratings = [
-            (item.author.lower(), item.rating)
+            (creator, item.rating)
             for item in consumed_items
             if item.author and item.rating is not None
+            for creator in split_creators(item.author)
         ]
         author_scores, disliked_authors = self._score_attributes(author_ratings)
 

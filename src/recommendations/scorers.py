@@ -10,7 +10,7 @@ from src.recommendations.content_length import score_length_match
 from src.recommendations.genre_clusters import get_clusters_for_terms
 from src.recommendations.genre_normalizer import extract_and_normalize_genres
 from src.recommendations.identity import candidate_key
-from src.recommendations.preferences import UserPreferences
+from src.recommendations.preferences import UserPreferences, split_creators
 from src.utils.series import SeriesOrder, build_series_tracking, is_next_after_consumed
 
 logger = logging.getLogger(__name__)
@@ -20,15 +20,15 @@ def extract_genres(item: ContentItem) -> list[str]:
     return extract_and_normalize_genres(item.metadata)
 
 
-def extract_creator(item: ContentItem) -> str | None:
+def extract_creators(item: ContentItem) -> frozenset[str]:
     if item.author:
-        return item.author.lower()
+        return split_creators(item.author)
     if item.metadata:
         for key in ("director", "developer", "studio", "creator"):
             value = item.metadata.get(key)
             if value:
-                return str(value).lower()
-    return None
+                return split_creators(str(value))
+    return frozenset()
 
 
 def _average_series_rating(series_ratings: list[int]) -> float | None:
@@ -78,9 +78,7 @@ class ScoringContext:
                 for genre in item_genres:
                     genre_ratings[genre].append(item.rating)
 
-            creator = extract_creator(item)
-            if creator:
-                creators.add(creator)
+            creators.update(extract_creators(item))
 
             series = self.series_order.series_of(item)
             if series is not None and item.rating is not None:
@@ -136,10 +134,16 @@ class CreatorMatchScorer(Scorer):
         super().__init__(weight)
 
     def score(self, candidate: ContentItem, context: ScoringContext) -> float:
-        creator = extract_creator(candidate)
-        if not creator:
-            return 0.5  # neutral
+        return max(
+            (
+                self._creator_score(creator, context)
+                for creator in extract_creators(candidate)
+            ),
+            default=0.5,
+        )
 
+    @staticmethod
+    def _creator_score(creator: str, context: ScoringContext) -> float:
         author_score = context.preferences.get_author_score(creator)
         if author_score != 0.0:
             return (author_score + 1.0) / 2.0

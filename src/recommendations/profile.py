@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypedDict
 
 from src.models.content import ContentItem, ContentType
+from src.recommendations.preferences import creator_names
 from src.recommendations.scorers import extract_genres
 from src.storage.schema import PreferenceProfileRow, get_default_user_id
 
@@ -177,13 +178,15 @@ def _ratings_by_genre(items: list[ContentItem]) -> dict[str, list[int]]:
 
 def _ratings_by_author(items: list[ContentItem]) -> dict[str, list[int]]:
     """Keyed on the creator column every content type fills — a book's author, a
-    film's director, a show's creators, a game's developer."""
+    film's director, a show's creators, a game's developer. Pooled case-blind,
+    shown as first spelled."""
     ratings: dict[str, list[int]] = defaultdict(list)
+    spellings: dict[str, str] = {}
     for item in items:
-        author = (item.author or "").strip()
-        if item.rating is None or not author:
+        if item.rating is None or not item.author:
             continue
-        ratings[author].append(item.rating)
+        for name in creator_names(item.author):
+            ratings[spellings.setdefault(name.lower(), name)].append(item.rating)
     return ratings
 
 

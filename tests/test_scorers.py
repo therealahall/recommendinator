@@ -14,7 +14,7 @@ from src.recommendations.scorers import (
     SeriesOrderScorer,
     TagOverlapScorer,
     build_scorers_with_overrides,
-    extract_creator,
+    extract_creators,
     extract_genres,
 )
 from src.utils.series import (
@@ -75,11 +75,29 @@ class TestExtractGenres:
 class TestExtractCreator:
     def test_author_field(self) -> None:
         item = make_item(author="Brandon Sanderson")
-        assert extract_creator(item) == "brandon sanderson"
+        assert extract_creators(item) == {"brandon sanderson"}
 
     def test_director_metadata(self) -> None:
         item = make_item(metadata={"director": "Christopher Nolan"})
-        assert extract_creator(item) == "christopher nolan"
+        assert extract_creators(item) == {"christopher nolan"}
+
+    def test_a_reordered_creator_list_is_the_same_creators(self) -> None:
+        listed = make_item(author="Matt Wolpert, Ronald D. Moore, Ben Nedivi")
+        reordered = make_item(author="Ben Nedivi,Matt Wolpert ,  Ronald D. Moore,")
+        assert extract_creators(listed) == extract_creators(reordered)
+        assert extract_creators(listed) == {
+            "matt wolpert",
+            "ronald d. moore",
+            "ben nedivi",
+        }
+
+    def test_a_suffix_stays_on_the_name_it_follows(self) -> None:
+        item = make_item(author="CAPCOM Co., Ltd., Sammy Davis, Jr., Atlus Co.,LTD")
+        assert extract_creators(item) == {
+            "capcom co., ltd.",
+            "sammy davis, jr.",
+            "atlus co., ltd",
+        }
 
 
 class TestScoringContext:
@@ -149,6 +167,47 @@ class TestCreatorMatchScorer:
         scorer = CreatorMatchScorer()
         score = scorer.score(candidate, context)
         assert score > 0.5
+
+    def test_a_cowritten_show_matches_as_well_as_a_solo_one(self) -> None:
+        consumed = [
+            make_item(
+                author="Taylor Sheridan", rating=5, content_type=ContentType.TV_SHOW
+            )
+        ]
+        context = _build_context(consumed=consumed, content_type=ContentType.TV_SHOW)
+        solo, cowritten = (
+            make_item(
+                author=author,
+                status=ConsumptionStatus.UNREAD,
+                content_type=ContentType.TV_SHOW,
+            )
+            for author in ("Taylor Sheridan", "Taylor Sheridan, Hugh Dillon")
+        )
+        scorer = CreatorMatchScorer()
+        assert scorer.score(cowritten, context) == scorer.score(solo, context) == 1.0
+
+    def test_one_creator_of_an_unrated_cowritten_item_counts_as_consumed(
+        self,
+    ) -> None:
+        context = _build_context(
+            consumed=[make_item(author="Matt Wolpert, Ben Nedivi")]
+        )
+        candidate = make_item(author="Ben Nedivi", status=ConsumptionStatus.UNREAD)
+        assert CreatorMatchScorer().score(candidate, context) == 0.7
+
+    def test_studios_sharing_only_a_company_suffix_do_not_match(self) -> None:
+        consumed = [
+            make_item(
+                author="CAPCOM Co., Ltd.", rating=5, content_type=ContentType.VIDEO_GAME
+            )
+        ]
+        context = _build_context(consumed=consumed, content_type=ContentType.VIDEO_GAME)
+        candidate = make_item(
+            author="KOEI TECMO GAMES CO., LTD.",
+            status=ConsumptionStatus.UNREAD,
+            content_type=ContentType.VIDEO_GAME,
+        )
+        assert CreatorMatchScorer().score(candidate, context) == 0.5
 
 
 class TestTagOverlapScorer:
