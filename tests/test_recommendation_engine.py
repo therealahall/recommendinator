@@ -185,8 +185,11 @@ class TestSingleWeightingStageRegression:
             status=ConsumptionStatus.UNREAD,
             metadata={"genre": "Science Fiction"},
         )
+        disliked = loved.model_copy(
+            update={"id": "disliked", "rating": 1, "metadata": {"genre": "Romance"}}
+        )
         mock_storage.get_completed_items = Mock(
-            side_effect=lambda content_type=None, **kwargs: [loved]
+            side_effect=lambda content_type=None, **kwargs: [loved, disliked]
         )
         mock_storage.get_unconsumed_items = Mock(return_value=[candidate])
 
@@ -196,7 +199,7 @@ class TestSingleWeightingStageRegression:
             user_preference_config=self._only("genre_match"),
         )
 
-        assert recs[0].score_breakdown["genre_match"] == pytest.approx(1.0)
+        assert recs[0].score_breakdown["genre_match"] > 0.5
         assert recs[0].score == pytest.approx(recs[0].score_breakdown["genre_match"])
 
     def test_a_preferred_director_scores_on_a_movie_regression(

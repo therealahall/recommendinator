@@ -143,7 +143,7 @@ def _seed_v32_db_with_retired_weights(path: Path) -> None:
                 ("recommendations.scorer_weights.tag_overlap", "2.0"),
             ],
         )
-        weights = {"series_affinity": 0, "series_order": 0.5, "tag_overlap": 3}
+        weights = {"series_affinity": 0, "rating_pattern": 2, "tag_overlap": 3}
         conn.execute(
             "UPDATE users SET settings = ? WHERE id = 1",
             (json.dumps({"preference_config": {"scorer_weights": weights}}),),

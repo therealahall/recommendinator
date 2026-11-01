@@ -80,8 +80,8 @@ parallel sync and library export, see **[docs/DATA_SOURCES.md](docs/DATA_SOURCES
 
 - Multi-source ingestion, with cross-content recommendations through genre
   clusters
-- A transparent scoring pipeline over genre, creator, series order, tag overlap
-  and rating patterns ([how it works](docs/SCORING.md))
+- A transparent scoring pipeline over genre, creator, tag overlap, content
+  length, series continuation and adaptations ([how it works](docs/SCORING.md))
 - Natural-language [custom rules](docs/CUSTOM_RULES.md) like "avoid horror"
 - [Metadata enrichment](docs/ENRICHMENT_SETUP.md) from TMDB, OpenLibrary and
   RAWG, automatic or edited by hand

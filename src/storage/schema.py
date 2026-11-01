@@ -129,6 +129,7 @@ _RETIRED_SCORER_KEYS: tuple[str, ...] = (
     "series_order",
     "series_affinity",
     "semantic_similarity",
+    "rating_pattern",
 )
 
 # Prefixes of the leaves the AI removal orphaned. By prefix rather than by key,
