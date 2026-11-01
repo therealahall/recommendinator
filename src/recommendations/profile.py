@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypedDict
 
 from src.models.content import ContentItem, ContentType
-from src.recommendations.preferences import creator_names
+from src.recommendations.preferences import creator_names, ratings_by_genre
 from src.recommendations.scorers import extract_genres
 from src.storage.schema import PreferenceProfileRow, get_default_user_id
 
@@ -166,16 +166,6 @@ LIKED_RATING = 3
 SAMPLE_LIMIT = 1000
 
 
-def _ratings_by_genre(items: list[ContentItem]) -> dict[str, list[int]]:
-    ratings: dict[str, list[int]] = defaultdict(list)
-    for item in items:
-        if item.rating is None:
-            continue
-        for genre in extract_genres(item):
-            ratings[genre].append(item.rating)
-    return ratings
-
-
 def _ratings_by_author(items: list[ContentItem]) -> dict[str, list[int]]:
     """Keyed on the creator column every content type fills — a book's author, a
     film's director, a show's creators, a game's developer. Pooled case-blind,
@@ -260,7 +250,7 @@ class ProfileGenerator:
             sort_by="updated_at",
         )
 
-        genre_ratings = _ratings_by_genre(rated_items)
+        genre_ratings = ratings_by_genre(rated_items)
         genre_affinities = _mean_ratings(genre_ratings)
         disliked_genres = _disliked_genres(genre_ratings, genre_affinities)
 
@@ -308,7 +298,7 @@ class ProfileGenerator:
 
         type_genre_affinities: dict[str, dict[str, float]] = {}
         for content_type, type_items in by_type.items():
-            type_affinities = _mean_ratings(_ratings_by_genre(type_items))
+            type_affinities = _mean_ratings(ratings_by_genre(type_items))
             if type_affinities:
                 type_genre_affinities[content_type] = type_affinities
 

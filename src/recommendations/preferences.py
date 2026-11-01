@@ -70,6 +70,16 @@ class GenreTaste:
     weight: float
 
 
+def ratings_by_genre(items: list[ContentItem]) -> dict[str, list[int]]:
+    ratings: dict[str, list[int]] = defaultdict(list)
+    for item in items:
+        if item.rating is None:
+            continue
+        for genre in extract_and_normalize_genres(item.metadata):
+            ratings[genre].append(item.rating)
+    return ratings
+
+
 def _genre_tastes(
     genre_ratings: dict[str, list[int]], mean: float, rated_items: int
 ) -> dict[str, GenreTaste]:
@@ -135,18 +145,14 @@ class PreferenceAnalyzer:
         ]
         author_scores, disliked_authors = self._score_attributes(author_ratings)
 
-        genre_ratings: dict[str, list[int]] = defaultdict(list)
-        for item in consumed_items:
-            if item.rating is not None:
-                for genre in extract_and_normalize_genres(item.metadata):
-                    genre_ratings[genre.lower()].append(item.rating)
-
         return UserPreferences(
             preferred_authors=author_scores,
             average_rating=avg_rating,
             total_items=len(consumed_items),
             disliked_authors=disliked_authors,
-            genre_tastes=_genre_tastes(genre_ratings, avg_rating, len(ratings)),
+            genre_tastes=_genre_tastes(
+                ratings_by_genre(consumed_items), avg_rating, len(ratings)
+            ),
         )
 
     def _score_attributes(
