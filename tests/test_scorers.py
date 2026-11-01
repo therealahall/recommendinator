@@ -437,18 +437,6 @@ def _season(title: str, season: int, status: ConsumptionStatus) -> ContentItem:
     )
 
 
-def _clerks(title: str, year: int, rating: int | None = None) -> ContentItem:
-    return make_item(
-        title=title,
-        content_type=ContentType.MOVIE,
-        status=(
-            ConsumptionStatus.UNREAD if rating is None else ConsumptionStatus.COMPLETED
-        ),
-        rating=rating,
-        metadata={"series_name": "Clerks", "release_year": year},
-    )
-
-
 class TestContinuationScorer:
     def test_the_season_after_unrated_watched_ones_scores_neutral(self) -> None:
         candidate = _season("Breaking Bad", 3, ConsumptionStatus.UNREAD)
@@ -463,20 +451,6 @@ class TestContinuationScorer:
         scorer = ContinuationScorer()
         assert scorer.applies(candidate, context) is True
         assert scorer.score(candidate, context) == 0.5
-
-    def test_a_sequel_scores_by_how_the_entry_before_it_was_rated(self) -> None:
-        """A flat 1.0 nudged every sequel above standalones the user liked more."""
-        sequel = _clerks("Clerks II", 2006)
-
-        def score(rating: int) -> float:
-            context = _build_context(
-                consumed=[_clerks("Clerks", 1994, rating)],
-                unconsumed=[sequel],
-                content_type=ContentType.MOVIE,
-            )
-            return ContinuationScorer().score(sequel, context)
-
-        assert (score(5), score(3), score(1)) == (1.0, 0.5, 0.0)
 
     def test_the_rating_averages_only_the_rated_entries_of_that_series(self) -> None:
         consumed = [

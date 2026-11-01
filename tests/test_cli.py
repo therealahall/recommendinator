@@ -24,6 +24,7 @@ from src.models.content import (
 from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.engine import RecommendationEngine
 from src.recommendations.record import Recommendation
+from src.recommendations.scorers import SCORER_NAME_MAP
 from src.storage.manager import StorageManager
 from src.web.api._library import CompletionResponse
 from src.web.api._sync import SyncStatusResponse
@@ -1230,6 +1231,17 @@ class TestPreferenceWritesTheStoreRefusesRegression:
 
         assert result.exit_code != 0
         assert "must be a finite number" in result.output
+        assert storage.get_user_preference_config(1).scorer_weights == {}
+
+    def test_a_retired_scorer_is_refused_so_the_web_save_cannot_422(
+        self, storage: StorageManager
+    ) -> None:
+        result = _invoke_with_mocks(
+            CliRunner(), ["preferences", "set-weight", "series_order", "1"], storage
+        )
+
+        assert result.exit_code != 0
+        assert all(name in result.output for name in SCORER_NAME_MAP)
         assert storage.get_user_preference_config(1).scorer_weights == {}
 
     def test_the_same_write_lands_for_a_user_that_exists(
