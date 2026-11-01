@@ -270,9 +270,10 @@ Invariants:
   serialise it through `to_payload`, which is what keeps `recommend --format
   json` and `GET /api/recommendations` one document.
 - The taste signal is completed items that are **rated** and **not ignored**,
-  across all content types. Nothing else shapes preferences or scoring. Two
-  consumption facts sit outside it and are answered from wider sets: series
-  ordering, from the full completed set, and the variety penalty below, which
+  across all content types. Nothing else shapes preferences or scoring. Three
+  facts sit outside it and are answered from wider sets: series ordering, from
+  the full completed set; the rating on a show part-way through, which scales
+  only its next season's `continuation`; and the variety penalty below, which
   multiplies the final score rather than contributing to it.
 - Ignored items are filtered from the candidate pool at fetch time, as they are
   from the signal set.

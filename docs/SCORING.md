@@ -6,7 +6,7 @@ settings < per-user preferences**.
 
 | Weight key | What the scorer does | Default |
 |------------|----------------------|---------|
-| `genre_match` | How you rate the item's genres against your own average rating. A genre rated a star above your average scores 100%, a star below 0%, and one with few ratings sits nearer 50%. Its genres are averaged, so one you dislike pulls down one you love, and a genre on most of your library, or one you have not rated, counts for little or nothing | 2.0 |
+| `genre_match` | How you rate the item's genres against your own average rating. A genre rated a star above your average climbs toward 100% the more often you have rated it, 75% at two ratings, and one a star below falls toward 0% the same way. Its genres are averaged, so one you dislike pulls down one you love, and a genre on most of your library, or one you have not rated, counts for little or nothing | 2.0 |
 | `creator_match` | Prefers authors, directors and developers you have enjoyed, and demotes ones you have not | 1.5 |
 | `tag_overlap` | How closely an item's tags and genre clusters match something you have consumed, scaled by how you rated it. A consumed item with more tags can lift a match higher | 1.0 |
 | `content_length` | Soft penalty for a length mismatch. Counts only for a content type with a length preference other than `any` | 1.0 |
@@ -156,7 +156,7 @@ A show with a known season count is scored season by season, so the season in fl
 An ignored item stays in your library and shapes nothing you are recommended. It
 never feeds preference analysis, scoring or the "since you enjoyed X"
 references, is never offered as a candidate, and claims no variety rung. It
-still counts as consumed for series ordering, one of the two consumption facts
+still counts as consumed for series ordering, one of the three exceptions
 spelled out at the end of this page.
 
 A re-import leaves the flag alone unless the file states it. A stated
@@ -170,8 +170,9 @@ since something you finished but never rated says nothing about your taste. They
 still appear as candidates, a backlog being unrated by nature. The filtering
 lives in the storage layer's signal-set accessor, so every caller respects it.
 
-The two deliberate exceptions are the consumption facts. Series *ordering* asks
-whether you have consumed an earlier entry, which is independent of rating and
-ignore state, so an ignored or unrated earlier entry still counts for "book #1
-before book #3". The variety ladder above asks what you recently finished, which
-is independent of rating but not of ignoring.
+There are three deliberate exceptions. Series *ordering* asks whether you have
+consumed an earlier entry, which is independent of rating and ignore state, so
+an ignored or unrated earlier entry still counts for "book #1 before book #3".
+The variety ladder above asks what you recently finished, which is independent
+of rating but not of ignoring. A show part-way through keeps its rating out of
+your taste, but it still scales that show's next `continuation`.
