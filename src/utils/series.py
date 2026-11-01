@@ -667,21 +667,6 @@ def is_first_item_in_series(item: ContentItem) -> bool:
     return entry is not None and entry[1] == 1
 
 
-def is_next_after_consumed(
-    item_number: float,
-    consumed_numbers: set[float],
-    known_positions: set[float],
-) -> bool:
-    max_consumed = max(consumed_numbers)
-    if item_number <= max_consumed:
-        return False
-
-    ahead = {pos for pos in known_positions if pos > max_consumed}
-    ahead.add(float(int(max_consumed) + 1))
-    ahead.add(item_number)
-    return item_number == min(ahead)
-
-
 def should_recommend_item(
     item: ContentItem,
     series_tracking: dict[str, set[float]],

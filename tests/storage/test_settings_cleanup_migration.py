@@ -1,11 +1,14 @@
+import json
 import sqlite3
 from pathlib import Path
 
+from src.recommendations.scorers import SCORER_NAME_MAP
 from src.settings.metadata import flat_defaults
 from src.storage.manager import StorageManager
 from src.storage.schema import (
     _ORPHANED_SETTING_KEYS,
     _ORPHANED_SETTING_PREFIXES,
+    _RETIRED_SCORER_KEYS,
     _SCHEMA_VERSION,
     create_schema,
 )
@@ -126,6 +129,55 @@ class TestTheAiRemovalPrunesItsOwnLeaves:
 
         assert storage.settings.list() == {"recommendations.default_count": 9}
         assert _user_version(db_path) == _SCHEMA_VERSION
+
+
+def _seed_v32_db_with_retired_weights(path: Path) -> None:
+    conn = sqlite3.connect(path)
+    try:
+        create_schema(conn)
+        conn.execute("DELETE FROM settings")
+        conn.executemany(
+            "INSERT INTO settings (key, value_json) VALUES (?, ?)",
+            [
+                ("recommendations.scorer_weights.semantic_similarity", "1.0"),
+                ("recommendations.scorer_weights.tag_overlap", "2.0"),
+            ],
+        )
+        weights = {"series_affinity": 0, "series_order": 0.5, "tag_overlap": 3}
+        conn.execute(
+            "UPDATE users SET settings = ? WHERE id = 1",
+            (json.dumps({"preference_config": {"scorer_weights": weights}}),),
+        )
+        conn.execute("PRAGMA user_version = 32")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+class TestRetiredScorerWeightsPrune:
+    """The Preferences page sends every stored weight back on save, and a retired
+    one makes the endpoint refuse the whole save."""
+
+    def test_no_retired_key_names_a_live_scorer(self) -> None:
+        assert set(_RETIRED_SCORER_KEYS) & set(SCORER_NAME_MAP) == set()
+
+    def test_the_upgrade_drops_retired_weights_and_keeps_the_rest(
+        self, tmp_path: Path
+    ) -> None:
+        db_path = tmp_path / "test.db"
+        _seed_v32_db_with_retired_weights(db_path)
+
+        storage = StorageManager(sqlite_path=db_path)
+
+        conn = sqlite3.connect(db_path)
+        try:
+            keys = [row[0] for row in conn.execute("SELECT key FROM settings")]
+        finally:
+            conn.close()
+        assert keys == ["recommendations.scorer_weights.tag_overlap"]
+        assert storage.get_user_preference_config(1).scorer_weights == {
+            "tag_overlap": 3.0
+        }
 
 
 class TestSettingsCleanupMigration:

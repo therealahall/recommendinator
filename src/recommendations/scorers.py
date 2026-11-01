@@ -5,13 +5,13 @@ from abc import ABC, abstractmethod
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 
-from src.models.content import ContentItem, ContentType
-from src.recommendations.content_length import score_length_match
+from src.models.content import ContentItem, ContentType, get_enum_value
+from src.recommendations.content_length import LengthPreference, score_length_match
 from src.recommendations.genre_clusters import get_clusters_for_terms
 from src.recommendations.genre_normalizer import extract_and_normalize_genres
 from src.recommendations.identity import candidate_key
 from src.recommendations.preferences import UserPreferences, split_creators
-from src.utils.series import SeriesOrder, build_series_tracking, is_next_after_consumed
+from src.utils.series import SeriesOrder
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,6 @@ class ScoringContext:
     consumed_items: list[ContentItem]
     series_tracking: dict[str, set[float]]
     content_type: ContentType
-    all_unconsumed_items: list[ContentItem]
     #: Required: an empty one silently hides every series with no ordinal.
     series_order: SeriesOrder
 
@@ -68,8 +67,9 @@ class ScoringContext:
     tag_sets_by_term: dict[str, list[int]] = field(default_factory=dict)
     consumed_creators: set[str] = field(default_factory=set)
     ratings_by_genre: dict[str, list[int]] = field(default_factory=dict)
+    #: Seeded by the caller with ratings that are no taste signal, a show's
+    #: between seasons; each rated consumed item's is added to its series.
     series_ratings: dict[str, list[int]] = field(default_factory=dict)
-    unconsumed_series_positions: dict[str, set[float]] = field(default_factory=dict)
 
     #: Series positions the user is part-way through, keyed by series. Supplied
     #: rather than derived: what is in progress is never itself a candidate.
@@ -84,6 +84,8 @@ class ScoringContext:
     def __post_init__(self) -> None:
         genre_ratings: dict[str, list[int]] = defaultdict(list)
         series_ratings: dict[str, list[int]] = defaultdict(list)
+        for seeded, ratings in self.series_ratings.items():
+            series_ratings[seeded].extend(ratings)
         best_lifts: dict[frozenset[str], float] = {}
         tag_sets_by_term: dict[str, list[int]] = defaultdict(list)
         creators: set[str] = set()
@@ -113,9 +115,6 @@ class ScoringContext:
         self.consumed_creators = creators
         self.ratings_by_genre = dict(genre_ratings)
         self.series_ratings = dict(series_ratings)
-        self.unconsumed_series_positions = build_series_tracking(
-            self.all_unconsumed_items, self.series_order
-        )
 
 
 class Scorer(ABC):
@@ -126,8 +125,9 @@ class Scorer(ABC):
         return type(self)(weight=weight)
 
     def applies(self, candidate: ContentItem, context: ScoringContext) -> bool:
-        """False only where the scorer structurally cannot fire, never where it
-        returns a neutral 0.5: an excluded scorer leaves the divisor."""
+        """False only where the scorer structurally cannot fire or has nothing
+        configured to measure, never where it returns a neutral 0.5 for want of
+        evidence: an excluded scorer leaves the divisor."""
         return True
 
     @abstractmethod
@@ -200,49 +200,6 @@ class TagOverlapScorer(Scorer):
         )
 
 
-class SeriesOrderScorer(Scorer):
-    def __init__(self, weight: float = 1.5) -> None:
-        super().__init__(weight)
-
-    def score(self, candidate: ContentItem, context: ScoringContext) -> float:
-        located = context.series_order.locate(candidate)
-        if located is None:
-            return 0.5  # not in a series – neutral
-
-        series_name, item_number = located
-        consumed_numbers = context.series_tracking.get(series_name, set())
-
-        if not consumed_numbers:
-            if item_number == 1:
-                return 0.8  # first item in unstarted series
-            return 0.3  # later item with nothing consumed
-
-        if is_next_after_consumed(
-            item_number,
-            consumed_numbers,
-            context.unconsumed_series_positions.get(series_name, set()),
-        ):
-            return self._rating_boosted_score(series_name, context)
-        if item_number > max(consumed_numbers):
-            return 0.3  # too far ahead
-        return 0.2  # already consumed, or an entry the user has moved past
-
-    def _rating_boosted_score(self, series_name: str, context: ScoringContext) -> float:
-        avg_rating = _average_series_rating(context.series_ratings.get(series_name, []))
-
-        if avg_rating is None:
-            return 0.85
-
-        if avg_rating >= 4.0:
-            return 1.0
-        elif avg_rating >= 3.0:
-            return 0.85 + (avg_rating - 3.0) * 0.15
-        elif avg_rating >= 2.0:
-            return 0.7 + (avg_rating - 2.0) * 0.15
-        else:
-            return 0.6 + (avg_rating - 1.0) * 0.1
-
-
 class RatingPatternScorer(Scorer):
     def __init__(self, weight: float = 1.0) -> None:
         super().__init__(weight)
@@ -307,11 +264,12 @@ class CustomPreferenceScorer(Scorer):
 
 
 class ContinuationScorer(Scorer):
-    """Nudge what continues a series already begun. Silent while an entry of
-    the series is in flight, so season 6 cannot jump the queue mid season 5.
+    """Nudge what continues a series already begun, by how well its consumed
+    entries were rated. Silent while an entry of the series is in flight, so
+    season 6 cannot jump the queue mid season 5.
     """
 
-    def __init__(self, weight: float = 2.0) -> None:
+    def __init__(self, weight: float = 1.0) -> None:
         super().__init__(weight)
 
     def applies(self, candidate: ContentItem, context: ScoringContext) -> bool:
@@ -326,25 +284,13 @@ class ContinuationScorer(Scorer):
         )
 
     def score(self, candidate: ContentItem, context: ScoringContext) -> float:
-        return 1.0
-
-
-class SeriesAffinityScorer(Scorer):
-    def __init__(self, weight: float = 1.0) -> None:
-        super().__init__(weight)
-
-    def score(self, candidate: ContentItem, context: ScoringContext) -> float:
         series = context.series_order.series_of(candidate)
-        if series is None:
-            return 0.5  # not in a series – neutral
-
-        avg_rating = _average_series_rating(context.series_ratings.get(series, []))
-        if avg_rating is None:
-            return 0.5  # no consumed entries in this series – neutral
-
-        if avg_rating >= 4.0:
-            return 1.0
-        return 0.5
+        average = _average_series_rating(
+            context.series_ratings.get(series, []) if series else []
+        )
+        if average is None:
+            return 0.5
+        return (average - 1.0) / 4.0
 
 
 class AdaptationScorer(Scorer):
@@ -366,9 +312,13 @@ class ContentLengthScorer(Scorer):
     def __init__(self, weight: float = 1.0) -> None:
         super().__init__(weight)
 
+    def applies(self, candidate: ContentItem, context: ScoringContext) -> bool:
+        preference = context.content_length_preferences.get(
+            get_enum_value(candidate.content_type), LengthPreference.ANY
+        )
+        return preference != LengthPreference.ANY
+
     def score(self, candidate: ContentItem, context: ScoringContext) -> float:
-        if not context.content_length_preferences:
-            return 0.5  # No preferences set — neutral
         return score_length_match(candidate, context.content_length_preferences)
 
 
@@ -376,11 +326,9 @@ DEFAULT_SCORERS: list[Scorer] = [
     GenreMatchScorer(),
     CreatorMatchScorer(),
     TagOverlapScorer(),
-    SeriesOrderScorer(),
     RatingPatternScorer(),
     ContentLengthScorer(),
     ContinuationScorer(),
-    SeriesAffinityScorer(),
     AdaptationScorer(),
 ]
 
@@ -389,12 +337,10 @@ SCORER_NAME_MAP: dict[str, type[Scorer]] = {
     "genre_match": GenreMatchScorer,
     "creator_match": CreatorMatchScorer,
     "tag_overlap": TagOverlapScorer,
-    "series_order": SeriesOrderScorer,
     "rating_pattern": RatingPatternScorer,
     "custom_preference": CustomPreferenceScorer,
     "content_length": ContentLengthScorer,
     "continuation": ContinuationScorer,
-    "series_affinity": SeriesAffinityScorer,
     "adaptation": AdaptationScorer,
 }
 

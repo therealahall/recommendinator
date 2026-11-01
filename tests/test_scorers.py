@@ -12,18 +12,12 @@ from src.recommendations.scorers import (
     GenreMatchScorer,
     RatingPatternScorer,
     ScoringContext,
-    SeriesAffinityScorer,
-    SeriesOrderScorer,
     TagOverlapScorer,
     build_scorers_with_overrides,
     extract_creators,
     extract_genres,
 )
-from src.utils.series import (
-    SeriesOrder,
-    build_series_tracking,
-    should_recommend_item,
-)
+from src.utils.series import SeriesOrder, build_series_tracking
 from tests.factories import make_item
 
 
@@ -45,7 +39,6 @@ def _build_context(
         consumed_items=consumed,
         series_tracking=series_tracking,
         content_type=content_type,
-        all_unconsumed_items=unconsumed,
         series_order=series_order,
         in_progress_positions=build_series_tracking(in_progress, series_order),
     )
@@ -255,294 +248,6 @@ class TestTagOverlapScorer:
         assert score(1) == score(5) / 2 == 0.25
 
 
-class TestSeriesOrderScorer:
-    def test_next_in_sequence_high_rating(self) -> None:
-        consumed = [
-            make_item(title="Mistborn (Mistborn, #1)", rating=5),
-        ]
-        context = _build_context(consumed=consumed)
-        candidate = make_item(
-            title="Mistborn (Mistborn, #2)", status=ConsumptionStatus.UNREAD
-        )
-        scorer = SeriesOrderScorer()
-        assert scorer.score(candidate, context) == 1.0
-
-    def test_next_in_sequence_very_low_rating(self) -> None:
-        consumed = [
-            make_item(title="Mistborn (Mistborn, #1)", rating=1),
-        ]
-        context = _build_context(consumed=consumed)
-        candidate = make_item(
-            title="Mistborn (Mistborn, #2)", status=ConsumptionStatus.UNREAD
-        )
-        scorer = SeriesOrderScorer()
-        score = scorer.score(candidate, context)
-        assert 0.55 <= score <= 0.65
-
-    def test_next_in_sequence_no_rating(self) -> None:
-        consumed = [
-            make_item(title="Mistborn (Mistborn, #1)", rating=None),
-        ]
-        context = _build_context(consumed=consumed)
-        candidate = make_item(
-            title="Mistborn (Mistborn, #2)", status=ConsumptionStatus.UNREAD
-        )
-        scorer = SeriesOrderScorer()
-        score = scorer.score(candidate, context)
-        assert score == 0.85
-
-    def test_next_in_sequence_average_of_multiple_books(self) -> None:
-        consumed = [
-            make_item(title="Mistborn (Mistborn, #1)", rating=5),
-            make_item(title="Mistborn (Mistborn, #2)", rating=3),
-        ]
-        context = _build_context(consumed=consumed)
-        candidate = make_item(
-            title="Mistborn (Mistborn, #3)", status=ConsumptionStatus.UNREAD
-        )
-        scorer = SeriesOrderScorer()
-        score = scorer.score(candidate, context)
-        assert score == 1.0
-
-    def test_first_in_unstarted_series(self) -> None:
-        context = _build_context(consumed=[])
-        candidate = make_item(title="Dune (Dune, #1)", status=ConsumptionStatus.UNREAD)
-        scorer = SeriesOrderScorer()
-        assert scorer.score(candidate, context) == 0.8
-
-    def test_too_far_ahead(self) -> None:
-        consumed = [make_item(title="Mistborn (Mistborn, #1)", rating=5)]
-        context = _build_context(consumed=consumed)
-        candidate = make_item(
-            title="Mistborn (Mistborn, #5)", status=ConsumptionStatus.UNREAD
-        )
-        scorer = SeriesOrderScorer()
-        assert scorer.score(candidate, context) == 0.3
-
-    def test_candidate_at_max_consumed_scores_low(self) -> None:
-        """When the user has consumed item #3, a candidate that is also #3 is already
-        consumed (or a duplicate) and should be deprioritized."""
-        consumed = [
-            make_item(title="Mistborn (Mistborn, #1)", rating=5),
-            make_item(title="Mistborn (Mistborn, #2)", rating=4),
-            make_item(title="Mistborn (Mistborn, #3)", rating=4),
-        ]
-        context = _build_context(consumed=consumed)
-        candidate = make_item(
-            title="Mistborn (Mistborn, #3)", status=ConsumptionStatus.UNREAD
-        )
-        scorer = SeriesOrderScorer()
-        assert scorer.score(candidate, context) == 0.2
-
-    def test_non_series_neutral(self) -> None:
-        context = _build_context(consumed=[])
-        candidate = make_item(title="Standalone Novel", status=ConsumptionStatus.UNREAD)
-        scorer = SeriesOrderScorer()
-        assert scorer.score(candidate, context) == 0.5
-
-
-class TestSeriesOrderFractionalPositions:
-    """Symptom: with The Expanse #1 and #2 read, "Gods of Risk (The Expanse, #2.5)"
-    scored 0.2, below the 0.3 given to an entry that is too far ahead, so the novella
-    series filtering had just unblocked ranked under unrelated books."""
-
-    @staticmethod
-    def _consumed() -> list[ContentItem]:
-        return [
-            make_item(title="Leviathan Wakes (The Expanse, #1)", rating=5),
-            make_item(title="Caliban's War (The Expanse, #2)", rating=5),
-        ]
-
-    def test_next_up_half_numbered_entry_scores_as_next_regression(self) -> None:
-        context = _build_context(consumed=self._consumed())
-        novella = make_item(
-            title="Gods of Risk (The Expanse, #2.5)", status=ConsumptionStatus.UNREAD
-        )
-        score = SeriesOrderScorer().score(novella, context)
-        assert score == 1.0
-        assert score > 0.3
-
-    def test_scorer_agrees_with_should_recommend_item_regression(self) -> None:
-        consumed = self._consumed()
-        novella = make_item(
-            title="Gods of Risk (The Expanse, #2.5)", status=ConsumptionStatus.UNREAD
-        )
-        book_three = make_item(
-            title="Abaddon's Gate (The Expanse, #3)", status=ConsumptionStatus.UNREAD
-        )
-        unconsumed = [novella, book_three]
-        context = _build_context(consumed=consumed, unconsumed=unconsumed)
-        scorer = SeriesOrderScorer()
-
-        for candidate in unconsumed:
-            recommended = should_recommend_item(
-                candidate, context.series_tracking, unconsumed_items=unconsumed
-            )
-            assert (scorer.score(candidate, context) > 0.3) is recommended
-
-        assert scorer.score(novella, context) == 1.0
-        assert scorer.score(book_three, context) == 0.3
-
-
-class TestSeriesOrderFractionalBoundaries:
-    def test_consumed_novella_advances_to_the_next_whole_number(self) -> None:
-        consumed = [
-            make_item(title="Leviathan Wakes (The Expanse, #1)", rating=5),
-            make_item(title="Caliban's War (The Expanse, #2)", rating=5),
-            make_item(title="Gods of Risk (The Expanse, #2.5)", rating=5),
-        ]
-        book_three = make_item(
-            title="Abaddon's Gate (The Expanse, #3)", status=ConsumptionStatus.UNREAD
-        )
-        unconsumed = [book_three]
-        context = _build_context(consumed=consumed, unconsumed=unconsumed)
-
-        assert should_recommend_item(
-            book_three, context.series_tracking, unconsumed_items=unconsumed
-        )
-        assert SeriesOrderScorer().score(book_three, context) == 1.0
-
-    def test_half_numbered_entry_waits_for_the_book_before_it(self) -> None:
-        consumed = [make_item(title="Leviathan Wakes (The Expanse, #1)", rating=5)]
-        book_two = make_item(
-            title="Caliban's War (The Expanse, #2)", status=ConsumptionStatus.UNREAD
-        )
-        novella = make_item(
-            title="Gods of Risk (The Expanse, #2.5)", status=ConsumptionStatus.UNREAD
-        )
-        unconsumed = [book_two, novella]
-        context = _build_context(consumed=consumed, unconsumed=unconsumed)
-        scorer = SeriesOrderScorer()
-
-        assert should_recommend_item(
-            book_two, context.series_tracking, unconsumed_items=unconsumed
-        )
-        assert not should_recommend_item(
-            novella, context.series_tracking, unconsumed_items=unconsumed
-        )
-        assert scorer.score(book_two, context) == 1.0
-        assert scorer.score(novella, context) == 0.3
-
-    def test_earlier_of_two_novellas_takes_the_next_slot(self) -> None:
-        consumed = [
-            make_item(title="Leviathan Wakes (The Expanse, #1)", rating=5),
-            make_item(title="Caliban's War (The Expanse, #2)", rating=5),
-        ]
-        first_novella = make_item(
-            title="The Butcher of Anderson Station (The Expanse, #2.1)",
-            status=ConsumptionStatus.UNREAD,
-        )
-        later_novella = make_item(
-            title="Gods of Risk (The Expanse, #2.5)", status=ConsumptionStatus.UNREAD
-        )
-        unconsumed = [later_novella, first_novella]
-        context = _build_context(consumed=consumed, unconsumed=unconsumed)
-        scorer = SeriesOrderScorer()
-
-        for candidate in unconsumed:
-            recommended = should_recommend_item(
-                candidate, context.series_tracking, unconsumed_items=unconsumed
-            )
-            assert (scorer.score(candidate, context) > 0.3) is recommended
-        assert scorer.score(first_novella, context) == 1.0
-        assert scorer.score(later_novella, context) == 0.3
-
-
-class TestSeriesOrderNextInSequenceEdges:
-    """Paths into the next-in-sequence branch the fractional cases do not reach."""
-
-    def test_tv_seasons_advance_to_the_next_unwatched_season(self) -> None:
-        consumed = [
-            make_item(
-                title="The Expanse (The Expanse, Season 1)",
-                content_type=ContentType.TV_SHOW,
-                rating=5,
-            ),
-            make_item(
-                title="The Expanse (The Expanse, Season 2)",
-                content_type=ContentType.TV_SHOW,
-                rating=5,
-            ),
-        ]
-        season_three = make_item(
-            title="The Expanse (The Expanse, Season 3)",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.UNREAD,
-        )
-        season_five = make_item(
-            title="The Expanse (The Expanse, Season 5)",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.UNREAD,
-        )
-        unconsumed = [season_three, season_five]
-        context = _build_context(
-            consumed=consumed,
-            unconsumed=unconsumed,
-            content_type=ContentType.TV_SHOW,
-        )
-        scorer = SeriesOrderScorer()
-
-        for candidate in unconsumed:
-            recommended = should_recommend_item(
-                candidate, context.series_tracking, unconsumed_items=unconsumed
-            )
-            assert (scorer.score(candidate, context) > 0.3) is recommended
-        assert scorer.score(season_three, context) == 1.0
-        assert scorer.score(season_five, context) == 0.3
-
-    def test_fractional_position_from_metadata_scores_as_next(self) -> None:
-        consumed = [
-            make_item(title="Leviathan Wakes (The Expanse, #1)", rating=5),
-            make_item(title="Caliban's War (The Expanse, #2)", rating=5),
-        ]
-        novella = make_item(
-            title="Gods of Risk",
-            status=ConsumptionStatus.UNREAD,
-            metadata={"series_name": "The Expanse", "series_position": "2.5"},
-        )
-        book_three = make_item(
-            title="Abaddon's Gate (The Expanse, #3)", status=ConsumptionStatus.UNREAD
-        )
-        context = _build_context(consumed=consumed, unconsumed=[novella, book_three])
-        scorer = SeriesOrderScorer()
-
-        assert scorer.score(novella, context) == 1.0
-        assert scorer.score(book_three, context) == 0.3
-
-
-class TestSeriesOrderScorerOnAPositionlessSeries:
-    @staticmethod
-    def _game(
-        title: str,
-        year: int,
-        status: ConsumptionStatus = ConsumptionStatus.UNREAD,
-        rating: int | None = None,
-    ) -> ContentItem:
-        return make_item(
-            title=title,
-            content_type=ContentType.VIDEO_GAME,
-            status=status,
-            rating=rating,
-            metadata={"series_name": "Final Fantasy", "release_year": year},
-        )
-
-    def test_the_next_released_entry_outscores_the_one_behind_it(self) -> None:
-        consumed = [
-            self._game("Final Fantasy VII", 1997, ConsumptionStatus.COMPLETED, 5)
-        ]
-        eighth = self._game("Final Fantasy VIII", 1999)
-        ninth = self._game("Final Fantasy IX", 2000)
-        context = _build_context(
-            consumed=consumed,
-            unconsumed=[ninth, eighth],
-            content_type=ContentType.VIDEO_GAME,
-        )
-        scorer = SeriesOrderScorer()
-
-        assert scorer.score(eighth, context) > scorer.score(ninth, context)
-        assert scorer.score(ninth, context) < 0.5
-
-
 class TestRatingPatternScorer:
     def test_high_average_in_genre(self) -> None:
         consumed = [
@@ -662,15 +367,17 @@ class TestCustomPreferenceScorer:
 
 
 class TestContentLengthScorer:
-    def test_no_preferences_returns_neutral(self) -> None:
-        candidate = make_item(
-            content_type=ContentType.BOOK,
-            metadata={"pages": 800},
-            status=ConsumptionStatus.UNREAD,
-        )
+    def test_only_a_type_with_a_length_preference_carries_the_row(self) -> None:
+        """Unset, every item took a constant 0.5, and "any" a constant 1.0."""
+        movie = make_item(content_type=ContentType.MOVIE, metadata={"runtime": 200})
+        book = make_item(content_type=ContentType.BOOK, metadata={"pages": 800})
         context = _build_context(consumed=[])
         scorer = ContentLengthScorer()
-        assert scorer.score(candidate, context) == 0.5
+
+        assert not scorer.applies(movie, context)
+        context.content_length_preferences = {"movie": "short", "book": "any"}
+        assert scorer.applies(movie, context)
+        assert not scorer.applies(book, context)
 
     def test_exact_match_returns_1(self) -> None:
         candidate = make_item(
@@ -730,8 +437,20 @@ def _season(title: str, season: int, status: ConsumptionStatus) -> ContentItem:
     )
 
 
+def _clerks(title: str, year: int, rating: int | None = None) -> ContentItem:
+    return make_item(
+        title=title,
+        content_type=ContentType.MOVIE,
+        status=(
+            ConsumptionStatus.UNREAD if rating is None else ConsumptionStatus.COMPLETED
+        ),
+        rating=rating,
+        metadata={"series_name": "Clerks", "release_year": year},
+    )
+
+
 class TestContinuationScorer:
-    def test_the_season_after_watched_ones_is_nudged_to_the_top(self) -> None:
+    def test_the_season_after_unrated_watched_ones_scores_neutral(self) -> None:
         candidate = _season("Breaking Bad", 3, ConsumptionStatus.UNREAD)
         context = _build_context(
             consumed=[
@@ -743,7 +462,58 @@ class TestContinuationScorer:
         )
         scorer = ContinuationScorer()
         assert scorer.applies(candidate, context) is True
-        assert scorer.score(candidate, context) == 1.0
+        assert scorer.score(candidate, context) == 0.5
+
+    def test_a_sequel_scores_by_how_the_entry_before_it_was_rated(self) -> None:
+        """A flat 1.0 nudged every sequel above standalones the user liked more."""
+        sequel = _clerks("Clerks II", 2006)
+
+        def score(rating: int) -> float:
+            context = _build_context(
+                consumed=[_clerks("Clerks", 1994, rating)],
+                unconsumed=[sequel],
+                content_type=ContentType.MOVIE,
+            )
+            return ContinuationScorer().score(sequel, context)
+
+        assert (score(5), score(3), score(1)) == (1.0, 0.5, 0.0)
+
+    def test_the_rating_averages_only_the_rated_entries_of_that_series(self) -> None:
+        consumed = [
+            make_item(title="Mistborn (Mistborn, #1)", rating=5),
+            make_item(title="Mistborn (Mistborn, #2)", rating=3),
+            make_item(title="Mistborn (Mistborn, #3)", rating=None),
+            make_item(title="Elantris (Elantris, #1)", rating=1),
+        ]
+        candidate = make_item(
+            title="Mistborn (Mistborn, #4)", status=ConsumptionStatus.UNREAD
+        )
+        context = _build_context(consumed=consumed, unconsumed=[candidate])
+        assert ContinuationScorer().score(candidate, context) == 0.75
+
+    def test_a_rating_pools_under_the_stated_name_not_a_title_fragment(self) -> None:
+        consumed = [
+            make_item(
+                title="Left 4 Dead",
+                content_type=ContentType.VIDEO_GAME,
+                metadata={"series_name": "Left 4 Dead", "release_year": 2008},
+                rating=5,
+            ),
+        ]
+        candidate = make_item(
+            title="Left 4 Dead 2",
+            content_type=ContentType.VIDEO_GAME,
+            metadata={"series_name": "Left 4 Dead", "release_year": 2009},
+            status=ConsumptionStatus.UNREAD,
+        )
+        context = _build_context(
+            consumed=consumed,
+            unconsumed=[candidate],
+            content_type=ContentType.VIDEO_GAME,
+        )
+
+        assert context.series_ratings == {"Left 4 Dead": [5]}
+        assert ContinuationScorer().score(candidate, context) == 1.0
 
     def test_a_later_season_is_silent_while_one_is_in_flight(self) -> None:
         candidate = _season("Breaking Bad", 3, ConsumptionStatus.UNREAD)
@@ -779,130 +549,6 @@ class TestContinuationScorer:
         candidate = make_item(title="Piranesi", status=ConsumptionStatus.UNREAD)
         context = _build_context(unconsumed=[candidate])
         assert ContinuationScorer().applies(candidate, context) is False
-
-
-class TestSeriesAffinityScorer:
-    def test_well_rated_series_scores_1(self) -> None:
-        consumed = [
-            make_item(
-                title="Final Fantasy I",
-                content_type=ContentType.VIDEO_GAME,
-                metadata={"series_name": "Final Fantasy", "series_number": 1},
-                rating=5,
-            ),
-            make_item(
-                title="Final Fantasy V",
-                content_type=ContentType.VIDEO_GAME,
-                metadata={"series_name": "Final Fantasy", "series_number": 5},
-                rating=4,
-            ),
-        ]
-        candidate = make_item(
-            title="Final Fantasy VII",
-            content_type=ContentType.VIDEO_GAME,
-            metadata={"series_name": "Final Fantasy", "series_number": 7},
-            status=ConsumptionStatus.UNREAD,
-        )
-        context = _build_context(consumed=consumed)
-        scorer = SeriesAffinityScorer()
-        assert scorer.score(candidate, context) == 1.0
-
-    def test_poorly_rated_series_scores_neutral(self) -> None:
-        consumed = [
-            make_item(
-                title="Final Fantasy I",
-                content_type=ContentType.VIDEO_GAME,
-                metadata={"series_name": "Final Fantasy", "series_number": 1},
-                rating=2,
-            ),
-            make_item(
-                title="Final Fantasy V",
-                content_type=ContentType.VIDEO_GAME,
-                metadata={"series_name": "Final Fantasy", "series_number": 5},
-                rating=3,
-            ),
-        ]
-        candidate = make_item(
-            title="Final Fantasy VII",
-            content_type=ContentType.VIDEO_GAME,
-            metadata={"series_name": "Final Fantasy", "series_number": 7},
-            status=ConsumptionStatus.UNREAD,
-        )
-        context = _build_context(consumed=consumed)
-        scorer = SeriesAffinityScorer()
-        assert scorer.score(candidate, context) == 0.5
-
-    def test_not_in_series_scores_neutral(self) -> None:
-        candidate = make_item(
-            title="Standalone Game",
-            content_type=ContentType.VIDEO_GAME,
-            status=ConsumptionStatus.UNREAD,
-        )
-        context = _build_context(consumed=[])
-        scorer = SeriesAffinityScorer()
-        assert scorer.score(candidate, context) == 0.5
-
-    def test_exactly_4_average_scores_1(self) -> None:
-        consumed = [
-            make_item(
-                title="Dune (Dune, #1)",
-                metadata={"series_name": "Dune", "series_number": 1},
-                rating=4,
-            ),
-        ]
-        candidate = make_item(
-            title="Dune (Dune, #2)",
-            metadata={"series_name": "Dune", "series_number": 2},
-            status=ConsumptionStatus.UNREAD,
-        )
-        context = _build_context(consumed=consumed)
-        scorer = SeriesAffinityScorer()
-        assert scorer.score(candidate, context) == 1.0
-
-    def test_a_rating_pools_under_the_stated_name_not_a_title_fragment(self) -> None:
-        consumed = [
-            make_item(
-                title="Left 4 Dead",
-                content_type=ContentType.VIDEO_GAME,
-                metadata={"series_name": "Left 4 Dead"},
-                rating=5,
-            ),
-        ]
-        candidate = make_item(
-            title="Left 4 Dead 2",
-            content_type=ContentType.VIDEO_GAME,
-            metadata={"series_name": "Left 4 Dead"},
-            status=ConsumptionStatus.UNREAD,
-        )
-        context = _build_context(consumed=consumed)
-
-        assert context.series_ratings == {"Left 4 Dead": [5]}
-        assert SeriesAffinityScorer().score(candidate, context) == 1.0
-
-    def test_unrated_consumed_entries_excluded_from_average(self) -> None:
-        consumed = [
-            make_item(
-                title="Final Fantasy I",
-                content_type=ContentType.VIDEO_GAME,
-                metadata={"series_name": "Final Fantasy", "series_number": 1},
-                rating=5,
-            ),
-            make_item(
-                title="Final Fantasy II",
-                content_type=ContentType.VIDEO_GAME,
-                metadata={"series_name": "Final Fantasy", "series_number": 2},
-                rating=None,
-            ),
-        ]
-        candidate = make_item(
-            title="Final Fantasy VII",
-            content_type=ContentType.VIDEO_GAME,
-            metadata={"series_name": "Final Fantasy", "series_number": 7},
-            status=ConsumptionStatus.UNREAD,
-        )
-        context = _build_context(consumed=consumed)
-        scorer = SeriesAffinityScorer()
-        assert scorer.score(candidate, context) == 1.0
 
 
 class TestAdaptationScorer:
