@@ -132,11 +132,10 @@ class TestGenreMatchScorer:
         five_times = _genre_score({"Western": [5] * 5, "Romance": [1] * 5}, "Western")
         assert 0.5 < once < five_times
 
-    def test_no_genre_returns_neutral(self) -> None:
-        context = _build_context(consumed=[])
-        candidate = make_item(status=ConsumptionStatus.UNREAD)
-        scorer = GenreMatchScorer()
-        assert scorer.score(candidate, context) == 0.5
+    def test_a_library_silent_on_the_genre_scores_it_neutral(self) -> None:
+        assert _genre_score({}, "Fantasy") == 0.5
+        assert _genre_score({"Fantasy": [5, 2, 4]}, "Fantasy") == 0.5
+        assert _genre_score({"Fantasy": [4, 4], "Horror": [4]}, "Fantasy") == 0.5
 
     def test_a_disliked_term_offsets_a_loved_one_and_an_unrated_one_counts_for_nothing(
         self,
