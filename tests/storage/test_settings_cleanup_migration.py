@@ -155,8 +155,7 @@ def _seed_v32_db_with_retired_weights(path: Path) -> None:
 
 
 class TestRetiredScorerWeightsPrune:
-    """The Preferences page sends every stored weight back on save, and a retired
-    one makes the endpoint refuse the whole save."""
+    """A retired stored weight made the Preferences page's whole save refused."""
 
     def test_no_retired_key_names_a_live_scorer(self) -> None:
         assert set(_RETIRED_SCORER_KEYS) & set(SCORER_NAME_MAP) == set()

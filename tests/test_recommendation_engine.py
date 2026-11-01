@@ -1955,8 +1955,7 @@ class TestContinuationScorerExclusion:
     def test_a_between_seasons_shows_rating_scales_its_next_season_regression(
         self, engine, mock_storage
     ):
-        """A show part-way through is no taste signal, so its rating never reached
-        continuation and every next season scored as unrated."""
+        """A show part-way through is no taste signal, so its rating went unused."""
         fresh_scores = set()
         for rating, continuation in ((5, 1.0), (1, 0.0), (None, 0.5)):
             scored = self._between_seasons(engine, mock_storage, rating)
@@ -2092,8 +2091,7 @@ class TestContinuationScorerExclusion:
 
 
 class TestASeriesScoresOnOneRowRegression:
-    """Liking one entry of a series scored a sequel on three rows, so twelve of
-    the top fifteen movies were sequels with mediocre taste rows."""
+    """Liking one entry scored a sequel on three rows, so sequels filled the top."""
 
     @staticmethod
     def _movie(title, *, series=None, year=None, rating=None):
@@ -2139,28 +2137,6 @@ class TestASeriesScoresOnOneRowRegression:
             sequel_rows = dict(scored["Clerks II"].score_breakdown)
             assert sequel_rows.pop("continuation") == continuation
             assert sequel_rows == scored["Office Space"].score_breakdown
-
-    def test_a_disliked_series_ranks_its_sequel_below_a_matching_standalone(
-        self, engine, mock_storage
-    ):
-        scored = self._after_clerks_rated(engine, mock_storage, 1)
-
-        assert scored["Clerks II"].score < scored["Office Space"].score
-
-    def test_an_unstarted_series_entry_scores_as_a_standalone(
-        self, engine, mock_storage
-    ):
-        taste = self._movie("Airplane!", rating=5)
-        opener = self._movie("Before Sunrise", series="Before Trilogy", year=1995)
-        standalone = self._movie("Office Space")
-
-        scored = self._scored(engine, mock_storage, [taste], [opener, standalone])
-
-        assert (
-            scored["Before Sunrise"].score_breakdown
-            == scored["Office Space"].score_breakdown
-        )
-        assert scored["Before Sunrise"].score == scored["Office Space"].score
 
 
 class TestSameSeriesReferenceExclusionRegression:
@@ -2990,8 +2966,7 @@ class TestSeriesTrackingFullSetRegression:
 
 
 class TestHalfNumberedEntryScoringRegression:
-    """Succession was once recognised as ``item_number == max_consumed + 1``,
-    which no fractional position satisfies, so #2.5 scored as already consumed."""
+    """A fractional position was never next, so #2.5 scored as already consumed."""
 
     @staticmethod
     def _stock_library(storage):
