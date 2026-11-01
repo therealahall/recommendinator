@@ -248,10 +248,18 @@ class RecommendationEngine:
         series_order = SeriesOrder([*consumed_items_of_type, *unconsumed_items])
         series_tracking = build_series_tracking(consumed_items_of_type, series_order)
 
+        begun_show_ratings: dict[str, list[int]] = {}
         if content_type == ContentType.TV_SHOW:
             series_tracking = inject_season_progress_tracking(
                 show_level_unconsumed, series_tracking
             )
+            # Never a taste signal, but the rating on a show part-way through is
+            # the verdict on the seasons watched, which continuation scales by.
+            begun_show_ratings = {
+                show.title: [show.rating]
+                for show in show_level_unconsumed
+                if show.rating is not None
+            }
 
         interpreted_prefs: InterpretedPreference | None = None
         if user_preference_config is not None and user_preference_config.custom_rules:
@@ -329,8 +337,8 @@ class RecommendationEngine:
             consumed_items=taste.items,
             series_tracking=series_tracking,
             content_type=content_type,
-            all_unconsumed_items=candidates,
             series_order=series_order,
+            series_ratings=begun_show_ratings,
             content_length_preferences=content_length_preferences,
             adaptations=adaptations,
             in_progress_positions=in_progress_positions,
@@ -546,8 +554,8 @@ class RecommendationEngine:
         if not ladder:
             return ranked_items
 
-        # No series exemption: the series scorers already rank a continuation
-        # first, so a softer penalty only widened its lead as variety went up.
+        # No series exemption: continuation already nudges a well-rated series
+        # on, so a softer penalty only widened its lead as variety went up.
         penalised: list[_RankedCandidate] = []
         for entry in ranked_items:
             penalty = variety_penalty_for(entry.item, ladder)

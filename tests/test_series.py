@@ -19,7 +19,6 @@ from src.utils.series import (
     in_progress_seasons,
     inject_season_progress_tracking,
     is_first_item_in_series,
-    is_next_after_consumed,
     latest_season_watched_date,
     reconcile_series,
     series_names_agree,
@@ -195,29 +194,6 @@ def test_is_first_item_in_series():
         metadata={"series_name": "Star Wars", "episode": 1},
     )
     assert is_first_item_in_series(item_with_metadata) is True
-
-
-class TestIsNextAfterConsumed:
-    """``SeriesOrderScorer`` orders entries with it, so the boundaries it draws
-    decide which candidate gets the rating-boosted score."""
-
-    def test_next_whole_number_when_nothing_sits_between(self) -> None:
-        assert is_next_after_consumed(3.0, {1.0, 2.0}, set()) is True
-
-    def test_fraction_takes_the_slot_ahead_of_the_next_book(self) -> None:
-        known = {2.5, 3.0}
-        assert is_next_after_consumed(2.5, {1.0, 2.0}, known) is True
-        assert is_next_after_consumed(3.0, {1.0, 2.0}, known) is False
-
-    def test_position_at_or_below_the_consumed_run_is_never_next(self) -> None:
-        assert is_next_after_consumed(2.0, {1.0, 2.0}, {3.0}) is False
-        assert is_next_after_consumed(1.0, {1.0, 2.0}, {3.0}) is False
-        assert is_next_after_consumed(2.5, {1.0, 2.0, 2.5}, {3.0}) is False
-        assert is_next_after_consumed(2.0, {1.0, 3.0}, {2.0}) is False
-
-    def test_prequel_unlocks_book_one(self) -> None:
-        assert is_next_after_consumed(1.0, {0.0}, {1.0, 2.0}) is True
-        assert is_next_after_consumed(2.0, {0.0}, {1.0, 2.0}) is False
 
 
 def test_should_recommend_book_not_in_series():
@@ -1112,6 +1088,23 @@ class TestDecimalSeriesOrderingRegression:
 
         assert should_recommend_item(novella_25, series_tracking, unconsumed) is True
         assert should_recommend_item(book_three, series_tracking, unconsumed) is False
+
+    def test_a_consumed_novella_releases_the_next_whole_book_regression(self) -> None:
+        series_tracking = {"The Expanse": {1.0, 2.0, 2.5}}
+        book_three = self._expanse("exp3", "Abaddon's Gate (The Expanse, #3)")
+
+        assert should_recommend_item(book_three, series_tracking, [book_three]) is True
+
+    def test_the_earlier_of_two_novellas_takes_the_next_slot_regression(self) -> None:
+        series_tracking = {"The Expanse": {1.0, 2.0}}
+        first = self._expanse(
+            "exp21", "The Butcher of Anderson Station (The Expanse, #2.1)"
+        )
+        later = self._expanse("exp25", "Gods of Risk (The Expanse, #2.5)")
+        unconsumed = [later, first]
+
+        assert should_recommend_item(first, series_tracking, unconsumed) is True
+        assert should_recommend_item(later, series_tracking, unconsumed) is False
 
 
 class TestSeasonBoundsRegression:

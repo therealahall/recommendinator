@@ -13,8 +13,8 @@ in plaintext.
 Enrichment fills in the genres, tags and descriptions the scoring pipeline runs
 on. A few sources arrive rich, Sonarr and Radarr carry genres, but most do not:
 a Goodreads CSV gives you titles and authors, Steam gives names and playtime.
-Genre matching, tag overlap, series affinity and creator matching all need that
-metadata, so a library half without it produces poor or seemingly random
+Genre matching, tag overlap, series continuation and creator matching all need
+that metadata, so a library half without it produces poor or seemingly random
 recommendations.
 
 ## Providers

@@ -15,8 +15,6 @@ from src.recommendations.scorers import (
     GenreMatchScorer,
     RatingPatternScorer,
     Scorer,
-    SeriesAffinityScorer,
-    SeriesOrderScorer,
     TagOverlapScorer,
 )
 from src.settings.metadata import default_config, default_of
@@ -191,11 +189,9 @@ _SCORER_CONFIG_MAP: dict[str, type[Scorer]] = {
     "genre_match": GenreMatchScorer,
     "creator_match": CreatorMatchScorer,
     "tag_overlap": TagOverlapScorer,
-    "series_order": SeriesOrderScorer,
     "rating_pattern": RatingPatternScorer,
     "content_length": ContentLengthScorer,
     "continuation": ContinuationScorer,
-    "series_affinity": SeriesAffinityScorer,
     "adaptation": AdaptationScorer,
 }
 

@@ -31,7 +31,6 @@ def _build_context(
         consumed_items=consumed,
         series_tracking=build_series_tracking(consumed, series_order),
         content_type=content_type,
-        all_unconsumed_items=unconsumed,
         series_order=series_order,
     )
 

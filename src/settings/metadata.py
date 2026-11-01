@@ -193,14 +193,6 @@ _REGISTRY: tuple[SettingMetadata, ...] = (
         validation=Validation(min=0.0),
     ),
     _entry(
-        "recommendations.scorer_weights.series_order",
-        label="Series order weight",
-        help="Weight for the next unread entry in a series (0 disables).",
-        type="float",
-        default=1.5,
-        validation=Validation(min=0.0),
-    ),
-    _entry(
         "recommendations.scorer_weights.rating_pattern",
         label="Rating pattern weight",
         help="Weight for matching learned rating patterns (0 disables).",
@@ -211,7 +203,7 @@ _REGISTRY: tuple[SettingMetadata, ...] = (
     _entry(
         "recommendations.scorer_weights.content_length",
         label="Content length weight",
-        help="Soft penalty weight for items not matching length preferences (0 disables).",
+        help="Soft penalty weight for items not matching a length preference, counted only for a type with one set (0 disables).",
         type="float",
         default=1.0,
         validation=Validation(min=0.0),
@@ -219,15 +211,7 @@ _REGISTRY: tuple[SettingMetadata, ...] = (
     _entry(
         "recommendations.scorer_weights.continuation",
         label="Continuation weight",
-        help="Weight boosting the later entries of a series you have begun, while none of it is in progress (0 disables).",
-        type="float",
-        default=2.0,
-        validation=Validation(min=0.0),
-    ),
-    _entry(
-        "recommendations.scorer_weights.series_affinity",
-        label="Series affinity weight",
-        help="Weight boosting franchises you have rated well (0 disables).",
+        help="Weight for the later entries of a series you have begun, scored by how you rated the entries you finished, while none of it is in progress (0 disables).",
         type="float",
         default=1.0,
         validation=Validation(min=0.0),

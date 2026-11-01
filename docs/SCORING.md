@@ -9,11 +9,9 @@ settings < per-user preferences**.
 | `genre_match` | Averages how you rate the item's genres, so one you dislike pulls down one you love. Genres you have not rated do not count | 2.0 |
 | `creator_match` | Prefers authors, directors and developers you have enjoyed, and demotes ones you have not | 1.5 |
 | `tag_overlap` | How closely an item's tags and genre clusters match something you have consumed, scaled by how you rated it. A consumed item with more tags can lift a match higher | 1.0 |
-| `series_order` | Prioritises the next entry in a series you are partway through | 1.5 |
 | `rating_pattern` | Learns from your rating history within a genre | 1.0 |
-| `content_length` | Soft penalty for a length mismatch | 1.0 |
-| `continuation` | Boosts the later entries and seasons of a series you have begun. Counts only where an earlier entry is finished or begun, and not while any entry of that series is in progress | 2.0 |
-| `series_affinity` | Boosts franchises you have rated well | 1.0 |
+| `content_length` | Soft penalty for a length mismatch. Counts only for a content type with a length preference other than `any` | 1.0 |
+| `continuation` | Scores the later entries and seasons of a series you have begun by how you rated the entries you finished, or the show itself between seasons: 5 stars is 100%, 3 is 50%, 1 is 0%, and none rated is 50%. Counts only where an earlier entry is finished or begun, and not while any entry of that series is in progress | 1.0 |
 | `adaptation` | Boosts a film, show or game adapting something you rated well, and the source behind an adaptation you loved. Counts only for an item that adapts something | 1.5 |
 | `custom_preference` | Applies your natural language rules, "avoid X" and "prefer Y". Only in the pipeline when you have rules | 1.0 |
 
@@ -24,11 +22,16 @@ The score a recommendation shows **is** the weighted mean of the rows the web
 the number beside them. Nothing is added outside that budget, and there is no
 second combination stage.
 
-A scorer that structurally cannot fire for an item is left out of both the panel
-and the weight the mean divides by: `continuation` on an entry nothing begun precedes or whose series is in progress,
-`adaptation` on something that adapts nothing. Neither can cost an item
-score it had no way to earn. A neutral `0.5` for want of evidence is a real
-contribution and keeps its weight.
+A scorer that cannot fire for an item, or has nothing configured to measure, is
+left out of both the panel and the weight the mean divides by: `continuation` on
+an entry nothing begun precedes or whose series is in progress, `adaptation` on
+something that adapts nothing, `content_length` on a type with no length
+preference. A neutral `0.5` for want of evidence on a scorer that applies is a
+real contribution and keeps its weight.
+
+An entry of a series you have not started gets no series row, so it scores
+exactly as a standalone with the same other rows. Which entry is offered is the
+job of series filtering below.
 
 A candidate the engine knows nothing about scores near `0.5`, because most
 scorers return a neutral `0.5` with no evidence either way. Genre and creator
@@ -55,7 +58,7 @@ The Preferences page and the `preferences` CLI (see [CLI.md](CLI.md#preferences)
 set weights for one user. That map is **sparse**: it overrides only the keys you
 touch, and every other weight falls back to the global value.
 
-Both surfaces take only the ten keys in the table above, and only finite
+Both surfaces take only the eight keys in the table above, and only finite
 numbers. Anything else is refused where it is written, rather than stored to
 weight nothing.
 

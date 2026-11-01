@@ -1868,18 +1868,6 @@ class TestPositionlessSeriesOfferedInReleaseOrder:
 
         assert offered == ["ocarina"]
 
-    def test_the_offered_entry_is_scored_as_a_series_opener(
-        self, engine, mock_storage
-    ) -> None:
-        earliest = self._game("ocarina", "The Legend of Zelda: Ocarina of Time", 1998)
-        later = self._game("wind-waker", "The Legend of Zelda: The Wind Waker", 2002)
-
-        [offered] = self._recommended(
-            engine, mock_storage, [self._taste()], [later, earliest]
-        )
-
-        assert offered.score_breakdown["series_order"] > 0.5
-
     def test_completing_the_earliest_releases_the_one_after_it(
         self, engine, mock_storage
     ) -> None:
@@ -1939,17 +1927,49 @@ class TestContinuationScorerExclusion:
         self, engine, mock_storage
     ):
         begun = self._show("y", "Show Y", ConsumptionStatus.UNREAD, 3, (1, 2))
-        neutral_only = UserPreferenceConfig(
+        length_only = UserPreferenceConfig(
             scorer_weights={
                 key: 0.0 for key in SCORER_NAME_MAP if key != "content_length"
-            }
+            },
+            content_length_preferences={"tv_show": "short"},
         )
 
-        scored = self._recommend_shows(engine, mock_storage, [begun], neutral_only)
+        scored = self._recommend_shows(engine, mock_storage, [begun], length_only)
 
         next_season = scored["Show Y (Season 3)"]
-        assert next_season.score_breakdown["continuation"] == 1.0
-        assert next_season.score == pytest.approx(0.5)
+        assert "continuation" in next_season.score_breakdown
+        assert next_season.score == pytest.approx(
+            next_season.score_breakdown["content_length"]
+        )
+
+    def _between_seasons(self, engine, mock_storage, rating):
+        begun = self._show(
+            "y", "Show Y", ConsumptionStatus.CURRENTLY_CONSUMING, 3, (1, 2)
+        ).model_copy(update={"rating": rating})
+        fresh = self._show("z", "Show Z", ConsumptionStatus.UNREAD, 3)
+        return self._recommend_shows(engine, mock_storage, [begun, fresh])
+
+    def test_a_between_seasons_shows_rating_scales_its_next_season_regression(
+        self, engine, mock_storage
+    ):
+        """A show part-way through is no taste signal, so its rating never reached
+        continuation and every next season scored as unrated."""
+        fresh_scores = set()
+        for rating, continuation in ((5, 1.0), (1, 0.0), (None, 0.5)):
+            scored = self._between_seasons(engine, mock_storage, rating)
+
+            next_rows = dict(scored["Show Y (Season 3)"].score_breakdown)
+            assert next_rows.pop("continuation") == continuation
+            assert next_rows == scored["Show Z (Season 1)"].score_breakdown
+            fresh_scores.add(scored["Show Z (Season 1)"].score)
+        assert len(fresh_scores) == 1, "the show's rating leaked into taste"
+
+    def test_the_next_season_of_a_loved_show_outranks_an_unstarted_one_regression(
+        self, engine, mock_storage
+    ):
+        scored = self._between_seasons(engine, mock_storage, 5)
+
+        assert scored["Show Y (Season 3)"].score > scored["Show Z (Season 1)"].score
 
     def test_the_season_after_one_in_flight_carries_no_continuation_row(
         self, engine, mock_storage
@@ -1985,19 +2005,6 @@ class TestContinuationScorerExclusion:
             "continuation" not in scored[f"Show N (Season {season})"].score_breakdown
             for season in (2, 3)
         )
-
-    def test_the_next_season_of_a_begun_show_outranks_an_unstarted_one(
-        self, engine, mock_storage
-    ):
-        """Continuation demoted every next season below shows nobody had begun."""
-        begun = self._show("y", "Show Y", ConsumptionStatus.UNREAD, 3, (1, 2))
-        fresh = self._show("z", "Show Z", ConsumptionStatus.UNREAD, 3)
-
-        scored = self._recommend_shows(engine, mock_storage, [begun, fresh])
-
-        next_season = scored["Show Y (Season 3)"]
-        assert next_season.score_breakdown["continuation"] == 1.0
-        assert next_season.score > scored["Show Z (Season 1)"].score
 
     def test_the_book_after_one_being_read_follows_a_finished_first(
         self, real_engine, real_storage
@@ -2079,6 +2086,78 @@ class TestContinuationScorerExclusion:
         scored = {rec.item.title: rec.score for rec in beside_active}
         assert alone[0].item.title == "Foundation"
         assert scored["Foundation"] == pytest.approx(alone[0].score)
+
+
+class TestASeriesScoresOnOneRowRegression:
+    """Liking one entry of a series scored a sequel on three rows, so twelve of
+    the top fifteen movies were sequels with mediocre taste rows."""
+
+    @staticmethod
+    def _movie(title, *, series=None, year=None, rating=None):
+        return make_item(
+            title=title,
+            content_type=ContentType.MOVIE,
+            status=(
+                ConsumptionStatus.UNREAD
+                if rating is None
+                else ConsumptionStatus.COMPLETED
+            ),
+            rating=rating,
+            metadata={
+                "genre": "Comedy",
+                **({"series_name": series, "release_year": year} if series else {}),
+            },
+        )
+
+    def _scored(self, engine, mock_storage, consumed, candidates):
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: consumed
+        )
+        mock_storage.get_unconsumed_items = Mock(return_value=candidates)
+        return {
+            rec.item.title: rec
+            for rec in engine.generate_recommendations(
+                content_type=ContentType.MOVIE, count=10
+            )
+        }
+
+    def _after_clerks_rated(self, engine, mock_storage, rating):
+        clerks = self._movie("Clerks", series="Clerks", year=1994, rating=rating)
+        sequel = self._movie("Clerks II", series="Clerks", year=2006)
+        standalone = self._movie("Office Space")
+        return self._scored(engine, mock_storage, [clerks], [sequel, standalone])
+
+    def test_a_sequel_differs_from_a_standalone_only_by_its_rated_continuation(
+        self, engine, mock_storage
+    ):
+        for rating, continuation in ((5, 1.0), (3, 0.5), (1, 0.0)):
+            scored = self._after_clerks_rated(engine, mock_storage, rating)
+
+            sequel_rows = dict(scored["Clerks II"].score_breakdown)
+            assert sequel_rows.pop("continuation") == continuation
+            assert sequel_rows == scored["Office Space"].score_breakdown
+
+    def test_a_disliked_series_ranks_its_sequel_below_a_matching_standalone(
+        self, engine, mock_storage
+    ):
+        scored = self._after_clerks_rated(engine, mock_storage, 1)
+
+        assert scored["Clerks II"].score < scored["Office Space"].score
+
+    def test_an_unstarted_series_entry_scores_as_a_standalone(
+        self, engine, mock_storage
+    ):
+        taste = self._movie("Airplane!", rating=5)
+        opener = self._movie("Before Sunrise", series="Before Trilogy", year=1995)
+        standalone = self._movie("Office Space")
+
+        scored = self._scored(engine, mock_storage, [taste], [opener, standalone])
+
+        assert (
+            scored["Before Sunrise"].score_breakdown
+            == scored["Office Space"].score_breakdown
+        )
+        assert scored["Before Sunrise"].score == scored["Office Space"].score
 
 
 class TestSameSeriesReferenceExclusionRegression:
@@ -2908,9 +2987,8 @@ class TestSeriesTrackingFullSetRegression:
 
 
 class TestHalfNumberedEntryScoringRegression:
-    """SeriesOrderScorer recognised succession as
-    ``item_number == max_consumed + 1``, which no fractional position satisfies,
-    so #2.5 fell through to the terminal already-consumed branch."""
+    """Succession was once recognised as ``item_number == max_consumed + 1``,
+    which no fractional position satisfies, so #2.5 scored as already consumed."""
 
     @staticmethod
     def _stock_library(storage):
@@ -2953,7 +3031,7 @@ class TestHalfNumberedEntryScoringRegression:
 
         assert "Gods of Risk (The Expanse, #2.5)" in by_title
         assert (
-            by_title["Gods of Risk (The Expanse, #2.5)"].score_breakdown["series_order"]
+            by_title["Gods of Risk (The Expanse, #2.5)"].score_breakdown["continuation"]
             == 1.0
         )
         assert "Abaddon's Gate (The Expanse, #3)" not in by_title
@@ -3114,7 +3192,11 @@ class TestSeasonCandidateIdentityRegression:
                 title="Uncharted Depths",
                 content_type=ContentType.TV_SHOW,
                 status=ConsumptionStatus.UNREAD,
-                metadata={"genre": "Drama", "total_seasons": 2},
+                metadata={
+                    "genre": "Drama",
+                    "total_seasons": 3,
+                    "seasons_watched": [2],
+                },
             )
         )
 
@@ -3125,7 +3207,7 @@ class TestSeasonCandidateIdentityRegression:
         )
 
         assert [rec.item.title for rec in recs] == ["Uncharted Depths (Season 1)"]
-        assert recs[0].score_breakdown["series_order"] == 0.8
+        assert "continuation" not in recs[0].score_breakdown
 
 
 class TestSeasonSiblingsStayDistinctInEveryMap:
@@ -3158,18 +3240,18 @@ class TestSeasonSiblingsStayDistinctInEveryMap:
         recommendations = engine._format_recommendations(
             [_RankedCandidate(first, 1.0), _RankedCandidate(second, 0.5)],
             {
-                candidate_key(first): {"series_order": 0.8},
-                candidate_key(second): {"series_order": 0.2},
+                candidate_key(first): {"genre_match": 0.8},
+                candidate_key(second): {"genre_match": 0.2},
             },
-            {"series_order": 1.5},
+            {"genre_match": 2.0},
             {candidate_key(second): [knives_out]},
             SignalIndex([]),
             PreferenceAnalyzer(min_rating=4).analyze([]),
         )
 
         assert [rec.score_breakdown for rec in recommendations] == [
-            {"series_order": 0.8},
-            {"series_order": 0.2},
+            {"genre_match": 0.8},
+            {"genre_match": 0.2},
         ]
         assert [
             [item.title for item in rec.adaptations] for rec in recommendations

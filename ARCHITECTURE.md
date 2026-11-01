@@ -248,11 +248,9 @@ RecommendationEngine
   |     |-- GenreMatchScorer        genre preference, dislike included
   |     |-- CreatorMatchScorer      author/director/creators/developer
   |     |-- TagOverlapScorer        closest tag and cluster match to a consumed item, by rating
-  |     |-- SeriesOrderScorer       next in sequence
   |     |-- RatingPatternScorer     rating history in matching genres
-  |     |-- ContentLengthScorer     soft penalty for length mismatch
-  |     |-- ContinuationScorer      boosts what follows a begun series (silent mid-series)
-  |     |-- SeriesAffinityScorer    well-rated franchises (avg >= 4)
+  |     |-- ContentLengthScorer     soft penalty for length mismatch (only where a length is set)
+  |     |-- ContinuationScorer      what follows a begun series, by its rating (silent mid-series)
   |     |-- AdaptationScorer        cross-media adaptations (dropped when none exist)
   |     |-- [CustomPreferenceScorer]    when the user has natural language rules
   |

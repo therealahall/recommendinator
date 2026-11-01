@@ -68,8 +68,8 @@ describe('RecScoreDetails', () => {
       props: {
         rec: makeRec({
           score: 0.57,
-          score_breakdown: { series_order: 1, genre_match: 0.25 },
-          scorer_weights: { series_order: 1.5, genre_match: 2 },
+          score_breakdown: { continuation: 1, genre_match: 0.25 },
+          scorer_weights: { continuation: 1.5, genre_match: 2 },
         }),
         open: true,
       },
