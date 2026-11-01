@@ -1,6 +1,51 @@
 # CHANGELOG
 
 
+## v0.74.0 (2026-11-01)
+
+### Chores
+
+- Bump the actions group with 3 updates
+  ([`d8ca97e`](https://github.com/therealahall/recommendinator/commit/d8ca97e87cdbbd98e8abb92b06658b377b484ff0))
+
+- Bump the python group with 2 updates
+  ([`38fb2b9`](https://github.com/therealahall/recommendinator/commit/38fb2b9787b7585caa05503d108305801c87957f))
+
+- Bump vite from 8.3.4 to 8.3.5 in the frontend group
+  ([`2e79850`](https://github.com/therealahall/recommendinator/commit/2e7985025cff5c8941727e726734aa9c0b586a15))
+
+### Documentation
+
+- State how genre_match approaches its ends, and name the show rating continuation reads
+  ([`7c7824c`](https://github.com/therealahall/recommendinator/commit/7c7824ce47467399e4287c9c1200182687218490))
+
+### Features
+
+- **recommendations**: Score a series on one row, scaled by how its earlier entries were rated
+  ([`9d293ac`](https://github.com/therealahall/recommendinator/commit/9d293acc1a562dded53977db2d413cda710ae680))
+
+- **recommendations**: Score genres against the user's own mean rating
+  ([`753e493`](https://github.com/therealahall/recommendinator/commit/753e493bfee44eeade124bf37cac116172263e62))
+
+### Refactoring
+
+- **recommendations**: Share one genre ratings walk between scoring and the profile
+  ([`c82cf6f`](https://github.com/therealahall/recommendinator/commit/c82cf6fb2ffaa72a18fa9adb4997b6e82592d36e))
+
+### Testing
+
+- **cli**: Refuse a retired scorer weight on the CLI
+  ([`cea6a7d`](https://github.com/therealahall/recommendinator/commit/cea6a7ddd300417ecab989c6049df92de332dbcb))
+
+- **recommendations**: Guard genre_match against a zero total weight
+  ([`cdc5887`](https://github.com/therealahall/recommendinator/commit/cdc58873d9b539630e05202045d5dd9710416e0f))
+
+### Breaking Changes
+
+- **recommendations**: The rating_pattern weight is gone. The same schema step drops it from stored
+  settings and every user's weights.
+
+
 ## v0.73.2 (2026-10-24)
 
 ### Bug Fixes
