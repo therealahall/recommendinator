@@ -13,7 +13,6 @@ from src.recommendations.scorers import (
     ContinuationScorer,
     CreatorMatchScorer,
     GenreMatchScorer,
-    RatingPatternScorer,
     Scorer,
     TagOverlapScorer,
 )
@@ -189,7 +188,6 @@ _SCORER_CONFIG_MAP: dict[str, type[Scorer]] = {
     "genre_match": GenreMatchScorer,
     "creator_match": CreatorMatchScorer,
     "tag_overlap": TagOverlapScorer,
-    "rating_pattern": RatingPatternScorer,
     "content_length": ContentLengthScorer,
     "continuation": ContinuationScorer,
     "adaptation": AdaptationScorer,

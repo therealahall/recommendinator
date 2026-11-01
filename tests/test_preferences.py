@@ -61,7 +61,6 @@ def test_preference_analyzer_basic():
 def test_user_preferences_get_author_score():
     preferences = UserPreferences(
         preferred_authors={"author a": 0.8, "author b": 0.5},
-        preferred_genres={},
         average_rating=4.5,
         total_items=10,
     )
@@ -106,9 +105,7 @@ def test_preference_analyzer_cross_content_type():
     preferences = analyzer.analyze(items)
 
     assert preferences.total_items == 3
-    assert "science fiction" in preferences.preferred_genres
     assert "frank herbert" in preferences.preferred_authors
-    assert preferences.preferred_genres["science fiction"] == 1.0
 
 
 class TestScoreNormalisationBounds:
@@ -129,10 +126,6 @@ class TestScoreNormalisationBounds:
         )
 
         assert preferences.preferred_authors == {"author a": 1.0, "author b": 1.0}
-        assert preferences.preferred_genres == {
-            "science fiction": 1.0,
-            "fantasy": 1.0,
-        }
 
     def test_min_rating_one_does_not_invert_preference_regression(self):
         analyzer = PreferenceAnalyzer(min_rating=1)
@@ -202,7 +195,7 @@ class TestScoreNormalisationBounds:
 
         assert preferences.preferred_authors == {}
         assert preferences.disliked_authors == {}
-        assert preferences.preferred_genres == {}
+        assert preferences.genre_tastes == {}
         assert preferences.average_rating == 0.0
         assert preferences.total_items == 1
         assert preferences.get_author_score("Author A") == 0.0
@@ -252,7 +245,6 @@ class TestPreferredWeightAccumulation:
 
         assert preferences.get_author_score("Author A") == 1.0
         assert 0.0 < preferences.get_author_score("Author B") <= 1.0
-        assert preferences.get_genre_score("Science Fiction") == 1.0
 
     def test_disliked_only_author_scores_negative_within_range(self):
         analyzer = PreferenceAnalyzer(min_rating=4)
@@ -266,7 +258,6 @@ class TestPreferredWeightAccumulation:
         )
 
         assert preferences.get_author_score("Author A") == -1.0
-        assert preferences.get_genre_score("Fantasy") == -1.0
 
     def test_items_without_an_author_only_feed_the_genre_buckets(self):
         """A missing author is skipped rather than keyed under an empty name."""
@@ -286,7 +277,7 @@ class TestPreferredWeightAccumulation:
         )
 
         assert preferences.preferred_authors == {}
-        assert preferences.preferred_genres == {"science fiction": 1.0}
+        assert set(preferences.genre_tastes) == {"science fiction"}
         assert preferences.get_author_score("") == 0.0
 
 

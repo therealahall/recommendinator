@@ -66,7 +66,6 @@ class ScoringContext:
     tag_set_lifts: list[float] = field(default_factory=list)
     tag_sets_by_term: dict[str, list[int]] = field(default_factory=dict)
     consumed_creators: set[str] = field(default_factory=set)
-    ratings_by_genre: dict[str, list[int]] = field(default_factory=dict)
     #: Seeded by the caller with ratings that are no taste signal, a show's
     #: between seasons; each rated consumed item's is added to its series.
     series_ratings: dict[str, list[int]] = field(default_factory=dict)
@@ -82,7 +81,6 @@ class ScoringContext:
     content_length_preferences: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        genre_ratings: dict[str, list[int]] = defaultdict(list)
         series_ratings: dict[str, list[int]] = defaultdict(list)
         for seeded, ratings in self.series_ratings.items():
             series_ratings[seeded].extend(ratings)
@@ -93,8 +91,6 @@ class ScoringContext:
         for item in self.consumed_items:
             item_genres = extract_genres(item)
             if item.rating is not None:
-                for genre in item_genres:
-                    genre_ratings[genre].append(item.rating)
                 terms = _tag_terms(item_genres)
                 lift = _rating_lift(item.rating)
                 best_lifts[terms] = max(best_lifts.get(terms, lift), lift)
@@ -113,7 +109,6 @@ class ScoringContext:
         self.tag_set_lifts = list(best_lifts.values())
         self.tag_sets_by_term = dict(tag_sets_by_term)
         self.consumed_creators = creators
-        self.ratings_by_genre = dict(genre_ratings)
         self.series_ratings = dict(series_ratings)
 
 
@@ -141,16 +136,19 @@ class GenreMatchScorer(Scorer):
         super().__init__(weight)
 
     def score(self, candidate: ContentItem, context: ScoringContext) -> float:
-        # Only terms the user has an opinion on count: an unrated broad term like
-        # drama would otherwise dilute every mean, and max() let it hide a dislike.
-        known = [
-            score
+        # Weighted rather than a plain mean: drama on most of the library would
+        # otherwise drag every candidate carrying it to neutral, and max() let a
+        # loved term hide a disliked one.
+        tastes = [
+            taste
             for genre in extract_genres(candidate)
-            if (score := context.preferences.get_genre_score(genre)) != 0.0
+            if (taste := context.preferences.genre_tastes.get(genre)) is not None
         ]
-        if not known:
+        weight = sum(taste.weight for taste in tastes)
+        if weight == 0.0:
             return 0.5
-        return (sum(known) / len(known) + 1.0) / 2.0
+        mean = sum(taste.score * taste.weight for taste in tastes) / weight
+        return (mean + 1.0) / 2.0
 
 
 class CreatorMatchScorer(Scorer):
@@ -198,27 +196,6 @@ class TagOverlapScorer(Scorer):
             ),
             default=0.0,
         )
-
-
-class RatingPatternScorer(Scorer):
-    def __init__(self, weight: float = 1.0) -> None:
-        super().__init__(weight)
-
-    def score(self, candidate: ContentItem, context: ScoringContext) -> float:
-        candidate_genres = extract_genres(candidate)
-        if not candidate_genres or not context.ratings_by_genre:
-            return 0.5  # neutral
-
-        matching_ratings: list[int] = []
-        for genre in candidate_genres:
-            matching_ratings.extend(context.ratings_by_genre.get(genre, []))
-
-        if not matching_ratings:
-            return 0.5
-
-        average = sum(matching_ratings) / len(matching_ratings)
-        # Map 1-5 rating scale to 0.0-1.0
-        return (average - 1.0) / 4.0
 
 
 class CustomPreferenceScorer(Scorer):
@@ -326,7 +303,6 @@ DEFAULT_SCORERS: list[Scorer] = [
     GenreMatchScorer(),
     CreatorMatchScorer(),
     TagOverlapScorer(),
-    RatingPatternScorer(),
     ContentLengthScorer(),
     ContinuationScorer(),
     AdaptationScorer(),
@@ -337,7 +313,6 @@ SCORER_NAME_MAP: dict[str, type[Scorer]] = {
     "genre_match": GenreMatchScorer,
     "creator_match": CreatorMatchScorer,
     "tag_overlap": TagOverlapScorer,
-    "rating_pattern": RatingPatternScorer,
     "custom_preference": CustomPreferenceScorer,
     "content_length": ContentLengthScorer,
     "continuation": ContinuationScorer,

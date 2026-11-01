@@ -163,7 +163,7 @@ _REGISTRY: tuple[SettingMetadata, ...] = (
     _entry(
         "recommendations.min_rating_for_preference",
         label="Minimum liked rating",
-        help="Items rated at least this value count as liked when profiling taste.",
+        help="Items rated at least this value count as liked when profiling the creators you enjoy.",
         type="int",
         default=4,
         validation=Validation(min=1, max=5),
@@ -171,7 +171,7 @@ _REGISTRY: tuple[SettingMetadata, ...] = (
     _entry(
         "recommendations.scorer_weights.genre_match",
         label="Genre match weight",
-        help="Weight for matching a candidate's genres to liked items (0 disables).",
+        help="Weight for how you rate a candidate's genres against your own average rating (0 disables).",
         type="float",
         default=2.0,
         validation=Validation(min=0.0),
@@ -188,14 +188,6 @@ _REGISTRY: tuple[SettingMetadata, ...] = (
         "recommendations.scorer_weights.tag_overlap",
         label="Tag overlap weight",
         help="Weight for how closely an item's tags and genre clusters match something you've consumed, scaled by how you rated it (0 disables).",
-        type="float",
-        default=1.0,
-        validation=Validation(min=0.0),
-    ),
-    _entry(
-        "recommendations.scorer_weights.rating_pattern",
-        label="Rating pattern weight",
-        help="Weight for matching learned rating patterns (0 disables).",
         type="float",
         default=1.0,
         validation=Validation(min=0.0),

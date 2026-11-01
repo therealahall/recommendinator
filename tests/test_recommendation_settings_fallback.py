@@ -92,12 +92,17 @@ def _apply_running(updates: dict[str, Any]) -> None:
 
 
 def _seed_split_taste_library(storage: StorageManager) -> None:
-    """Two rated books and two candidates that swap genre for creator."""
+    """Rated books and two candidates that swap genre for creator. Three a genre,
+    because genre_match holds a genre rated once near neutral."""
     completed = ConsumptionStatus.COMPLETED
     unread = ConsumptionStatus.UNREAD
     for item_id, title, author, genre, status, rating in (
         ("liked", "Ash Harbour", "Vera Lang", "Science Fiction", completed, 5),
+        ("liked-2", "Ash Harbour 2", "Ida Moss", "Science Fiction", completed, 5),
+        ("liked-3", "Ash Harbour 3", "Ida Moss", "Science Fiction", completed, 5),
         ("disliked", "Grey Ledger", "Miles Crane", "Romance", completed, 2),
+        ("disliked-2", "Grey Ledger 2", "Ada Finch", "Romance", completed, 2),
+        ("disliked-3", "Grey Ledger 3", "Ada Finch", "Romance", completed, 2),
         ("genre-led", "Neon Divide", "Miles Crane", "Science Fiction", unread, None),
         ("creator-led", "Quiet Harvest", "Vera Lang", "Romance", unread, None),
     ):

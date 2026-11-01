@@ -9,7 +9,6 @@ export const SCORER_KEYS = [
   'genre_match',
   'creator_match',
   'tag_overlap',
-  'rating_pattern',
   'content_length',
   'continuation',
   'adaptation',
@@ -20,7 +19,6 @@ export const DEFAULT_WEIGHTS: Record<string, number> = {
   genre_match: 2.0,
   creator_match: 1.5,
   tag_overlap: 1.0,
-  rating_pattern: 1.0,
   content_length: 1.0,
   continuation: 1.0,
   adaptation: 1.5,
@@ -28,10 +26,9 @@ export const DEFAULT_WEIGHTS: Record<string, number> = {
 }
 
 export const SCORER_TOOLTIPS: Record<string, string> = {
-  genre_match: 'Scores recommendations by how well their genres match your preferences. Higher weight means genre alignment matters more. Default: 2.0',
+  genre_match: 'Scores recommendations by how you rate their genres against your own average rating: a genre you rate above your average lifts an item, one below holds it down, and a genre on most of your library counts for little. Default: 2.0',
   creator_match: "Boosts items by creators (authors, directors, developers) you've enjoyed before. Default: 1.5",
   tag_overlap: "How closely an item's tags and genre clusters match something you've consumed, scaled by how you rated it. Default: 1.0",
-  rating_pattern: "Uses your rating history per genre to predict how much you'd enjoy a recommendation. Genres you rate highly get boosted. Default: 1.0",
   content_length: 'Soft-penalizes items that don\'t match your preferred content length (short/medium/long). Counts only for a content type you have set a length for. Default: 1.0',
   continuation: "Scores the later entries of a series you've begun by how you rated the entries you finished: a series you loved is nudged up, one you disliked is held down. Holds off while you're part-way through an entry of that series. Default: 1.0",
   adaptation: 'Boosts a film, show or game that adapts something you rated well, and the book behind an adaptation you loved. Default: 1.5',

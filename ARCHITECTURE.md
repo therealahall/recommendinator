@@ -245,10 +245,9 @@ A unified scoring pipeline that always runs, across content types.
 ```
 RecommendationEngine
   |-- ScoringPipeline (always runs; its aggregate IS the emitted score)
-  |     |-- GenreMatchScorer        genre preference, dislike included
+  |     |-- GenreMatchScorer        genre ratings against the user's own mean, dislike included
   |     |-- CreatorMatchScorer      author/director/creators/developer
   |     |-- TagOverlapScorer        closest tag and cluster match to a consumed item, by rating
-  |     |-- RatingPatternScorer     rating history in matching genres
   |     |-- ContentLengthScorer     soft penalty for length mismatch (only where a length is set)
   |     |-- ContinuationScorer      what follows a begun series, by its rating (silent mid-series)
   |     |-- AdaptationScorer        cross-media adaptations (dropped when none exist)

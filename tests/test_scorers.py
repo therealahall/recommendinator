@@ -1,3 +1,5 @@
+import pytest
+
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.recommendations.genre_clusters import get_clusters_for_terms
 from src.recommendations.genre_normalizer import ALLOWED_TERMS
@@ -10,7 +12,6 @@ from src.recommendations.scorers import (
     CreatorMatchScorer,
     CustomPreferenceScorer,
     GenreMatchScorer,
-    RatingPatternScorer,
     ScoringContext,
     TagOverlapScorer,
     build_scorers_with_overrides,
@@ -101,36 +102,35 @@ class TestExtractCreator:
         }
 
 
-class TestScoringContext:
-    def test_ratings_by_genre(self) -> None:
-        consumed = [
-            make_item(rating=5, metadata={"genre": "Fantasy"}),
-            make_item(rating=3, metadata={"genre": "Fantasy"}),
-        ]
-        context = _build_context(consumed=consumed)
-        assert context.ratings_by_genre["fantasy"] == [5, 3]
+def _genre_score(ratings: dict[str, list[int]], genre: str, *shared: str) -> float:
+    # A book library scoring a film: genre taste carries across content types.
+    consumed = [
+        make_item(rating=rating, genres=", ".join([name, *shared]))
+        for name, scale in ratings.items()
+        for rating in scale
+    ]
+    candidate = make_item(
+        content_type=ContentType.MOVIE, genres=", ".join([genre, *shared])
+    )
+    return GenreMatchScorer().score(candidate, _build_context(consumed=consumed))
 
 
 class TestGenreMatchScorer:
-    def test_preferred_genre_scores_high(self) -> None:
-        consumed = [make_item(rating=5, metadata={"genre": "Fantasy"})]
-        context = _build_context(consumed=consumed)
-        candidate = make_item(
-            status=ConsumptionStatus.UNREAD, metadata={"genre": "Fantasy"}
-        )
-        scorer = GenreMatchScorer()
-        score = scorer.score(candidate, context)
-        assert score > 0.5
+    @pytest.mark.parametrize("shared", [(), ("Drama",)])
+    # The second is a generous rater, whose 3 stars is a dislike and 4 average.
+    @pytest.mark.parametrize(("romance", "comedy"), [(2, [3, 4]), (3, [4, 4])])
+    def test_loved_average_and_disliked_genres_separate_even_under_a_shared_term(
+        self, romance: int, comedy: list[int], shared: tuple[str, ...]
+    ) -> None:
+        library = {"Horror": [5] * 5, "Romance": [romance] * 5, "Comedy": comedy}
+        assert _genre_score(library, "Horror", *shared) >= 0.75
+        assert _genre_score(library, "Romance", *shared) <= 0.25
+        assert 0.45 <= _genre_score(library, "Comedy", *shared) <= 0.55
 
-    def test_disliked_genre_scores_low(self) -> None:
-        consumed = [make_item(rating=1, metadata={"genre": "Romance"})]
-        context = _build_context(consumed=consumed)
-        candidate = make_item(
-            status=ConsumptionStatus.UNREAD, metadata={"genre": "Romance"}
-        )
-        scorer = GenreMatchScorer()
-        score = scorer.score(candidate, context)
-        assert score < 0.5
+    def test_a_genre_rated_once_claims_less_than_one_rated_five_times(self) -> None:
+        once = _genre_score({"Western": [5], "Romance": [1]}, "Western")
+        five_times = _genre_score({"Western": [5] * 5, "Romance": [1] * 5}, "Western")
+        assert 0.5 < once < five_times
 
     def test_no_genre_returns_neutral(self) -> None:
         context = _build_context(consumed=[])
@@ -154,7 +154,7 @@ class TestGenreMatchScorer:
             )
             return scorer.score(candidate, context)
 
-        assert score("Drama", "Crime") == 1.0
+        assert score("Drama", "Crime") == score("Crime") > 0.5
         assert score("Drama", "Crime", "Western") == 0.5
 
 
@@ -246,30 +246,6 @@ class TestTagOverlapScorer:
             return self._score([make_item(genres="War", rating=rating)], "War")
 
         assert score(1) == score(5) / 2 == 0.25
-
-
-class TestRatingPatternScorer:
-    def test_high_average_in_genre(self) -> None:
-        consumed = [
-            make_item(rating=5, metadata={"genre": "Fantasy"}),
-            make_item(rating=5, metadata={"genre": "Fantasy"}),
-        ]
-        context = _build_context(consumed=consumed)
-        candidate = make_item(
-            status=ConsumptionStatus.UNREAD, metadata={"genre": "Fantasy"}
-        )
-        scorer = RatingPatternScorer()
-        score = scorer.score(candidate, context)
-        assert score == 1.0
-
-    def test_no_matching_genre_neutral(self) -> None:
-        consumed = [make_item(rating=5, metadata={"genre": "Fantasy"})]
-        context = _build_context(consumed=consumed)
-        candidate = make_item(
-            status=ConsumptionStatus.UNREAD, metadata={"genre": "Romance"}
-        )
-        scorer = RatingPatternScorer()
-        assert scorer.score(candidate, context) == 0.5
 
 
 class TestScorerClone:
