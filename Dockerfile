@@ -7,7 +7,7 @@
 # =============================================================================
 # Frontend builder (Vue 3 + Vite)
 # =============================================================================
-FROM node:26-slim@sha256:14bf3eac4bf209d906d3c41256597d3ab1f926b2e93a79e9bdfe1efd32454239 AS frontend-builder
+FROM node:26-slim@sha256:e4db4c914bf8ad241bd24804fc25d272d89bad97e68cdc8a1414862790a02c39 AS frontend-builder
 
 # Node dropped corepack from the distribution at 25, so pnpm installs directly.
 RUN npm install -g pnpm@9.7.0
