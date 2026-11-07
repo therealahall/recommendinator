@@ -458,9 +458,50 @@ def test_update_command_steam_api_error(mock_components):
         runner = CliRunner()
         result = runner.invoke(cli, ["update", "--source", "steam"])
 
-        assert result.exit_code == 0
+        assert result.exit_code == 1
         assert "Warning: API error" in result.output
         assert "No items were updated" in result.output
+
+
+def test_one_failed_source_fails_the_update_and_the_others_still_print(
+    tmp_path: Path,
+) -> None:
+    """Reported: a scheduled ``update`` exited 0 with a source failing every run."""
+    from src.ingestion.plugin_base import SourceError
+
+    db_path = tmp_path / "test.db"
+    _steam_source(db_path)
+    StorageManager(sqlite_path=db_path).sources.upsert(
+        1, "sonarr", "sonarr", {"url": "http://localhost:8989"}, enabled=True
+    )
+    shows = [make_item("Show", ContentType.TV_SHOW, item_id="s1")]
+
+    with (
+        patch(
+            "src.cli.main.load_config",
+            return_value={"storage": {"database_path": str(db_path)}},
+        ),
+        patch(
+            "src.ingestion.sources.steam.SteamPlugin.fetch",
+            side_effect=SourceError("steam", "API error"),
+        ),
+        patch(
+            "src.ingestion.sources.steam.SteamPlugin.validate_config", return_value=[]
+        ),
+        patch(
+            "src.ingestion.sources.sonarr.SonarrPlugin.fetch",
+            return_value=iter(shows),
+        ),
+        patch(
+            "src.ingestion.sources.sonarr.SonarrPlugin.validate_config",
+            return_value=[],
+        ),
+    ):
+        result = CliRunner().invoke(cli, ["update", "--source", "all"])
+
+    assert result.exit_code == 1
+    assert "Warning: API error" in result.output
+    assert "(sonarr): 1 of 1 items saved" in result.output
 
 
 class TestUpdateWorkersFlag:
@@ -763,7 +804,7 @@ def test_update_reports_the_omitted_error_count_the_web_payload_carries(
             cli, ["update", "--source", "steam", "--format", "json"]
         )
 
-    assert result.exit_code == 0, result.stderr
+    assert result.exit_code == 1, result.stderr
     job = SyncStatusResponse(**json.loads(result.stdout)).jobs[0]
     assert len(job.errors) == MAX_REPORTED_ERRORS
     assert len(job.errors) + job.sources[0].omitted_errors == failures
