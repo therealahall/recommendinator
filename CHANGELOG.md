@@ -1,6 +1,70 @@
 # CHANGELOG
 
 
+## v0.75.0 (2026-11-07)
+
+### Bug Fixes
+
+- **cli**: Exit nonzero when a source fails during update
+  ([`323e138`](https://github.com/therealahall/recommendinator/commit/323e138ea972f21b481960678baf202683a71064))
+
+- **recommendations**: Count a consumed term once in tag_overlap
+  ([`b4bc4cf`](https://github.com/therealahall/recommendinator/commit/b4bc4cf94ab7dafc02db21d594e38aa98f30bb9c))
+
+- **scoring**: Keep every scorer weight within 0 to 5
+  ([`29272e5`](https://github.com/therealahall/recommendinator/commit/29272e5a552b2a56556fa98392ad61c65316f1b1))
+
+- **scoring**: Score a creator with a zero net rating as neutral
+  ([`d1b3c88`](https://github.com/therealahall/recommendinator/commit/d1b3c88efe7c403e38313e2c07dcff2ad655fad4))
+
+- **scoring**: Stop a book series scaling a show of the same name
+  ([`e0133fb`](https://github.com/therealahall/recommendinator/commit/e0133fb77f8304ff4c2c49c0450b2fee3ae06d5a))
+
+- **series**: Offer the earliest entry in the library and hold later seasons for the one in flight
+  ([`800e179`](https://github.com/therealahall/recommendinator/commit/800e179e848b64c3ae8a65f5cc49b0a1fe745544))
+
+### Chores
+
+- Bump astral-sh/setup-uv
+  ([`fa52c2b`](https://github.com/therealahall/recommendinator/commit/fa52c2bf1753b0210f7725342b167a68b1206e75))
+
+- Bump node from `14bf3ea` to `e4db4c9` in the base-images group
+  ([`ea1e873`](https://github.com/therealahall/recommendinator/commit/ea1e87322e380d92f0c8a2544cbf18938912f6a8))
+
+- Bump the frontend group with 2 updates
+  ([`da966d8`](https://github.com/therealahall/recommendinator/commit/da966d845052cfa9a9bec590a0f4ebdb1dba4bed))
+
+- Bump the python group with 7 updates
+  ([`2d47909`](https://github.com/therealahall/recommendinator/commit/2d4790965d70df7995726f3da06ccf59ea7709a2))
+
+### Documentation
+
+- Match the docs to weight bounds, update exit codes, rating scales and in-progress taste
+  ([`7223ae4`](https://github.com/therealahall/recommendinator/commit/7223ae4be338f1a939cdf2992098d6f712550af8))
+
+- **scoring**: Describe tag_overlap as one credit per tag
+  ([`948d79b`](https://github.com/therealahall/recommendinator/commit/948d79b49f7a045f533858a89c13797989085c49))
+
+- **series**: Describe gap skipping and the season in flight
+  ([`b688b97`](https://github.com/therealahall/recommendinator/commit/b688b97272cc1a095b854217ee3ee0b0606fbe10))
+
+### Features
+
+- **plugins**: Let a source declare its rating scale
+  ([`f07bedd`](https://github.com/therealahall/recommendinator/commit/f07bedd82963eece5785afb67ed25e26c9f821f4))
+
+### Testing
+
+- **recommendations**: Feed a rated show in progress to taste
+  ([`6bbdb07`](https://github.com/therealahall/recommendinator/commit/6bbdb074eade4dd4a43f928a1bd6d39b76810026))
+
+- **recommendations**: Pin tag_overlap to one credit per consumed term
+  ([`65634f5`](https://github.com/therealahall/recommendinator/commit/65634f5a36c8008658baeccf4f5135fe000c8bef))
+
+- **series**: Pin gap skipping and the season in flight
+  ([`5a3e07b`](https://github.com/therealahall/recommendinator/commit/5a3e07b19a3a8765710dd1b6b30edc06fb0e8ba3))
+
+
 ## v0.74.0 (2026-11-01)
 
 ### Chores
