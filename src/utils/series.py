@@ -437,22 +437,19 @@ def inject_season_progress_tracking(
     unconsumed_items: list[ContentItem],
     series_tracking: dict[str, set[float]],
 ) -> dict[str, set[float]]:
-    """Seasons begun, not seasons finished: the one in flight holds its slot, so
-    the next season reads as the next thing rather than as a skipped one.
-    """
     merged = dict(series_tracking)
 
     for item in unconsumed_items:
         if item.content_type != ContentType.TV_SHOW:
             continue
 
-        begun = _watched_seasons(item) | in_progress_seasons(item)
-        if not begun:
+        watched = _watched_seasons(item)
+        if not watched:
             continue
 
         show_title = item.title
         merged[show_title] = set(merged.get(show_title, ())) | {
-            float(season) for season in begun
+            float(season) for season in watched
         }
 
     return merged
@@ -610,8 +607,11 @@ def expand_tv_shows_to_seasons(items: list[ContentItem]) -> list[ContentItem]:
         # The show's status describes whichever season is in flight, so copying
         # it onto all of them would mark seasons never started as in progress.
         active_seasons = in_progress_seasons(item)
+        # Whatever the series ordering, a season is not next until the one
+        # being watched is finished.
+        last_season = min(active_seasons | {total_seasons})
 
-        for season_num in range(1, total_seasons + 1):
+        for season_num in range(1, last_season + 1):
             if season_num in watched_set:
                 continue
             season_title = f"{show_title} (Season {season_num})"
@@ -692,16 +692,14 @@ def should_recommend_item(
             return True
         if unconsumed_items is None:
             return False
-        return not any(num < item_num for num in unconsumed_item_nums)
+    elif item_num in consumed_numbers:
+        return False
 
-    # Every ordinal reaching here is bounded — by ``MAX_SERIES_POSITION``, a
-    # marker pattern's ``max_number``, ``MAX_SEASONS``, or the size of the series
-    # for a year-derived rank — so the slot set never grows without bound.
-    max_consumed = max(consumed_numbers)
-    virtual_slots = {float(slot) for slot in range(1, int(max_consumed) + 2)}
-    positions = consumed_numbers | unconsumed_item_nums | {item_num} | virtual_slots
-    remaining = sorted(pos for pos in positions if pos not in consumed_numbers)
-    return bool(remaining) and item_num == remaining[0]
+    # Only what is in the library can hold an entry back: a position missing
+    # from it, or ignored, would otherwise strand the series for good.
+    return not any(
+        num < item_num and num not in consumed_numbers for num in unconsumed_item_nums
+    )
 
 
 def find_earliest_recommendable(
