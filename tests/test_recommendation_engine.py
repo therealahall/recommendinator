@@ -1952,19 +1952,37 @@ class TestContinuationScorerExclusion:
         fresh = self._show("z", "Show Z", ConsumptionStatus.UNREAD, 3)
         return self._recommend_shows(engine, mock_storage, [begun, fresh])
 
-    def test_a_between_seasons_shows_rating_scales_its_next_season_regression(
-        self, engine, mock_storage
+    def test_a_rated_show_part_way_through_feeds_taste_and_its_next_season(
+        self, real_engine, real_storage
     ):
-        """A show part-way through is no taste signal, so its rating went unused."""
-        fresh_scores = set()
-        for rating, continuation in ((5, 1.0), (1, 0.0), (None, 0.5)):
-            scored = self._between_seasons(engine, mock_storage, rating)
+        """Against SQLite, not a mock: the signal accessor is what includes it.
+        Disliked drama alone weighs nothing, so mystery lifting a candidate can
+        only come from the show in progress."""
+        for show in (
+            self._show(
+                "seen", "Watched Show", ConsumptionStatus.COMPLETED, 1, (1,)
+            ).model_copy(update={"rating": 1}),
+            self._show(
+                "y",
+                "Show Y",
+                ConsumptionStatus.CURRENTLY_CONSUMING,
+                3,
+                (1, 2),
+                genres=["Mystery"],
+            ).model_copy(update={"rating": 5}),
+            self._show("z", "Show Z", ConsumptionStatus.UNREAD, 3, genres=["Mystery"]),
+        ):
+            real_storage.save_content_item(show)
 
-            next_rows = dict(scored["Show Y (Season 3)"].score_breakdown)
-            assert next_rows.pop("continuation") == continuation
-            assert next_rows == scored["Show Z (Season 1)"].score_breakdown
-            fresh_scores.add(scored["Show Z (Season 1)"].score)
-        assert len(fresh_scores) == 1, "the show's rating leaked into taste"
+        scored = {
+            rec.item.title: rec.score_breakdown
+            for rec in real_engine.generate_recommendations(
+                content_type=ContentType.TV_SHOW, count=10
+            )
+        }
+
+        assert scored["Show Y (Season 3)"]["continuation"] == 1.0
+        assert scored["Show Z (Season 1)"]["genre_match"] > 0.5
 
     def test_the_next_season_of_a_loved_show_outranks_an_unstarted_one_regression(
         self, engine, mock_storage
