@@ -214,37 +214,47 @@ class TestTagOverlapScorer:
             for term in ALLOWED_TERMS - {"battle", "war", "drama"}
             if not get_clusters_for_terms([term]) & reached
         )[:55]
-        assert self._score(consumed, "Battle") == self._score(consumed, "War") == 2 / 7
-        assert self._score(consumed, "Battle", "War") == 3 / 7
-        assert self._score(consumed, "Battle", "War", "Drama") == 5 / 7
-        assert self._score(consumed, "Battle", *unrelated) == 2 / 7
+        assert (
+            self._score(consumed, "Battle") == self._score(consumed, "War") == 1.5 / 5
+        )
+        assert self._score(consumed, "Battle", "War") == 2 / 5
+        assert self._score(consumed, "Battle", "War", "Drama") == 3 / 5
+        assert self._score(consumed, "Battle", *unrelated) == 1.5 / 5
         consumed.append(make_item(genres="War", rating=5))
-        assert self._score(consumed, "War") == 2 / 4
+        assert self._score(consumed, "War") == 1 / 3
 
     def test_a_one_tag_item_never_gives_full_marks_and_a_richer_one_reaches_higher(
         self,
     ) -> None:
         magic = [make_item(genres="Magic", rating=5)]
         rich = [make_item(genres="Magic, Wizards, Sorcery", rating=5)]
-        assert self._score(magic, "Magic") == 2 / 4
-        assert self._score(rich, "Magic") == 2 / 6
-        assert self._score(rich, "Magic", "Wizards", "Sorcery") == 4 / 6
+        assert self._score(magic, "Magic") == 1 / 3
+        assert self._score(rich, "Magic", "Wizards", "Sorcery") == 3 / 5
 
-    def test_a_shared_cluster_counts_but_never_as_much_as_the_term_it_comes_from(
+    def test_a_term_counts_once_however_many_clusters_it_shares(self) -> None:
+        consumed = [make_item(genres="Space Warfare, Science Fiction", rating=5)]
+        assert self._score(consumed, "Space Warfare") == 1.5 / 4
+        assert self._score(consumed, "War") == 0.5 / 4
+        assert self._score(consumed, "Space Opera") == self._score(
+            consumed, "Cyberpunk"
+        )
+
+    def test_a_related_term_scores_above_nothing_and_below_the_exact_term(
         self,
     ) -> None:
-        consumed = [make_item(genres="Space Warfare, Science Fiction", rating=5)]
-        assert self._score(consumed, "War") == 1 / 7
-        assert self._score(consumed, "War", "Science Fiction") == 3 / 7
-        assert self._score(consumed, "Space Warfare") == 4 / 7
-        fantasy = [make_item(genres="Fantasy", rating=5)]
-        assert self._score(fantasy, "Epic Fantasy") < self._score(fantasy, "Fantasy")
+        for consumed, exact, related in [
+            ("War", "War", "Battle"),
+            ("Science Fiction", "Science Fiction", "Cyberpunk"),
+        ]:
+            library = [make_item(genres=consumed, rating=5)]
+            assert self._score(library, exact) == 1 / 3
+            assert 0 < self._score(library, related) < 1 / 3
 
     def test_a_one_star_match_scores_half_a_five_star_one(self) -> None:
         def score(rating: int) -> float:
             return self._score([make_item(genres="War", rating=rating)], "War")
 
-        assert score(1) == score(5) / 2 == 0.25
+        assert score(1) == score(5) / 2 == 1 / 6
 
 
 class TestScorerClone:
