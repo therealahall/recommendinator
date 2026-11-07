@@ -265,7 +265,6 @@ CLUSTERS: dict[str, set[str]] = {
     "post_apocalyptic": {
         "apocalyptic",
         "post-apocalyptic",
-        "dystopia",
         "dystopian",
         "pandemic",
         "survival",
@@ -590,7 +589,6 @@ CLUSTERS: dict[str, set[str]] = {
     },
     "animation_family": {
         "animation",
-        "animated",
         "anime",
         "cartoon",
         "family",

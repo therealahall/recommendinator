@@ -21,6 +21,10 @@ SUFFIX_PATTERNS: tuple[re.Pattern[str], ...] = (
 EXCLUDED_TERMS: frozenset[str] = frozenset(
     {
         # Steam/game platform noise
+        "singleplayer",
+        "single-player",
+        "multiplayer",
+        "multi-player",
         "steam achievements",
         "steam cloud",
         "steam-trading-cards",
@@ -28,9 +32,33 @@ EXCLUDED_TERMS: frozenset[str] = frozenset(
         "partial controller support",
         "steam workshop",
         "remote play",
+        "remote play together",
+        "family sharing",
         "cloud saves",
         "controller",
         "achievements",
+        "great soundtrack",
+        "early access",
+        "free to play",
+        "vr supported",
+        # Reading shelves
+        "to-read",
+        "currently-reading",
+        "read",
+        "owned",
+        "own",
+        "kindle",
+        "ebook",
+        "e-book",
+        "audiobook",
+        "audible",
+        "library",
+        "favorites",
+        "favourites",
+        "dnf",
+        "did-not-finish",
+        "tbr",
+        "abandoned",
         # Movie metadata noise
         "aftercreditsstinger",
         "duringcreditsstinger",
@@ -75,6 +103,14 @@ EXCLUDED_PATTERNS: tuple[str, ...] = (
     "overdrive",
     "wishlist",
 )
+
+# Year and reading-challenge shelves: "read in 2019", "2019 reads", "2020-challenge"
+YEAR_SHELF_PATTERN = re.compile(
+    r"\b(?:19|20)\d\d\b.*\b(?:reads?|challenge)\b"
+    r"|\b(?:read|reading|challenge)\b.*\b(?:19|20)\d\d\b"
+)
+
+_SEPARATORS = re.compile(r"[\s_-]+")
 
 # Compound genre splits — expanded before individual normalization so
 # both constituent terms are preserved.
@@ -177,10 +213,6 @@ NORMALIZATIONS: MappingProxyType[str, str] = MappingProxyType(
         "shounen": "shonen",
         "shoujo": "shojo",
         # Game-specific
-        "singleplayer": "single-player",
-        "single player": "single-player",
-        "multiplayer": "multi-player",
-        "multi player": "multi-player",
         "co-op": "cooperative",
         "coop": "cooperative",
         "online co-op": "cooperative",
@@ -200,8 +232,8 @@ NORMALIZATIONS: MappingProxyType[str, str] = MappingProxyType(
     }
 )
 
-# Curated list of useful genres and tags to keep
-# This is permissive but filters out truly useless terms
+# Canonical spellings a folded term resolves to; a term outside them passes
+# through folded rather than being dropped.
 ALLOWED_TERMS: frozenset[str] = frozenset(
     {
         # Core genres
@@ -704,7 +736,6 @@ ALLOWED_TERMS: frozenset[str] = frozenset(
         "airship",
         "cabin",
         "farmhouse",
-        "library",
         "trench",
         "battlefield",
         "military base",
@@ -890,8 +921,6 @@ ALLOWED_TERMS: frozenset[str] = frozenset(
         "horror adventure",
         "procedural generation",
         # Game features
-        "single-player",
-        "multi-player",
         "cooperative",
         "competitive",
         "pvp",
@@ -1035,12 +1064,26 @@ ALLOWED_TERMS: frozenset[str] = frozenset(
 )
 
 
+def _fold(term: str) -> str:
+    return _SEPARATORS.sub(" ", term).strip()
+
+
+_FOLDED_EXCLUDED_TERMS = frozenset(_fold(term) for term in EXCLUDED_TERMS)
+
+# NORMALIZATIONS last, so an allowed spelling it rewrites ("animated") still
+# resolves to its canonical term.
+_CANONICAL: dict[str, str] = {_fold(term): term for term in ALLOWED_TERMS} | {
+    _fold(variant): canonical for variant, canonical in NORMALIZATIONS.items()
+}
+
+
 def normalize_term(term: str) -> str | None:
     if not term:
         return None
 
     normalized = term.lower().strip()
 
+    # Before the suffix strip, which would remove "(imaginary place)" itself.
     for pattern in EXCLUDED_PATTERNS:
         if pattern in normalized:
             return None
@@ -1051,18 +1094,16 @@ def normalize_term(term: str) -> str | None:
     for suffix_re in SUFFIX_PATTERNS:
         normalized = suffix_re.sub("", normalized)
 
-    normalized = normalized.strip()
+    normalized = _fold(normalized)
 
-    if normalized in EXCLUDED_TERMS:
+    if (
+        not normalized
+        or normalized in _FOLDED_EXCLUDED_TERMS
+        or YEAR_SHELF_PATTERN.search(normalized)
+    ):
         return None
 
-    if normalized in NORMALIZATIONS:
-        normalized = NORMALIZATIONS[normalized]
-
-    if normalized in ALLOWED_TERMS:
-        return normalized
-
-    return None
+    return _CANONICAL.get(normalized, normalized)
 
 
 def normalize_terms(terms: list[str]) -> list[str]:
