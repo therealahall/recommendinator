@@ -12,7 +12,6 @@ settings < per-user preferences**.
 | `content_length` | Soft penalty for a length mismatch. Counts only for a content type with a length preference other than `any` | 1.0 |
 | `continuation` | Scores the later entries and seasons of a series you have begun by how you rated its entries of the same content type, a show part-way through included: 5 stars is 100%, 3 is 50%, 1 is 0%, and none rated is 50%. Counts only where an earlier entry is finished or begun, and not while any entry of that series is in progress | 1.0 |
 | `adaptation` | Boosts a film, show or game adapting something you rated well, and the source behind an adaptation you loved. Counts only for an item that adapts something | 1.5 |
-| `custom_preference` | Applies your natural language rules, "avoid X" and "prefer Y". Only in the pipeline when you have rules | 1.0 |
 
 ## One score, fully explained
 
@@ -57,7 +56,7 @@ The Preferences page and the `preferences` CLI (see [CLI.md](CLI.md#preferences)
 set weights for one user. That map is **sparse**: it overrides only the keys you
 touch, and every other weight falls back to the global value.
 
-Both surfaces take only the seven keys in the table above, and only numbers
+Both surfaces take only the six keys in the table above, and only numbers
 from `0` to `5`, the global settings included. Anything else is refused where it
 is written, rather than stored to weight nothing. A per-user weight stored above
 `5` before that bound existed reads as `5`.
