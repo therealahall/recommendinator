@@ -147,7 +147,10 @@ ContentItem(
 operator gave the source, overwriting anything a plugin put there. Storage files
 `id` under that name, which is why `id` need only be unique within your source.
 
-Map source statuses onto the enum, and normalize ratings to 1-5:
+Map source statuses onto the enum, and pass ratings through
+`self.normalize_rating(raw)`. It reads `0` or anything unparseable as unrated and
+rounds up from the plugin's `rating_scale` onto 1-5. The scale defaults to `5`;
+a service rating out of 10 declares it:
 
 ```python
 STATUS_MAP = {
@@ -157,10 +160,8 @@ STATUS_MAP = {
 }
 
 
-def normalize_rating(source_rating: int, max_rating: int = 10) -> int | None:
-    if source_rating <= 0:
-        return None
-    return max(1, min(5, round(source_rating * 5 / max_rating)))
+class MovieApiPlugin(SourcePlugin):
+    rating_scale = 10  # 8 of 10 is 4 stars, 10 is 5
 ```
 
 ## Metadata keys
@@ -286,7 +287,7 @@ def fetch(
                 title=row["title"],
                 content_type=ContentType.BOOK,
                 status=self._map_status(row.get("status", "")),
-                rating=self._parse_rating(row.get("rating")),
+                rating=self.normalize_rating(row.get("rating")),
                 author=row.get("author"),
                 metadata={
                     "pages": int(row["pages"]) if row.get("pages") else None,
@@ -337,7 +338,7 @@ def fetch(
             title=movie["title"],
             content_type=ContentType.MOVIE,
             status=self._map_status(movie.get("watch_status")),
-            rating=self._normalize_rating(movie.get("user_rating")),
+            rating=self.normalize_rating(movie.get("user_rating")),
             metadata={
                 "runtime": movie.get("runtime"),
                 "director": movie.get("director"),

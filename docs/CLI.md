@@ -59,6 +59,10 @@ sync reads as 40 unchanged rather than as another 40 items. Failed items are
 listed per source, capped at the first 200, and a source that hit the cap adds a
 line giving its error total and how many are not shown.
 
+The command exits non-zero when any source's run failed, saving nothing while
+reporting errors, so a scheduled job sees it. The other sources' results still
+print, and the output is the same either way.
+
 With `enrichment.enabled` and `enrichment.auto_enrich_on_sync` both on, each
 off by default, a sync that saved something enriches it before the command
 returns — the run the web starts after its own sync, waited out here because
@@ -419,7 +423,7 @@ See [SCORING.md](SCORING.md) for what each weight does and
 
 ```bash
 uv run python -m src.cli preferences get --format json
-uv run python -m src.cli preferences set-weight genre_match 3.0
+uv run python -m src.cli preferences set-weight genre_match 3.0   # 0.0 to 5.0
 uv run python -m src.cli preferences set-length book short
 uv run python -m src.cli preferences set-toggle series_in_order off
 uv run python -m src.cli preferences set-variety 4.0      # 0.0 off to 5.0 full strength

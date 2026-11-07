@@ -269,12 +269,12 @@ Invariants:
 - The engine's output is one declared record (`record.py`). Both interfaces
   serialise it through `to_payload`, which is what keeps `recommend --format
   json` and `GET /api/recommendations` one document.
-- The taste signal is completed items that are **rated** and **not ignored**,
-  across all content types. Nothing else shapes preferences or scoring. Three
-  facts sit outside it and are answered from wider sets: series ordering, from
-  the full completed set; the rating on a show part-way through, which scales
-  only its next season's `continuation`; and the variety penalty below, which
-  multiplies the final score rather than contributing to it.
+- The taste signal is completed and in-progress items that are **rated** and
+  **not ignored**, across all content types: a rated show part-way through feeds
+  taste and scales its next season's `continuation`. Nothing else shapes
+  preferences or scoring. Two facts sit outside it and are answered from wider
+  sets: series ordering, from the full completed set; and the variety penalty
+  below, which multiplies the final score rather than contributing to it.
 - Ignored items are filtered from the candidate pool at fetch time, as they are
   from the signal set.
 - Items in progress leave the candidate pool after TV season expansion, which
