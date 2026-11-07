@@ -37,8 +37,8 @@ file to send anyone to.
 ## Confirmations
 
 The commands that destroy stored data — `source clear-secret`, `source remove`,
-`settings clear-secret`, `preferences reset`, `preferences custom-rules clear`,
-`enrichment reset` and `auth disconnect` — each prompt first, naming what goes.
+`settings clear-secret`, `preferences reset`, `enrichment reset` and
+`auth disconnect` — each prompt first, naming what goes.
 So does overwriting an existing `--output` file, in `import-template` and
 `library export`. Pass `--yes` to skip the prompt in a script.
 
@@ -414,8 +414,7 @@ uv run python -m src.cli settings clear-secret enrichment.providers.tmdb.api_key
 
 ## Preferences
 
-See [SCORING.md](SCORING.md) for what each weight does and
-[CUSTOM_RULES.md](CUSTOM_RULES.md) for rule syntax.
+See [SCORING.md](SCORING.md) for what each weight does.
 
 ```bash
 uv run python -m src.cli preferences get --format json
@@ -428,18 +427,6 @@ uv run python -m src.cli preferences reset
 
 Every one of these takes `--user`, and a `--user` naming nobody is refused
 rather than reporting a write it did not make.
-
-Custom rules are natural-language preferences, matched against genres and tags:
-
-```bash
-uv run python -m src.cli preferences custom-rules add "avoid horror"
-uv run python -m src.cli preferences custom-rules list
-uv run python -m src.cli preferences custom-rules interpret "avoid horror"
-uv run python -m src.cli preferences custom-rules remove 0
-uv run python -m src.cli preferences custom-rules clear --yes
-```
-
-At most 50 rules of 500 characters each, the same bound the web API applies.
 
 ## Theme
 
