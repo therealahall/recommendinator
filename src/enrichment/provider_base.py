@@ -305,7 +305,7 @@ def stored_config_schema(provider: EnrichmentProvider) -> list[ConfigField]:
 
 
 def states_a_match(provider: EnrichmentProvider) -> bool:
-    """Whether the first-success loop may settle an item on this provider."""
+    """Whether a run asks this provider for a match; it asks every one that can."""
     return _overrides(type(provider), "enrich")
 
 

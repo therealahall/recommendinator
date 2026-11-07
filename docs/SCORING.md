@@ -10,7 +10,7 @@ settings < per-user preferences**.
 | `creator_match` | Prefers authors, directors and developers you have enjoyed, and demotes ones you have not | 1.5 |
 | `tag_overlap` | How closely an item's tags and genre clusters match something you have consumed, scaled by how you rated it. A consumed item with more tags can lift a match higher | 1.0 |
 | `content_length` | Soft penalty for a length mismatch. Counts only for a content type with a length preference other than `any` | 1.0 |
-| `continuation` | Scores the later entries and seasons of a series you have begun by how you rated the entries you finished, or the show itself between seasons: 5 stars is 100%, 3 is 50%, 1 is 0%, and none rated is 50%. Counts only where an earlier entry is finished or begun, and not while any entry of that series is in progress | 1.0 |
+| `continuation` | Scores the later entries and seasons of a series you have begun by how you rated its entries of the same content type, a show part-way through included: 5 stars is 100%, 3 is 50%, 1 is 0%, and none rated is 50%. Counts only where an earlier entry is finished or begun, and not while any entry of that series is in progress | 1.0 |
 | `adaptation` | Boosts a film, show or game adapting something you rated well, and the source behind an adaptation you loved. Counts only for an item that adapts something | 1.5 |
 | `custom_preference` | Applies your natural language rules, "avoid X" and "prefer Y". Only in the pipeline when you have rules | 1.0 |
 
@@ -57,9 +57,10 @@ The Preferences page and the `preferences` CLI (see [CLI.md](CLI.md#preferences)
 set weights for one user. That map is **sparse**: it overrides only the keys you
 touch, and every other weight falls back to the global value.
 
-Both surfaces take only the seven keys in the table above, and only finite
-numbers. Anything else is refused where it is written, rather than stored to
-weight nothing.
+Both surfaces take only the seven keys in the table above, and only numbers
+from `0` to `5`, the global settings included. Anything else is refused where it
+is written, rather than stored to weight nothing. A per-user weight stored above
+`5` before that bound existed reads as `5`.
 
 ## Series filtering
 
@@ -149,6 +150,8 @@ its own rewrites nothing. Set the zone before the import that matters.
 
 Something in progress is not offered back to you: the book you are reading, the game you are playing, the season you are mid-way through. What follows still appears, without a `continuation` row, so the next season cannot jump the queue. Once nothing in the series is in progress, what follows a finished entry gets its `continuation` row back, scored by how you rated that series.
 
+A rating on something in progress counts toward your taste like any other, and a show's rating between seasons also scores its next season.
+
 A show with a known season count is scored season by season, so the season in flight leaves on its own. Trakt and Tautulli count episodes per season, which names it. Without counts, as after an import, a show with a season finished is between seasons and its next season is offered, while one with none finished is in season 1. A show with no season count cannot be split, and leaves whole while in progress.
 
 ## Ignored items
@@ -156,7 +159,7 @@ A show with a known season count is scored season by season, so the season in fl
 An ignored item stays in your library and shapes nothing you are recommended. It
 never feeds preference analysis, scoring or the "since you enjoyed X"
 references, is never offered as a candidate, and claims no variety rung. It
-still counts as consumed for series ordering, one of the three exceptions
+still counts as consumed for series ordering, one of the two exceptions
 spelled out at the end of this page.
 
 A re-import leaves the flag alone unless the file states it. A stated
@@ -170,9 +173,8 @@ since something you finished but never rated says nothing about your taste. They
 still appear as candidates, a backlog being unrated by nature. The filtering
 lives in the storage layer's signal-set accessor, so every caller respects it.
 
-There are three deliberate exceptions. Series *ordering* asks whether you have
+There are two deliberate exceptions. Series *ordering* asks whether you have
 consumed an earlier entry, which is independent of rating and ignore state, so
 an ignored or unrated earlier entry still counts for "book #1 before book #3".
 The variety ladder above asks what you recently finished, which is independent
-of rating but not of ignoring. A show part-way through keeps its rating out of
-your taste, but it still scales that show's next `continuation`.
+of rating but not of ignoring.
