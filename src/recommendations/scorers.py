@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from collections import Counter, defaultdict
+from collections import defaultdict
 from dataclasses import dataclass, field
 
 from src.models.content import ContentItem, ContentType, get_enum_value
@@ -35,11 +35,9 @@ def extract_creators(item: ContentItem) -> frozenset[str]:
 #: one-tag item can't give every candidate sharing that tag full marks.
 _TAG_SET_PADDING = 2
 
-
-def _tag_terms(genres: list[str]) -> frozenset[str]:
-    # Prefixed: unprefixed, the fantasy cluster would count as the fantasy term.
-    clusters = get_clusters_for_terms(genres)
-    return frozenset(genres) | {f"cluster:{cluster}" for cluster in clusters}
+#: What a consumed term earns when the candidate holds a different term from
+#: one of its clusters rather than the term itself.
+_RELATED_TERM_WEIGHT = 0.5
 
 
 def _rating_lift(rating: int) -> float:
@@ -65,6 +63,7 @@ class ScoringContext:
     tag_set_divisors: list[int] = field(default_factory=list)
     tag_set_lifts: list[float] = field(default_factory=list)
     tag_sets_by_term: dict[str, list[int]] = field(default_factory=dict)
+    tag_terms_by_cluster: dict[str, list[tuple[int, str]]] = field(default_factory=dict)
     consumed_creators: set[str] = field(default_factory=set)
     #: Seeded by the caller with ratings that are no taste signal, a show's
     #: between seasons; each rated consumed item's is added to its series.
@@ -86,12 +85,13 @@ class ScoringContext:
             series_ratings[seeded].extend(ratings)
         best_lifts: dict[frozenset[str], float] = {}
         tag_sets_by_term: dict[str, list[int]] = defaultdict(list)
+        tag_terms_by_cluster: dict[str, list[tuple[int, str]]] = defaultdict(list)
         creators: set[str] = set()
 
         for item in self.consumed_items:
             item_genres = extract_genres(item)
             if item.rating is not None:
-                terms = _tag_terms(item_genres)
+                terms = frozenset(item_genres)
                 lift = _rating_lift(item.rating)
                 best_lifts[terms] = max(best_lifts.get(terms, lift), lift)
 
@@ -104,10 +104,13 @@ class ScoringContext:
         for ordinal, terms in enumerate(best_lifts):
             for term in terms:
                 tag_sets_by_term[term].append(ordinal)
+                for cluster in get_clusters_for_terms([term]):
+                    tag_terms_by_cluster[cluster].append((ordinal, term))
 
         self.tag_set_divisors = [len(terms) + _TAG_SET_PADDING for terms in best_lifts]
         self.tag_set_lifts = list(best_lifts.values())
         self.tag_sets_by_term = dict(tag_sets_by_term)
+        self.tag_terms_by_cluster = dict(tag_terms_by_cluster)
         self.consumed_creators = creators
         self.series_ratings = dict(series_ratings)
 
@@ -181,12 +184,24 @@ class TagOverlapScorer(Scorer):
 
     def score(self, candidate: ContentItem, context: ScoringContext) -> float:
         # Divided by the consumed item's terms, not the candidate's: tags the
-        # candidate adds beyond the match cost it nothing here.
-        hits = Counter(
-            ordinal
-            for term in _tag_terms(extract_genres(candidate))
+        # candidate adds beyond the match cost it nothing here. Keyed by consumed
+        # term so a term sharing several clusters with the candidate counts once.
+        genres = extract_genres(candidate)
+        exact = {
+            (ordinal, term)
+            for term in genres
             for ordinal in context.tag_sets_by_term.get(term, ())
-        )
+        }
+        related = {
+            hit
+            for cluster in get_clusters_for_terms(genres)
+            for hit in context.tag_terms_by_cluster.get(cluster, ())
+        }
+        hits: dict[int, float] = defaultdict(float)
+        for ordinal, _ in exact:
+            hits[ordinal] += 1.0
+        for ordinal, _ in related - exact:
+            hits[ordinal] += _RELATED_TERM_WEIGHT
         return max(
             (
                 count
