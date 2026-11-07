@@ -291,8 +291,8 @@ Invariants:
 
 **Cross-content-type matching is a lookup, not a model.** Genre clusters
 (`genre_clusters.py`) map genre and tag terms onto a fixed set of thematic
-clusters, which tag overlap counts as extra tags, so a book tagged "space
-warfare" reaches a TV show tagged "war".
+clusters, through which tag overlap gives a related tag part credit, so a book
+tagged "space warfare" reaches a TV show tagged "war".
 Compound terms like "Sci-Fi & Fantasy" split first (`genre_normalizer.py`).
 
 **Adaptations and reference items are matched through an index**

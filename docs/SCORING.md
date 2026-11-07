@@ -8,7 +8,7 @@ settings < per-user preferences**.
 |------------|----------------------|---------|
 | `genre_match` | How you rate the item's genres against your own average rating. A genre rated a star above your average climbs toward 100% the more often you have rated it, 75% at two ratings, and one a star below falls toward 0% the same way. Its genres are averaged, so one you dislike pulls down one you love, and a genre on most of your library, or one you have not rated, counts for little or nothing | 2.0 |
 | `creator_match` | Prefers authors, directors and developers you have enjoyed, and demotes ones you have not | 1.5 |
-| `tag_overlap` | How closely an item's tags and genre clusters match something you have consumed, scaled by how you rated it. A consumed item with more tags can lift a match higher | 1.0 |
+| `tag_overlap` | How many of a consumed item's tags the item shares, scaled by how you rated it. Each tag counts once: in full when the item has the same tag, half when it has a related tag from the same genre cluster. A consumed item with more tags can lift a match higher | 1.0 |
 | `content_length` | Soft penalty for a length mismatch. Counts only for a content type with a length preference other than `any` | 1.0 |
 | `continuation` | Scores the later entries and seasons of a series you have begun by how you rated its entries of the same content type, a show part-way through included: 5 stars is 100%, 3 is 50%, 1 is 0%, and none rated is 50%. Counts only where an earlier entry is finished or begun, and not while any entry of that series is in progress | 1.0 |
 | `adaptation` | Boosts a film, show or game adapting something you rated well, and the source behind an adaptation you loved. Counts only for an item that adapts something | 1.5 |
