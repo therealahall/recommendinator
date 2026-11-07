@@ -278,12 +278,14 @@ Invariants:
 - Ignored items are filtered from the candidate pool at fetch time, as they are
   from the signal set.
 - Items in progress leave the candidate pool after TV season expansion, which
-  marks only the season in flight as in progress. Their series positions are
-  kept, so `ContinuationScorer` stays silent on the rest of their series.
+  marks only the season in flight as in progress and expands no season after
+  it. Their series positions are kept, so `ContinuationScorer` stays silent on
+  the rest of their series.
 - Series filtering with substitution (`series_in_order`) replaces a candidate
-  failing the ordering rules with the earliest recommendable entry in its series,
-  once per series. The substitute ranks at the replaced entry's score but shows
-  its own, and carries a `series_lead` naming the series and the score it holds.
+  failing the ordering rules with the earliest unconsumed entry of its series in
+  the candidate pool, once per series, so a gap never blocks a series. The
+  substitute ranks at the replaced entry's score but shows its own, and carries
+  a `series_lead` naming the series and the score it holds.
 - The variety penalty multiplies a candidate's final score by `1 - penalty`.
   Each recent completion's penalty is cut back to the share of that completion's
   genre clusters the candidate covers, and the largest result wins. See

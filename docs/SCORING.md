@@ -69,6 +69,11 @@ read is replaced by the earliest available entry in its series. That entry takes
 book 3's place in the list and shows its own score, marked "Up next in" the series
 with the score it is ranked at.
 
+In a series you have started, the entry offered is the earliest one in your
+library you have neither finished nor ignored. A position missing from the
+library, or ignored, is skipped rather than waited on, and an earlier entry
+comes back first: with Fallout 3 played, Fallout 1 is offered ahead of New Vegas.
+
 Both the series and the position come from what a source states: series
 metadata, or a marker still naming the series in the title, such as
 `(The Expanse, #2)`. An item nothing names belongs to no series. A bare number
@@ -148,7 +153,9 @@ its own rewrites nothing. Set the zone before the import that matters.
 
 ## Items you are part-way through
 
-Something in progress is not offered back to you: the book you are reading, the game you are playing, the season you are mid-way through. What follows still appears, without a `continuation` row, so the next season cannot jump the queue. Once nothing in the series is in progress, what follows a finished entry gets its `continuation` row back, scored by how you rated that series.
+Something in progress is not offered back to you: the book you are reading, the game you are playing, the season you are mid-way through. The book or game after it still appears, without a `continuation` row. Once nothing in the series is in progress, what follows a finished entry gets its `continuation` row back, scored by how you rated that series.
+
+No later season of a show appears until the one in flight is finished, whether or not series are in order.
 
 A rating on something in progress counts toward your taste like any other, and a show's rating between seasons also scores its next season.
 
