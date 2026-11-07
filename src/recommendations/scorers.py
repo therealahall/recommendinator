@@ -66,8 +66,9 @@ class ScoringContext:
     tag_set_lifts: list[float] = field(default_factory=list)
     tag_sets_by_term: dict[str, list[int]] = field(default_factory=dict)
     consumed_creators: set[str] = field(default_factory=set)
-    #: Seeded by the caller with ratings that are no taste signal, a show's
-    #: between seasons; each rated consumed item's is added to its series.
+    #: Seeded by the caller with ratings no series name carries, a show's
+    #: between seasons; each rated consumed item of ``content_type`` adds to its
+    #: series.
     series_ratings: dict[str, list[int]] = field(default_factory=dict)
 
     #: Series positions the user is part-way through, keyed by series. Supplied
@@ -97,8 +98,13 @@ class ScoringContext:
 
             creators.update(extract_creators(item))
 
+            # A book series' ratings say nothing of a same-named show's seasons.
             series = self.series_order.series_of(item)
-            if series is not None and item.rating is not None:
+            if (
+                series is not None
+                and item.rating is not None
+                and item.content_type == self.content_type
+            ):
                 series_ratings[series].append(item.rating)
 
         for ordinal, terms in enumerate(best_lifts):

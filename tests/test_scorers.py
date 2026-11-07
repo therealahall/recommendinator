@@ -475,6 +475,18 @@ class TestContinuationScorer:
             content_type=ContentType.TV_SHOW,
         )
         assert ContinuationScorer().applies(candidate, context) is False
+    def test_a_same_named_book_series_never_scales_the_shows_seasons(self) -> None:
+        books = make_item(
+            title="Leviathan Wakes", metadata={"series_name": "The Expanse"}, rating=5
+        )
+        candidate = _season("The Expanse", 2, ConsumptionStatus.UNREAD)
+        context = _build_context(
+            consumed=[books, _season("The Expanse", 1, ConsumptionStatus.COMPLETED)],
+            unconsumed=[candidate],
+            content_type=ContentType.TV_SHOW,
+        )
+        assert ContinuationScorer().score(candidate, context) == 0.5
+
 
     def test_an_earlier_season_than_the_one_watched_does_not_apply(self) -> None:
         candidate = _season("Breaking Bad", 1, ConsumptionStatus.UNREAD)
