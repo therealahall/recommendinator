@@ -8,21 +8,15 @@ from src.models.content import (
     ConsumptionStatus,
     ContentItem,
     ContentType,
-    get_enum_value,
 )
 from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.identity import candidate_key
-from src.recommendations.preference_interpreter import (
-    InterpretedPreference,
-    PatternBasedInterpreter,
-)
 from src.recommendations.preferences import PreferenceAnalyzer, UserPreferences
 from src.recommendations.record import Recommendation, SeriesLead
 from src.recommendations.reference_index import SignalIndex
 from src.recommendations.scorers import (
     DEFAULT_SCORERS,
     SCORER_NAME_MAP,
-    CustomPreferenceScorer,
     Scorer,
     ScoringContext,
     build_scorers_with_overrides,
@@ -99,7 +93,6 @@ class _ConfiguredScoring:
 
     pipeline: ScoringPipeline
     preference_analyzer: PreferenceAnalyzer
-    custom_preference_weight: float
 
 
 @dataclass(frozen=True)
@@ -128,7 +121,6 @@ class RecommendationEngine:
         storage_manager: StorageManager,
         min_rating: int = 4,
         scorers: list[Scorer] | None = None,
-        custom_preference_weight: float = 1.0,
         rng: random.Random | None = None,
         config_provider: Callable[[], dict[str, Any] | None] | None = None,
     ) -> None:
@@ -136,7 +128,6 @@ class RecommendationEngine:
         self.rng = rng if rng is not None else _DEFAULT_RNG
         self._config_provider = config_provider
         self._base_min_rating = min_rating
-        self._base_custom_preference_weight = custom_preference_weight
         self._base_scorers = list(scorers if scorers is not None else DEFAULT_SCORERS)
 
     @property
@@ -146,10 +137,6 @@ class RecommendationEngine:
     @property
     def preference_analyzer(self) -> PreferenceAnalyzer:
         return self._configured_scoring().preference_analyzer
-
-    @property
-    def custom_preference_weight(self) -> float:
-        return self._configured_scoring().custom_preference_weight
 
     def _configured_scoring(self) -> _ConfiguredScoring:
         section = self._recommendations_config()
@@ -162,9 +149,6 @@ class RecommendationEngine:
                 min_rating=section.get(
                     "min_rating_for_preference", self._base_min_rating
                 )
-            ),
-            custom_preference_weight=weights.get(
-                "custom_preference", self._base_custom_preference_weight
             ),
         )
 
@@ -262,38 +246,6 @@ class RecommendationEngine:
                 if show.rating is not None
             }
 
-        interpreted_prefs: InterpretedPreference | None = None
-        if user_preference_config is not None and user_preference_config.custom_rules:
-            interpreter = PatternBasedInterpreter()
-            interpreted_prefs = interpreter.interpret_all(
-                user_preference_config.custom_rules
-            )
-            logger.info(
-                "Interpreted %d custom rules: boosts=%s, penalties=%s",
-                len(user_preference_config.custom_rules),
-                list(interpreted_prefs.genre_boosts.keys()),
-                list(interpreted_prefs.genre_penalties.keys()),
-            )
-
-            if interpreted_prefs.content_type_exclusions:
-                original_count = len(unconsumed_items)
-                unconsumed_items = [
-                    item
-                    for item in unconsumed_items
-                    if get_enum_value(item.content_type)
-                    not in interpreted_prefs.content_type_exclusions
-                ]
-                if unconsumed_items:
-                    logger.info(
-                        "Content type exclusions removed %d items",
-                        original_count - len(unconsumed_items),
-                    )
-                else:
-                    logger.warning(
-                        "Content type exclusion removed all candidates, "
-                        "this shouldn't happen for same-type recommendations"
-                    )
-
         logger.info(
             "Analyzed preferences from %d consumed items "
             "across all content types to recommend %ss",
@@ -345,9 +297,7 @@ class RecommendationEngine:
             in_progress_positions=in_progress_positions,
         )
 
-        active_pipeline = self._build_active_pipeline(
-            scoring, user_preference_config, interpreted_prefs
-        )
+        active_pipeline = self._build_active_pipeline(scoring, user_preference_config)
 
         pipeline_scored = active_pipeline.score_candidates_with_breakdown(
             candidates, scoring_context
@@ -516,19 +466,8 @@ class RecommendationEngine:
         self,
         scoring: _ConfiguredScoring,
         user_preference_config: UserPreferenceConfig | None,
-        interpreted_prefs: InterpretedPreference | None,
     ) -> ScoringPipeline:
         scorers = list(scoring.pipeline.scorers)
-
-        if interpreted_prefs is not None and not interpreted_prefs.is_empty():
-            scorers.append(
-                CustomPreferenceScorer(
-                    genre_boosts=interpreted_prefs.genre_boosts,
-                    genre_penalties=interpreted_prefs.genre_penalties,
-                    weight=scoring.custom_preference_weight,
-                )
-            )
-
         if user_preference_config is not None and user_preference_config.scorer_weights:
             scorers = build_scorers_with_overrides(
                 scorers, user_preference_config.scorer_weights

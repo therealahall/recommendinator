@@ -56,10 +56,6 @@ PreferenceWeight = Annotated[
     Field(allow_inf_nan=False, ge=0.0, le=UserPreferenceConfig.MAX_SCORER_WEIGHT),
 ]
 
-CustomRuleText = Annotated[
-    str, Field(max_length=UserPreferenceConfig.MAX_CUSTOM_RULE_LENGTH)
-]
-
 
 class UserPreferenceResponse(BaseModel):
     """``scorer_weights`` needs no bound of its own: ``from_dict`` drops or
@@ -72,7 +68,6 @@ class UserPreferenceResponse(BaseModel):
     variety_penalty: float = Field(
         0.0, ge=0.0, le=UserPreferenceConfig.MAX_VARIETY_PENALTY
     )
-    custom_rules: list[str]
     content_length_preferences: dict[str, str] = Field(default_factory=dict)
 
 
@@ -83,9 +78,6 @@ class UserPreferenceUpdateRequest(BaseModel):
     series_in_order: bool | None = None
     variety_penalty: float | None = Field(
         None, ge=0.0, le=UserPreferenceConfig.MAX_VARIETY_PENALTY
-    )
-    custom_rules: list[CustomRuleText] | None = Field(
-        None, max_length=UserPreferenceConfig.MAX_CUSTOM_RULES
     )
     content_length_preferences: dict[ContentTypeName, LengthPreferenceName] | None = (
         None
@@ -116,8 +108,6 @@ def update_user_preferences(
             existing.series_in_order = request.series_in_order
         if request.variety_penalty is not None:
             existing.variety_penalty = request.variety_penalty
-        if request.custom_rules is not None:
-            existing.custom_rules = request.custom_rules
         if request.content_length_preferences is not None:
             existing.content_length_preferences.update(
                 request.content_length_preferences

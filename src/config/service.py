@@ -195,10 +195,6 @@ _SCORER_CONFIG_MAP: dict[str, type[Scorer]] = {
 
 
 def build_scorers_from_config(config: dict[str, Any]) -> list[Scorer]:
-    """Does **not** include :class:`CustomPreferenceScorer` — the engine builds it
-    per call from the user's custom rules, and
-    :func:`create_recommendation_engine` passes it its configured weight.
-    """
     # `or {}`, not a .get default: a childless `recommendations:` header parses
     # to None, and the default only fires on an ABSENT key.
     rec_config = config.get("recommendations") or {}
@@ -227,21 +223,12 @@ def create_recommendation_engine(
         "min_rating_for_preference",
         default_of("recommendations.min_rating_for_preference"),
     )
-    scorer_weights = rec_config.get("scorer_weights", {})
-    custom_preference_weight = float(
-        scorer_weights.get(
-            "custom_preference",
-            default_of("recommendations.scorer_weights.custom_preference"),
-        )
-    )
-
     scorers = build_scorers_from_config(config)
 
     return RecommendationEngine(
         storage_manager=storage_manager,
         min_rating=min_rating,
         scorers=scorers,
-        custom_preference_weight=custom_preference_weight,
         config_provider=(
             config_provider if config_provider is not None else lambda: config
         ),

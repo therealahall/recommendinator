@@ -12,7 +12,6 @@ from src.utils.text import (
     exception_for_log,
     humanize_source_id,
     sanitize_for_log,
-    sanitize_rule_text,
     strip_lone_surrogates,
 )
 
@@ -91,47 +90,9 @@ class TestCleanGameTitleForSearch:
         assert clean_game_title_for_search(title) == title
 
 
-class TestSanitizeRuleText:
-    """Rules are stripped, not allowlisted: an allowlist ate the ``+`` from
-    ``prefer 4+ star ratings``."""
-
-    @pytest.mark.parametrize(
-        "rule",
-        [
-            "prefer 4+ star ratings",
-            "prefer Café Society and 攻殻機動隊",
-            "\U0001f3ac and \U0001f47b only",
-        ],
-    )
-    def test_operator_typed_characters_survive(self, rule: str) -> None:
-        assert sanitize_rule_text(rule) == rule
-
-    @pytest.mark.parametrize("structure", ['"', "{", "}"])
-    def test_slot_structure_characters_are_dropped(self, structure: str) -> None:
-        """The rule sits in a quoted slot beside a JSON template."""
-        assert sanitize_rule_text(f"avoid {structure}horror") == "avoid horror"
-
-    @pytest.mark.parametrize("code", [0x00, 0x1B, 0x7F, 0x9B, 0xD800])
-    def test_no_control_or_surrogate_survives(self, code: int) -> None:
-        assert chr(code) not in sanitize_rule_text(f"avoid {chr(code)}horror")
-
-    def test_no_codepoint_survives_unencodable(self) -> None:
-        """The whole invariant: whatever comes out, the request body encodes."""
-        every_codepoint = "".join(chr(code) for code in range(sys.maxunicode + 1))
-
-        assert sanitize_rule_text(every_codepoint).encode("utf-8")
-
-    @pytest.mark.parametrize("breaker", ALL_LINE_BREAKS)
-    def test_a_whitespace_run_collapses_and_the_ends_are_trimmed(
-        self, breaker: str
-    ) -> None:
-        """One rule, one prompt line, whatever it was typed with."""
-        assert sanitize_rule_text(f" avoid\t{breaker}  horror ") == "avoid horror"
-
-
 class TestStripLoneSurrogates:
-    """Narrower than the rule sanitizer on purpose: a review is prose, and
-    flattening it to one line would lose the operator's own paragraphs.
+    """Narrow on purpose: a review is prose, and flattening it to one line would
+    lose the operator's own paragraphs.
     """
 
     @pytest.mark.parametrize("code", [0xD800, 0xDFFF])
@@ -150,8 +111,8 @@ class TestStripLoneSurrogates:
 
 
 class TestSanitizeForLog:
-    """Escapes rather than strips, unlike the rule sanitizer: a forged log line is
-    the risk, and the reader still wants the value that caused it."""
+    """Escapes rather than strips: a forged log line is the risk, and the reader
+    still wants the value that caused it."""
 
     @pytest.mark.parametrize(
         ("raw", "expected"),
@@ -324,9 +285,3 @@ class TestEveryCodepointIsAccountedFor:
             if len(f"A{chr(code)}B".splitlines()) > 1
         }
         assert breaking == set(ALL_LINE_BREAKS) - {"\r\n"}
-
-    def test_no_codepoint_survives_as_a_line_break(self) -> None:
-        every_codepoint = "".join(
-            f"A{chr(code)}B" for code in range(sys.maxunicode + 1)
-        )
-        assert len(sanitize_rule_text(every_codepoint).splitlines()) == 1

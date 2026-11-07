@@ -11,10 +11,8 @@ from src.models.user_preferences import (
     PreferenceValidationError,
     UserPreferenceConfig,
 )
-from src.recommendations.preference_interpreter import PatternBasedInterpreter
 from src.recommendations.scorers import SCORER_NAME_MAP
 from src.storage.manager import StorageManager, UnknownUserError
-from src.utils.text import sanitize_rule_text
 
 
 @click.group()
@@ -185,11 +183,9 @@ def preferences_reset(ctx: click.Context, user_id: int, yes: bool) -> None:
     storage = ctx.obj["storage"]
 
     if not yes:
-        rules = len(storage.get_user_preference_config(user_id).custom_rules)
         if not click.confirm(
-            "Reset the scorer weights, length preferences, variety penalty, "
-            "series ordering and "
-            f"{rules} custom rule(s) for user {user_id} to defaults?"
+            "Reset the scorer weights, length preferences, variety penalty "
+            f"and series ordering for user {user_id} to defaults?"
         ):
             click.echo("Aborted.")
             return
@@ -236,193 +232,3 @@ def preferences_set_length(
     click.echo(
         f"Set {content_type} length preference to '{length_preference}' for user {user_id}"
     )
-
-
-@preferences.group("custom-rules")
-def custom_rules() -> None:
-    """Manage custom preference rules."""
-
-
-@custom_rules.command("list")
-@click.option(
-    "--user",
-    "user_id",
-    type=int,
-    default=1,
-    help="User ID",
-)
-@click.pass_context
-def custom_rules_list(ctx: click.Context, user_id: int) -> None:
-    """List all custom rules for a user."""
-    storage = ctx.obj["storage"]
-    preference_config = storage.get_user_preference_config(user_id)
-    rules = preference_config.custom_rules
-
-    if not rules:
-        click.echo(f"No custom rules set for user {user_id}")
-        return
-
-    click.echo(f"Custom rules for user {user_id}:")
-    for index, rule in enumerate(rules):
-        # A rule reaches storage as it was typed, and ``click.echo`` encodes
-        # strictly: a lone surrogate out of argv raises here rather than print.
-        click.echo(f"  {index}: {sanitize_rule_text(rule)}")
-
-
-@custom_rules.command("add")
-@click.argument("rule_text")
-@click.option(
-    "--user",
-    "user_id",
-    type=int,
-    default=1,
-    help="User ID",
-)
-@click.pass_context
-def custom_rules_add(ctx: click.Context, rule_text: str, user_id: int) -> None:
-    """Add a custom preference rule.
-
-    RULE_TEXT is the natural language rule (e.g., "avoid horror", "prefer sci-fi").
-
-    Bounded as PUT /api/users/{id}/preferences is: a list this appends past
-    the bound is one the Preferences page can then no longer save back.
-    """
-    if len(rule_text) > UserPreferenceConfig.MAX_CUSTOM_RULE_LENGTH:
-        click.echo(
-            "Error: A rule may be at most "
-            f"{UserPreferenceConfig.MAX_CUSTOM_RULE_LENGTH} characters.",
-            err=True,
-        )
-        raise click.Abort()
-
-    def add_rule(preference_config: UserPreferenceConfig) -> None:
-        # Under the lock, so the list it counts is the list it appends to.
-        if len(preference_config.custom_rules) >= UserPreferenceConfig.MAX_CUSTOM_RULES:
-            abort_with(
-                "At most "
-                f"{UserPreferenceConfig.MAX_CUSTOM_RULES} rules are kept. "
-                "Remove one first."
-            )
-        preference_config.custom_rules.append(rule_text)
-
-    saved = _edit_preferences(ctx, user_id, add_rule)
-    click.echo(f"Added rule: '{sanitize_rule_text(rule_text)}' for user {user_id}")
-    click.echo(f"Total rules: {len(saved.custom_rules)}")
-
-
-@custom_rules.command("remove")
-@click.argument("index", type=int)
-@click.option(
-    "--user",
-    "user_id",
-    type=int,
-    default=1,
-    help="User ID",
-)
-@click.pass_context
-def custom_rules_remove(ctx: click.Context, index: int, user_id: int) -> None:
-    """Remove a custom rule by index.
-
-    INDEX is the rule number (use 'list' to see indices).
-    """
-    removed = ""
-
-    def remove_rule(preference_config: UserPreferenceConfig) -> None:
-        nonlocal removed
-        if index < 0 or index >= len(preference_config.custom_rules):
-            abort_with(
-                f"Invalid index {index}. "
-                f"Valid range: 0-{len(preference_config.custom_rules) - 1}"
-            )
-        removed = preference_config.custom_rules.pop(index)
-
-    saved = _edit_preferences(ctx, user_id, remove_rule)
-    click.echo(f"Removed rule: '{sanitize_rule_text(removed)}'")
-    click.echo(f"Remaining rules: {len(saved.custom_rules)}")
-
-
-@custom_rules.command("clear")
-@click.option(
-    "--user",
-    "user_id",
-    type=int,
-    default=1,
-    help="User ID",
-)
-@click.option(
-    "--yes",
-    is_flag=True,
-    help="Skip confirmation prompt",
-)
-@click.pass_context
-def custom_rules_clear(ctx: click.Context, user_id: int, yes: bool) -> None:
-    """Clear all custom rules for a user."""
-    storage = ctx.obj["storage"]
-    count = len(storage.get_user_preference_config(user_id).custom_rules)
-
-    if count and not yes:
-        if not click.confirm(f"Clear {count} custom rule(s) for user {user_id}?"):
-            click.echo("Aborted.")
-            return
-
-    cleared_count = 0
-
-    def clear_rules(preference_config: UserPreferenceConfig) -> None:
-        nonlocal cleared_count
-        cleared_count = len(preference_config.custom_rules)
-        preference_config.custom_rules = []
-
-    # No early return on an empty list: the write is what proves the user
-    # exists, and skipping it reported success for an id no user carries. The
-    # count above only sizes the prompt; this one is read under the lock.
-    _edit_preferences(ctx, user_id, clear_rules)
-    if cleared_count:
-        click.echo(f"Cleared {cleared_count} custom rule(s) for user {user_id}")
-    else:
-        click.echo(f"No custom rules to clear for user {user_id}")
-
-
-@custom_rules.command("interpret")
-@click.argument("rule_text")
-@click.pass_context
-def custom_rules_interpret(ctx: click.Context, rule_text: str) -> None:
-    """Interpret a custom rule and show the parsed result.
-
-    RULE_TEXT is the natural language rule to interpret.
-
-    This command shows how the system would interpret a rule without saving it.
-    """
-    result = PatternBasedInterpreter().interpret(rule_text)
-
-    # The interpreter sanitized it on the way in, so this is the text the
-    # parse below was actually run against.
-    click.echo(f"\nRule: '{result.original_rule}'")
-    click.echo(f"Confidence: {result.confidence.value}")
-    click.echo(f"Notes: {result.interpretation_notes}")
-    click.echo("")
-
-    if result.genre_boosts:
-        click.echo("Genre boosts:")
-        for genre, boost in result.genre_boosts.items():
-            click.echo(f"  +{boost:.1f} {genre}")
-
-    if result.genre_penalties:
-        click.echo("Genre penalties:")
-        for genre, penalty in result.genre_penalties.items():
-            click.echo(f"  -{penalty:.1f} {genre}")
-
-    if result.content_type_filters:
-        click.echo(f"Content type filters: {', '.join(result.content_type_filters)}")
-
-    if result.content_type_exclusions:
-        click.echo(
-            f"Content type exclusions: {', '.join(result.content_type_exclusions)}"
-        )
-
-    if result.length_preferences:
-        click.echo("Length preferences:")
-        for content_type, length in result.length_preferences.items():
-            click.echo(f"  {content_type}: {length}")
-
-    if result.is_empty():
-        click.echo("(No preferences extracted from this rule)")

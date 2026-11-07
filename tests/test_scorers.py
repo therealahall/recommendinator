@@ -10,7 +10,6 @@ from src.recommendations.scorers import (
     ContentLengthScorer,
     ContinuationScorer,
     CreatorMatchScorer,
-    CustomPreferenceScorer,
     GenreMatchScorer,
     ScoringContext,
     TagOverlapScorer,
@@ -268,29 +267,6 @@ class TestTagOverlapScorer:
         assert score(1) == score(5) / 2 == 1 / 6
 
 
-class TestScorerClone:
-    def test_clone_custom_preference_preserves_args(self) -> None:
-        scorer = CustomPreferenceScorer(
-            genre_boosts={"fantasy": 1.0},
-            genre_penalties={"horror": 0.8},
-            weight=2.0,
-        )
-        cloned = scorer.clone(weight=3.0)
-        assert isinstance(cloned, CustomPreferenceScorer)
-        assert cloned.weight == 3.0
-        assert cloned.genre_boosts == {"fantasy": 1.0}
-        assert cloned.genre_penalties == {"horror": 0.8}
-
-    def test_clone_does_not_share_dicts(self) -> None:
-        scorer = CustomPreferenceScorer(
-            genre_boosts={"fantasy": 1.0},
-            weight=2.0,
-        )
-        cloned = scorer.clone(weight=3.0)
-        cloned.genre_boosts["sci-fi"] = 0.5
-        assert "sci-fi" not in scorer.genre_boosts
-
-
 class TestBuildScorersWithOverrides:
     def test_partial_override(self) -> None:
         base = [
@@ -309,57 +285,6 @@ class TestBuildScorersWithOverrides:
         base = [GenreMatchScorer(weight=2.0)]
         build_scorers_with_overrides(base, {"genre_match": 9.0})
         assert base[0].weight == 2.0
-
-
-class TestCustomPreferenceScorer:
-    def test_genre_boost_scores_high(self) -> None:
-        candidate = make_item(
-            metadata={"genre": "horror"}, status=ConsumptionStatus.UNREAD
-        )
-        context = _build_context(consumed=[])
-        scorer = CustomPreferenceScorer(genre_boosts={"horror": 1.0})
-        score = scorer.score(candidate, context)
-        assert score == 1.0
-
-    def test_genre_penalty_scores_low(self) -> None:
-        candidate = make_item(
-            metadata={"genre": "romance"}, status=ConsumptionStatus.UNREAD
-        )
-        context = _build_context(consumed=[])
-        scorer = CustomPreferenceScorer(genre_penalties={"romance": 1.0})
-        score = scorer.score(candidate, context)
-        assert score == 0.0
-
-    def test_partial_boost(self) -> None:
-        candidate = make_item(
-            metadata={"genre": "mystery"}, status=ConsumptionStatus.UNREAD
-        )
-        context = _build_context(consumed=[])
-        scorer = CustomPreferenceScorer(genre_boosts={"mystery": 0.5})
-        score = scorer.score(candidate, context)
-        assert score == 0.75
-
-    def test_no_matching_rules_returns_neutral(self) -> None:
-        candidate = make_item(
-            metadata={"genre": "drama"}, status=ConsumptionStatus.UNREAD
-        )
-        context = _build_context(consumed=[])
-        scorer = CustomPreferenceScorer(
-            genre_boosts={"comedy": 1.0}, genre_penalties={"horror": 1.0}
-        )
-        score = scorer.score(candidate, context)
-        assert score == 0.5
-
-    def test_penalty_takes_precedence_over_boost(self) -> None:
-        candidate = make_item(
-            metadata={"genres": ["horror", "comedy"]}, status=ConsumptionStatus.UNREAD
-        )
-        context = _build_context(consumed=[])
-        scorer = CustomPreferenceScorer(
-            genre_boosts={"comedy": 1.0}, genre_penalties={"horror": 1.0}
-        )
-        score = scorer.score(candidate, context)
-        assert score == 0.0
 
 
 class TestContentLengthScorer:

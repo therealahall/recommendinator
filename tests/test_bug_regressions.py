@@ -2,7 +2,6 @@ import sqlite3
 from pathlib import Path
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
-from src.recommendations.preference_interpreter import PatternBasedInterpreter
 from src.storage.schema import (
     create_schema,
     mark_enrichment_complete,
@@ -25,29 +24,6 @@ class TestArticleStrippingRegression:
         assert titles_similar("The Matrix", "Matrix") is True
         assert titles_similar("A Beautiful Mind", "Beautiful Mind") is True
         assert titles_similar("An Inspector Calls", "Inspector Calls") is True
-
-
-class TestPreferenceInterpreterRegression:
-    def test_into_genre_parsed_as_prefer_not_avoid_regression(self) -> None:
-        """Bug reported: "into sci-fi" was matched by the AVOID_PATTERNS regex
-        r"(?:not?\\s+)?(?:into|interested in)\\s+(.+)" because "not?" makes the "not"
-        optional, causing "into sci-fi" to match as an avoid pattern."""
-        interpreter = PatternBasedInterpreter()
-
-        result = interpreter.interpret("into sci-fi")
-        assert result.genre_boosts, "Expected genre boosts for 'into sci-fi'"
-        assert (
-            not result.genre_penalties
-        ), "'into sci-fi' should NOT produce genre penalties"
-
-    def test_not_into_genre_still_avoids_regression(self) -> None:
-        interpreter = PatternBasedInterpreter()
-
-        result = interpreter.interpret("not into horror")
-        assert result.genre_penalties, "Expected genre penalties for 'not into horror'"
-        assert (
-            not result.genre_boosts
-        ), "'not into horror' should NOT produce genre boosts"
 
 
 class TestMinRatingZeroRegression:

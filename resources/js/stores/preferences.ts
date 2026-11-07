@@ -12,7 +12,6 @@ export const SCORER_KEYS = [
   'content_length',
   'continuation',
   'adaptation',
-  'custom_preference',
 ] as const
 
 export const DEFAULT_WEIGHTS: Record<string, number> = {
@@ -22,7 +21,6 @@ export const DEFAULT_WEIGHTS: Record<string, number> = {
   content_length: 1.0,
   continuation: 1.0,
   adaptation: 1.5,
-  custom_preference: 1.0,
 }
 
 export const SCORER_TOOLTIPS: Record<string, string> = {
@@ -32,7 +30,6 @@ export const SCORER_TOOLTIPS: Record<string, string> = {
   content_length: 'Soft-penalizes items that don\'t match your preferred content length (short/medium/long). Counts only for a content type you have set a length for. Default: 1.0',
   continuation: "Scores the later entries of a series you've begun by how you rated the entries you finished: a series you loved is nudged up, one you disliked is held down. Holds off while you're part-way through an entry of that series. Default: 1.0",
   adaptation: 'Boosts a film, show or game that adapts something you rated well, and the book behind an adaptation you loved. Default: 1.5',
-  custom_preference: 'Applies your natural language rules, the "avoid X" and "prefer Y" ones, from the Rules section below. Default: 1.0',
 }
 
 // The "5.0 at full strength" mirrors the backend UserPreferenceConfig.MAX_VARIETY_PENALTY.
@@ -55,7 +52,6 @@ export const usePreferencesStore = defineStore('preferences', () => {
   const seriesInOrder = ref(true)
   const varietyPenalty = ref(0)
   const contentLengthPreferences = ref<Record<string, string>>({})
-  const customRules = ref<string[]>([])
   const loading = ref(false)
   const loadError = ref('')
   // True only while the values above came from the server. Everything is PUT
@@ -76,7 +72,6 @@ export const usePreferencesStore = defineStore('preferences', () => {
       seriesInOrder.value,
       varietyPenalty.value,
       CONTENT_TYPES.map((type) => contentLengthPreferences.value[type] || 'any'),
-      customRules.value,
     ])
   }
 
@@ -89,7 +84,6 @@ export const usePreferencesStore = defineStore('preferences', () => {
     seriesInOrder.value = prefs.series_in_order
     varietyPenalty.value = prefs.variety_penalty ?? 0
     contentLengthPreferences.value = prefs.content_length_preferences || {}
-    customRules.value = prefs.custom_rules || []
     hasLoaded.value = true
     savedFields.value = fields()
   }
@@ -170,7 +164,6 @@ export const usePreferencesStore = defineStore('preferences', () => {
         series_in_order: seriesInOrder.value,
         variety_penalty: varietyPenalty.value,
         content_length_preferences: contentLengthPreferences.value,
-        custom_rules: customRules.value,
       }
       const sent = fields()
       await api.put(`/users/${app.currentUserId}/preferences`, payload)
@@ -196,23 +189,11 @@ export const usePreferencesStore = defineStore('preferences', () => {
     scorerWeights.value[key] = value
   }
 
-  function addRule(rule: string) {
-    const trimmed = rule.trim()
-    if (trimmed) {
-      customRules.value.push(trimmed)
-    }
-  }
-
-  function removeRule(index: number) {
-    customRules.value.splice(index, 1)
-  }
-
   return {
     scorerWeights,
     seriesInOrder,
     varietyPenalty,
     contentLengthPreferences,
-    customRules,
     loading,
     loadError,
     hasLoaded,
@@ -226,7 +207,5 @@ export const usePreferencesStore = defineStore('preferences', () => {
     resetToDefaults,
     getWeight,
     setWeight,
-    addRule,
-    removeRule,
   }
 })

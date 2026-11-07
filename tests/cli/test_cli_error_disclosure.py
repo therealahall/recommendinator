@@ -5,7 +5,7 @@ import logging
 import sqlite3
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import click
 import pytest
@@ -27,7 +27,6 @@ from src.models.content import (
     ContentItem,
     ContentType,
 )
-from src.models.user_preferences import UserPreferenceConfig
 from src.sources.service import SOURCE_ID_RULE, SOURCE_MISCONFIGURED_DETAIL
 from src.storage.accounts import AccountStore
 from src.storage.manager import StorageManager
@@ -301,86 +300,6 @@ class TestVerboseRendersAFaultTheTerminalCannotEncode:
         assert result.exit_code != 0
         assert result.exception is None or isinstance(result.exception, SystemExit)
         assert f"{COMPLETE_FAILED}: OperationalError: {rendered}" in result.output
-
-
-class TestACustomRuleIsShownSanitizedRegression:
-    _RAW = "avoid horror\udcff\x07"
-    _CLEANED = "avoid horror"
-
-    def _storage_holding(self, rules: list[str]) -> MagicMock:
-        storage = make_storage_mock()
-        preferences = UserPreferenceConfig(custom_rules=list(rules))
-
-        def merge(_user_id: int, apply: Any) -> UserPreferenceConfig:
-            apply(preferences)
-            return preferences
-
-        storage.get_user_preference_config.return_value = preferences
-        storage.merge_user_preference_config.side_effect = merge
-        return storage
-
-    def test_add_echoes_the_cleaned_rule_regression(
-        self, cli_runner: CliRunner
-    ) -> None:
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["preferences", "custom-rules", "add", self._RAW],
-            self._storage_holding([]),
-        )
-
-        assert result.exit_code == 0, result.output
-        assert f"Added rule: '{self._CLEANED}'" in result.output
-
-    def test_list_echoes_the_cleaned_rule_regression(
-        self, cli_runner: CliRunner
-    ) -> None:
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["preferences", "custom-rules", "list"],
-            self._storage_holding([self._RAW]),
-        )
-
-        assert result.exit_code == 0, result.output
-        assert f"0: {self._CLEANED}" in result.output
-
-    def test_remove_echoes_the_cleaned_rule_regression(
-        self, cli_runner: CliRunner
-    ) -> None:
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["preferences", "custom-rules", "remove", "0"],
-            self._storage_holding([self._RAW]),
-        )
-
-        assert result.exit_code == 0, result.output
-        assert f"Removed rule: '{self._CLEANED}'" in result.output
-
-    @pytest.mark.parametrize("output_format", ["table", "json"])
-    def test_preferences_get_still_renders_the_rule_regression(
-        self, cli_runner: CliRunner, output_format: str
-    ) -> None:
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["preferences", "get", "--format", output_format],
-            self._storage_holding([self._RAW]),
-        )
-
-        assert result.exit_code == 0, result.output
-        assert self._CLEANED in result.output
-        assert "\udcff" not in result.output
-        assert "\x07" not in result.output
-
-    def test_interpret_echoes_the_text_it_parsed_regression(
-        self, cli_runner: CliRunner
-    ) -> None:
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["preferences", "custom-rules", "interpret", self._RAW],
-            self._storage_holding([]),
-        )
-
-        assert result.exit_code == 0, result.output
-        assert f"Rule: '{self._CLEANED}'" in result.output
 
 
 class TestArgvTextIsStoredWithoutItsSurrogatesRegression:
