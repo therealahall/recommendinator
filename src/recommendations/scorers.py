@@ -66,8 +66,9 @@ class ScoringContext:
     tag_set_lifts: list[float] = field(default_factory=list)
     tag_sets_by_term: dict[str, list[int]] = field(default_factory=dict)
     consumed_creators: set[str] = field(default_factory=set)
-    #: Seeded by the caller with ratings that are no taste signal, a show's
-    #: between seasons; each rated consumed item's is added to its series.
+    #: Seeded by the caller with ratings no series name carries, a show's
+    #: between seasons; each rated consumed item of ``content_type`` adds to its
+    #: series.
     series_ratings: dict[str, list[int]] = field(default_factory=dict)
 
     #: Series positions the user is part-way through, keyed by series. Supplied
@@ -97,8 +98,13 @@ class ScoringContext:
 
             creators.update(extract_creators(item))
 
+            # A book series' ratings say nothing of a same-named show's seasons.
             series = self.series_order.series_of(item)
-            if series is not None and item.rating is not None:
+            if (
+                series is not None
+                and item.rating is not None
+                and item.content_type == self.content_type
+            ):
                 series_ratings[series].append(item.rating)
 
         for ordinal, terms in enumerate(best_lifts):
@@ -166,9 +172,14 @@ class CreatorMatchScorer(Scorer):
 
     @staticmethod
     def _creator_score(creator: str, context: ScoringContext) -> float:
-        author_score = context.preferences.get_author_score(creator)
-        if author_score != 0.0:
-            return (author_score + 1.0) / 2.0
+        # Keyed on a rating existing, not on a non-zero net: a creator loved
+        # once and hated once is a wash, not the mild positive unrated reads as.
+        preferences = context.preferences
+        if (
+            creator in preferences.preferred_authors
+            or creator in preferences.disliked_authors
+        ):
+            return (preferences.get_author_score(creator) + 1.0) / 2.0
 
         if creator in context.consumed_creators:
             return 0.7  # mild positive – user has consumed this creator before

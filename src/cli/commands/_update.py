@@ -353,3 +353,6 @@ def update(
             click.echo("Enrichment is already running; left to finish.", err=True)
         elif started is EnrichmentStart.UNAVAILABLE:
             click.echo(ENRICHMENT_UNAVAILABLE, err=True)
+
+    if any(sync_run_failed(result.items_synced, result.errors) for result in results):
+        ctx.exit(1)

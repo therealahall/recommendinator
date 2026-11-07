@@ -51,7 +51,10 @@ LengthPreferenceName = Annotated[
 #: ``json.loads`` accepts the ``Infinity`` and ``NaN`` literals and
 #: ``JSONResponse`` refuses to render them, so one stored non-finite weight
 #: answers 500 on every later read of the preferences page.
-PreferenceWeight = Annotated[float, Field(allow_inf_nan=False)]
+PreferenceWeight = Annotated[
+    float,
+    Field(allow_inf_nan=False, ge=0.0, le=UserPreferenceConfig.MAX_SCORER_WEIGHT),
+]
 
 CustomRuleText = Annotated[
     str, Field(max_length=UserPreferenceConfig.MAX_CUSTOM_RULE_LENGTH)
@@ -59,8 +62,8 @@ CustomRuleText = Annotated[
 
 
 class UserPreferenceResponse(BaseModel):
-    """``scorer_weights`` needs no bound of its own: ``from_dict`` drops the
-    non-finite ones on read, and a second refusal here would answer a bare
+    """``scorer_weights`` needs no bound of its own: ``from_dict`` drops or
+    clamps an out-of-bound one on read, and a second refusal here would answer a bare
     ``ValidationError`` rather than anything an operator can act on.
     """
 

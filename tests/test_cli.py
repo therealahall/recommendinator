@@ -458,9 +458,50 @@ def test_update_command_steam_api_error(mock_components):
         runner = CliRunner()
         result = runner.invoke(cli, ["update", "--source", "steam"])
 
-        assert result.exit_code == 0
+        assert result.exit_code == 1
         assert "Warning: API error" in result.output
         assert "No items were updated" in result.output
+
+
+def test_one_failed_source_fails_the_update_and_the_others_still_print(
+    tmp_path: Path,
+) -> None:
+    """Reported: a scheduled ``update`` exited 0 with a source failing every run."""
+    from src.ingestion.plugin_base import SourceError
+
+    db_path = tmp_path / "test.db"
+    _steam_source(db_path)
+    StorageManager(sqlite_path=db_path).sources.upsert(
+        1, "sonarr", "sonarr", {"url": "http://localhost:8989"}, enabled=True
+    )
+    shows = [make_item("Show", ContentType.TV_SHOW, item_id="s1")]
+
+    with (
+        patch(
+            "src.cli.main.load_config",
+            return_value={"storage": {"database_path": str(db_path)}},
+        ),
+        patch(
+            "src.ingestion.sources.steam.SteamPlugin.fetch",
+            side_effect=SourceError("steam", "API error"),
+        ),
+        patch(
+            "src.ingestion.sources.steam.SteamPlugin.validate_config", return_value=[]
+        ),
+        patch(
+            "src.ingestion.sources.sonarr.SonarrPlugin.fetch",
+            return_value=iter(shows),
+        ),
+        patch(
+            "src.ingestion.sources.sonarr.SonarrPlugin.validate_config",
+            return_value=[],
+        ),
+    ):
+        result = CliRunner().invoke(cli, ["update", "--source", "all"])
+
+    assert result.exit_code == 1
+    assert "Warning: API error" in result.output
+    assert "(sonarr): 1 of 1 items saved" in result.output
 
 
 class TestUpdateWorkersFlag:
@@ -763,7 +804,7 @@ def test_update_reports_the_omitted_error_count_the_web_payload_carries(
             cli, ["update", "--source", "steam", "--format", "json"]
         )
 
-    assert result.exit_code == 0, result.stderr
+    assert result.exit_code == 1, result.stderr
     job = SyncStatusResponse(**json.loads(result.stdout)).jobs[0]
     assert len(job.errors) == MAX_REPORTED_ERRORS
     assert len(job.errors) + job.sources[0].omitted_errors == failures
@@ -1218,11 +1259,12 @@ class TestPreferenceWritesTheStoreRefusesRegression:
         assert "No user with id 999" in result.output
         assert storage.get_user_preference_config(999).scorer_weights == {}
 
-    @pytest.mark.parametrize("literal", ["inf", "nan"])
-    def test_a_non_finite_weight_is_refused(
+    @pytest.mark.parametrize("literal", ["inf", "nan", "5.1", "-0.1"])
+    def test_a_weight_off_the_slider_is_refused(
         self, storage: StorageManager, literal: str
     ) -> None:
-        """Click's ``float`` takes these, and the API's guard is HTTP-side."""
+        """Click's ``FloatRange`` lets ``nan`` through, and the API's guard is
+        HTTP-side."""
         result = _invoke_with_mocks(
             CliRunner(),
             ["preferences", "set-weight", "genre_match", literal],
@@ -1230,7 +1272,6 @@ class TestPreferenceWritesTheStoreRefusesRegression:
         )
 
         assert result.exit_code != 0
-        assert "must be a finite number" in result.output
         assert storage.get_user_preference_config(1).scorer_weights == {}
 
     def test_a_retired_scorer_is_refused_so_the_web_save_cannot_422(
@@ -1244,20 +1285,21 @@ class TestPreferenceWritesTheStoreRefusesRegression:
         assert all(name in result.output for name in SCORER_NAME_MAP)
         assert storage.get_user_preference_config(1).scorer_weights == {}
 
+    @pytest.mark.parametrize("literal", ["0", "3.0", "5"])
     def test_the_same_write_lands_for_a_user_that_exists(
-        self, storage: StorageManager
+        self, storage: StorageManager, literal: str
     ) -> None:
         """Without this the refusals above would hold on a store that never writes
         at all."""
         result = _invoke_with_mocks(
             CliRunner(),
-            ["preferences", "set-weight", "genre_match", "3.0"],
+            ["preferences", "set-weight", "genre_match", literal],
             storage,
         )
 
         assert result.exit_code == 0
         assert storage.get_user_preference_config(1).scorer_weights == {
-            "genre_match": 3.0
+            "genre_match": float(literal)
         }
 
     @pytest.mark.parametrize(

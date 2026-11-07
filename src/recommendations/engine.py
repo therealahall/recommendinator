@@ -253,8 +253,9 @@ class RecommendationEngine:
             series_tracking = inject_season_progress_tracking(
                 show_level_unconsumed, series_tracking
             )
-            # Never a taste signal, but the rating on a show part-way through is
-            # the verdict on the seasons watched, which continuation scales by.
+            # A rated show part-way through feeds taste like any rated item, but
+            # names no series, so this is how its verdict on the seasons watched
+            # reaches its next season's continuation.
             begun_show_ratings = {
                 show.title: [show.rating]
                 for show in show_level_unconsumed

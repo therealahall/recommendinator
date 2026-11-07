@@ -68,7 +68,9 @@ def preferences_get(ctx: click.Context, user_id: int, output_format: str) -> Non
 
 @preferences.command("set-weight")
 @click.argument("scorer_name")
-@click.argument("weight", type=float)
+@click.argument(
+    "weight", type=click.FloatRange(0.0, UserPreferenceConfig.MAX_SCORER_WEIGHT)
+)
 @click.option(
     "--user",
     "user_id",
@@ -83,7 +85,7 @@ def preferences_set_weight(
     """Set a scorer weight for a user.
 
     SCORER_NAME is the scorer to adjust (e.g. genre_match, creator_match).
-    WEIGHT is the new weight value (e.g. 2.5).
+    WEIGHT is the new weight value, 0.0-5.0 (e.g. 2.5).
     """
     if scorer_name not in SCORER_NAME_MAP:
         valid_names = ", ".join(sorted(SCORER_NAME_MAP.keys()))
