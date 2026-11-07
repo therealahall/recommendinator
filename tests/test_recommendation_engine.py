@@ -3161,9 +3161,11 @@ class TestSeasonCandidateIdentityRegression:
                 content_type=ContentType.TV_SHOW,
                 status=ConsumptionStatus.COMPLETED,
                 rating=5,
-                metadata={"genre": "Drama"},
+                metadata={"genres": ["Drama", "Mystery", "Thriller"]},
             )
         )
+        # Tags overlapping above neutral, so Season 1 leads Season 3 outright
+        # rather than by a tie with its neutral continuation row.
         real_storage.save_content_item(
             ContentItem(
                 id=None,
@@ -3171,7 +3173,7 @@ class TestSeasonCandidateIdentityRegression:
                 content_type=ContentType.TV_SHOW,
                 status=ConsumptionStatus.UNREAD,
                 metadata={
-                    "genre": "Drama",
+                    "genres": ["Drama", "Mystery", "Thriller"],
                     "total_seasons": 3,
                     "seasons_watched": [2],
                 },
