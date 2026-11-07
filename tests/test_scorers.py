@@ -188,6 +188,17 @@ class TestCreatorMatchScorer:
         candidate = make_item(author="Ben Nedivi", status=ConsumptionStatus.UNREAD)
         assert CreatorMatchScorer().score(candidate, context) == 0.7
 
+    def test_a_creator_loved_once_and_hated_once_scores_neutral(self) -> None:
+        """A zero net read as unrated, so the wash scored the 0.7 mild positive."""
+        context = _build_context(
+            consumed=[
+                make_item(author="Ben Nedivi", rating=5),
+                make_item(author="Ben Nedivi", rating=1),
+            ]
+        )
+        candidate = make_item(author="Ben Nedivi", status=ConsumptionStatus.UNREAD)
+        assert CreatorMatchScorer().score(candidate, context) == 0.5
+
 
 class TestTagOverlapScorer:
     def test_no_overlap(self) -> None:
@@ -464,17 +475,6 @@ class TestContinuationScorer:
         assert context.series_ratings == {"Left 4 Dead": [5]}
         assert ContinuationScorer().score(candidate, context) == 1.0
 
-    def test_a_later_season_is_silent_while_one_is_in_flight(self) -> None:
-        candidate = _season("Breaking Bad", 3, ConsumptionStatus.UNREAD)
-        context = _build_context(
-            consumed=[_season("Breaking Bad", 1, ConsumptionStatus.COMPLETED)],
-            unconsumed=[candidate],
-            in_progress=[
-                _season("Breaking Bad", 2, ConsumptionStatus.CURRENTLY_CONSUMING)
-            ],
-            content_type=ContentType.TV_SHOW,
-        )
-        assert ContinuationScorer().applies(candidate, context) is False
     def test_a_same_named_book_series_never_scales_the_shows_seasons(self) -> None:
         books = make_item(
             title="Leviathan Wakes", metadata={"series_name": "The Expanse"}, rating=5
@@ -487,6 +487,17 @@ class TestContinuationScorer:
         )
         assert ContinuationScorer().score(candidate, context) == 0.5
 
+    def test_a_later_season_is_silent_while_one_is_in_flight(self) -> None:
+        candidate = _season("Breaking Bad", 3, ConsumptionStatus.UNREAD)
+        context = _build_context(
+            consumed=[_season("Breaking Bad", 1, ConsumptionStatus.COMPLETED)],
+            unconsumed=[candidate],
+            in_progress=[
+                _season("Breaking Bad", 2, ConsumptionStatus.CURRENTLY_CONSUMING)
+            ],
+            content_type=ContentType.TV_SHOW,
+        )
+        assert ContinuationScorer().applies(candidate, context) is False
 
     def test_an_earlier_season_than_the_one_watched_does_not_apply(self) -> None:
         candidate = _season("Breaking Bad", 1, ConsumptionStatus.UNREAD)

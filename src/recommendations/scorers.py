@@ -172,9 +172,14 @@ class CreatorMatchScorer(Scorer):
 
     @staticmethod
     def _creator_score(creator: str, context: ScoringContext) -> float:
-        author_score = context.preferences.get_author_score(creator)
-        if author_score != 0.0:
-            return (author_score + 1.0) / 2.0
+        # Keyed on a rating existing, not on a non-zero net: a creator loved
+        # once and hated once is a wash, not the mild positive unrated reads as.
+        preferences = context.preferences
+        if (
+            creator in preferences.preferred_authors
+            or creator in preferences.disliked_authors
+        ):
+            return (preferences.get_author_score(creator) + 1.0) / 2.0
 
         if creator in context.consumed_creators:
             return 0.7  # mild positive – user has consumed this creator before
