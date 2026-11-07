@@ -23,6 +23,9 @@ class UserPreferenceConfig:
     #: just-finished genre (no score floor).
     MAX_VARIETY_PENALTY: ClassVar[float] = 5.0
 
+    #: Highest weight any scorer takes, per user or global; the slider's top.
+    MAX_SCORER_WEIGHT: ClassVar[float] = 5.0
+
     #: Most rules ``custom_rules`` holds. A write merges into a single
     #: ``users.settings`` blob that each recommendation request parses, and
     #: free text is the one collection here no closed key set bounds.
@@ -43,9 +46,10 @@ class UserPreferenceConfig:
         ``float`` takes ``inf``.
         """
         for name, weight in self.scorer_weights.items():
-            if not isfinite(weight):
+            if not 0.0 <= weight <= self.MAX_SCORER_WEIGHT:
                 raise PreferenceValidationError(
-                    f"Scorer weight '{name}' must be a finite number."
+                    f"Scorer weight '{name}' must be a number from 0 to "
+                    f"{self.MAX_SCORER_WEIGHT:g}."
                 )
         if not isfinite(self.variety_penalty):
             raise PreferenceValidationError("variety_penalty must be a finite number.")
@@ -69,8 +73,10 @@ class UserPreferenceConfig:
 
     @classmethod
     def _resolve_scorer_weights(cls, data: dict[str, Any]) -> dict[str, float]:
+        """Clamped, not refused: the Preferences page sends every weight back on
+        save, so one stored before the bound would fail each later save."""
         return {
-            name: float(weight)
+            name: max(0.0, min(cls.MAX_SCORER_WEIGHT, float(weight)))
             for name, weight in data.get("scorer_weights", {}).items()
             if isinstance(weight, (int, float)) and isfinite(weight)
         }
