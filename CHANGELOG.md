@@ -1,6 +1,38 @@
 # CHANGELOG
 
 
+## v0.76.0 (2026-11-07)
+
+### Chores
+
+- Bump certifi and filelock past published advisories
+  ([`3505639`](https://github.com/therealahall/recommendinator/commit/3505639514f1549e4284da7e95a37a174d3c1010))
+
+### Documentation
+
+- Drop custom rules from the docs
+  ([`aaad457`](https://github.com/therealahall/recommendinator/commit/aaad457dd4cf9839b3c4193c275bc4d52523f5b8))
+
+### Features
+
+- Remove custom rules
+  ([`107fd14`](https://github.com/therealahall/recommendinator/commit/107fd14d9524b58d6b476f2de94ecae5598272dd))
+
+- **recommendations**: Pass unknown genre terms through, dropping only blocklisted junk
+  ([`6c3bc2b`](https://github.com/therealahall/recommendinator/commit/6c3bc2b128b8c9d5611dd94ac48ea03523576922))
+
+### Testing
+
+- **recommendations**: Pin genre term pass-through and the blocklist
+  ([`2509fb2`](https://github.com/therealahall/recommendinator/commit/2509fb2af52cce7192359d8ae597b29d8a0bc87c))
+
+### Breaking Changes
+
+- The custom-rules CLI group, the custom_rules API field, the custom_preference scorer weight and
+  the recommendations.scorer_weights.custom_preference setting are removed. Stored values are
+  dropped on upgrade.
+
+
 ## v0.75.0 (2026-11-07)
 
 ### Bug Fixes
