@@ -612,10 +612,7 @@ class TestTraktSeasonExpansionHandoff:
             season.metadata["season"]: season.status
             for season in expand_tv_shows_to_seasons(items)
         }
-        assert statuses == {
-            3: ConsumptionStatus.CURRENTLY_CONSUMING,
-            4: ConsumptionStatus.UNREAD,
-        }
+        assert statuses == {3: ConsumptionStatus.CURRENTLY_CONSUMING}
 
     def test_partially_watched_first_season_still_surfaces_regression(self) -> None:
         payloads = _all_lists(
@@ -643,13 +640,7 @@ class TestTraktSeasonExpansionHandoff:
         assert show.metadata["total_seasons"] == 4
 
         expanded = expand_tv_shows_to_seasons(items)
-        season_titles = sorted(item.title for item in expanded)
-        assert season_titles == [
-            "Solitary (Season 1)",
-            "Solitary (Season 2)",
-            "Solitary (Season 3)",
-            "Solitary (Season 4)",
-        ]
+        assert [item.title for item in expanded] == ["Solitary (Season 1)"]
 
 
 class TestTraktSpecialsOnly:

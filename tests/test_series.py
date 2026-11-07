@@ -241,16 +241,27 @@ def test_should_recommend_next_book_started_series():
     assert should_recommend_item(item, series_tracking) is True
 
 
-def test_should_not_recommend_skipped_book_started_series():
-    item = ContentItem(
-        id="1",
-        title="Book (Series A, #5)",
-        author="Author",
+def _series_a_book(number: int) -> ContentItem:
+    return ContentItem(
+        id=str(number),
+        title=f"Book (Series A, #{number})",
         content_type=ContentType.BOOK,
         status=ConsumptionStatus.UNREAD,
     )
-    series_tracking = {"Series A": {1, 2}}
-    assert should_recommend_item(item, series_tracking) is False
+
+
+def test_a_book_missing_from_the_library_never_blocks_the_next_one():
+    book_four = _series_a_book(4)
+    series_tracking = {"Series A": {1, 3}}
+    assert should_recommend_item(book_four, series_tracking, [book_four]) is True
+
+
+def test_an_unread_gap_in_the_library_is_offered_before_a_later_book():
+    book_two, book_four = _series_a_book(2), _series_a_book(4)
+    series_tracking = {"Series A": {1, 3}}
+    library = [book_two, book_four]
+    assert should_recommend_item(book_two, series_tracking, library) is True
+    assert should_recommend_item(book_four, series_tracking, library) is False
 
 
 def test_should_recommend_book_zero_prequel():
@@ -326,7 +337,9 @@ class TestShouldRecommendNonSequentialSeasons:
         )
         assert should_recommend_item(item_s1, series_tracking) is True
 
-    def test_non_sequential_seasons_5_6_does_not_recommend_season_7(self) -> None:
+    def test_seasons_absent_from_the_library_do_not_hold_back_season_7(
+        self,
+    ) -> None:
         series_tracking = {"The Show": {5, 6}}
         item_s7 = ContentItem(
             id="s7",
@@ -334,7 +347,7 @@ class TestShouldRecommendNonSequentialSeasons:
             content_type=ContentType.TV_SHOW,
             status=ConsumptionStatus.UNREAD,
         )
-        assert should_recommend_item(item_s7, series_tracking) is False
+        assert should_recommend_item(item_s7, series_tracking, [item_s7]) is True
 
 
 class TestExpandTvShowsSkipsWatchedSeasons:
@@ -367,7 +380,9 @@ class TestExpandTvShowsMarksTheSeasonInFlight:
             metadata={"total_seasons": 3, **metadata},
         )
 
-    def test_episode_counts_name_the_season_in_flight(self) -> None:
+    def test_episode_counts_name_the_season_in_flight_and_hold_back_the_rest(
+        self,
+    ) -> None:
         show = self._show(
             seasons_watched=[1],
             episodes_watched_by_season={"2": 4},
@@ -377,10 +392,7 @@ class TestExpandTvShowsMarksTheSeasonInFlight:
             item.metadata["season"]: item.status
             for item in expand_tv_shows_to_seasons([show])
         }
-        assert by_season == {
-            2: ConsumptionStatus.CURRENTLY_CONSUMING,
-            3: ConsumptionStatus.UNREAD,
-        }
+        assert by_season == {2: ConsumptionStatus.CURRENTLY_CONSUMING}
 
     def test_without_episode_counts_a_show_between_seasons_has_none_in_flight(
         self,
@@ -507,22 +519,6 @@ class TestInjectSeasonProgressTracking:
         result = inject_season_progress_tracking(items, original)
         assert original["The Show"] == {1, 2}
         assert result["The Show"] == {1, 2, 5, 6}
-
-    def test_the_season_in_flight_holds_its_slot(self) -> None:
-        items = [
-            ContentItem(
-                id="show1",
-                title="The Show",
-                content_type=ContentType.TV_SHOW,
-                status=ConsumptionStatus.CURRENTLY_CONSUMING,
-                metadata={
-                    "seasons_watched": [1],
-                    "episodes_watched_by_season": {"2": 3},
-                    "plex_season_episode_counts": {"2": 10},
-                },
-            ),
-        ]
-        assert inject_season_progress_tracking(items, {})["The Show"] == {1, 2}
 
     def test_ignores_non_tv_items(self) -> None:
         items = [
@@ -1039,7 +1035,7 @@ class TestDecimalSeriesOrderingRegression:
     def test_non_finite_metadata_position_rejected_regression(self) -> None:
         """Unlike ``int()``, ``float()`` accepts "inf"/"nan", which would
         enter series tracking and corrupt ordering comparisons (``nan`` compares
-        False against everything; ``inf`` breaks the virtual slot ``range()``)."""
+        False against everything)."""
         for bad_value in ("inf", "-inf", "nan", float("inf"), float("nan")):
             item = _titled(
                 "Drive",

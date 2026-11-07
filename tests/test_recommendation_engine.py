@@ -1608,7 +1608,7 @@ class TestSubstituteRanksAtTheBlockedEntrysScoreRegression:
     with nothing saying why it sat above higher ones."""
 
     @staticmethod
-    def _engine(mock_storage, scores, unconsumed, consumed_genres=None):
+    def _engine(mock_storage, scores, unconsumed, consumed_genres=None, played=()):
         consumed = make_item(
             item_id="consumed",
             title="Chrono Trigger",
@@ -1617,7 +1617,7 @@ class TestSubstituteRanksAtTheBlockedEntrysScoreRegression:
             metadata={"genres": consumed_genres or ["Puzzle"]},
         )
         mock_storage.get_completed_items = Mock(
-            side_effect=lambda content_type=None, **kwargs: [consumed]
+            side_effect=lambda content_type=None, **kwargs: [consumed, *played]
         )
         mock_storage.get_unconsumed_items = Mock(
             side_effect=lambda content_type=None, **kwargs: [
@@ -1803,6 +1803,49 @@ class TestSubstituteRanksAtTheBlockedEntrysScoreRegression:
 
         assert [(rec.item.title, rec.series_lead) for rec in recs] == expected
 
+    @pytest.mark.parametrize(
+        ("fallout_1_in_library", "offered"),
+        [
+            pytest.param(False, "New Vegas", id="a-gap-is-skipped"),
+            pytest.param(True, "Fallout 1", id="going-back-comes-first"),
+        ],
+    )
+    def test_a_series_played_out_of_order_offers_its_earliest_unplayed_entry(
+        self, mock_storage, fallout_1_in_library, offered
+    ):
+        """Fallout 3 played with 1 and 2 absent held every later entry back."""
+        game = ContentType.VIDEO_GAME
+        fallout_3 = make_item(
+            item_id="Fallout 3",
+            title="Fallout 3",
+            content_type=game,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            metadata={"series_name": "Fallout", "series_position": 3},
+        )
+        engine = self._engine(
+            mock_storage,
+            {"Fallout 4": 0.75, "Standalone": 0.7, "New Vegas": 0.6, "Fallout 1": 0.5},
+            [
+                self._entry(game, "Fallout 4", "Fallout", 4),
+                self._standalone(game, "Standalone"),
+                self._entry(game, "New Vegas", "Fallout", 3.5),
+                *(
+                    [self._entry(game, "Fallout 1", "Fallout", 1)]
+                    if fallout_1_in_library
+                    else []
+                ),
+            ],
+            played=[fallout_3],
+        )
+
+        recs = engine.generate_recommendations(content_type=game, count=5)
+
+        assert [(rec.item.title, rec.series_lead) for rec in recs] == [
+            (offered, SeriesLead("Fallout", 0.75)),
+            ("Standalone", None),
+        ]
+
 
 class TestPositionlessSeriesOfferedInReleaseOrder:
     """A franchise whose titles carry no number at all, so release year is the
@@ -1973,7 +2016,7 @@ class TestContinuationScorerExclusion:
 
         assert scored["Show Y (Season 3)"].score > scored["Show Z (Season 1)"].score
 
-    def test_the_season_after_one_in_flight_carries_no_continuation_row(
+    def test_no_season_after_one_in_flight_is_offered_with_series_order_off(
         self, engine, mock_storage
     ):
         """Season 6 jumped the queue while season 5 was still being watched."""
@@ -1986,27 +2029,22 @@ class TestContinuationScorerExclusion:
             episodes_watched_by_season={"5": 3},
         )
 
-        scored = self._recommend_shows(engine, mock_storage, [show])
+        scored = self._recommend_shows(
+            engine, mock_storage, [show], UserPreferenceConfig(series_in_order=False)
+        )
 
-        assert "Show X (Season 5)" not in scored
-        assert "continuation" not in scored["Show X (Season 6)"].score_breakdown
+        assert scored == {}
 
-    def test_a_show_begun_with_nothing_finished_holds_back_season_1(
+    def test_a_show_begun_with_nothing_finished_offers_none_of_its_seasons(
         self, engine, mock_storage
     ):
         """With no episode counts, a show being watched came back as its own
         season 1."""
         show = self._show("n", "Show N", ConsumptionStatus.CURRENTLY_CONSUMING, 3)
 
-        scored = self._recommend_shows(
-            engine, mock_storage, [show], UserPreferenceConfig(series_in_order=False)
-        )
+        scored = self._recommend_shows(engine, mock_storage, [show])
 
-        assert "Show N (Season 1)" not in scored
-        assert all(
-            "continuation" not in scored[f"Show N (Season {season})"].score_breakdown
-            for season in (2, 3)
-        )
+        assert scored == {}
 
     def test_the_book_after_one_being_read_follows_a_finished_first(
         self, real_engine, real_storage
@@ -2964,6 +3002,32 @@ class TestSeriesTrackingFullSetRegression:
             "Foundation's Edge" in t for t in titles
         ), "#4 must stay held until #3 is consumed"
 
+    def test_an_ignored_unread_entry_never_blocks_the_next_regression(
+        self, real_engine, real_storage
+    ):
+        _save_book(
+            real_storage,
+            item_id="s1",
+            title="Foundation (Signal Saga #1)",
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+        )
+        _save_book(
+            real_storage,
+            item_id="s2",
+            title="Foundation and Empire (Signal Saga #2)",
+            status=ConsumptionStatus.UNREAD,
+            ignored=True,
+        )
+        _save_book(
+            real_storage,
+            item_id="s3",
+            title="Second Foundation (Signal Saga #3)",
+            status=ConsumptionStatus.UNREAD,
+        )
+
+        assert self._titles(real_engine) == ["Second Foundation (Signal Saga #3)"]
+
 
 class TestHalfNumberedEntryScoringRegression:
     """A fractional position was never next, so #2.5 scored as already consumed."""
@@ -3073,6 +3137,7 @@ class TestShowInFlightRegression:
     part-watched season never reaches that list."""
 
     def _watch(self, real_storage, *, title, total_seasons, episodes_watched):
+        """Each season watched is ten episodes long."""
         real_storage.save_content_item(
             ContentItem(
                 id=f"show:{title}",
@@ -3082,9 +3147,25 @@ class TestShowInFlightRegression:
                 metadata={
                     "genre": "Drama",
                     "total_seasons": total_seasons,
-                    "episodes_watched_by_season": {"1": episodes_watched},
-                    "plex_season_episode_counts": {"1": 12},
+                    "episodes_watched_by_season": {
+                        str(season): count for season, count in episodes_watched.items()
+                    },
+                    "plex_season_episode_counts": {
+                        str(season): 10 for season in episodes_watched
+                    },
                 },
+            )
+        )
+
+    def _seen(self, real_storage):
+        real_storage.save_content_item(
+            ContentItem(
+                id="seen",
+                title="Watched Show",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+                metadata={"genre": "Drama"},
             )
         )
 
@@ -3099,35 +3180,18 @@ class TestShowInFlightRegression:
     def test_the_only_season_of_a_show_being_watched_is_not_offered_regression(
         self, real_engine, real_storage
     ):
-        real_storage.save_content_item(
-            ContentItem(
-                id="seen",
-                title="Watched Show",
-                content_type=ContentType.TV_SHOW,
-                status=ConsumptionStatus.COMPLETED,
-                rating=5,
-                metadata={"genre": "Drama"},
-            )
-        )
+        self._seen(real_storage)
         self._watch(
-            real_storage, title="Death Note", total_seasons=1, episodes_watched=5
+            real_storage, title="Death Note", total_seasons=1, episodes_watched={1: 5}
         )
 
         assert self._recommend(real_engine) == []
 
-    def test_a_later_season_of_a_show_being_watched_is_still_offered(
+    def test_no_later_season_is_offered_while_one_is_in_flight_regression(
         self, real_engine, real_storage
     ):
-        real_storage.save_content_item(
-            ContentItem(
-                id="seen",
-                title="Watched Show",
-                content_type=ContentType.TV_SHOW,
-                status=ConsumptionStatus.COMPLETED,
-                rating=5,
-                metadata={"genre": "Drama"},
-            )
-        )
+        """Silo's season 3 was offered three episodes into season 2."""
+        self._seen(real_storage)
         real_storage.save_content_item(
             ContentItem(
                 id="fresh",
@@ -3138,13 +3202,25 @@ class TestShowInFlightRegression:
             )
         )
         self._watch(
-            real_storage, title="Ongoing Show", total_seasons=2, episodes_watched=5
+            real_storage, title="Silo", total_seasons=3, episodes_watched={1: 10, 2: 3}
         )
 
-        titles = self._recommend(real_engine)
+        assert self._recommend(real_engine) == ["Fresh Show"]
 
-        assert "Ongoing Show (Season 1)" not in titles
-        assert sorted(titles) == ["Fresh Show", "Ongoing Show (Season 2)"]
+    def test_finishing_a_season_offers_the_next_as_a_continuation(
+        self, real_engine, real_storage
+    ):
+        self._seen(real_storage)
+        self._watch(
+            real_storage, title="Silo", total_seasons=3, episodes_watched={1: 10, 2: 10}
+        )
+
+        (season_three,) = real_engine.generate_recommendations(
+            content_type=ContentType.TV_SHOW, count=10
+        )
+
+        assert season_three.item.title == "Silo (Season 3)"
+        assert "continuation" in season_three.score_breakdown
 
 
 class TestSeasonCandidateIdentityRegression:
