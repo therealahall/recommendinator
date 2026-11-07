@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from src.enrichment.provider_base import flags_no_credential, stored_config_schema
 from src.enrichment.registry import get_enrichment_registry
+from src.models.user_preferences import UserPreferenceConfig
 from src.utils.text import humanize_source_id
 
 logger = logging.getLogger(__name__)
@@ -140,6 +141,8 @@ def _entry(
     )
 
 
+_SCORER_WEIGHT_BOUNDS = Validation(min=0.0, max=UserPreferenceConfig.MAX_SCORER_WEIGHT)
+
 _REGISTRY: tuple[SettingMetadata, ...] = (
     # recommendations
     _entry(
@@ -174,7 +177,7 @@ _REGISTRY: tuple[SettingMetadata, ...] = (
         help="Weight for how you rate a candidate's genres against your own average rating (0 disables).",
         type="float",
         default=2.0,
-        validation=Validation(min=0.0),
+        validation=_SCORER_WEIGHT_BOUNDS,
     ),
     _entry(
         "recommendations.scorer_weights.creator_match",
@@ -182,7 +185,7 @@ _REGISTRY: tuple[SettingMetadata, ...] = (
         help="Weight for matching a candidate's creators to liked items (0 disables).",
         type="float",
         default=1.5,
-        validation=Validation(min=0.0),
+        validation=_SCORER_WEIGHT_BOUNDS,
     ),
     _entry(
         "recommendations.scorer_weights.tag_overlap",
@@ -190,7 +193,7 @@ _REGISTRY: tuple[SettingMetadata, ...] = (
         help="Weight for how closely an item's tags and genre clusters match something you've consumed, scaled by how you rated it (0 disables).",
         type="float",
         default=1.0,
-        validation=Validation(min=0.0),
+        validation=_SCORER_WEIGHT_BOUNDS,
     ),
     _entry(
         "recommendations.scorer_weights.content_length",
@@ -198,7 +201,7 @@ _REGISTRY: tuple[SettingMetadata, ...] = (
         help="Soft penalty weight for items not matching a length preference, counted only for a type with one set (0 disables).",
         type="float",
         default=1.0,
-        validation=Validation(min=0.0),
+        validation=_SCORER_WEIGHT_BOUNDS,
     ),
     _entry(
         "recommendations.scorer_weights.continuation",
@@ -206,7 +209,7 @@ _REGISTRY: tuple[SettingMetadata, ...] = (
         help="Weight for the later entries of a series you have begun, scored by how you rated the entries you finished, while none of it is in progress (0 disables).",
         type="float",
         default=1.0,
-        validation=Validation(min=0.0),
+        validation=_SCORER_WEIGHT_BOUNDS,
     ),
     _entry(
         "recommendations.scorer_weights.adaptation",
@@ -214,7 +217,7 @@ _REGISTRY: tuple[SettingMetadata, ...] = (
         help="Weight boosting films, shows and games adapting content you rated well (0 disables).",
         type="float",
         default=1.5,
-        validation=Validation(min=0.0),
+        validation=_SCORER_WEIGHT_BOUNDS,
     ),
     _entry(
         "recommendations.scorer_weights.custom_preference",
@@ -222,7 +225,7 @@ _REGISTRY: tuple[SettingMetadata, ...] = (
         help="Weight for user-defined natural-language preference rules (0 disables).",
         type="float",
         default=1.0,
-        validation=Validation(min=0.0),
+        validation=_SCORER_WEIGHT_BOUNDS,
     ),
     # sync
     _entry(

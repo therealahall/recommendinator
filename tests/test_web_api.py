@@ -1015,6 +1015,19 @@ class TestUserPreferenceBounds:
         assert response.status_code == 422
         merge.assert_not_called()
 
+    @pytest.mark.parametrize("weight", [-0.1, 5.1])
+    def test_a_weight_outside_the_slider_is_rejected_rather_than_persisted(
+        self, client, mock_components, weight
+    ):
+        merge = back_mock_preference_store(mock_components["storage"])
+
+        response = client.put(
+            "/api/users/1/preferences", json={"scorer_weights": {"genre_match": weight}}
+        )
+
+        assert response.status_code == 422
+        merge.assert_not_called()
+
     def test_a_payload_sitting_exactly_on_every_bound_is_accepted(
         self, client, mock_components
     ):
@@ -1022,11 +1035,15 @@ class TestUserPreferenceBounds:
         would cut this one to a quarter of the documented 500."""
         back_mock_preference_store(mock_components["storage"])
         at_bound_rule = "🎬" * UserPreferenceConfig.MAX_CUSTOM_RULE_LENGTH
+        at_bound_weights = {
+            **dict.fromkeys(SCORER_NAME_MAP, UserPreferenceConfig.MAX_SCORER_WEIGHT),
+            "genre_match": 0.0,
+        }
 
         response = client.put(
             "/api/users/1/preferences",
             json={
-                "scorer_weights": dict.fromkeys(SCORER_NAME_MAP, 1.0),
+                "scorer_weights": at_bound_weights,
                 "custom_rules": [at_bound_rule] * UserPreferenceConfig.MAX_CUSTOM_RULES,
                 "content_length_preferences": dict.fromkeys(
                     _CONTENT_TYPE_NAMES, "long"
@@ -1036,7 +1053,7 @@ class TestUserPreferenceBounds:
 
         assert response.status_code == 200
         body = response.json()
-        assert body["scorer_weights"] == dict.fromkeys(SCORER_NAME_MAP, 1.0)
+        assert body["scorer_weights"] == at_bound_weights
         assert body["content_length_preferences"] == dict.fromkeys(
             _CONTENT_TYPE_NAMES, "long"
         )
@@ -1076,6 +1093,25 @@ class TestUserPreferenceBounds:
 
         assert read_back.status_code == 200
         assert read_back.json()["scorer_weights"] == {}
+
+    def test_a_weight_stored_past_the_bound_reads_clamped_and_saves_back(
+        self, settings_app
+    ):
+        """The page sends every stored weight back, so an unclamped 7.0 would
+        422 every later save."""
+        client, storage = settings_app
+        with storage.sqlite_db.connection() as conn:
+            update_user_settings(
+                conn, 1, {"preference_config": {"scorer_weights": {"genre_match": 7.0}}}
+            )
+
+        read_back = client.get("/api/users/1/preferences").json()["scorer_weights"]
+        saved = client.put(
+            "/api/users/1/preferences", json={"scorer_weights": read_back}
+        )
+
+        assert read_back == {"genre_match": 5.0}
+        assert saved.status_code == 200
 
     @pytest.mark.parametrize("literal", ["Infinity", "NaN"])
     def test_a_non_finite_variety_penalty_is_refused_the_same_way(

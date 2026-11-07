@@ -1218,11 +1218,12 @@ class TestPreferenceWritesTheStoreRefusesRegression:
         assert "No user with id 999" in result.output
         assert storage.get_user_preference_config(999).scorer_weights == {}
 
-    @pytest.mark.parametrize("literal", ["inf", "nan"])
-    def test_a_non_finite_weight_is_refused(
+    @pytest.mark.parametrize("literal", ["inf", "nan", "5.1", "-0.1"])
+    def test_a_weight_off_the_slider_is_refused(
         self, storage: StorageManager, literal: str
     ) -> None:
-        """Click's ``float`` takes these, and the API's guard is HTTP-side."""
+        """Click's ``FloatRange`` lets ``nan`` through, and the API's guard is
+        HTTP-side."""
         result = _invoke_with_mocks(
             CliRunner(),
             ["preferences", "set-weight", "genre_match", literal],
@@ -1230,7 +1231,6 @@ class TestPreferenceWritesTheStoreRefusesRegression:
         )
 
         assert result.exit_code != 0
-        assert "must be a finite number" in result.output
         assert storage.get_user_preference_config(1).scorer_weights == {}
 
     def test_a_retired_scorer_is_refused_so_the_web_save_cannot_422(
@@ -1244,20 +1244,21 @@ class TestPreferenceWritesTheStoreRefusesRegression:
         assert all(name in result.output for name in SCORER_NAME_MAP)
         assert storage.get_user_preference_config(1).scorer_weights == {}
 
+    @pytest.mark.parametrize("literal", ["0", "3.0", "5"])
     def test_the_same_write_lands_for_a_user_that_exists(
-        self, storage: StorageManager
+        self, storage: StorageManager, literal: str
     ) -> None:
         """Without this the refusals above would hold on a store that never writes
         at all."""
         result = _invoke_with_mocks(
             CliRunner(),
-            ["preferences", "set-weight", "genre_match", "3.0"],
+            ["preferences", "set-weight", "genre_match", literal],
             storage,
         )
 
         assert result.exit_code == 0
         assert storage.get_user_preference_config(1).scorer_weights == {
-            "genre_match": 3.0
+            "genre_match": float(literal)
         }
 
     @pytest.mark.parametrize(

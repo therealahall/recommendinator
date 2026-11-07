@@ -1,4 +1,6 @@
-from src.models.user_preferences import UserPreferenceConfig
+import pytest
+
+from src.models.user_preferences import PreferenceValidationError, UserPreferenceConfig
 
 
 class TestUserPreferenceConfig:
@@ -32,6 +34,16 @@ class TestUserPreferenceConfig:
         assert config.variety_penalty == 0.0
 
 
+class TestScorerWeightBound:
+    """The store guard is the one door every write passes, CLI and API alike."""
+
+    @pytest.mark.parametrize("weight", [-0.1, 5.1])
+    def test_a_weight_off_the_slider_is_unstorable(self, weight: float) -> None:
+        config = UserPreferenceConfig(scorer_weights={"genre_match": weight})
+        with pytest.raises(PreferenceValidationError):
+            config.raise_if_unstorable()
+
+
 class TestVarietyPenaltyMigrationRegression:
     """``from_dict`` keyed only on the new field, so legacy JSON would
     have resolved to the default (disabled) regardless of the old toggle."""
@@ -58,7 +70,7 @@ class TestAPoisonedRowIsStillReadableRegression:
     door is left to correct it by."""
 
     def test_a_non_finite_stored_weight_is_read_past(self) -> None:
-        """Dropped, not clamped: there is no bound to clamp a weight into."""
+        """Dropped, not clamped: infinity is no weight anyone chose."""
         config = UserPreferenceConfig.from_dict(
             {"scorer_weights": {"recency": float("inf"), "genre_match": 2.0}}
         )

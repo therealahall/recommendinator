@@ -15,8 +15,11 @@ const emit = defineEmits<{
 // pointer or focus. mouseleave/blur clear it so it can reappear next time.
 const dismissed = ref(false)
 
+// The backend's UserPreferenceConfig.MAX_SCORER_WEIGHT, which TS cannot import.
+const MAX = 5
+
 const displayValue = computed(() => props.modelValue.toFixed(1))
-const fillPercent = computed(() => `${(props.modelValue / 5) * 100}%`)
+const fillPercent = computed(() => `${(props.modelValue / MAX) * 100}%`)
 const labelId = computed(() => {
   const slug = props.label.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
   return `slider-label-${slug}`
@@ -56,7 +59,7 @@ function onEscape(event: KeyboardEvent) {
     <input
       type="range"
       min="0"
-      max="5"
+      :max="MAX"
       step="0.1"
       :value="modelValue"
       class="pref-slider"

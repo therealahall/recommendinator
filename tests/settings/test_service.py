@@ -13,6 +13,7 @@ from src.settings.metadata import (
     PROVIDER_ORDER_KEY,
     SettingMetadata,
     Validation,
+    all_entries,
     default_of,
     get_entry,
 )
@@ -183,6 +184,19 @@ class TestCoerceAndValidate:
 
         weight = _entry("recommendations.scorer_weights.genre_match")
         assert coerce_and_validate(weight, 0.0) == 0.0
+        assert coerce_and_validate(weight, 5.0) == 5.0
+
+    @pytest.mark.parametrize(
+        "entry",
+        [entry for entry in all_entries() if ".scorer_weights." in entry.key],
+        ids=lambda entry: entry.key,
+    )
+    def test_every_scorer_weight_refuses_more_than_the_per_user_bound(
+        self, entry: SettingMetadata
+    ) -> None:
+        """A global weight past it is one the per-user slider cannot reach."""
+        with pytest.raises(SettingsValidationError):
+            coerce_and_validate(entry, 5.1)
 
     def test_tmdb_language_pattern_accepts_locales_rejects_junk(self) -> None:
         entry = _entry("enrichment.providers.tmdb.language")
