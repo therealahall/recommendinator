@@ -18,8 +18,6 @@ body:
         A "preferred length" setting per content type would solve this:
         - Books: short / medium / long (by page count)
         - Games: short / medium / long (by hours-to-beat)
-
-        I tried custom rules but the scoring doesn't expose page count directly.
     validations:
       required: true
 

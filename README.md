@@ -82,7 +82,6 @@ parallel sync and library export, see **[docs/DATA_SOURCES.md](docs/DATA_SOURCES
   clusters
 - A transparent scoring pipeline over genre, creator, tag overlap, content
   length, series continuation and adaptations ([how it works](docs/SCORING.md))
-- Natural-language [custom rules](docs/CUSTOM_RULES.md) like "avoid horror"
 - [Metadata enrichment](docs/ENRICHMENT_SETUP.md) from TMDB, OpenLibrary and
   RAWG, automatic or edited by hand
 - Automated syncing: each source carries its own cadence, set from the CLI or
@@ -189,7 +188,6 @@ Full command reference: **[docs/CLI.md](docs/CLI.md)**.
 | [ARCHITECTURE.md](ARCHITECTURE.md) | System design and components |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Contributing guidelines |
 | [docs/DOCKER.md](docs/DOCKER.md) | Docker deployment and reverse proxy |
-| [docs/CUSTOM_RULES.md](docs/CUSTOM_RULES.md) | Custom preference rules |
 | [docs/PLUGIN_DEVELOPMENT.md](docs/PLUGIN_DEVELOPMENT.md) | Adding new data sources |
 | [docs/THEME_DEVELOPMENT.md](docs/THEME_DEVELOPMENT.md) | Creating custom web UI themes |
 | [docs/SECURITY.md](docs/SECURITY.md) | Security considerations |

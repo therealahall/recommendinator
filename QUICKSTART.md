@@ -223,15 +223,13 @@ uv run python -m src.cli preferences get
 
 uv run python -m src.cli preferences set-weight genre_match 3.0
 uv run python -m src.cli preferences set-length book short        # or any, long
-uv run python -m src.cli preferences custom-rules add "avoid horror"
 uv run python -m src.cli preferences set-variety 4.0              # 0.0 off, 5.0 full
 ```
 
 `set-variety` demotes genres you recently finished, per content type, so
 recommendations stay varied. The next entry in a series you are reading takes the
 same penalty as the rest of its genre, so turn the setting down to get back to it. See
-[docs/SCORING.md](docs/SCORING.md) and
-[docs/CUSTOM_RULES.md](docs/CUSTOM_RULES.md).
+[docs/SCORING.md](docs/SCORING.md).
 
 ## Next steps
 
@@ -241,7 +239,6 @@ same penalty as the rest of its genre, so turn the setting down to get back to i
 | [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md) | Managing sources, parallel sync, export |
 | [docs/CLI.md](docs/CLI.md) | Full CLI reference |
 | [docs/SCORING.md](docs/SCORING.md) | How recommendations are scored |
-| [docs/CUSTOM_RULES.md](docs/CUSTOM_RULES.md) | Preference rules |
 | [docs/PLUGIN_DEVELOPMENT.md](docs/PLUGIN_DEVELOPMENT.md) | Writing a data source plugin |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | How the system works |
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Common issues |
