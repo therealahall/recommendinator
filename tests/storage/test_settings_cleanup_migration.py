@@ -131,7 +131,7 @@ class TestTheAiRemovalPrunesItsOwnLeaves:
         assert _user_version(db_path) == _SCHEMA_VERSION
 
 
-def _seed_v32_db_with_retired_weights(path: Path) -> None:
+def _seed_v33_db_with_retired_weights(path: Path) -> None:
     conn = sqlite3.connect(path)
     try:
         create_schema(conn)
@@ -140,15 +140,23 @@ def _seed_v32_db_with_retired_weights(path: Path) -> None:
             "INSERT INTO settings (key, value_json) VALUES (?, ?)",
             [
                 ("recommendations.scorer_weights.semantic_similarity", "1.0"),
+                ("recommendations.scorer_weights.custom_preference", "1.0"),
                 ("recommendations.scorer_weights.tag_overlap", "2.0"),
             ],
         )
-        weights = {"series_affinity": 0, "rating_pattern": 2, "tag_overlap": 3}
+        blob = {
+            "custom_rules": ["no movies"],
+            "scorer_weights": {
+                "series_affinity": 0,
+                "custom_preference": 2.0,
+                "genre_match": 2.0,
+            },
+        }
         conn.execute(
             "UPDATE users SET settings = ? WHERE id = 1",
-            (json.dumps({"preference_config": {"scorer_weights": weights}}),),
+            (json.dumps({"preference_config": blob}),),
         )
-        conn.execute("PRAGMA user_version = 32")
+        conn.execute("PRAGMA user_version = 33")
         conn.commit()
     finally:
         conn.close()
@@ -164,18 +172,21 @@ class TestRetiredScorerWeightsPrune:
         self, tmp_path: Path
     ) -> None:
         db_path = tmp_path / "test.db"
-        _seed_v32_db_with_retired_weights(db_path)
+        _seed_v33_db_with_retired_weights(db_path)
 
-        storage = StorageManager(sqlite_path=db_path)
+        StorageManager(sqlite_path=db_path)
 
         conn = sqlite3.connect(db_path)
         try:
             keys = [row[0] for row in conn.execute("SELECT key FROM settings")]
+            (settings,) = conn.execute(
+                "SELECT settings FROM users WHERE id = 1"
+            ).fetchone()
         finally:
             conn.close()
         assert keys == ["recommendations.scorer_weights.tag_overlap"]
-        assert storage.get_user_preference_config(1).scorer_weights == {
-            "tag_overlap": 3.0
+        assert json.loads(settings)["preference_config"] == {
+            "scorer_weights": {"genre_match": 2.0}
         }
 
 

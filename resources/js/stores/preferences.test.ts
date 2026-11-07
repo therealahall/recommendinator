@@ -31,7 +31,6 @@ const STORED_PREFS = {
   series_in_order: true,
   variety_penalty: 0,
   content_length_preferences: {},
-  custom_rules: [],
 }
 
 async function loadedStore() {
@@ -57,7 +56,6 @@ describe('usePreferencesStore', () => {
       series_in_order: false,
       variety_penalty: 0.5,
       content_length_preferences: { book: 'short' },
-      custom_rules: ['avoid horror'],
     })
 
     const store = usePreferencesStore()
@@ -67,7 +65,6 @@ describe('usePreferencesStore', () => {
     expect(store.seriesInOrder).toBe(false)
     expect(store.varietyPenalty).toBe(0.5)
     expect(store.contentLengthPreferences).toEqual({ book: 'short' })
-    expect(store.customRules).toEqual(['avoid horror'])
   })
 
   it('save sends the edited preferences and leaves nothing unsaved', async () => {
@@ -77,7 +74,6 @@ describe('usePreferencesStore', () => {
     store.scorerWeights = { genre_match: 3.0 }
     store.seriesInOrder = false
     store.varietyPenalty = 0.4
-    store.customRules = ['prefer sci-fi']
     expect(store.isDirty).toBe(true)
 
     await store.save()
@@ -88,7 +84,6 @@ describe('usePreferencesStore', () => {
         scorer_weights: { genre_match: 3.0 },
         series_in_order: false,
         variety_penalty: 0.4,
-        custom_rules: ['prefer sci-fi'],
       }),
     )
     expect(store.saveStatus).toBe('saved')
@@ -155,14 +150,12 @@ describe('usePreferencesStore', () => {
 
   it('reset shows the defaults the server answers with, and leaves the theme painted', async () => {
     const store = await loadedStore()
-    store.customRules = ['no horror']
     store.varietyPenalty = 3.0
     mockDelete.mockResolvedValue(STORED_PREFS)
 
     await store.resetToDefaults()
 
     expect(mockDelete).toHaveBeenCalledWith('/users/1/preferences')
-    expect(store.customRules).toEqual([])
     expect(store.varietyPenalty).toBe(0)
     expect(store.isDirty).toBe(false)
     expect(mockApplyTheme).not.toHaveBeenCalled()
@@ -179,13 +172,11 @@ describe('preferences load-failure regression', () => {
 
   it('keeps the previously loaded values when a later load fails', async () => {
     const store = await loadedStore()
-    store.customRules = ['no horror']
     store.scorerWeights = { genre_match: 4.0 }
     mockGet.mockRejectedValue(new Error('Network error'))
 
     await store.load()
 
-    expect(store.customRules).toEqual(['no horror'])
     expect(store.scorerWeights).toEqual({ genre_match: 4.0 })
     expect(store.loadError).toBe('Network error')
   })

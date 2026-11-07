@@ -17,13 +17,12 @@ const PROFILE = {
   generated_at: '2026-01-01T00:00:00+00:00',
 }
 
-function preferences(customRules: string[] = []) {
+function preferences(contentLengthPreferences: Record<string, string> = {}) {
   return {
     scorer_weights: {},
     series_in_order: true,
     variety_penalty: 0.0,
-    content_length_preferences: {},
-    custom_rules: customRules,
+    content_length_preferences: contentLengthPreferences,
   }
 }
 
@@ -60,9 +59,12 @@ async function mountPage(attachTo?: HTMLElement) {
   return { wrapper, router }
 }
 
-async function addRule(wrapper: ReturnType<typeof mount>, text: string) {
-  await wrapper.find('#new-rule-input').setValue(text)
-  await wrapper.find('.add-rule-form button').trigger('click')
+async function editLength(wrapper: ReturnType<typeof mount>) {
+  await wrapper.find('#length-pref-book').setValue('short')
+}
+
+function bookLength(wrapper: ReturnType<typeof mount>): string {
+  return (wrapper.find('#length-pref-book').element as HTMLSelectElement).value
 }
 
 describe('PreferencesPage', () => {
@@ -93,10 +95,10 @@ describe('PreferencesPage', () => {
     expect(mockPost).toHaveBeenCalledWith('/profile/regenerate', expect.anything())
   })
 
-  it('asks before a nav link discards an unsaved rule, and stays put', async () => {
+  it('asks before a nav link discards an unsaved edit, and stays put', async () => {
     const { wrapper, router } = await mountPage()
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
-    await addRule(wrapper, 'prefer westerns')
+    await editLength(wrapper)
 
     await router.push('/library')
 
@@ -115,7 +117,7 @@ describe('PreferencesPage', () => {
 
     expect(marker().exists()).toBe(false)
 
-    await addRule(wrapper, 'prefer westerns')
+    await editLength(wrapper)
 
     expect(marker().text()).not.toBe('')
 
@@ -139,10 +141,10 @@ describe('PreferencesPage', () => {
 
   it('confirms a reset, then shows the defaults it stored', async () => {
     mockPreferencesGet.mockImplementation(() =>
-      Promise.resolve(preferences(['prefer westerns'])),
+      Promise.resolve(preferences({ book: 'short' })),
     )
     const { wrapper } = await mountPage()
-    expect(wrapper.text()).toContain('prefer westerns')
+    expect(bookLength(wrapper)).toBe('short')
 
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
     const reset = wrapper.findAll('button').find((b) => b.text() === 'Reset to defaults')!
@@ -156,7 +158,7 @@ describe('PreferencesPage', () => {
     await flushPromises()
 
     expect(mockDelete).toHaveBeenCalledWith('/users/1/preferences')
-    expect(wrapper.text()).not.toContain('prefer westerns')
+    expect(bookLength(wrapper)).toBe('any')
   })
 
   it('does not offer to clear the theme, which the reset leaves alone', async () => {

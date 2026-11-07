@@ -906,7 +906,6 @@ def test_get_user_preferences_defaults(client, mock_components):
     data = response.json()
     assert data["scorer_weights"] == {}
     assert data["series_in_order"] is True
-    assert data["custom_rules"] == []
 
 
 def test_put_user_preferences_full(client, mock_components):
@@ -918,7 +917,6 @@ def test_put_user_preferences_full(client, mock_components):
             "scorer_weights": {"genre_match": 5.0},
             "series_in_order": False,
             "variety_penalty": 4.0,
-            "custom_rules": ["no horror"],
         },
     )
     assert response.status_code == 200
@@ -926,7 +924,6 @@ def test_put_user_preferences_full(client, mock_components):
     assert data["scorer_weights"] == {"genre_match": 5.0}
     assert data["series_in_order"] is False
     assert data["variety_penalty"] == 4.0
-    assert data["custom_rules"] == ["no horror"]
 
 
 def test_put_user_preferences_rejects_out_of_range_variety_penalty(
@@ -947,7 +944,7 @@ def test_put_user_preferences_keeps_stored_fields_the_request_omits(
 ):
     back_mock_preference_store(
         mock_components["storage"],
-        UserPreferenceConfig(series_in_order=False, custom_rules=["no horror"]),
+        UserPreferenceConfig(series_in_order=False),
     )
 
     response = client.put(
@@ -959,7 +956,6 @@ def test_put_user_preferences_keeps_stored_fields_the_request_omits(
     data = response.json()
     assert data["variety_penalty"] == 1.0
     assert data["series_in_order"] is False
-    assert data["custom_rules"] == ["no horror"]
 
 
 def test_put_user_preferences_merges_for_the_user_named_in_the_path(
@@ -985,36 +981,6 @@ class TestUserPreferenceBounds:
     """The merge is additive, so keys a request names stay in ``users.settings``
     for good and every recommendation request parses them."""
 
-    @pytest.mark.parametrize(
-        "payload",
-        [
-            pytest.param(
-                {
-                    "custom_rules": ["no horror"]
-                    * (UserPreferenceConfig.MAX_CUSTOM_RULES + 1)
-                },
-                id="too-many-rules",
-            ),
-            pytest.param(
-                {
-                    "custom_rules": [
-                        "r" * (UserPreferenceConfig.MAX_CUSTOM_RULE_LENGTH + 1)
-                    ]
-                },
-                id="over-long-rule",
-            ),
-        ],
-    )
-    def test_an_over_long_payload_is_rejected_rather_than_persisted(
-        self, client, mock_components, payload
-    ):
-        merge = back_mock_preference_store(mock_components["storage"])
-
-        response = client.put("/api/users/1/preferences", json=payload)
-
-        assert response.status_code == 422
-        merge.assert_not_called()
-
     @pytest.mark.parametrize("weight", [-0.1, 5.1])
     def test_a_weight_outside_the_slider_is_rejected_rather_than_persisted(
         self, client, mock_components, weight
@@ -1031,10 +997,7 @@ class TestUserPreferenceBounds:
     def test_a_payload_sitting_exactly_on_every_bound_is_accepted(
         self, client, mock_components
     ):
-        """The rule is astral-plane characters: ``max_length`` counting UTF-8 bytes
-        would cut this one to a quarter of the documented 500."""
         back_mock_preference_store(mock_components["storage"])
-        at_bound_rule = "🎬" * UserPreferenceConfig.MAX_CUSTOM_RULE_LENGTH
         at_bound_weights = {
             **dict.fromkeys(SCORER_NAME_MAP, UserPreferenceConfig.MAX_SCORER_WEIGHT),
             "genre_match": 0.0,
@@ -1044,7 +1007,6 @@ class TestUserPreferenceBounds:
             "/api/users/1/preferences",
             json={
                 "scorer_weights": at_bound_weights,
-                "custom_rules": [at_bound_rule] * UserPreferenceConfig.MAX_CUSTOM_RULES,
                 "content_length_preferences": dict.fromkeys(
                     _CONTENT_TYPE_NAMES, "long"
                 ),
@@ -1057,7 +1019,6 @@ class TestUserPreferenceBounds:
         assert body["content_length_preferences"] == dict.fromkeys(
             _CONTENT_TYPE_NAMES, "long"
         )
-        assert body["custom_rules"][0] == at_bound_rule
 
     @pytest.mark.parametrize("literal", ["Infinity", "NaN"])
     def test_a_non_finite_scorer_weight_is_refused_rather_than_stored(
@@ -1156,6 +1117,9 @@ class TestPreferenceKeysAreAClosedSet:
         [
             pytest.param({"scorer_weights": {"recency": 1.0}}, id="unknown-scorer"),
             pytest.param(
+                {"scorer_weights": {"custom_preference": 1.0}}, id="retired-scorer"
+            ),
+            pytest.param(
                 {"content_length_preferences": {"audiobook": "short"}},
                 id="unknown-content-type",
             ),
@@ -1220,7 +1184,6 @@ class TestPreferenceReset:
                 "scorer_weights": {"genre_match": 4.5},
                 "series_in_order": False,
                 "variety_penalty": 3.0,
-                "custom_rules": ["no horror"],
                 "content_length_preferences": {"book": "short"},
             },
         )
@@ -3990,10 +3953,10 @@ class TestOverlappingPreferenceWritesRegression:
             ),
             ThreadPoolExecutor(max_workers=2) as pool,
         ):
-            rules = pool.submit(
+            toggle = pool.submit(
                 client.put,
                 "/api/users/1/preferences",
-                json={"custom_rules": ["no horror"]},
+                json={"series_in_order": False},
             )
             assert parked.wait(timeout=_STALL_TIMEOUT_SECONDS)
 
@@ -4006,11 +3969,11 @@ class TestOverlappingPreferenceWritesRegression:
                 weights.result(timeout=_BLOCKED_GRACE_SECONDS)
 
             release.set()
-            assert rules.result(timeout=_STALL_TIMEOUT_SECONDS).status_code == 200
+            assert toggle.result(timeout=_STALL_TIMEOUT_SECONDS).status_code == 200
             assert weights.result(timeout=_STALL_TIMEOUT_SECONDS).status_code == 200
 
         stored = storage.get_user_preference_config(1)
-        assert stored.custom_rules == ["no horror"]
+        assert stored.series_in_order is False
         assert stored.scorer_weights == {"genre_match": 3.0}
 
 
@@ -4420,48 +4383,6 @@ class TestAStoredLoneSurrogate500edEveryEndpointEchoingItRegression:
 
         assert response.status_code == 200, response.text
         assert f"Dune\\u{ord(surrogate):04x}" in response.text
-
-
-class TestAStoredCustomRulePermanently500edThePreferencesPageRegression:
-    """Bug: a rule stored as ASCII and read back with ``ensure_ascii=False``
-    500ed the page — every later read, for good, with no door left to correct
-    the row by."""
-
-    RULE = "avoid \ud800"
-
-    def test_the_put_door_refuses_one_rather_than_storing_it(
-        self, settings_app
-    ) -> None:
-        """The rule's length bound makes pydantic read a string it cannot represent,
-        so the row below is the case left — the one with no door to correct it by."""
-        client, storage = settings_app
-        tolerant = authenticated_client(client.app, raise_server_exceptions=False)
-
-        written = tolerant.put(
-            "/api/users/1/preferences",
-            content='{"custom_rules": ["avoid \\ud800"]}',
-            headers={"Content-Type": "application/json"},
-        )
-
-        assert written.status_code == 422, written.text
-        assert storage.get_user_preference_config(1).custom_rules == []
-
-    def test_a_rule_already_in_the_database_reads_back_twice(
-        self, settings_app
-    ) -> None:
-        """The permanent case: the row is written, and no read may refuse it."""
-        client, storage = settings_app
-        with storage.sqlite_db.connection() as conn:
-            update_user_settings(
-                conn, 1, {"preference_config": {"custom_rules": [self.RULE]}}
-            )
-        tolerant = authenticated_client(client.app, raise_server_exceptions=False)
-
-        first = tolerant.get("/api/users/1/preferences")
-        second = tolerant.get("/api/users/1/preferences")
-
-        assert (first.status_code, second.status_code) == (200, 200)
-        assert first.json()["custom_rules"] == [self.RULE]
 
 
 class TestAnHTTPExceptionDetailBypassesTheAppResponseClassRegression:

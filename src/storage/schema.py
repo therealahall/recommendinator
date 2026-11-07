@@ -110,7 +110,7 @@ class SyncRunDict(TypedDict):
 # Changing ``normalize_title_for_matching``, ``get_sort_title`` or
 # ``build_search_text`` needs a bump and a step to rewrite what the old one
 # stored, or dedup lookups stop matching and duplicates accumulate in silence.
-_SCHEMA_VERSION = 33
+_SCHEMA_VERSION = 34
 
 # Rows for these keys are unreachable from the app but would still
 # be overlaid onto config, so they are pruned once on upgrade.
@@ -130,6 +130,7 @@ _RETIRED_SCORER_KEYS: tuple[str, ...] = (
     "series_affinity",
     "semantic_similarity",
     "rating_pattern",
+    "custom_preference",
 )
 
 # Prefixes of the leaves the AI removal orphaned. By prefix rather than by key,
@@ -884,11 +885,13 @@ def _migrate_settings_table(cursor: sqlite3.Cursor, stored_version: int) -> None
             [(_like_prefix(prefix),) for prefix in _ORPHANED_SETTING_PREFIXES],
         )
 
-    if stored_version < 33:
-        _drop_retired_scorer_weights(cursor)
+    # 34 retired custom_preference and custom_rules; the walk is idempotent, so
+    # rerunning it for the keys 33 already dropped costs nothing.
+    if stored_version < 34:
+        _drop_retired_preferences(cursor)
 
 
-def _drop_retired_scorer_weights(cursor: sqlite3.Cursor) -> None:
+def _drop_retired_preferences(cursor: sqlite3.Cursor) -> None:
     cursor.executemany(
         "DELETE FROM settings WHERE key = ?",
         [(f"recommendations.scorer_weights.{key}",) for key in _RETIRED_SCORER_KEYS],
@@ -900,14 +903,17 @@ def _drop_retired_scorer_weights(cursor: sqlite3.Cursor) -> None:
         except (json.JSONDecodeError, TypeError):
             continue
         blob = settings.get("preference_config") if isinstance(settings, dict) else None
-        weights = blob.get("scorer_weights") if isinstance(blob, dict) else None
-        if not isinstance(weights, dict):
+        if not isinstance(blob, dict):
             continue
+        weights = blob.get("scorer_weights")
+        if not isinstance(weights, dict):
+            weights = {}
         retired = [key for key in _RETIRED_SCORER_KEYS if key in weights]
-        if not retired:
+        if not retired and "custom_rules" not in blob:
             continue
         for key in retired:
             weights.pop(key)
+        blob.pop("custom_rules", None)
         cursor.execute(
             "UPDATE users SET settings = ? WHERE id = ?",
             (json.dumps(settings), row["id"]),
