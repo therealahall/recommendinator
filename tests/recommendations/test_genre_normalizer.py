@@ -1,5 +1,6 @@
 import pytest
 
+from src.recommendations.genre_clusters import CLUSTERS, get_clusters_for_terms
 from src.recommendations.genre_normalizer import (
     extract_and_normalize_genres,
     normalize_term,
@@ -29,11 +30,48 @@ class TestCompoundGenreSplitting:
 
 
 class TestNormalizeTermIndividual:
-    def test_sci_fi_normalizes_to_science_fiction(self) -> None:
-        assert normalize_term("sci-fi") == "science fiction"
+    @pytest.mark.parametrize(
+        ("term", "canonical"),
+        [
+            ("Sci-Fi", "science fiction"),
+            ("sci fi", "science fiction"),
+            ("Post-Apocalyptic", "post-apocalyptic"),
+            ("post apocalyptic", "post-apocalyptic"),
+            ("Turn_Based", "turn-based"),
+        ],
+    )
+    def test_a_separator_variant_resolves_to_its_canonical_term(
+        self, term: str, canonical: str
+    ) -> None:
+        assert normalize_term(term) == canonical
 
-    def test_excluded_term_returns_none(self) -> None:
-        assert normalize_term("fiction") is None
+    @pytest.mark.parametrize(
+        "term",
+        [
+            "fiction",
+            "Singleplayer",
+            "Single-player",
+            "Steam Trading Cards",
+            "to-read",
+            "Currently Reading",
+            "read in 2019",
+            "2019 reads",
+            "2020-challenge",
+        ],
+    )
+    def test_a_blocked_term_is_dropped(self, term: str) -> None:
+        assert normalize_term(term) is None
+
+    def test_an_unknown_term_passes_through_folded(self) -> None:
+        assert normalize_term("Hope-Punk  Fiction") == "hope punk fiction"
+
+    def test_every_cluster_term_survives_as_itself(self) -> None:
+        cluster_terms = {term for terms in CLUSTERS.values() for term in terms}
+        assert {term for term in cluster_terms if normalize_term(term) != term} == set()
+
+    def test_a_game_tagged_only_flight_simulator_reaches_its_cluster(self) -> None:
+        terms = extract_and_normalize_genres({"genres": ["Flight Simulator"]})
+        assert get_clusters_for_terms(terms) == {"simulation_sandbox"}
 
 
 class TestSubgenrePreservation:

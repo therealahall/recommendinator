@@ -3405,5 +3405,9 @@ class TestARunEndsWithTheProfileItsGenresImply:
         record = storage_manager.profiles.get(1)
         assert record is not None
         affinities = record["profile"]["genre_affinities"]
-        assert {genre.lower() for genre in affinities} == {"action", "drama"}
+        assert {genre.lower() for genre in affinities} == {
+            "action",
+            "drama",
+            "test tag",
+        }
         assert set(affinities.values()) == {5.0}
