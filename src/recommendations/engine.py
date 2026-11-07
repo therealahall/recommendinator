@@ -498,12 +498,6 @@ class RecommendationEngine:
                         scored_candidate.item.title,
                     )
 
-        if not filtered_candidates:
-            logger.warning(
-                "Series filtering removed all candidates, using original candidates"
-            )
-            return _unfiltered(pipeline_scored)
-
         return filtered_candidates
 
     @staticmethod
