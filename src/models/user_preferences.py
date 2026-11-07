@@ -14,7 +14,6 @@ class UserPreferenceConfig:
     scorer_weights: dict[str, float] = field(default_factory=dict)
     series_in_order: bool = True
     variety_penalty: float = 0.0
-    custom_rules: list[str] = field(default_factory=list)
     content_length_preferences: dict[str, str] = field(default_factory=dict)
 
     #: Highest variety strength a user may set. The engine divides this
@@ -22,14 +21,6 @@ class UserPreferenceConfig:
     #: fraction, so ``5.0`` yields a 1.0 fraction that fully zeroes a
     #: just-finished genre (no score floor).
     MAX_VARIETY_PENALTY: ClassVar[float] = 5.0
-
-    #: Most rules ``custom_rules`` holds. A write merges into a single
-    #: ``users.settings`` blob that each recommendation request parses, and
-    #: free text is the one collection here no closed key set bounds.
-    MAX_CUSTOM_RULES: ClassVar[int] = 50
-
-    #: Longest single rule. Free text with no closed key set to bound it.
-    MAX_CUSTOM_RULE_LENGTH: ClassVar[int] = 500
 
     #: The old boolean applied a fixed 0.8 top-penalty fraction; on the 0.0-5.0
     #: scale that same full-strength fraction is ``0.8 * MAX_VARIETY_PENALTY ==
@@ -63,7 +54,6 @@ class UserPreferenceConfig:
             scorer_weights=cls._resolve_scorer_weights(data),
             series_in_order=data.get("series_in_order", True),
             variety_penalty=cls._resolve_variety_penalty(data),
-            custom_rules=data.get("custom_rules", []),
             content_length_preferences=data.get("content_length_preferences", {}),
         )
 

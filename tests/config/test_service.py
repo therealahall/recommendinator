@@ -30,8 +30,6 @@ from src.utils.dotted_path import get_leaf
 from src.web.app import create_app
 from src.web.state import app_state
 
-_ENGINE_MANAGED_SCORERS = {"custom_preference"}
-
 _SRC = Path(__file__).resolve().parents[2] / "src"
 
 _EXAMPLE_CONFIG = Path("config/example.yaml")
@@ -182,7 +180,7 @@ class TestResolveBootstrapWeb:
 
 class TestScorerConfigMap:
     def test_config_map_contains_all_standard_scorers(self) -> None:
-        expected = set(SCORER_NAME_MAP.keys()) - _ENGINE_MANAGED_SCORERS
+        expected = set(SCORER_NAME_MAP.keys())
         actual = set(_SCORER_CONFIG_MAP.keys())
         assert actual == expected, (
             f"_SCORER_CONFIG_MAP is out of sync with SCORER_NAME_MAP.\n"

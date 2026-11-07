@@ -151,7 +151,6 @@ export interface UserPreferenceResponse {
   scorer_weights: Record<string, number>
   series_in_order: boolean
   variety_penalty: number
-  custom_rules: string[]
   content_length_preferences: Record<string, string>
 }
 
@@ -159,7 +158,6 @@ export interface UserPreferenceUpdateRequest {
   scorer_weights?: Record<string, number>
   series_in_order?: boolean
   variety_penalty?: number
-  custom_rules?: string[]
   content_length_preferences?: Record<string, string>
 }
 

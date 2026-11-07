@@ -1023,115 +1023,6 @@ def test_preferences_set_toggle_off(mock_components):
     assert config.series_in_order is False
 
 
-def test_custom_rules_add(mock_components):
-    mock_config = UserPreferenceConfig()
-    back_mock_preference_store(mock_components["storage"], mock_config)
-
-    runner = CliRunner()
-    result = runner.invoke(cli, ["preferences", "custom-rules", "add", "avoid horror"])
-
-    assert result.exit_code == 0
-    assert "Added rule" in result.output
-    assert "avoid horror" in result.output
-    assert mock_config.custom_rules == ["avoid horror"]
-
-
-def test_custom_rules_add_refuses_an_over_long_rule(mock_components):
-    """A rule the Preferences page could not save back is refused here too."""
-    merge = back_mock_preference_store(mock_components["storage"])
-
-    runner = CliRunner()
-    result = runner.invoke(
-        cli,
-        [
-            "preferences",
-            "custom-rules",
-            "add",
-            "r" * (UserPreferenceConfig.MAX_CUSTOM_RULE_LENGTH + 1),
-        ],
-    )
-
-    assert result.exit_code != 0
-    assert "at most" in result.output
-    merge.assert_not_called()
-
-
-def test_custom_rules_add_refuses_one_rule_past_the_bound(mock_components):
-    """The list itself is bounded, since the CLI appends and the web merges."""
-    stored = UserPreferenceConfig(
-        custom_rules=["avoid horror"] * UserPreferenceConfig.MAX_CUSTOM_RULES
-    )
-    back_mock_preference_store(mock_components["storage"], stored)
-
-    runner = CliRunner()
-    result = runner.invoke(cli, ["preferences", "custom-rules", "add", "prefer sci-fi"])
-
-    assert result.exit_code != 0
-    assert "Remove one first" in result.output
-    assert "prefer sci-fi" not in stored.custom_rules
-
-
-def test_custom_rules_list_with_rules(mock_components):
-    mock_config = UserPreferenceConfig(custom_rules=["avoid horror", "prefer sci-fi"])
-    mock_components["storage"].get_user_preference_config = Mock(
-        return_value=mock_config
-    )
-
-    runner = CliRunner()
-    result = runner.invoke(cli, ["preferences", "custom-rules", "list"])
-
-    assert result.exit_code == 0
-    assert "0: avoid horror" in result.output
-    assert "1: prefer sci-fi" in result.output
-
-
-def test_custom_rules_remove(mock_components):
-    mock_config = UserPreferenceConfig(custom_rules=["avoid horror"])
-    back_mock_preference_store(mock_components["storage"], mock_config)
-
-    runner = CliRunner()
-    result = runner.invoke(cli, ["preferences", "custom-rules", "remove", "0"])
-
-    assert result.exit_code == 0
-    assert "Removed rule: 'avoid horror'" in result.output
-    assert mock_config.custom_rules == []
-
-
-def test_custom_rules_remove_invalid_index(mock_components):
-    stored = UserPreferenceConfig(custom_rules=["avoid horror"])
-    back_mock_preference_store(mock_components["storage"], stored)
-
-    runner = CliRunner()
-    result = runner.invoke(cli, ["preferences", "custom-rules", "remove", "99"])
-
-    assert result.exit_code != 0
-    assert "Invalid index" in result.output
-    assert stored.custom_rules == ["avoid horror"]
-
-
-def test_custom_rules_clear(mock_components):
-    mock_config = UserPreferenceConfig(custom_rules=["avoid horror", "prefer sci-fi"])
-    back_mock_preference_store(mock_components["storage"], mock_config)
-
-    runner = CliRunner()
-    result = runner.invoke(cli, ["preferences", "custom-rules", "clear", "--yes"])
-
-    assert result.exit_code == 0
-    assert "Cleared 2" in result.output
-    assert mock_config.custom_rules == []
-
-
-def test_custom_rules_interpret_pattern(mock_components):
-    runner = CliRunner()
-    result = runner.invoke(
-        cli, ["preferences", "custom-rules", "interpret", "avoid horror"]
-    )
-
-    assert result.exit_code == 0
-    assert "Rule: 'avoid horror'" in result.output
-    assert "horror" in result.output
-
-
 class TestPreferencesResetConfirms:
     """``reset`` wipes every preference a user has, so it asks first."""
 
@@ -1141,7 +1032,6 @@ class TestPreferencesResetConfirms:
         storage.save_user_preference_config(
             1,
             UserPreferenceConfig(
-                custom_rules=["avoid horror", "prefer sci-fi", "no sequels"],
                 scorer_weights={"genre_match": 3.0},
                 variety_penalty=4.0,
             ),
@@ -1159,7 +1049,6 @@ class TestPreferencesResetConfirms:
         )
 
         assert result.exit_code == 0
-        assert "3" in result.output
         assert "theme" not in result.output.lower()
         assert storage.get_user_preference_config(1) == before
 
@@ -1270,34 +1159,17 @@ class TestPreferenceWritesTheStoreRefusesRegression:
             pytest.param(
                 ["preferences", "set-length", "book", "short"], id="set-length"
             ),
-            pytest.param(
-                ["preferences", "custom-rules", "add", "prefer sci-fi"],
-                id="custom-rules-add",
-            ),
         ],
     )
     def test_every_other_edit_names_the_unknown_user_too(
         self, storage: StorageManager, command: list[str]
     ) -> None:
-        """One door in four more places: they all write via ``_edit_preferences``."""
+        """One door in three more places: they all write via ``_edit_preferences``."""
         result = _invoke_with_mocks(CliRunner(), [*command, "--user", "999"], storage)
 
         assert result.exit_code != 0
         assert "No user with id 999" in result.output
         assert storage.get_user_preference_config(999) == UserPreferenceConfig()
-
-    def test_removing_a_rule_refuses_before_it_reaches_the_write(
-        self, storage: StorageManager
-    ) -> None:
-        """The index check answers first, so this one never names the user."""
-        result = _invoke_with_mocks(
-            CliRunner(),
-            ["preferences", "custom-rules", "remove", "0", "--user", "999"],
-            storage,
-        )
-
-        assert result.exit_code != 0
-        assert "Invalid index 0" in result.output
 
     def test_reset_names_the_unknown_user_too(self, storage: StorageManager) -> None:
         """The one write that does not read first, so it took another path."""
@@ -1307,31 +1179,6 @@ class TestPreferenceWritesTheStoreRefusesRegression:
 
         assert result.exit_code != 0
         assert "No user with id 999" in result.output
-
-    def test_custom_rules_clear_names_the_unknown_user_too(
-        self, storage: StorageManager
-    ) -> None:
-        """It returned early on the empty rule list defaults answer for an id no
-        ``users`` row carries, so it never reached the write that refuses."""
-        result = _invoke_with_mocks(
-            CliRunner(),
-            ["preferences", "custom-rules", "clear", "--user", "999", "--yes"],
-            storage,
-        )
-
-        assert result.exit_code != 0
-        assert "No user with id 999" in result.output
-
-    def test_clearing_nothing_for_a_real_user_still_says_so(
-        self, storage: StorageManager
-    ) -> None:
-        """The refusal above must not have cost the empty-list message."""
-        result = _invoke_with_mocks(
-            CliRunner(), ["preferences", "custom-rules", "clear", "--yes"], storage
-        )
-
-        assert result.exit_code == 0
-        assert "No custom rules to clear for user 1" in result.output
 
 
 class TestConfigLoadingRegression:

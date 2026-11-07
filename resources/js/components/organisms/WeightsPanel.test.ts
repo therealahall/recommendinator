@@ -18,7 +18,6 @@ function stored(weights: Record<string, number> = {}): UserPreferenceResponse {
     series_in_order: true,
     variety_penalty: 0,
     content_length_preferences: {},
-    custom_rules: [],
   } as UserPreferenceResponse
 }
 

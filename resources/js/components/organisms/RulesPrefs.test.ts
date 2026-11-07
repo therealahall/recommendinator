@@ -28,11 +28,10 @@ describe('RulesPrefs', () => {
     expect(wrapper.find('label[for="prefSeriesOrder"]').text()).not.toBe('')
   })
 
-  it('renders the Length dropdowns and Custom rules form', () => {
+  it('renders the Length dropdowns', () => {
     const wrapper = mount(RulesPrefs)
 
     expect(wrapper.findAll('select[id^="length-pref-"]')).toHaveLength(4)
-    expect(wrapper.find('#new-rule-input').exists()).toBe(true)
   })
 
   it('flips seriesInOrder when the series-order checkbox is toggled', async () => {
@@ -52,33 +51,5 @@ describe('RulesPrefs', () => {
     await bookSelect.setValue('short')
 
     expect(prefs.contentLengthPreferences.book).toBe('short')
-  })
-
-  it('names every rule in a list, each with its own labelled remove button', () => {
-    const prefs = usePreferencesStore()
-    prefs.addRule('avoid horror')
-    prefs.addRule('prefer sci-fi')
-    const wrapper = mount(RulesPrefs)
-
-    expect(wrapper.find('ul.rule-list').attributes('role')).toBe('list')
-
-    const removeButtons = wrapper.findAll('.rule-item button')
-    expect(removeButtons.map((b) => b.attributes('aria-label'))).toEqual([
-      'Remove rule: avoid horror',
-      'Remove rule: prefer sci-fi',
-    ])
-  })
-
-  it('adds then removes a custom rule through the form', async () => {
-    const prefs = usePreferencesStore()
-    const wrapper = mount(RulesPrefs)
-
-    const input = wrapper.find('#new-rule-input')
-    await input.setValue('avoid horror')
-    await wrapper.find('.add-rule-form button').trigger('click')
-    expect(prefs.customRules).toContain('avoid horror')
-
-    await wrapper.find('.rule-item button').trigger('click')
-    expect(prefs.customRules).not.toContain('avoid horror')
   })
 })

@@ -34,7 +34,7 @@ function resetToDefaults() {
   if (
     window.confirm(
       'Reset every preference to its defaults? This clears your scorer ' +
-        'weights, custom rules and length preferences.',
+        'weights, length preferences, variety penalty and series ordering.',
     )
   ) {
     prefs.resetToDefaults()

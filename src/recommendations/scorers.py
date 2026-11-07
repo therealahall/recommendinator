@@ -198,48 +198,6 @@ class TagOverlapScorer(Scorer):
         )
 
 
-class CustomPreferenceScorer(Scorer):
-    def __init__(
-        self,
-        genre_boosts: dict[str, float] | None = None,
-        genre_penalties: dict[str, float] | None = None,
-        weight: float = 1.0,
-    ) -> None:
-        super().__init__(weight)
-        self.genre_boosts = genre_boosts or {}
-        self.genre_penalties = genre_penalties or {}
-
-    def clone(self, weight: float) -> CustomPreferenceScorer:
-        return CustomPreferenceScorer(
-            genre_boosts=dict(self.genre_boosts),
-            genre_penalties=dict(self.genre_penalties),
-            weight=weight,
-        )
-
-    def score(self, candidate: ContentItem, context: ScoringContext) -> float:
-        candidate_genres = extract_genres(candidate)
-        if not candidate_genres:
-            return 0.5  # Neutral when no genre info
-
-        # Check for penalties first (avoid rules)
-        for genre in candidate_genres:
-            genre_lower = genre.lower()
-            if genre_lower in self.genre_penalties:
-                penalty_factor = self.genre_penalties[genre_lower]
-                return max(0.0, 0.5 - (penalty_factor * 0.5))
-
-        max_boost = 0.0
-        for genre in candidate_genres:
-            genre_lower = genre.lower()
-            if genre_lower in self.genre_boosts:
-                max_boost = max(max_boost, self.genre_boosts[genre_lower])
-
-        if max_boost > 0:
-            return min(1.0, 0.5 + (max_boost * 0.5))
-
-        return 0.5  # Neutral when no rules match
-
-
 class ContinuationScorer(Scorer):
     """Nudge what continues a series already begun, by how well its consumed
     entries were rated. Silent while an entry of the series is in flight, so
@@ -313,7 +271,6 @@ SCORER_NAME_MAP: dict[str, type[Scorer]] = {
     "genre_match": GenreMatchScorer,
     "creator_match": CreatorMatchScorer,
     "tag_overlap": TagOverlapScorer,
-    "custom_preference": CustomPreferenceScorer,
     "content_length": ContentLengthScorer,
     "continuation": ContinuationScorer,
     "adaptation": AdaptationScorer,

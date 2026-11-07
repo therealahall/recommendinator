@@ -6,12 +6,9 @@ import requests
 
 from src.utils.request_errors import scrub_request_error
 
-#: Every character ``str.splitlines`` breaks on. A rule line and a log entry
-#: both end at any of them, so both sanitizers below are built from this rather
-#: than from a list each.
+#: Every character ``str.splitlines`` breaks on. A log entry ends at any of
+#: them, so the log sanitizer is built from this rather than a list of its own.
 LINE_BREAKS = "\n\r\v\f\x1c\x1d\x1e\x85\N{LINE SEPARATOR}\N{PARAGRAPH SEPARATOR}"
-
-_WHITESPACE_RUN_RE = re.compile(rf"[\s{re.escape(LINE_BREAKS)}]+")
 
 # NUL joins them because it ends the entry for any reader that stops at one.
 # The first three keep the spelling every log reader knows; the rest have no
@@ -32,11 +29,6 @@ _CONTROL_RANGE = r"\x00-\x1f\x7f\x80-\x9f"
 _LOG_UNSAFE_RE = re.compile(
     f"[{_CONTROL_RANGE}{re.escape(''.join(_LOG_ESCAPES))}{_SURROGATE_RANGE}]"
 )
-
-# Quotes and braces forge structure in the quoted slot. Only a lone surrogate
-# fails the encode of the request body; controls encode fine and go because a
-# rule is prose.
-_RULE_UNSAFE_RE = re.compile(rf'["{{}}{_CONTROL_RANGE}{_SURROGATE_RANGE}]')
 
 _LONE_SURROGATE_RE = re.compile(f"[{_SURROGATE_RANGE}]")
 
@@ -126,13 +118,6 @@ def exception_for_log(error: BaseException) -> str:
     if isinstance(error, requests.RequestException):
         return sanitize_for_log(scrub_request_error(error))
     return sanitize_for_log(f"{type(error).__name__}: {error}")
-
-
-def sanitize_rule_text(raw: str) -> str:
-    """Strips rather than allowlists: the ``+`` in ``prefer 4+ star ratings`` is
-    the operator's own word.
-    """
-    return _RULE_UNSAFE_RE.sub("", _WHITESPACE_RUN_RE.sub(" ", raw)).strip()
 
 
 def strip_lone_surrogates(raw: str) -> str:
