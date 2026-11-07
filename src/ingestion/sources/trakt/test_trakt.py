@@ -230,9 +230,8 @@ class TestTraktNormalizeRating:
         [
             (None, None),
             (0, None),
-            (1, 1),
-            (7, 4),
-            (10, 5),
+            # The (r + 1) // 2 Trakt applied before the base class rescaled.
+            *((raw, (raw + 1) // 2) for raw in range(1, 11)),
         ],
     )
     def test_normalize(self, raw: int | None, expected: int | None) -> None:

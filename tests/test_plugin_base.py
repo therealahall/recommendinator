@@ -1,6 +1,8 @@
 from collections.abc import Iterator
 from typing import Any
 
+import pytest
+
 from src.ingestion.plugin_base import (
     ConfigField,
     ProgressCallback,
@@ -89,3 +91,14 @@ class TestNormalizeRating:
         assert plugin.normalize_rating("invalid") is None
         assert plugin.normalize_rating("N/A") is None
         assert plugin.normalize_rating("") is None
+
+    @pytest.mark.parametrize(("raw", "expected"), [(0, None), (8, 4), (10, 5)])
+    def test_a_ten_point_plugin_rescales_rather_than_clamping(
+        self, raw: int, expected: int | None
+    ) -> None:
+        """Clamped, every rating from 5 to 10 out of 10 read as 5 stars."""
+
+        class TenPointPlugin(MockPlugin):
+            rating_scale = 10
+
+        assert TenPointPlugin().normalize_rating(raw) == expected

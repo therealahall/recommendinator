@@ -375,6 +375,7 @@ class TraktOAuth(DeviceCodeFlow):
 
 class TraktPlugin(SourcePlugin):
     oauth = TraktOAuth()
+    rating_scale = 10
 
     @property
     def name(self) -> str:
@@ -468,18 +469,6 @@ class TraktPlugin(SourcePlugin):
             )
 
         return errors
-
-    def normalize_rating(self, raw_rating: Any) -> int | None:
-        """Trakt ratings are integers 1-10 (0/None means unrated)."""
-        if raw_rating is None:
-            return None
-        try:
-            rating = int(raw_rating)
-        except (ValueError, TypeError):
-            return None
-        if rating <= 0:
-            return None
-        return max(1, min(5, (rating + 1) // 2))
 
     def fetch(
         self,

@@ -119,6 +119,8 @@ class SourcePlugin(ABC):
     #: Until the user picks one; a key of ``schedule.SYNC_INTERVAL_KEYS``.
     default_sync_interval: str = "daily"
     oauth: OAuthFlow | None = None
+    #: The top of the service's own rating scale; 0 means unrated on any scale.
+    rating_scale: int = 5
 
     @property
     @abstractmethod
@@ -167,16 +169,16 @@ class SourcePlugin(ABC):
         ...
 
     def normalize_rating(self, raw_rating: Any) -> int | None:
+        """Rounds up from ``rating_scale`` onto 1-5, so 7 of 10 is a 4."""
         if raw_rating is None:
             return None
-
         try:
             rating = int(raw_rating)
-            if rating == 0:
-                return None
-            return max(1, min(5, rating))
         except (ValueError, TypeError):
             return None
+        if rating == 0:
+            return None
+        return max(1, min(5, -(-rating * 5 // self.rating_scale)))
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         # @final only reaches code mypy checks, and a plugin author outside this
