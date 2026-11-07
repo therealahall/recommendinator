@@ -251,7 +251,6 @@ RecommendationEngine
   |     |-- ContentLengthScorer     soft penalty for length mismatch (only where a length is set)
   |     |-- ContinuationScorer      what follows a begun series, by its rating (silent mid-series)
   |     |-- AdaptationScorer        cross-media adaptations (dropped when none exist)
-  |     |-- [CustomPreferenceScorer]    when the user has natural language rules
   |
   |-- UserPreferenceConfig (per-user weight overrides)
   |-- Variety penalty (variety.py) when variety_penalty > 0

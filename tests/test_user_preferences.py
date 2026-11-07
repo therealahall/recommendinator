@@ -7,17 +7,20 @@ class TestUserPreferenceConfig:
             scorer_weights={"genre_match": 3.0, "creator_match": 0.5},
             series_in_order=False,
             variety_penalty=0.4,
-            custom_rules=["no horror"],
             content_length_preferences={"book": "short", "movie": "long"},
         )
         restored = UserPreferenceConfig.from_dict(original.to_dict())
         assert restored == original
 
-    def test_from_dict_reads_past_the_retired_diversity_weight(self) -> None:
-        """The key is written into ``users.settings`` for anyone who ran an earlier
-        release, so from_dict must ignore it rather than raise."""
+    def test_from_dict_reads_past_retired_keys(self) -> None:
+        """These are written into ``users.settings`` for anyone who ran an earlier
+        release, so from_dict must ignore them rather than raise."""
         config = UserPreferenceConfig.from_dict(
-            {"diversity_weight": 0.3, "series_in_order": False}
+            {
+                "diversity_weight": 0.3,
+                "custom_rules": ["no movies"],
+                "series_in_order": False,
+            }
         )
 
         assert config == UserPreferenceConfig(series_in_order=False)

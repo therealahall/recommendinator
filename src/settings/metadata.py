@@ -216,14 +216,6 @@ _REGISTRY: tuple[SettingMetadata, ...] = (
         default=1.5,
         validation=Validation(min=0.0),
     ),
-    _entry(
-        "recommendations.scorer_weights.custom_preference",
-        label="Custom preference weight",
-        help="Weight for user-defined natural-language preference rules (0 disables).",
-        type="float",
-        default=1.0,
-        validation=Validation(min=0.0),
-    ),
     # sync
     _entry(
         "sync.max_workers",

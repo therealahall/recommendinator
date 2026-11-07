@@ -68,18 +68,7 @@ Recommendations come from items you have **not** consumed, so:
   [ENRICHMENT_SETUP.md](ENRICHMENT_SETUP.md).
 - Check coverage on the Data page. Aim for 90% or better.
 - Rate more items, across more genres.
-- Tune scorer weights and rules. See [SCORING.md](SCORING.md) and
-  [CUSTOM_RULES.md](CUSTOM_RULES.md).
-
-### A custom rule changes nothing
-
-Confirm it saved with `preferences custom-rules list`, then see how it parses:
-
-```bash
-uv run python -m src.cli preferences custom-rules interpret "your rule"
-```
-
-Rules bias scoring. They do not override it.
+- Tune scorer weights. See [SCORING.md](SCORING.md).
 
 ## Imports
 

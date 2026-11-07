@@ -1270,28 +1270,6 @@ button.badge[aria-checked='true']:hover {
   margin: 0 0 var(--space-3) 0;
 }
 
-.rule-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.rule-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--space-2) var(--space-3);
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  margin-bottom: var(--space-2);
-}
-
-.rule-text {
-  font-size: var(--text-sm);
-  color: var(--text-primary);
-}
-
 .add-rule-form {
   display: flex;
   gap: var(--space-2);

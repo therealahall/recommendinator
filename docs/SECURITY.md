@@ -161,10 +161,7 @@ and an empty list allows nothing.
 ## Input handling
 
 Imported CSV and JSON are parsed with standard libraries, and invalid rows are
-skipped rather than executed. Custom rules are stored as typed and collapsed to
-a single line before the interpreter reads them. See
-[CUSTOM_RULES.md](CUSTOM_RULES.md). Neither path executes anything from user
-data.
+skipped rather than executed. Nothing from user data is executed.
 
 ## Database and backups
 

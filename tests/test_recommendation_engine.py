@@ -318,58 +318,6 @@ class TestScoringPipeline:
             assert rec.reasoning
 
 
-class TestCustomRulesIntegration:
-    def test_multiple_custom_rules(self, engine, mock_storage):
-        consumed = ContentItem(
-            id="1",
-            title="Consumed",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=4,
-            metadata={"genre": "Drama"},
-        )
-        items = [
-            ContentItem(
-                id="2",
-                title="Horror Book",
-                content_type=ContentType.BOOK,
-                status=ConsumptionStatus.UNREAD,
-                metadata={"genre": "horror"},
-            ),
-            ContentItem(
-                id="3",
-                title="Comedy Book",
-                content_type=ContentType.BOOK,
-                status=ConsumptionStatus.UNREAD,
-                metadata={"genre": "comedy"},
-            ),
-            ContentItem(
-                id="4",
-                title="Sci-Fi Book",
-                content_type=ContentType.BOOK,
-                status=ConsumptionStatus.UNREAD,
-                metadata={"genre": "science fiction"},
-            ),
-        ]
-
-        mock_storage.get_completed_items = Mock(
-            side_effect=lambda content_type=None, **kwargs: [consumed]
-        )
-        mock_storage.get_unconsumed_items = Mock(return_value=items)
-
-        user_config = UserPreferenceConfig(
-            custom_rules=["avoid horror", "prefer sci-fi"]
-        )
-        recommendations = engine.generate_recommendations(
-            content_type=ContentType.BOOK,
-            count=3,
-            user_preference_config=user_config,
-        )
-        titles = [rec.item.title for rec in recommendations]
-        assert titles[0] == "Sci-Fi Book"
-        assert titles[-1] == "Horror Book"
-
-
 class TestTwinnedSeriesEntryRegression:
     """Reported: a run offered book #2 while #1 sat unread, both rows counting."""
 
@@ -3271,72 +3219,6 @@ class TestSeasonSiblingsStayDistinctInEveryMap:
             "Uncharted Depths (Season 1)",
             "Northern Lights (Season 1)",
         ]
-
-
-class TestContentTypeExclusions:
-    """``tests/test_preference_interpreter.py`` covers the interpreter producing
-    ``content_type_exclusions``."""
-
-    @staticmethod
-    def _consumed():
-        return ContentItem(
-            id="c1",
-            title="Dune",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-            metadata={"genre": "Science Fiction"},
-        )
-
-    @staticmethod
-    def _book():
-        return ContentItem(
-            id="b1",
-            title="Hyperion",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"genre": "Science Fiction"},
-        )
-
-    @staticmethod
-    def _movie(content_type=ContentType.MOVIE):
-        return ContentItem(
-            id="m1",
-            title="Blade Runner",
-            content_type=content_type,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"genre": "Science Fiction"},
-        )
-
-    def _recommend(self, engine, mock_storage, candidates, rules):
-        mock_storage.get_completed_items = Mock(
-            side_effect=lambda content_type=None, **kwargs: [self._consumed()]
-        )
-        mock_storage.get_unconsumed_items = Mock(return_value=candidates)
-
-        return engine.generate_recommendations(
-            content_type=ContentType.BOOK,
-            count=5,
-            user_preference_config=UserPreferenceConfig(custom_rules=rules),
-        )
-
-    def test_an_excluded_type_is_dropped_and_the_rest_survive(
-        self, engine, mock_storage
-    ):
-        recommendations = self._recommend(
-            engine, mock_storage, [self._book(), self._movie()], ["avoid movies"]
-        )
-
-        assert [rec.item.id for rec in recommendations] == ["b1"]
-
-    def test_a_rule_with_no_exclusion_leaves_every_candidate(
-        self, engine, mock_storage
-    ):
-        recommendations = self._recommend(
-            engine, mock_storage, [self._book(), self._movie()], ["avoid horror"]
-        )
-
-        assert {rec.item.id for rec in recommendations} == {"b1", "m1"}
 
 
 class TestCrossTypeRun:

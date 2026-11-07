@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { usePreferencesStore } from '@/stores/preferences'
 import LengthPrefs from '@/components/organisms/LengthPrefs.vue'
-import CustomRules from '@/components/organisms/CustomRules.vue'
 
 const prefs = usePreferencesStore()
 </script>
@@ -14,6 +13,5 @@ const prefs = usePreferencesStore()
       <label for="prefSeriesOrder">Recommend series in order</label>
     </div>
     <LengthPrefs />
-    <CustomRules />
   </div>
 </template>
