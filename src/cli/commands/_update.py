@@ -16,6 +16,7 @@ from src.ingestion.source_labels import label_for_source
 from src.ingestion.sync import (
     ALL_SOURCES_LABEL,
     MAX_WORKERS_CEILING,
+    SyncPhase,
     SyncResult,
     already_syncing_detail,
     claim_sources,
@@ -52,11 +53,9 @@ def _source_view(result: SyncResult) -> dict[str, Any]:
         "items_processed": result.items_synced,
         "total_items": result.total_items,
         "current_item": None,
-        "progress_percent": (
-            int(result.items_synced * 100 / result.total_items)
-            if result.total_items
-            else None
-        ),
+        # The web counts a source whole once it has finished, failed items and
+        # all, and every source this view describes has.
+        "progress_percent": 100,
         "items_added": result.items_added,
         "items_updated": result.items_updated,
         "items_unchanged": result.items_unchanged,
@@ -92,9 +91,7 @@ def _status_view(
                 "current_item": None,
                 "current_source": None,
                 "error_message": errors[0]["message"] if failed else None,
-                "progress_percent": (
-                    int(items_processed * 100 / total_items) if total_items else None
-                ),
+                "progress_percent": 100,
                 "items_added": sum(result.items_added for result in results),
                 "items_updated": sum(result.items_updated for result in results),
                 "items_unchanged": sum(result.items_unchanged for result in results),
@@ -274,7 +271,8 @@ def update(
         items_processed: int,
         total_items: int | None,
         current_item: str | None,
-        current_source: str | None = None,
+        current_source: str | None,
+        _phase: SyncPhase,
     ) -> None:
         if not (total_items and items_processed > 0 and items_processed % 10 == 0):
             return

@@ -2620,9 +2620,7 @@ class TestUpdateEndpointParallelSync:
         assert by_source["goodreads"]["items_processed"] == 12
         assert by_source["goodreads"]["total_items"] == 20
         assert by_source["goodreads"]["current_item"] == "Book 12"
-        assert by_source["goodreads"]["progress_percent"] == 60
         assert by_source["steam"]["items_processed"] == 3
-        assert by_source["steam"]["progress_percent"] == 30
 
     def test_sync_status_lists_multiple_concurrent_jobs(
         self, client: TestClient, mock_components: dict

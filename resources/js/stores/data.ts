@@ -329,35 +329,23 @@ export const useDataStore = defineStore('data', () => {
   function buildRunningMessage(running: SyncJobResponse[]): string {
     if (running.length === 0) return ''
 
-    const totalProcessed = running.reduce(
-      (sum, j) => sum + j.items_processed,
-      0,
-    )
-    const totalKnown = running.reduce(
-      (sum, j) => sum + (j.total_items || 0),
-      0,
-    )
-
-    let summary: string
-    if (totalKnown > 0) {
-      const pct = Math.min(100, Math.floor((totalProcessed * 100) / totalKnown))
-      summary = `${totalProcessed}/${totalKnown} (${pct}%)`
-    } else {
-      summary = `${totalProcessed} items so far`
-    }
-
     // Errors land on the job as each source finishes, so a run that is still
     // going has a count worth showing: the accordion rows only render them
     // once the whole run is over.
     const failures = visibleErrors(running).total
     const errorNote = failures > 0 ? ` — ${failures} error(s) so far` : ''
 
+    // The server's figure, never one summed from the counts: those restart as a
+    // source moves from fetching to saving, taking the banner backwards.
     if (running.length === 1) {
       const job = running[0]
+      const pct = job.progress_percent ?? 0
       const item = job.current_item ? truncate(job.current_item, 50) : '...'
-      return `${summary} - Syncing ${nameForJobKey(job.source)}: ${item}${errorNote}`
+      return `${pct}% - Syncing ${nameForJobKey(job.source)}: ${item}${errorNote}`
     }
-    return `${summary} - Syncing ${running.length} sources in parallel${errorNote}`
+    // No figure across separate runs: one joining or finishing would move it
+    // backwards. Each row's bar carries its own.
+    return `Syncing ${running.length} sources in parallel${errorNote}`
   }
 
   // OAuth connect flows. Every call names the source being connected: the

@@ -6,7 +6,7 @@ from collections.abc import Iterator
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 import requests
@@ -150,11 +150,17 @@ class TestExecuteSync:
 
     def test_progress_callback_reports_one_based_item_number(self) -> None:
         """Progress callback emits ``index + 1`` so the final iteration shows
-        ``items_processed == total_items`` instead of N-1/N."""
+        ``items_processed == total_items`` instead of N-1/N. Each report names
+        its phase, which the web's figures need to hold across the switch."""
         items = [make_item(f"Item {i}") for i in range(3)]
         plugin = MagicMock(spec=SourcePlugin)
         plugin.display_name = "TestPlugin"
-        plugin.fetch.return_value = iter(items)
+
+        def fetch(_config: Any, progress_callback: Any) -> Iterator[ContentItem]:
+            progress_callback(2, 7, "wishlist")
+            return iter(items)
+
+        plugin.fetch.side_effect = fetch
 
         storage = make_storage_mock()
         progress = MagicMock()
@@ -166,12 +172,13 @@ class TestExecuteSync:
             progress_callback=progress,
         )
 
-        in_loop_counts = [
-            call.args[0]
-            for call in progress.call_args_list
-            if len(call.args) >= 2 and call.args[1] == 3 and call.args[2] is not None
+        in_loop = [
+            (report.args[0], report.args[4])
+            for report in progress.call_args_list
+            if report.args[1] == 3 and report.args[2] is not None
         ]
-        assert in_loop_counts == [1, 2, 3]
+        assert in_loop == [(1, "save"), (2, "save"), (3, "save")]
+        assert call(2, 7, "wishlist", "", "fetch") in progress.call_args_list
 
 
 class TestExecuteMultiSourceSync:
