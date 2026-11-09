@@ -16,6 +16,7 @@ from src.recommendations.genre_clusters import (
     cluster_similarity,
     get_clusters_for_terms,
 )
+from src.recommendations.preferences import split_creators
 from src.recommendations.scorers import extract_creators, extract_genres
 from src.utils.series import get_series_name
 from src.utils.sorting import normalize_for_search, titles_similar
@@ -70,8 +71,8 @@ class _SignalRecord:
     item: ContentItem
     ordinal: int
     rating: int | None
-    title_key: str
-    author_key: str | None
+    franchise_keys: frozenset[str]
+    author_keys: frozenset[str]
     genre_set: frozenset[str]
     clusters: frozenset[str]
     creators: frozenset[str]
@@ -112,6 +113,22 @@ class _TypeBucket:
             self.liked.append(record)
 
 
+def _franchise_keys(title: str, series_name: str | None) -> frozenset[str]:
+    """TMDB names a film series "Harry Potter Collection" where a book series is
+    plain "Harry Potter". A name of nothing but punctuation folds to "", which
+    every other such name would equal."""
+    names = (title,) if series_name is None else (title, series_name)
+    keys = (normalize_for_search(name).removesuffix(" collection") for name in names)
+    return frozenset(key for key in keys if key)
+
+
+def _author_keys(item: ContentItem) -> frozenset[str]:
+    if not item.author:
+        return frozenset()
+    keys = (normalize_for_search(name) for name in split_creators(item.author))
+    return frozenset(key for key in keys if key)
+
+
 def _record_for(item: ContentItem, ordinal: int) -> _SignalRecord:
     genres = extract_genres(item)
 
@@ -126,8 +143,8 @@ def _record_for(item: ContentItem, ordinal: int) -> _SignalRecord:
         item=item,
         ordinal=ordinal,
         rating=item.rating,
-        title_key=normalize_for_search(item.title),
-        author_key=normalize_for_search(item.author) if item.author else None,
+        franchise_keys=_franchise_keys(item.title, series_name),
+        author_keys=_author_keys(item),
         genre_set=frozenset(genres),
         clusters=frozenset(get_clusters_for_terms(genres)),
         creators=extract_creators(item),
@@ -177,23 +194,17 @@ class SignalIndex:
             _record_for(item, ordinal) for ordinal, item in enumerate(signal_items)
         ]
 
-        self._adaptations_by_title: dict[str, list[_SignalRecord]] = {}
+        self._adaptations_by_franchise: dict[str, list[_SignalRecord]] = {}
         self._adaptations_by_author: dict[str, list[_SignalRecord]] = {}
         self._references_by_type: dict[str, _TypeBucket] = {}
         self._excluded_by_series: dict[str, set[int]] = {}
 
         for record in records:
             if record.liked:
-                # A title of nothing but punctuation folds to "", which every
-                # other such title would equal.
-                if record.title_key:
-                    self._adaptations_by_title.setdefault(record.title_key, []).append(
-                        record
-                    )
-                if record.author_key:
-                    self._adaptations_by_author.setdefault(
-                        record.author_key, []
-                    ).append(record)
+                for key in record.franchise_keys:
+                    self._adaptations_by_franchise.setdefault(key, []).append(record)
+                for key in record.author_keys:
+                    self._adaptations_by_author.setdefault(key, []).append(record)
 
             if record.rating is not None and record.rating < _DISLIKED_RATING:
                 continue
@@ -205,19 +216,16 @@ class SignalIndex:
                 )
 
     def adaptations_of(self, candidate: ContentItem) -> list[ContentItem]:
-        """Consumed items of another type that *candidate* adapts."""
-        title_key = normalize_for_search(candidate.title)
-        author_key = (
-            normalize_for_search(candidate.author) if candidate.author else None
-        )
-
+        """Liked items of another type in *candidate*'s franchise, or sharing its
+        author and a similar title."""
         matched: dict[int, ContentItem] = {}
-        for record in self._adaptations_by_title.get(title_key, ()):
-            if record.item.content_type != candidate.content_type:
-                matched[record.ordinal] = record.item
+        for key in _franchise_keys(candidate.title, get_series_name(candidate)):
+            for record in self._adaptations_by_franchise.get(key, ()):
+                if record.item.content_type != candidate.content_type:
+                    matched[record.ordinal] = record.item
 
-        if author_key:
-            for record in self._adaptations_by_author.get(author_key, ()):
+        for key in _author_keys(candidate):
+            for record in self._adaptations_by_author.get(key, ()):
                 if (
                     record.item.content_type != candidate.content_type
                     and titles_similar(candidate.title, record.item.title)

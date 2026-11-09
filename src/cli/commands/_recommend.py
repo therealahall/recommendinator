@@ -27,7 +27,7 @@ def _evidence_cell(rec: Recommendation) -> str:
     sections = []
     for label, items in (
         ("From your library", direct_only),
-        ("Adaptations", rec.adaptations),
+        ("Same franchise", rec.adaptations),
     ):
         if items:
             sections.append(f"{label}: {_related_titles(items)}")

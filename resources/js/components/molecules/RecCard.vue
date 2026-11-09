@@ -75,7 +75,7 @@ const evidence = computed(() => {
     (item) => item.db_id === null || !adapted.has(item.db_id),
   )
   return [
-    ...pills(props.rec.adaptations, 'same story, inferred', true),
+    ...pills(props.rec.adaptations, 'same franchise, inferred', true),
     ...pills(directOnly, 'contributed directly', false),
   ]
 })
@@ -180,7 +180,7 @@ function toggleBreakdown() {
           </li>
         </ul>
         <p v-if="hasInferred" class="rec-evidence-legend" aria-hidden="true">
-          Dashed: a different version of the same story
+          Dashed: another work in the same franchise
         </p>
         <button
           v-if="hiddenEvidence > 0"

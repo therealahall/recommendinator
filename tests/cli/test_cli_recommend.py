@@ -382,7 +382,7 @@ class TestRecommendTableOutput:
 
         assert result.exit_code == 0
         assert "From your library: Dune (book), Neuromancer (book)" in result.stdout
-        assert "Adaptations: Blade Runner (movie)" in result.stdout
+        assert "Same franchise: Blade Runner (movie)" in result.stdout
 
     def test_an_adaptation_that_also_contributed_is_named_once(self) -> None:
         dune = _book("Dune", db_id=2)
@@ -402,7 +402,7 @@ class TestRecommendTableOutput:
 
         assert result.exit_code == 0
         assert "From your library: Neuromancer (book)" in result.stdout
-        assert "Adaptations: Dune (book)" in result.stdout
+        assert "Same franchise: Dune (book)" in result.stdout
 
     def test_a_series_entry_ranked_above_its_score_says_which_series_holds_it(
         self,
