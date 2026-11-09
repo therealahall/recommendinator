@@ -1,6 +1,43 @@
 # CHANGELOG
 
 
+## v0.77.0 (2026-11-09)
+
+### Bug Fixes
+
+- **recommendations**: Cite rated in-progress items as references
+  ([`4ff4916`](https://github.com/therealahall/recommendinator/commit/4ff491620c91090d71561e3d69c4065b4c6b3b5b))
+
+### Documentation
+
+- Count rated in-progress items toward taste and references
+  ([`afbec7b`](https://github.com/therealahall/recommendinator/commit/afbec7bb52382e2bc54ec22613ccd5b3d7ad8c24))
+
+- Drop the Goodreads RSS source and tighten over-budget sections
+  ([`e374201`](https://github.com/therealahall/recommendinator/commit/e37420114591372852c644cd99d35f36d488d4a2))
+
+- **scoring**: Say a finished item is never offered back, rated or not
+  ([`2753a0b`](https://github.com/therealahall/recommendinator/commit/2753a0bf1e1e9bbf1cda73b0b768029334a2dad8))
+
+### Features
+
+- **ingestion**: Remove the goodreads_rss source
+  ([`e44c75a`](https://github.com/therealahall/recommendinator/commit/e44c75a5e7d0abe4494ef00d879e57c275174058))
+
+- **recommendations**: Map more provider genres onto clusters
+  ([`4464d04`](https://github.com/therealahall/recommendinator/commit/4464d04c46f809070920d885c24ea09c65d86ba4))
+
+### Testing
+
+- Move fixtures off the goodreads_rss plugin
+  ([`cb724cf`](https://github.com/therealahall/recommendinator/commit/cb724cff40262c2e5057990934970fe65f5039c7))
+
+### Breaking Changes
+
+- **ingestion**: Goodreads_rss is no longer a source type. A configured one is deleted at boot and
+  named in the log. Import the Goodreads CSV export instead.
+
+
 ## v0.76.0 (2026-11-07)
 
 ### Chores
