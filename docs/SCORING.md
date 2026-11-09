@@ -175,9 +175,10 @@ See [DATA_SOURCES.md](DATA_SOURCES.md#library-export). A merge moves no ignore:
 the absorbed row's stops applying while that row is hidden.
 
 Completed-but-unrated items are excluded from the taste *signal* the same way,
-since something you finished but never rated says nothing about your taste. They
-still appear as candidates, a backlog being unrated by nature. The filtering
-lives in the storage layer's signal-set accessor, so every caller respects it.
+since something you finished but never rated says nothing about your taste. Like
+anything finished, they are never offered back. Unrated items you have not
+started still are, a backlog being unrated by nature. The filtering lives in
+the storage layer's signal-set accessor, so every caller respects it.
 
 There are two deliberate exceptions. Series *ordering* asks whether you have
 consumed an earlier entry, which is independent of rating and ignore state, so
