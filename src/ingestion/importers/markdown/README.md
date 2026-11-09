@@ -18,7 +18,7 @@ Reads a Markdown file of one content type, which you pick when you upload it.
 
 Recognized section headings, matched case-insensitively on the keyword:
 `Completed`, `In Progress`, `Currently Reading`/`Watching`/`Playing`, `To
-Read`/`Watch`/`Play`, `Wishlist`, `Backlog`. An unrecognized heading leaves the
+Read`/`Watch`/`Play`, `Wishlist`, `Backlog`, `Did Not Finish`. An unrecognized heading leaves the
 running status alone. The metadata tail after `|` takes `key: value` pairs;
 `Rating` and `Date` are read, and the rest is stored as metadata.
 

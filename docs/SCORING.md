@@ -160,6 +160,12 @@ A rating on something in progress counts like one on something finished: it shap
 
 A show with a known season count is scored season by season, so the season in flight leaves on its own. Trakt and Tautulli count episodes per season, which names it. Without counts, as after an import, a show with a season finished is between seasons and its next season is offered, while one with none finished is in season 1. A show with no season count cannot be split, and leaves whole while in progress.
 
+## Items you did not finish
+
+Something marked did not finish is never offered back. Rated, it shapes your taste exactly as a finished item does; unrated, it does not, and it never appears under needs rating. It claims a variety rung like a completion.
+
+Giving up on a series entry holds every later entry, whether or not series are in order. Finish or start a later entry and the series resumes after it, in order as usual. A show marked did not finish offers none of its seasons.
+
 ## Ignored items
 
 An ignored item stays in your library and shapes nothing you are recommended. It

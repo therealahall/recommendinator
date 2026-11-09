@@ -119,11 +119,15 @@ _STATUS_ORDER: dict[str, int] = {
     "unread": 0,
     "currently_consuming": 1,
     "completed": 2,
+    "dnf": 3,
 }
 
 
 def resolve_status_forward(existing_status: str | None, incoming_status: str) -> str:
-    """Status can only advance: unread → currently_consuming → completed."""
+    """Status can only advance: unread → currently_consuming → completed → dnf.
+    An import can state dnf, which outranks every other status, so only an edit
+    leaves it.
+    """
     if existing_status is None:
         return incoming_status
     existing_order = _STATUS_ORDER.get(existing_status, 0)

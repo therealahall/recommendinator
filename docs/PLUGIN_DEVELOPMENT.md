@@ -134,7 +134,7 @@ ContentItem(
     id="unique-external-id",             # required, unique per source and type
     title="Item Title",                  # required
     content_type=ContentType.BOOK,       # BOOK, MOVIE, TV_SHOW, VIDEO_GAME
-    status=ConsumptionStatus.COMPLETED,  # COMPLETED, CURRENTLY_CONSUMING, UNREAD
+    status=ConsumptionStatus.COMPLETED,  # COMPLETED, CURRENTLY_CONSUMING, UNREAD, DNF
     rating=4,                            # 1-5
     review="My review text",
     author="Author/Director",

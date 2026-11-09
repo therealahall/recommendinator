@@ -124,6 +124,7 @@ onUnmounted(() => {
           <option value="unread">{{ unreadLabel }}</option>
           <option value="currently_consuming">In Progress</option>
           <option value="completed">Completed</option>
+          <option value="dnf">Did not finish</option>
         </select>
         <span v-else class="help-text">Status: Completed while Needs rating is on.</span>
         <select class="field toolbar-select" aria-label="Enrichment" :value="enrichmentFilter" @change="emit('filterChange', 'enrichment', ($event.target as HTMLSelectElement).value)">

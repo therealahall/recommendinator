@@ -1743,6 +1743,28 @@ def test_edit_invalid_status(client, mock_components):
     assert "Invalid status" in response.json()["detail"]
 
 
+def test_an_item_marked_dnf_is_listed_under_dnf_alone(mock_components, tmp_path):
+    storage = StorageManager(sqlite_path=tmp_path / "dnf.db")
+    db_id = storage.save_content_item(
+        ContentItem(
+            id="w1",
+            title="The Last Wish",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.CURRENTLY_CONSUMING,
+        )
+    )
+    client = _client_on(mock_components["app"], storage)
+
+    edited = client.patch(f"/api/items/{db_id}?user_id=1", json={"status": "dnf"})
+
+    assert edited.status_code == 200, edited.text
+    assert [item["title"] for item in client.get("/api/items?status=dnf").json()] == [
+        "The Last Wish"
+    ]
+    assert client.get("/api/items?status=currently_consuming").json() == []
+    assert client.get("/api/items?needs_rating=true").json() == []
+
+
 class TestEditRouteCompletesEverySeasonRegression:
     """Completing a show over PATCH left the checklist partial (#123)."""
 

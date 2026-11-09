@@ -16,8 +16,8 @@ A column the export no longer carries is fine — StoryGraph tweaks the shape ov
 time — as long as every row matches the header the file declares.
 
 - Status: `read` → completed, `currently-reading` → currently consuming,
-  `to-read` → unread, `did-not-finish` → completed (a rated-then-abandoned book
-  is a real signal). Anything else → unread. The raw status is kept in
+  `to-read` → unread, `did-not-finish` → dnf (its rating still counts as
+  taste). Anything else → unread. The raw status is kept in
   `metadata["read_status"]`.
 - Rating: quarter stars on a 0–5 scale, rounded half up and clamped to 1–5
   (`4.5` → 5, `3.25` → 3). A `0`, blank or unparseable rating is unrated.

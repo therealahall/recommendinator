@@ -38,6 +38,7 @@ from src.utils.series import (
     build_series_tracking,
     expand_tv_shows_to_seasons,
     find_earliest_recommendable,
+    held_by_abandonment,
     inject_season_progress_tracking,
     should_recommend_item,
 )
@@ -178,7 +179,7 @@ class RecommendationEngine:
         )
 
     def _taste_signals(self, scoring: _ConfiguredScoring) -> _TasteSignals:
-        # Taste-signal items (completed or in progress, rated, not ignored) shape
+        # Taste-signal items (completed, in progress or dnf, rated, not ignored) shape
         # preference analysis, scoring, similarity seeds and references alike
         # (issue #99).
         items = self.storage.get_signal_items(content_type=None)
@@ -265,14 +266,29 @@ class RecommendationEngine:
             ],
             series_order,
         )
+        # Held whatever series_in_order says: giving up on a series is the
+        # operator's verdict on it, not a preference about reading order. An
+        # ignored one shapes nothing, so it holds nothing either.
+        abandoned_positions = build_series_tracking(
+            [
+                item
+                for item in consumed_items_of_type
+                if item.status == ConsumptionStatus.DNF and not item.ignored
+            ],
+            series_order,
+        )
         candidates = [
             item
             for item in unconsumed_items
             if item.status != ConsumptionStatus.CURRENTLY_CONSUMING
+            and not held_by_abandonment(
+                item, series_tracking, abandoned_positions, series_order
+            )
         ]
         if not candidates:
             logger.info(
-                "Every unconsumed %s is already in progress", content_type.value
+                "Every unconsumed %s is in progress or after an abandoned entry",
+                content_type.value,
             )
             return []
 

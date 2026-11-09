@@ -881,6 +881,30 @@ class TestLibraryEditPartialUpdate:
         assert stored.rating == 5
         assert stored.review == "Loved it"
 
+    def test_an_item_marked_dnf_is_listed_under_dnf_alone(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        storage, db_id = self._seeded_storage(tmp_path)
+
+        def listed(status: str) -> list[str]:
+            result = _invoke_with_mocks(
+                cli_runner,
+                ["library", "list", "--status", status, "--format", "json"],
+                storage,
+            )
+            assert result.exit_code == 0, result.output
+            return [item["title"] for item in json.loads(result.output)]
+
+        edited = _invoke_with_mocks(
+            cli_runner,
+            ["library", "edit", "--id", str(db_id), "--status", "dnf"],
+            storage,
+        )
+
+        assert edited.exit_code == 0, edited.output
+        assert listed("dnf") == ["Dune"]
+        assert listed("completed") == []
+
     def test_rating_edit_overwrites_the_existing_rating(
         self, cli_runner: CliRunner, tmp_path: Path
     ) -> None:

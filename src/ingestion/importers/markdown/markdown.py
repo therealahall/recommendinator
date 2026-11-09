@@ -25,6 +25,7 @@ SECTION_STATUS_MAP: dict[str, ConsumptionStatus] = {
     "to play": ConsumptionStatus.UNREAD,
     "wishlist": ConsumptionStatus.UNREAD,
     "backlog": ConsumptionStatus.UNREAD,
+    "did not finish": ConsumptionStatus.DNF,
 }
 
 # - **Title** by Creator | Rating: N | Date: YYYY-MM-DD

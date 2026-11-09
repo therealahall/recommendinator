@@ -18,7 +18,8 @@ logged and ignored.
 
 `status` takes type-specific aliases: `read`/`watched`/`played` for completed,
 `reading`/`watching`/`playing` for currently consuming, and
-`to_read`/`to_watch`/`to_play`/`wishlist`/`unwatched`/`unplayed` for unread.
+`to_read`/`to_watch`/`to_play`/`wishlist`/`unwatched`/`unplayed` for unread,
+and `dnf`/`did_not_finish` for did not finish.
 Boolean fields accept `true`/`false`, `1`/`0` and `yes`/`no`. `seasons_watched`
 takes a list, `1,2,5,6`, or a count integer. `seasons_watched_dates` takes a JSON
 object mapping a season number to the UTC instant you finished it,
@@ -37,7 +38,7 @@ Reported with the file line they were on:
 | Column | Rule |
 |---|---|
 | `rating`, `review` | Fill-only. Written while the stored value is empty, never overwritten. |
-| `status` | Forward-only: unread → consuming → completed. A file can advance a status, never revert a completion. |
+| `status` | Forward-only: unread → consuming → completed → dnf. A file can advance a status, never revert a completion. It can move an item to dnf, never out of it: a re-import saying read or completed leaves a dnf item as dnf, so change it with an edit. |
 | `date_completed` | Replaced only by a later date. |
 | `genre` | Combines with other writers' genres; a re-import replaces what this file stated before. |
 | `seasons_watched`, `seasons_watched_dates` | Additive. An import adds a watched season and its date, never removes one. |

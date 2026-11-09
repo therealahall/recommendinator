@@ -98,7 +98,7 @@ change depends on the field:
 | Field | What a re-import can do to it |
 |-------|-------------------------------|
 | `rating`, `review` | Fill an empty value. Never replaces one you wrote in the app |
-| `status` | Move forward only, unread to consuming to completed. Never reverts a completion, except that a completed TV show whose season checklist you have filled in returns to in-progress when an import raises its `total_seasons` above the seasons you have watched, unless the item is ignored |
+| `status` | Move forward only, unread to consuming to completed to did not finish. An import can mark an item did not finish, but no sync or import moves one out of it: a re-import saying read or completed leaves it as did not finish, so change it with an edit. Never reverts a completion, except that a completed TV show whose season checklist you have filled in returns to in-progress when an import raises its `total_seasons` above the seasons you have watched, unless the item is ignored |
 | `date_completed` | Replace it with a later date only |
 | `ignored` | Whatever the file states, in either direction. An absent column, a blank cell or a JSON `null` all say nothing, and your value stands |
 | `genre` | Merge in. An import never removes a genre |

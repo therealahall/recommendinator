@@ -2605,6 +2605,39 @@ class TestUpdateItemFromUi:
 
         assert stored.status == ConsumptionStatus.COMPLETED
 
+    def test_a_sync_reporting_completion_never_moves_an_item_out_of_dnf(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        stored = self._synced_after_a_status_edit(
+            temp_db, "dnf", ConsumptionStatus.COMPLETED
+        )
+
+        assert stored.status == ConsumptionStatus.DNF
+
+    def test_season_changes_never_move_a_show_out_of_dnf(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        def show(status: ConsumptionStatus, watched: list[int]) -> ContentItem:
+            return ContentItem(
+                id="ui_dnf_show",
+                title="Abandoned Show",
+                content_type=ContentType.TV_SHOW,
+                status=status,
+                source="trakt",
+                metadata={"seasons": 3, "seasons_watched": watched},
+            )
+
+        db_id = temp_db.save_content_item(
+            show(ConsumptionStatus.CURRENTLY_CONSUMING, [1])
+        )
+        temp_db.update_item_from_ui(db_id=db_id, status="dnf")
+        temp_db.save_content_item(show(ConsumptionStatus.COMPLETED, [1, 2, 3]))
+        temp_db.update_item_from_ui(db_id=db_id, seasons_watched=[1, 2])
+
+        stored = temp_db.get_content_item(db_id)
+        assert stored is not None
+        assert stored.status == ConsumptionStatus.DNF
+
 
 class TestEditDoorNeverStoresABlankReview:
     """Bug: ``update_item_from_ui`` wrote whatever string it was handed, so a

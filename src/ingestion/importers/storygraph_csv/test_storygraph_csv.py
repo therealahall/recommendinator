@@ -62,10 +62,10 @@ class TestExport:
         assert second.review is None
         assert second.id is None
 
-    def test_did_not_finish_counts_as_completed_and_keeps_the_raw_status(self) -> None:
+    def test_did_not_finish_imports_as_dnf_and_keeps_the_raw_status(self) -> None:
         parsed = items("Gave Up,Some Author,,,,did-not-finish," + "," * 16 + "\n")
 
-        assert parsed[0].status == ConsumptionStatus.COMPLETED
+        assert parsed[0].status == ConsumptionStatus.DNF
         assert parsed[0].metadata["read_status"] == "did-not-finish"
 
     def test_a_series_title_arrives_as_a_title_and_a_series(self) -> None:

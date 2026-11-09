@@ -50,6 +50,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+_STATUSES = [status.value for status in ConsumptionStatus]
+_INVALID_STATUS = f"Invalid status. Valid options: {', '.join(_STATUSES)}"
+
 
 def _blank_rejector(field: str) -> Callable[[str], str]:
     """The lower bound refuses ``""``; spaces are the same claim, unsayable in
@@ -303,7 +306,7 @@ def list_items(
         except ValueError:
             raise HTTPException(
                 status_code=400,
-                detail="Invalid status. Valid options: unread, currently_consuming, completed",
+                detail=_INVALID_STATUS,
             ) from None
 
     if sort_by.lower() not in VALID_SORT_OPTIONS:
@@ -455,11 +458,8 @@ def edit_item(
     supplied = request.model_fields_set
     status: str | Unset = UNSET
     if "status" in supplied:
-        if request.status not in {"unread", "currently_consuming", "completed"}:
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid status. Valid options: completed, currently_consuming, unread",
-            )
+        if request.status not in _STATUSES:
+            raise HTTPException(status_code=400, detail=_INVALID_STATUS)
         status = request.status
 
     crossed = _edit_bound_crossed(request)

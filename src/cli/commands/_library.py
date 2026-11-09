@@ -69,6 +69,8 @@ from src.utils.item_serialization import (
 from src.utils.series import MAX_SEASONS
 from src.utils.sorting import MAX_SEARCH_LENGTH, normalize_for_search
 
+_STATUS_CHOICES = [status.value for status in ConsumptionStatus]
+
 
 @click.group()
 def library() -> None:
@@ -148,12 +150,9 @@ def library_rebuild_status(ctx: click.Context, output_format: str) -> None:
 @click.option(
     "--status",
     "status_str",
-    type=click.Choice(
-        ["unread", "currently_consuming", "completed"],
-        case_sensitive=False,
-    ),
+    type=click.Choice(_STATUS_CHOICES, case_sensitive=False),
     default=None,
-    help="Filter by consumption status",
+    help="Filter by consumption status (dnf: did not finish)",
 )
 @click.option(
     "--sort",
@@ -414,12 +413,9 @@ def library_show(
 @click.option(
     "--status",
     "status_str",
-    type=click.Choice(
-        ["unread", "currently_consuming", "completed"],
-        case_sensitive=False,
-    ),
+    type=click.Choice(_STATUS_CHOICES, case_sensitive=False),
     default=None,
-    help="New status",
+    help="New status (dnf: did not finish)",
 )
 @click.option(
     "--rating",
