@@ -61,7 +61,6 @@ Each source has its own setup guide. Pick the ones you use.
 
 | Source | Type | Setup |
 |--------|------|-------|
-| **Goodreads (public shelves via RSS)** | Books | [goodreads_rss](src/ingestion/sources/goodreads_rss/README.md) |
 | **Calibre-Web** | Books | [calibre_web](src/ingestion/sources/calibre_web/README.md) |
 | **Steam** | Games | [steam](src/ingestion/sources/steam/README.md) |
 | **GOG** | Games | [gog](src/ingestion/sources/gog/README.md) |
@@ -164,6 +163,10 @@ A global setting the file still names — `logging.file`, `web.allowed_origins`,
 scorer weight — is not read either. Re-apply it on the Settings page or with
 `settings set <key> <value>`, or `settings set-secret <key>` for an API key,
 then delete it from the file.
+
+**From 0.76.0 or earlier.** The Goodreads RSS source is gone: Goodreads no
+longer serves shelf feeds. A source on it is deleted on first boot and named in
+the log, and its books stay. Import the Goodreads CSV export instead.
 
 ## CLI usage
 

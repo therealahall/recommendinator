@@ -113,8 +113,8 @@ step. Full guide: [docs/ENRICHMENT_SETUP.md](docs/ENRICHMENT_SETUP.md).
 
 ## Import your data
 
-Plugins cover Goodreads shelves, Calibre-Web, Steam, GOG, Epic Games, Sonarr,
-Radarr, Trakt and a ROM library; [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md)
+Plugins cover Calibre-Web, Steam, GOG, Epic Games, Sonarr, Radarr, Trakt and a
+ROM library; [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md)
 lists them all. A one-off export is imported instead.
 
 ### Add a source
