@@ -11,7 +11,7 @@ settings < per-user preferences**.
 | `tag_overlap` | How many of a consumed item's tags the item shares, scaled by how you rated it. Each tag counts once: in full when the item has the same tag, half when it has a related tag from the same genre cluster. A consumed item with more tags can lift a match higher | 1.0 |
 | `content_length` | Soft penalty for a length mismatch. Counts only for a content type with a length preference other than `any` | 1.0 |
 | `continuation` | Scores the later entries and seasons of a series you have begun by how you rated its entries of the same content type, a show part-way through included: 5 stars is 100%, 3 is 50%, 1 is 0%, and none rated is 50%. Counts only where an earlier entry is finished or begun, and not while any entry of that series is in progress | 1.0 |
-| `adaptation` | Boosts a film, show or game adapting something you rated well, and the source behind an adaptation you loved. Counts only for an item that adapts something | 1.5 |
+| `adaptation` | Boosts a film, show or game adapting something you rated well, and the source behind an adaptation you loved. An item adapts one of another type when either's title or series name matches the other's, a trailing "Collection" aside, or when they share an author and a similar title. Counts only for an item that adapts something | 1.5 |
 
 ## One score, fully explained
 
