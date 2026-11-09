@@ -255,6 +255,7 @@ class TestTagOverlapScorer:
         for consumed, exact, related in [
             ("War", "War", "Battle"),
             ("Science Fiction", "Science Fiction", "Cyberpunk"),
+            ("Fighting", "Fighting", "Beat 'em up"),
         ]:
             library = [make_item(genres=consumed, rating=5)]
             assert self._score(library, exact) == 1 / 3
