@@ -38,9 +38,17 @@ class TestNormalizeTermIndividual:
             ("Post-Apocalyptic", "post-apocalyptic"),
             ("post apocalyptic", "post-apocalyptic"),
             ("Turn_Based", "turn-based"),
+            ("Beat 'em up", "beat em up"),
+            ("Beat-em-up", "beat em up"),
+            ("Rogue-lite", "roguelite"),
+            ("Roguelite", "roguelite"),
+            ("Rogue-like", "roguelike"),
+            ("Roguelike", "roguelike"),
+            ("Soulslike", "souls-like"),
+            ("Souls-like", "souls-like"),
         ],
     )
-    def test_a_separator_variant_resolves_to_its_canonical_term(
+    def test_a_spelling_variant_resolves_to_its_canonical_term(
         self, term: str, canonical: str
     ) -> None:
         assert normalize_term(term) == canonical
@@ -72,6 +80,42 @@ class TestNormalizeTermIndividual:
     def test_a_game_tagged_only_flight_simulator_reaches_its_cluster(self) -> None:
         terms = extract_and_normalize_genres({"genres": ["Flight Simulator"]})
         assert get_clusters_for_terms(terms) == {"simulation_sandbox"}
+
+    @pytest.mark.parametrize(
+        ("raw", "cluster"),
+        [
+            ("Fighting", "action_combat"),
+            ("Beat 'em up", "action_combat"),
+            ("Hack and slash/Beat 'em up", "action_combat"),
+            ("Action-Adventure", "action_combat"),
+            ("Action-Adventure", "adventure_exploration"),
+            ("Souls-like", "action_combat"),
+            ("Platformer", "roguelike_metroidvania"),
+            ("Platform", "roguelike_metroidvania"),
+            ("Rogue-lite", "roguelike_metroidvania"),
+            ("Rogue-like", "roguelike_metroidvania"),
+            ("Metroidvania", "roguelike_metroidvania"),
+            ("Soulslike", "roguelike_metroidvania"),
+            ("Deckbuilding", "strategy_tactics"),
+            ("Card Game", "strategy_tactics"),
+            ("Board Games", "strategy_tactics"),
+            ("Card & Board Game", "strategy_tactics"),
+            ("Politics", "war_military"),
+            ("War & Politics", "historical"),
+            ("History", "historical"),
+            ("Literary Fiction", "drama_emotional"),
+            ("Manga", "anime_manga"),
+            ("Anime", "anime_manga"),
+            ("Shounen", "anime_manga"),
+            ("Seinen", "anime_manga"),
+            ("Shoujo", "anime_manga"),
+            ("Josei", "anime_manga"),
+            ("Magical Girl", "anime_manga"),
+        ],
+    )
+    def test_a_provider_genre_reaches_its_cluster(self, raw: str, cluster: str) -> None:
+        terms = extract_and_normalize_genres({"genres": [raw]})
+        assert cluster in get_clusters_for_terms(terms)
 
 
 class TestSubgenrePreservation:

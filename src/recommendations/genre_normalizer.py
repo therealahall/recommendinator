@@ -145,6 +145,9 @@ COMPOUND_SPLITS: MappingProxyType[str, tuple[str, ...]] = MappingProxyType(
         "horror and fantasy": ("horror", "fantasy"),
         "history & politics": ("history", "politics"),
         "history and politics": ("history", "politics"),
+        # IGDB genre names
+        "hack and slash/beat 'em up": ("hack and slash", "beat em up"),
+        "card & board game": ("card game", "board game"),
     }
 )
 
@@ -229,6 +232,16 @@ NORMALIZATIONS: MappingProxyType[str, str] = MappingProxyType(
         "turn based": "turn-based",
         "real time strategy": "rts",
         "real-time strategy": "rts",
+        # An entry rather than an apostrophe strip in _fold, which would
+        # reach every pass-through term.
+        "beat 'em up": "beat em up",
+        "rogue-like": "roguelike",
+        "rogue-lite": "roguelite",
+        "soulslike": "souls-like",
+        "platform": "platformer",
+        "deckbuilding": "deckbuilder",
+        "deck-building": "deckbuilder",
+        "board games": "board game",
     }
 )
 

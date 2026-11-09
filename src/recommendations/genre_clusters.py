@@ -159,6 +159,7 @@ CLUSTERS: dict[str, set[str]] = {
         "resistance",
         "rebellion",
         "revolution",
+        "politics",
     },
     "horror_dark": {
         "horror",
@@ -261,6 +262,7 @@ CLUSTERS: dict[str, set[str]] = {
         "swashbuckler",
         "adventurer",
         "explorer",
+        "action adventure",
     },
     "post_apocalyptic": {
         "apocalyptic",
@@ -321,6 +323,7 @@ CLUSTERS: dict[str, set[str]] = {
         "isolation",
         "found family",
         "slice of life",
+        "literary fiction",
     },
     "comedy_lighthearted": {
         "comedy",
@@ -384,6 +387,9 @@ CLUSTERS: dict[str, set[str]] = {
         "duel",
         "combat",
         "chase",
+        "fighting",
+        "action adventure",
+        "souls-like",
     },
     "strategy_tactics": {
         "strategy",
@@ -400,6 +406,9 @@ CLUSTERS: dict[str, set[str]] = {
         "tycoon",
         "god game",
         "auto battler",
+        "deckbuilder",
+        "card game",
+        "board game",
     },
     "historical": {
         "historical",
@@ -437,6 +446,8 @@ CLUSTERS: dict[str, set[str]] = {
         "vietnam war",
         "alternate history",
         "biopic",
+        "history",
+        "politics",
     },
     "western": {
         "western",
@@ -607,6 +618,24 @@ CLUSTERS: dict[str, set[str]] = {
         "vehicle simulation",
         "dating sim",
         "sandbox",
+    },
+    "anime_manga": {
+        "anime",
+        "manga",
+        "shonen",
+        "seinen",
+        "shojo",
+        "josei",
+        "magical girl",
+    },
+    # Game structures with no thematic home elsewhere, kept together because
+    # their audiences overlap: a Hollow Knight player wants Dead Cells.
+    "roguelike_metroidvania": {
+        "roguelike",
+        "roguelite",
+        "metroidvania",
+        "platformer",
+        "souls-like",
     },
 }
 
