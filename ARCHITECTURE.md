@@ -270,7 +270,8 @@ Invariants:
   json` and `GET /api/recommendations` one document.
 - The taste signal is completed and in-progress items that are **rated** and
   **not ignored**, across all content types: a rated show part-way through feeds
-  taste and scales its next season's `continuation`. Nothing else shapes
+  taste, references and adaptations like a completed one, and scales its next
+  season's `continuation`. Nothing else shapes
   preferences or scoring. Two facts sit outside it and are answered from wider
   sets: series ordering, from the full completed set; and the variety penalty
   below, which multiplies the final score rather than contributing to it.
