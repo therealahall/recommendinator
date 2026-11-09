@@ -710,6 +710,26 @@ class TestTMDBSeasonEpisodeCounts:
 
         assert "season_episode_counts" not in result.extra_metadata
 
+    def test_an_announced_season_keeps_its_place_with_no_air_date(self) -> None:
+        """Dropped like an uncounted season, it could not hold itself back from
+        being recommended before it airs."""
+        result = self._enrich(
+            {
+                "id": 1396,
+                "name": "Breaking Bad",
+                "seasons": [
+                    {"season_number": 0, "air_date": "2009-02-17"},
+                    {"season_number": 1, "air_date": "2008-01-20", "episode_count": 7},
+                    {"season_number": 2, "air_date": None, "episode_count": 0},
+                ],
+            }
+        )
+
+        assert result.extra_metadata["season_air_dates"] == {
+            "1": "2008-01-20",
+            "2": None,
+        }
+
 
 class TestTMDBProviderKeywords:
     @pytest.fixture

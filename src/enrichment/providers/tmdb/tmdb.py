@@ -480,6 +480,15 @@ class TMDBProvider(EnrichmentProvider):
             }
             if season_counts:
                 extra_metadata["season_episode_counts"] = season_counts
+            # Kept without an episode count: an announced season's null date is
+            # what holds it back from being recommended.
+            season_air_dates = {
+                str(season["season_number"]): season.get("air_date") or None
+                for season in show.get("seasons") or []
+                if season.get("season_number")
+            }
+            if season_air_dates:
+                extra_metadata["season_air_dates"] = season_air_dates
             if show.get("vote_average"):
                 extra_metadata["tmdb_rating"] = show["vote_average"]
             if show.get("first_air_date"):

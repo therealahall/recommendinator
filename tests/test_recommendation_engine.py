@@ -1,5 +1,5 @@
 import random
-from datetime import date
+from datetime import UTC, date, datetime
 from unittest.mock import Mock
 
 import pytest
@@ -25,6 +25,7 @@ from src.recommendations.scoring_pipeline import ScoredCandidate, tiebreaker_key
 from src.recommendations.variety import (
     VARIETY_LADDER_STEPS,
 )
+from src.storage.field_writes import FieldWriter, WriterBand
 from src.storage.item_merges import MergeEvidence
 from src.storage.manager import StorageManager
 from src.utils.series import (
@@ -401,6 +402,87 @@ class TestIgnoredItems:
         assert "Normal Book" in recommended_titles
 
         assert "Ignored Book" not in recommended_titles
+
+
+class TestUnreleasedItemsAreNeverOffered:
+    @pytest.mark.parametrize(
+        ("content_type", "metadata", "offered"),
+        [
+            (ContentType.MOVIE, {"release_date": "2026-11-08"}, True),
+            (
+                ContentType.MOVIE,
+                {"release_date": "2026-11-01", "release_year": 2027},
+                True,
+            ),
+            (ContentType.MOVIE, {"release_year": 2027}, False),
+            (ContentType.MOVIE, {}, True),
+            (
+                ContentType.VIDEO_GAME,
+                {"release_date": "2027-01-15T00:00:00.000Z"},
+                False,
+            ),
+            (ContentType.BOOK, {"year_published": 2027}, False),
+            (ContentType.TV_SHOW, {"first_air_date": "2026-11-09"}, False),
+            (
+                ContentType.TV_SHOW,
+                {"first_air_date": "2027-01-15", "total_seasons": 2},
+                False,
+            ),
+        ],
+    )
+    def test_only_what_is_out_by_today_is_offered(
+        self, engine, mock_storage, monkeypatch, content_type, metadata, offered
+    ):
+        monkeypatch.setattr(
+            "src.utils.dates.utc_now", lambda: datetime(2026, 11, 8, 12, tzinfo=UTC)
+        )
+        seen = make_item("Seen", ContentType.MOVIE, item_id="seen", rating=5)
+        candidate = make_item(
+            "Next",
+            content_type,
+            ConsumptionStatus.UNREAD,
+            item_id="next",
+            metadata=metadata,
+        )
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: [seen]
+        )
+        mock_storage.get_unconsumed_items = Mock(return_value=[candidate])
+
+        recommendations = engine.generate_recommendations(
+            content_type=content_type, count=5
+        )
+
+        assert bool(recommendations) is offered
+
+    @pytest.mark.parametrize(
+        ("release_date", "offered"), [("2027-03-01", False), ("2026-11-01", True)]
+    )
+    def test_a_release_date_tmdb_stored_reaches_the_gate(
+        self, real_engine, real_storage, monkeypatch, release_date, offered
+    ):
+        monkeypatch.setattr(
+            "src.utils.dates.utc_now", lambda: datetime(2026, 11, 8, 12, tzinfo=UTC)
+        )
+        real_storage.save_content_item(
+            make_item("Seen", ContentType.MOVIE, item_id="seen", rating=5)
+        )
+        db_id = real_storage.save_content_item(
+            make_item("Next", ContentType.MOVIE, ConsumptionStatus.UNREAD, "next")
+        )
+        item = real_storage.get_content_item(db_id)
+        real_storage.save_enrichment_metadata(
+            db_id,
+            item,
+            FieldWriter(WriterBand.PROVIDER, "tmdb"),
+            {"release_date": release_date, "release_year": int(release_date[:4])},
+        )
+
+        recommendations = real_engine.generate_recommendations(
+            content_type=ContentType.MOVIE, count=5
+        )
+
+        assert bool(recommendations) is offered
 
 
 class TestTvRecommendationCarriesDbIdRegression:

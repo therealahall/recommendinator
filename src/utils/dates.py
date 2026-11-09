@@ -15,6 +15,18 @@ def parse_iso_timestamp(raw: object) -> datetime | None:
         return None
 
 
+def parse_calendar_date(raw: object) -> date | None:
+    """The day as written, never shifted by zone: a release date names a
+    calendar day, and Epic's midnight-UTC stamp means that day too.
+    """
+    if not isinstance(raw, str):
+        return None
+    try:
+        return date.fromisoformat(raw[:10])
+    except ValueError:
+        return None
+
+
 def _as_utc(value: datetime) -> datetime:
     """Return *value* as an aware UTC datetime, assuming a naive value is UTC."""
     return value if value.tzinfo is not None else value.replace(tzinfo=UTC)

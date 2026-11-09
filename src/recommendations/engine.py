@@ -2,6 +2,7 @@ import logging
 import random
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from datetime import date
 from typing import Any, TypeVar
 
 from src.models.content import (
@@ -9,6 +10,7 @@ from src.models.content import (
     ContentItem,
     ContentType,
 )
+from src.models.detail_fields import to_int
 from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.identity import candidate_key
 from src.recommendations.preferences import PreferenceAnalyzer, UserPreferences
@@ -33,6 +35,7 @@ from src.recommendations.variety import (
     variety_penalty_for,
 )
 from src.storage.manager import StorageManager
+from src.utils.dates import local_today, parse_calendar_date
 from src.utils.series import (
     SeriesOrder,
     build_series_tracking,
@@ -66,6 +69,25 @@ def _unfiltered(pipeline_scored: list[ScoredCandidate]) -> list[_RankedCandidate
         _RankedCandidate(scored.item, scored.aggregate_score)
         for scored in pipeline_scored
     ]
+
+
+#: The key each type states its exact release day in, then its year.
+_RELEASE_KEYS: dict[ContentType, tuple[str | None, str]] = {
+    ContentType.MOVIE: ("release_date", "release_year"),
+    ContentType.VIDEO_GAME: ("release_date", "release_year"),
+    ContentType.TV_SHOW: ("first_air_date", "release_year"),
+    ContentType.BOOK: (None, "year_published"),
+}
+
+
+def _released(item: ContentItem, today: date) -> bool:
+    """An item stating neither reads as out: most of a library states no date."""
+    date_key, year_key = _RELEASE_KEYS[item.content_type]
+    day = parse_calendar_date(item.metadata.get(date_key)) if date_key else None
+    if day is not None:
+        return day <= today
+    year = to_int(item.metadata.get(year_key))
+    return year is None or year <= today.year
 
 
 def _collapse_duplicate_db_ids(
@@ -277,17 +299,22 @@ class RecommendationEngine:
             ],
             series_order,
         )
+        # Something not out yet stays in the library and in its series' order,
+        # but is nothing to recommend.
+        today = local_today()
         candidates = [
             item
             for item in unconsumed_items
             if item.status != ConsumptionStatus.CURRENTLY_CONSUMING
+            and _released(item, today)
             and not held_by_abandonment(
                 item, series_tracking, abandoned_positions, series_order
             )
         ]
         if not candidates:
             logger.info(
-                "Every unconsumed %s is in progress or after an abandoned entry",
+                "Every unconsumed %s is in progress, unreleased or after an "
+                "abandoned entry",
                 content_type.value,
             )
             return []

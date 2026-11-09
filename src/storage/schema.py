@@ -4,6 +4,7 @@ import sqlite3
 from collections import defaultdict
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import datetime
 from typing import Any, Literal, TypedDict
 
 from src.models.detail_fields import (
@@ -1898,6 +1899,25 @@ def requeue_enrichment_status(
         params,
     )
     conn.commit()
+
+
+def enriched_before_ids(
+    conn: sqlite3.Connection,
+    cutoff: datetime,
+    content_type: str | None = None,
+    user_id: int | None = None,
+    content_item_id: int | None = None,
+) -> list[int]:
+    """*cutoff* is UTC, formatted as the ``CURRENT_TIMESTAMP`` a run stamps."""
+    query, params = _enrichment_scope(None, content_type, user_id, content_item_id)
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT content_item_id FROM enrichment_status"
+        " WHERE needs_enrichment = 0 AND last_enriched_at <= ?"
+        f" AND content_item_id IN ({query})",
+        [cutoff.strftime("%Y-%m-%d %H:%M:%S"), *params],
+    )
+    return [int(row["content_item_id"]) for row in cursor.fetchall()]
 
 
 def _enrichment_count(

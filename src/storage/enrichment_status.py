@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timedelta
 
 from src.models.content import ContentItem, ContentType
 from src.storage.schema import (
     EnrichmentStatusDict,
+    enriched_before_ids,
     enrichment_legacy_count,
     enrichment_reset_count,
     enrichment_scope_ids,
@@ -17,6 +19,10 @@ from src.storage.schema import (
     requeue_enrichment_status,
 )
 from src.storage.sqlite_db import SQLiteDB
+from src.utils.dates import utc_now
+from src.utils.series import awaits_a_season
+
+PENDING_SEASON_REFRESH = timedelta(days=7)
 
 
 @dataclass(frozen=True)
@@ -110,6 +116,31 @@ class EnrichmentStore:
         """
         with self._sqlite_db.connection() as conn:
             requeue_enrichment_status(conn, content_item_id=content_item_id)
+
+    def requeue_pending_seasons(
+        self,
+        content_type: ContentType | None = None,
+        user_id: int | None = None,
+        content_item_id: int | None = None,
+    ) -> None:
+        """A season announced undated, or dated ahead, is held back until a later
+        enrichment dates it, and an enriched item is otherwise never asked again.
+        """
+        if content_type not in (None, ContentType.TV_SHOW):
+            return
+        now = utc_now()
+        with self._sqlite_db.connection() as conn:
+            stale = enriched_before_ids(
+                conn,
+                now - PENDING_SEASON_REFRESH,
+                ContentType.TV_SHOW.value,
+                user_id,
+                content_item_id,
+            )
+        today = now.astimezone().date()
+        for item in self._sqlite_db.get_content_items_by_db_ids(stale):
+            if item.db_id is not None and awaits_a_season(item, today):
+                self.requeue(item.db_id)
 
     def reset(
         self,

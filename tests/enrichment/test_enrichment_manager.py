@@ -3,6 +3,7 @@ import sqlite3
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -42,6 +43,7 @@ from src.storage.field_writes import (
 from src.storage.manager import StorageManager
 from src.storage.schema import _LEGACY_EXTERNAL_ID_SOURCE
 from src.utils.matching import Candidate
+from src.utils.series import expand_tv_shows_to_seasons
 from tests.factories import make_storage_mock
 
 
@@ -3411,3 +3413,70 @@ class TestARunEndsWithTheProfileItsGenresImply:
             "test tag",
         }
         assert set(affinities.values()) == {5.0}
+
+
+class SeasonDatingProvider(MockProvider):
+    def __init__(self, season_air_dates: dict[str, dict[str, str | None]]) -> None:
+        super().__init__(name="tmdb", content_types=[ContentType.TV_SHOW])
+        self.season_air_dates = season_air_dates
+
+    def enrich(
+        self, item: ContentItem, config: dict[str, Any]
+    ) -> EnrichmentResult | None:
+        self.enrich_calls.append(item)
+        return EnrichmentResult(
+            extra_metadata={
+                "season_air_dates": dict(self.season_air_dates[item.title])
+            },
+            match_quality="high",
+        )
+
+
+class TestAShowAwaitingASeasonIsEnrichedAgain:
+    AIRED = {"1": "2020-01-01", "2": "2021-01-01", "3": "2022-01-01"}
+
+    def test_an_announced_season_is_dated_by_a_run_a_week_later(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Nothing else re-queues an enriched show, so a season first listed
+        undated was held back from recommendations forever."""
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        db_ids = {
+            title: storage_manager.save_content_item(
+                ContentItem(
+                    id=title.lower(),
+                    title=title,
+                    content_type=ContentType.TV_SHOW,
+                    status=ConsumptionStatus.UNREAD,
+                    metadata={"total_seasons": 4, "seasons_watched": [1, 2, 3]},
+                )
+            )
+            for title in ("Awaiting", "Aired")
+        }
+        provider = SeasonDatingProvider(
+            {
+                "Awaiting": {**self.AIRED, "4": None},
+                "Aired": {**self.AIRED, "4": "2023-01-01"},
+            }
+        )
+
+        def offered_seasons() -> list[int]:
+            manager = manager_over(storage_manager, provider)
+            manager.start_enrichment()
+            assert manager._wait_for_completion()
+            show = storage_manager.get_content_item(db_ids["Awaiting"])
+            return [
+                season.metadata["season"]
+                for season in expand_tv_shows_to_seasons([show])
+            ]
+
+        assert offered_seasons() == []
+        provider.season_air_dates["Awaiting"]["4"] = "2024-01-01"
+        provider.enrich_calls.clear()
+        assert offered_seasons() == []
+        assert provider.enrich_calls == []
+
+        week_later = datetime.now(UTC) + timedelta(days=8)
+        monkeypatch.setattr("src.storage.enrichment_status.utc_now", lambda: week_later)
+        assert offered_seasons() == [4]
+        assert [item.title for item in provider.enrich_calls] == ["Awaiting"]

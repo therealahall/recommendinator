@@ -9,7 +9,11 @@ from enum import Enum
 from typing import Any, NamedTuple, TypedDict
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
-from src.utils.dates import local_date_from_iso_timestamp
+from src.utils.dates import (
+    local_date_from_iso_timestamp,
+    local_today,
+    parse_calendar_date,
+)
 from src.utils.matching import normalize_title
 
 MAX_SEASONS = 200
@@ -581,10 +585,38 @@ def latest_season_watched_date(item: ContentItem) -> date | None:
     return max(parsed) if parsed else None
 
 
+def _last_aired_season(item: ContentItem, total_seasons: int, today: date) -> int:
+    """A season TMDB never listed is left to the show's own release: the dates
+    are as old as its last enrichment, and a sync counts seasons it lacks. One
+    it listed undated while dating others is announced rather than aired.
+    """
+    air_dates = item.metadata.get("season_air_dates")
+    if not isinstance(air_dates, dict) or not any(air_dates.values()):
+        return total_seasons
+    for season in range(1, total_seasons + 1):
+        if str(season) not in air_dates:
+            continue
+        aired = parse_calendar_date(air_dates[str(season)])
+        if aired is None or aired > today:
+            return season - 1
+    return total_seasons
+
+
+def awaits_a_season(item: ContentItem, today: date) -> bool:
+    air_dates = item.metadata.get("season_air_dates")
+    if not isinstance(air_dates, dict):
+        return False
+    return any(
+        (aired := parse_calendar_date(raw)) is None or aired > today
+        for raw in air_dates.values()
+    )
+
+
 def expand_tv_shows_to_seasons(items: list[ContentItem]) -> list[ContentItem]:
     """Library stays at show level; this expansion is for recommendation scoring
     only.
     """
+    today = local_today()
     expanded: list[ContentItem] = []
     for item in items:
         if item.content_type != ContentType.TV_SHOW:
@@ -608,8 +640,10 @@ def expand_tv_shows_to_seasons(items: list[ContentItem]) -> list[ContentItem]:
         # it onto all of them would mark seasons never started as in progress.
         active_seasons = in_progress_seasons(item)
         # Whatever the series ordering, a season is not next until the one
-        # being watched is finished.
-        last_season = min(active_seasons | {total_seasons})
+        # being watched is finished, nor while one before it is yet to air.
+        last_season = min(
+            active_seasons | {_last_aired_season(item, total_seasons, today)}
+        )
 
         for season_num in range(1, last_season + 1):
             if season_num in watched_set:

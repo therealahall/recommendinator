@@ -445,6 +445,10 @@ DETAIL_FIELDS: dict[str, ContentTypeFields] = {
                 aliases=("total_seasons",),
                 template_column="total_seasons",
             ),
+            # Ledger-resolved, unlike the blob's season counts: the weekly
+            # re-enrichment of a show awaiting a season must replace its dates,
+            # not keep the first.
+            DetailField("season_air_dates", FieldKind.FREE_FORM, FieldOwner.WRITER),
             DetailField(
                 "release_year",
                 FieldKind.INTEGER,

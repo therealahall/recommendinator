@@ -532,6 +532,14 @@ class EnrichmentManager:
                     len(not_found_ids),
                 )
 
+            # Every run, CLI, web or after a sync, so a show's unaired season is
+            # re-dated by whichever one comes next.
+            self.storage_manager.enrichment.requeue_pending_seasons(
+                content_type=content_type,
+                user_id=user_id,
+                content_item_id=content_item_id,
+            )
+
             # Status polling reads total_items mid-run, so it must be set
             # before the first batch starts. Querying upfront avoids the
             # previous "growing in batch_size steps" UI behavior.
