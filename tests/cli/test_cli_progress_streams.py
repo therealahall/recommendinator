@@ -17,7 +17,7 @@ from .conftest import _invoke_with_mocks
 class TestUpdateProgressIsOffTheDataChannel:
     def _run(self, tmp_path: Path, display_name: str | None = None) -> Any:
         def sync(progress_callback: Any, **_: Any) -> list[SyncResult]:
-            progress_callback(10, 100, "Dune", "books")
+            progress_callback(10, 100, "Dune", "books", "save")
             return [
                 SyncResult(
                     source_name="books",

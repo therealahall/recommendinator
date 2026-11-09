@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from src.config.service import auto_enrich_enabled
 from src.enrichment.manager import EnrichmentManager, EnrichmentStart
 from src.ingestion.sync import (
+    SyncPhase,
     SyncResult,
     execute_multi_source_sync,
     release_sources,
@@ -47,11 +48,14 @@ def build_sync_job(
     content_type = enrichment_content_type(resolved)
 
     def run_sync(job: SyncJob) -> int:
+        job.source_count = len(source_pairs)
+
         def progress_callback(
             items_processed: int,
             total_items: int | None,
             current_item: str | None,
             current_source: str | None,
+            phase: SyncPhase,
         ) -> None:
             sync_manager.update_progress(
                 source=job_key,
@@ -59,6 +63,7 @@ def build_sync_job(
                 total_items=total_items,
                 current_item=current_item,
                 current_source=current_source,
+                phase=phase,
             )
 
         def result_callback(result: SyncResult) -> None:

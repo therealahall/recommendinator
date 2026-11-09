@@ -461,34 +461,36 @@ describe('useDataStore', () => {
     expect(store.syncMessage).toContain('5000')
   })
 
-  it('checkSyncStatus aggregates running jobs into a single banner', async () => {
-    mockGet.mockResolvedValue({
-      status: 'running',
-      jobs: [
-        {
-          source: 'Goodreads',
-          status: 'running',
-          items_processed: 5,
-          total_items: 10,
-          errors: [],
-          sources: [],
-        },
-        {
-          source: 'Steam',
-          status: 'running',
-          items_processed: 3,
-          total_items: 20,
-          errors: [],
-          sources: [],
-        },
-      ],
+  it('banners the server figure, and none across runs that join and leave', async () => {
+    const job = (source: string, progress_percent: number, status = 'running') => ({
+      source,
+      status,
+      items_processed: 0,
+      total_items: 10,
+      progress_percent,
+      errors: [],
+      sources: [],
     })
-
+    const poll = (...jobs: ReturnType<typeof job>[]) => ({ status: 'running', jobs })
+    mockGet
+      .mockResolvedValueOnce(poll(job('Goodreads', 50)))
+      .mockResolvedValueOnce(poll(job('Goodreads', 90), job('Steam', 15), job('Roms', 15)))
+      .mockResolvedValueOnce(
+        poll(job('Goodreads', 100, 'completed'), job('Steam', 15), job('Roms', 15)),
+      )
     const store = useDataStore()
-    await store.checkSyncStatus()
 
-    expect(store.syncMessage).toContain('8/30')
-    expect(store.syncMessage).toContain('Syncing 2 sources in parallel')
+    await store.checkSyncStatus()
+    expect(store.syncMessage).toMatch(/^50% - Syncing Goodreads/)
+
+    await store.checkSyncStatus()
+    expect(store.syncMessage).toMatch(/^Syncing 3 sources in parallel/)
+
+    await store.checkSyncStatus()
+    expect(store.syncMessage).toMatch(/^Syncing 2 sources in parallel/)
+    expect(store.syncMessage).not.toContain('%')
+
+    store.cleanup()
   })
 
   describe('enrichment stats poll regression', () => {

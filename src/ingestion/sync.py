@@ -6,7 +6,7 @@ from collections.abc import Callable, Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from src.ingestion.plugin_base import SourceError, SourcePlugin
 from src.ingestion.source_labels import label_for_source
@@ -23,8 +23,16 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Callback signature: (items_processed, total_items, current_item_title, current_source)
-SyncProgressCallback = Callable[[int, int | None, str | None, str | None], None]
+# The counts restart when a source moves from fetching to saving, and a plugin's
+# own fetch figures restart with each of its sub-phases, so a consumer wanting a
+# figure that only rises needs the phase alongside them.
+SyncPhase = Literal["fetch", "save"]
+
+# Callback signature: (items_processed, total_items, current_item_title,
+# current_source, phase)
+SyncProgressCallback = Callable[
+    [int, int | None, str | None, str | None, SyncPhase], None
+]
 
 
 # One entry per failed item, so a library refusing every one of them put
@@ -248,7 +256,7 @@ def execute_sync(
     safe_source_name = sanitize_for_log(source_name)
 
     if progress_callback:
-        progress_callback(0, None, "Fetching...", source_id)
+        progress_callback(0, None, "Fetching...", source_id, "fetch")
 
     # One function decides what a source is called, so the token owner, the
     # attribution and the delete key agree for every id.
@@ -280,7 +288,9 @@ def execute_sync(
         items_processed: int, total_items: int | None, current_item: str | None
     ) -> None:
         if progress_callback:
-            progress_callback(items_processed, total_items, current_item, source_id)
+            progress_callback(
+                items_processed, total_items, current_item, source_id, "fetch"
+            )
 
     items: list[ContentItem] = list(
         plugin.fetch(plugin_config, progress_callback=fetch_progress)
@@ -288,7 +298,7 @@ def execute_sync(
 
     result.total_items = len(items)
     if progress_callback:
-        progress_callback(0, result.total_items, None, source_id)
+        progress_callback(0, result.total_items, None, source_id, "save")
 
     logger.info(
         "[SYNC] %s: Found %d items, saving...", safe_source_name, result.total_items
@@ -307,7 +317,9 @@ def execute_sync(
             if progress_callback:
                 # Report ``item_num`` (1-based) so the UI shows the current
                 # item number rather than the count of completed items.
-                progress_callback(item_num, result.total_items, safe_title, source_id)
+                progress_callback(
+                    item_num, result.total_items, safe_title, source_id, "save"
+                )
 
             logger.debug(
                 "[SYNC] %s: Syncing %s %d/%d - %s",

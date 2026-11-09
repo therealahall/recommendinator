@@ -1,16 +1,18 @@
 import asyncio
 import logging
 import threading
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
 from fastapi import FastAPI
 
-from src.ingestion.sync import ALL_SOURCES_KEY, ALL_SOURCES_LABEL
+from src.ingestion.sync import ALL_SOURCES_KEY, ALL_SOURCES_LABEL, SyncResult
 from src.library.rebuild import owe_library_rebuild
 from src.sources.service import ResolvedInput
 from src.storage.manager import StorageManager
@@ -66,13 +68,14 @@ class TestSyncJobToDict:
         assert result["current_item"] == "The Name of the Wind"
         assert result["current_source"] == "goodreads"
         assert result["error_message"] == "Some warning"
-        assert result["progress_percent"] == 50
         assert result["errors"] == [
             {"source": "goodreads", "message": "Error 1"},
             {"source": "goodreads", "message": "Error 2"},
         ]
 
-    def test_progress_percent_when_total_is_zero(self) -> None:
+    def test_progress_percent_is_unknown_until_the_run_knows_its_sources(
+        self,
+    ) -> None:
         job = SyncJob(source="steam", items_processed=5, total_items=0)
         assert job.to_dict()["progress_percent"] is None
 
@@ -266,24 +269,62 @@ class TestSyncManagerPerSourceProgress:
         assert by_source["steam"]["total_items"] == 20
         assert by_source["steam"]["current_item"] == "Game B"
 
-    def test_progress_percent_uses_aggregate(self) -> None:
+    def test_no_run_or_row_figure_falls_as_sources_start_and_change_phase(
+        self,
+    ) -> None:
+        """Issue #271: the figure read 72%, 68%, 74%, 71% through one run, and a
+        row's bar emptied as its source moved from fetching to saving."""
         manager = SyncManager()
-        _planted(manager, "all")
+        job = _planted(manager, ALL_SOURCES_KEY)
+        figures: defaultdict[str, list[int]] = defaultdict(list)
+        events: list[tuple[int, int | None, str | None, str, str] | SyncResult] = [
+            (0, None, "Fetching...", "a", "fetch"),
+            SyncResult(source_name="A", source_id="a", errors=["401"]),
+            (0, None, "Fetching...", "b", "fetch"),
+            (50, 50, "Portal 2", "b", "fetch"),
+            (0, None, "Fetching...", "c", "fetch"),
+            (0, 50, None, "b", "save"),
+            (0, 400, "Fetching library...", "c", "fetch"),
+            (30, 30, "wishlist", "c", "fetch"),
+            (3, 400, "owned_games", "c", "fetch"),
+            (50, 50, "Portal 2", "b", "save"),
+            SyncResult(source_name="B", source_id="b", items_synced=50),
+            (0, 400, None, "c", "save"),
+            (400, 400, "Hades", "c", "save"),
+            SyncResult(source_name="C", source_id="c", items_synced=400),
+        ]
 
-        manager.update_progress(
-            source="all",
-            items_processed=2,
-            total_items=10,
-            current_source="goodreads",
-        )
-        manager.update_progress(
-            source="all",
-            items_processed=8,
-            total_items=10,
-            current_source="steam",
-        )
+        def fake_execute(
+            *, progress_callback: Any, result_callback: Any, **_: Any
+        ) -> list[SyncResult]:
+            for event in events:
+                if isinstance(event, SyncResult):
+                    result_callback(event)
+                else:
+                    progress_callback(*event)
+                view = manager.get_status()["jobs"][0]
+                figures["run"].append(view["progress_percent"])
+                for row in view["sources"]:
+                    figures[row["source"]].append(row["progress_percent"])
+            return []
 
-        assert manager.get_status()["jobs"][0]["progress_percent"] == 50
+        dispatch = build_sync_job(
+            manager,
+            ALL_SOURCES_KEY,
+            [ResolvedInput(key, MagicMock(), {"_source_id": key}) for key in "abc"],
+            [],
+            make_storage_mock(),
+            {},
+        )
+        with patch(
+            "src.web.sync_dispatch.execute_multi_source_sync", side_effect=fake_execute
+        ):
+            dispatch.run(job)
+
+        assert figures["run"][1] == 33, "one source finished of three is a third"
+        for name, series in figures.items():
+            assert series == sorted(series), name
+        assert {series[-1] for series in figures.values()} == {100}
 
     def test_concurrent_per_source_updates_no_loss(self) -> None:
         manager = SyncManager()

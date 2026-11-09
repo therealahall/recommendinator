@@ -1042,8 +1042,33 @@ describe('SyncSourceAccordion', () => {
       expect(bar.exists()).toBe(true)
       expect(bar.attributes('aria-valuenow')).toBe('40')
       expect(wrapper.text()).toContain('4/10')
-      expect(wrapper.text()).toContain('40%')
       expect(wrapper.text()).toContain('Half-Life 2')
+    })
+
+    it('holds the row bar when fetching gives way to saving and the counts restart', async () => {
+      const slot = (items_processed: number) => ({
+        source: 'steam',
+        items_processed,
+        total_items: 50,
+        current_item: null,
+        progress_percent: 50,
+        items_added: 0,
+        items_updated: 0,
+        items_unchanged: 0,
+        omitted_errors: 0,
+      })
+      const umbrella = (items_processed: number) =>
+        makeJob({ source: 'All Sources', sources: [slot(items_processed)] })
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: baseSource, syncing: true, job: umbrella(50) },
+      })
+
+      await wrapper.setProps({ job: umbrella(0) })
+
+      expect(wrapper.get('[role="progressbar"]').attributes('aria-valuenow')).toBe('50')
+      const counts = wrapper.get('.source-progress-counts').text()
+      expect(counts).toContain('0/50')
+      expect(counts).not.toContain('%')
     })
 
     it('looks up this source in job.sources[] when job is umbrella', () => {

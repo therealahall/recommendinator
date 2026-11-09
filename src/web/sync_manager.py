@@ -6,7 +6,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from src.ingestion.sync import job_label, sync_run_failed
+from src.ingestion.sync import SyncPhase, job_label, sync_run_failed
 from src.utils.text import exception_for_log, sanitize_for_log
 
 logger = logging.getLogger(__name__)
@@ -34,6 +34,20 @@ class _SourceProgress:
     items_updated: int = 0
     items_unchanged: int = 0
     omitted_errors: int = 0
+    #: How much of this source is done, kept from ever falling though the
+    #: counts above restart with each phase.
+    fraction_done: float = 0.0
+
+    def advance(self, phase: SyncPhase) -> None:
+        share = (
+            min(self.items_processed / self.total_items, 1.0)
+            if self.total_items
+            else 0.0
+        )
+        # Fetching is the first half of a source and saving the second, so the
+        # switch between them lands on the same figure from either side.
+        reached = share / 2 if phase == "fetch" else 0.5 + share / 2
+        self.fraction_done = max(self.fraction_done, reached)
 
 
 @dataclass
@@ -50,26 +64,35 @@ class SyncJob:
     errors: list[SyncError] = field(default_factory=list)
     # Keyed by source id, not name: a rename mid-run must not strand a row's progress.
     source_progress: dict[str, _SourceProgress] = field(default_factory=dict)
+    # Every source the run will sync weighs in from the start: one counted only
+    # from its first report grew the denominator and pulled the figure back.
+    source_count: int = 0
+
+    def _progress_percent(self, slots: list[_SourceProgress]) -> int | None:
+        if not self.source_count:
+            return None
+        done = sum(slot.fraction_done for slot in slots)
+        return int(done * 100 / self.source_count)
 
     def to_dict(self) -> dict[str, Any]:
-        progress_slots = list(self.source_progress.values())
+        # One snapshot, taken in a single step: a status poll reads this outside
+        # the manager's lock while workers add slots, and iterating the live
+        # dict as it grows raises.
+        named_slots = sorted(self.source_progress.items())
+        progress_slots = [progress for _, progress in named_slots]
         sources = [
             {
                 "source": name,
                 "items_processed": progress.items_processed,
                 "total_items": progress.total_items,
                 "current_item": progress.current_item,
-                "progress_percent": (
-                    int(progress.items_processed * 100 / progress.total_items)
-                    if progress.total_items and progress.total_items > 0
-                    else None
-                ),
+                "progress_percent": int(progress.fraction_done * 100),
                 "items_added": progress.items_added,
                 "items_updated": progress.items_updated,
                 "items_unchanged": progress.items_unchanged,
                 "omitted_errors": progress.omitted_errors,
             }
-            for name, progress in sorted(self.source_progress.items())
+            for name, progress in named_slots
         ]
         return {
             "source": job_label(self.source),
@@ -86,11 +109,7 @@ class SyncJob:
             "current_item": self.current_item,
             "current_source": self.current_source,
             "error_message": self.error_message,
-            "progress_percent": (
-                int(self.items_processed * 100 / self.total_items)
-                if self.total_items and self.total_items > 0
-                else None
-            ),
+            "progress_percent": self._progress_percent(progress_slots),
             "errors": [
                 {"source": error.source, "message": error.message}
                 for error in self.errors
@@ -248,6 +267,7 @@ class SyncManager:
         total_items: int | None = None,
         current_item: str | None = None,
         current_source: str | None = None,
+        phase: SyncPhase = "fetch",
     ) -> None:
         with self._lock:
             job = self._jobs.get(source)
@@ -262,6 +282,7 @@ class SyncManager:
                     slot.total_items = total_items
                 if current_item is not None:
                     slot.current_item = current_item
+                slot.advance(phase)
                 job.current_source = current_source
                 # Top-level current_item is intentionally last-write-wins
                 # for the single-line "Currently syncing X" banner;
@@ -279,8 +300,6 @@ class SyncManager:
                     progress.total_items or 0
                     for progress in job.source_progress.values()
                 )
-                # None until at least one source reported a known total —
-                # avoids divide-by-zero in progress_percent rendering.
                 job.total_items = total_sum if total_sum > 0 else None
             else:
                 if items_processed is not None:
@@ -311,6 +330,7 @@ class SyncManager:
             slot.items_updated = items_updated
             slot.items_unchanged = items_unchanged
             slot.omitted_errors = omitted_errors
+            slot.fraction_done = 1.0
 
     def add_error(self, source: str, failed_source: str, error: str) -> None:
         """``failed_source`` names the source the message came from, which the UI

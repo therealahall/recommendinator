@@ -29,12 +29,13 @@ const progress = computed<Omit<SyncSourceProgressResponse, 'omitted_errors'> | n
   return job.sources.find((entry) => entry.source === props.sourceId) || null
 })
 
+// No percentage beside the counts: they restart when fetching gives way to
+// saving, while the bar's figure never falls, so the two would disagree.
 const label = computed<string>(() => {
   const entry = progress.value
   if (!entry) return ''
   if (entry.total_items != null && entry.total_items > 0) {
-    const pct = entry.progress_percent != null ? ` (${entry.progress_percent}%)` : ''
-    return `${entry.items_processed}/${entry.total_items}${pct}`
+    return `${entry.items_processed}/${entry.total_items}`
   }
   return `${entry.items_processed} items`
 })
