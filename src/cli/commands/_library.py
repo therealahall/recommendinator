@@ -68,7 +68,13 @@ from src.utils.item_serialization import (
     ignore_result_to_dict,
     item_to_dict,
 )
-from src.utils.series import MAX_SEASONS
+from src.utils.series import (
+    MAX_SEASONS,
+    season_ratings_of,
+    unrated_seasons_label,
+    unrated_watched_seasons,
+    watched_seasons,
+)
 from src.utils.sorting import MAX_SEARCH_LENGTH, normalize_for_search
 
 _STATUS_CHOICES = [status.value for status in ConsumptionStatus]
@@ -141,6 +147,26 @@ def library_rebuild_status(ctx: click.Context, output_format: str) -> None:
         echo_rebuild(record)
 
 
+def _rating_cell(item: ContentItem) -> str:
+    """Says what the web card's badge says, so a show listed by --needs-rating
+    for its seasons does not read as one that already carries a rating.
+    """
+    rating = "N/A" if item.rating is None else str(item.rating)
+    unrated = unrated_watched_seasons(item.metadata)
+    return f"{rating} ({unrated_seasons_label(len(unrated))})" if unrated else rating
+
+
+def _season_ratings_cell(item: ContentItem) -> str:
+    ratings = season_ratings_of(item.metadata)
+    return (
+        ", ".join(
+            f"{season}: {ratings.get(season, 'unrated')}"
+            for season in sorted(watched_seasons(item.metadata))
+        )
+        or "N/A"
+    )
+
+
 @library.command("list")
 @click.option(
     "--type",
@@ -185,7 +211,10 @@ def library_rebuild_status(ctx: click.Context, output_format: str) -> None:
 @click.option(
     "--needs-rating",
     is_flag=True,
-    help="Only completed items with no rating (overrides --status)",
+    help=(
+        "Only completed items with no rating, and shows with a watched season"
+        " unrated (overrides --status)"
+    ),
 )
 @click.option(
     "--limit",
@@ -246,16 +275,16 @@ def library_list(
         cast(EnrichmentFilter, enrichment_str.lower()) if enrichment_str else None
     )
 
-    # needs_rating means "completed AND unrated": completed status is implied
-    # and takes precedence over any explicitly-passed --status (matches web API).
+    # A show waiting on a season's rating may be in progress, so --needs-rating
+    # brings its own status rule and drops any --status (matches web API).
     if needs_rating:
-        consumption_status = ConsumptionStatus.COMPLETED
+        consumption_status = None
 
     items: list[ContentItem] = storage.get_content_items(
         user_id=user_id,
         content_type=content_type,
         status=consumption_status,
-        unrated_only=needs_rating,
+        needs_rating=needs_rating,
         sort_by=sort_by,
         search=search,
         include_ignored=show_ignored,
@@ -280,8 +309,8 @@ def library_list(
             )
         elif needs_rating:
             click.echo(
-                "Nothing needs a rating. Every item you have finished already "
-                "carries one."
+                "Nothing needs a rating. Every item you have finished, and every "
+                "season you have watched, already carries one."
             )
         elif content_type or consumption_status or enrichment:
             click.echo(
@@ -305,7 +334,7 @@ def library_list(
                 item.author or "N/A",
                 get_enum_value(item.content_type),
                 get_enum_value(item.status),
-                "N/A" if item.rating is None else item.rating,
+                _rating_cell(item),
                 "Yes" if item.enriched else "No",
             ]
         )
@@ -372,6 +401,11 @@ def library_show(
             ["Type", content_type],
             ["Status", get_enum_value(item.status)],
             ["Rating", "N/A" if item.rating is None else item.rating],
+            *(
+                [["Season Ratings", _season_ratings_cell(item)]]
+                if content_type == "tv_show"
+                else []
+            ),
             ["Review", item.review or "N/A"],
             [
                 "Date Completed",
@@ -403,6 +437,33 @@ def library_show(
             ["Description", description or "N/A"],
         ]
         click.echo(tabulate(table_data, tablefmt="grid"))
+
+
+def _parsed_season_ratings(
+    rated: tuple[str, ...], cleared: tuple[int, ...]
+) -> dict[int, int | None] | None:
+    stated: dict[int, int] = {}
+    for value in rated:
+        season, _, rating = value.partition("=")
+        try:
+            stated[int(season)] = int(rating)
+        except ValueError:
+            abort_with(f"--season-rating takes SEASON=RATING, e.g. 2=4, not {value!r}.")
+    if any(
+        not 1 <= season <= MAX_SEASONS or not 1 <= rating <= 5
+        for season, rating in stated.items()
+    ):
+        abort_with(
+            f"--season-rating takes a season from 1 to {MAX_SEASONS} and a rating"
+            " from 1 to 5."
+        )
+    if both := sorted(set(stated) & set(cleared)):
+        abort_with(
+            "--season-rating and --clear-season-rating cannot both name season"
+            f" {both[0]}."
+        )
+    parsed: dict[int, int | None] = {**stated, **dict.fromkeys(cleared)}
+    return parsed or None
 
 
 @library.command("edit")
@@ -445,6 +506,20 @@ def library_show(
     "--clear-seasons",
     is_flag=True,
     help="Remove every watched season",
+)
+@click.option(
+    "--season-rating",
+    "season_ratings",
+    multiple=True,
+    help="Rate a watched season as SEASON=RATING, e.g. 2=4 (repeatable); a show"
+    " with rated seasons takes its rating from their mean",
+)
+@click.option(
+    "--clear-season-rating",
+    "cleared_season_ratings",
+    type=click.IntRange(min=1, max=MAX_SEASONS),
+    multiple=True,
+    help="Remove one season's rating (repeatable)",
 )
 @click.option(
     "--genre",
@@ -510,6 +585,8 @@ def library_edit(
     clear_review: bool,
     seasons_watched: str | None,
     clear_seasons: bool,
+    season_ratings: tuple[str, ...],
+    cleared_season_ratings: tuple[int, ...],
     genres: tuple[str, ...],
     clear_genres: bool,
     tags: tuple[str, ...],
@@ -530,6 +607,8 @@ def library_edit(
         and not clear_review
         and seasons_watched is None
         and not clear_seasons
+        and not season_ratings
+        and not cleared_season_ratings
         and not genres
         and not clear_genres
         and not tags
@@ -541,8 +620,9 @@ def library_edit(
         click.echo(
             "Error: Provide at least one of --title, --status, --rating, "
             "--clear-rating, --review, --clear-review, --seasons-watched, "
-            "--clear-seasons, --genre, --clear-genres, --tag, --clear-tags, "
-            "--description, --release-year, --creator.",
+            "--clear-seasons, --season-rating, --clear-season-rating, --genre, "
+            "--clear-genres, --tag, --clear-tags, --description, --release-year, "
+            "--creator.",
             err=True,
         )
         raise click.Abort()
@@ -622,6 +702,8 @@ def library_edit(
             )
             raise click.Abort()
 
+    rated_seasons = _parsed_season_ratings(season_ratings, cleared_season_ratings)
+
     genre_list = [] if clear_genres else (list(genres) if genres else None)
     tag_list = [] if clear_tags else (list(tags) if tags else None)
     if genre_list is not None and len(genre_list) > MAX_GENRES:
@@ -665,6 +747,7 @@ def library_edit(
             rating=None if clear_rating else unset_if_none(rating),
             review=None if clear_review else unset_if_none(review),
             seasons_watched=parsed_seasons,
+            season_ratings=rated_seasons,
             genres=genre_list,
             tags=tag_list,
             description=description,

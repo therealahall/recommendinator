@@ -428,6 +428,23 @@ describe('EditModal', () => {
     wrapper.unmount()
   })
 
+  it('picking completed keeps a season watched past a stale total, and its rating', async () => {
+    const wrapper = mount(EditModal, {
+      props: {
+        item: { ...tvItem, total_seasons: 2, seasons_watched: [3], season_ratings: { '3': 4 } },
+        saving: false,
+        saveError: '',
+      },
+      attachTo: document.body,
+    })
+
+    await wrapper.find('#edit-status').setValue('completed')
+    await wrapper.findAll('.btn-primary').find(b => b.text().includes('Save'))!.trigger('click')
+
+    expect(wrapper.emitted('save')![0][1]).toEqual({ status: 'completed', seasons_watched: [1, 2, 3] })
+    wrapper.unmount()
+  })
+
   it('opened as Mark complete it preselects completed, and the choice stays editable', async () => {
     const wrapper = mount(EditModal, {
       props: { item: tvItem, saving: false, saveError: '', initialStatus: 'completed' },
@@ -440,6 +457,44 @@ describe('EditModal', () => {
     await wrapper.findAll('.btn-primary').find(b => b.text().includes('Save'))!.trigger('click')
 
     expect(wrapper.emitted('save')![0][1]).toEqual({ seasons_watched: [1, 2, 3, 4] })
+    wrapper.unmount()
+  })
+
+  it('rating a season sends that season alone and shows the show rating it derives', async () => {
+    const wrapper = mount(EditModal, {
+      props: {
+        item: { ...tvItem, rating: 5, season_ratings: { '1': 5 } },
+        saving: false,
+        saveError: '',
+      },
+      attachTo: document.body,
+    })
+
+    const seasonTwo = wrapper.findAll('.season-rating-row')[1]
+    await seasonTwo.get('[aria-label="2 stars"]').trigger('click')
+
+    expect(wrapper.get('[data-testid="derived-rating"]').text()).toContain('4 out of 5')
+    await wrapper.findAll('.btn-primary').find(b => b.text().includes('Save'))!.trigger('click')
+    expect(wrapper.emitted('save')![0][1]).toEqual({ season_ratings: { 2: 2 } })
+    wrapper.unmount()
+  })
+
+  it('a show with no season count still rates the seasons it lists as watched', async () => {
+    const wrapper = mount(EditModal, {
+      props: {
+        item: { ...tvItem, total_seasons: null, rating: 4, season_ratings: { '1': 4 } },
+        saving: false,
+        saveError: '',
+      },
+      attachTo: document.body,
+    })
+
+    const rows = wrapper.findAll('.season-rating-row')
+    expect(rows).toHaveLength(2)
+    await rows[1].get('[aria-label="2 stars"]').trigger('click')
+    await wrapper.findAll('.btn-primary').find(b => b.text().includes('Save'))!.trigger('click')
+
+    expect(wrapper.emitted('save')![0][1]).toEqual({ season_ratings: { 2: 2 } })
     wrapper.unmount()
   })
 

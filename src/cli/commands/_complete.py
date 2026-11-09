@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import click
 
-from src.cli._shared import abort_after_failure, emit_view, is_blank_review
+from src.cli._shared import (
+    abort_after_failure,
+    abort_with,
+    emit_view,
+    is_blank_review,
+)
 from src.models.content import (
     MAX_CREATOR_LENGTH,
     MAX_REVIEW_LENGTH,
@@ -11,6 +16,7 @@ from src.models.content import (
     ContentItem,
     ContentType,
 )
+from src.storage.manager import UncorrectableFieldError
 from src.utils.item_serialization import completion_to_dict
 from src.utils.text import is_blank
 
@@ -55,7 +61,7 @@ def complete(
     """Mark content as completed.
 
     A rating or review given here replaces the stored one, so an empty
-    --review is refused rather than written over a review you wrote.
+    --review is refused. A show with rated seasons refuses --rating.
     Mirrors the web API POST /api/complete.
     """
     content_type = ContentType.from_string(content_type_str)
@@ -107,6 +113,8 @@ def complete(
 
     try:
         db_id = storage.complete_content_item(item)
+    except UncorrectableFieldError as error:
+        abort_with(str(error))
     except Exception as error:
         abort_after_failure(ctx, COMPLETE_FAILED, error)
 

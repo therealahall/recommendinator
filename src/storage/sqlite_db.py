@@ -39,8 +39,10 @@ from src.models.detail_fields import (
 from src.storage.derived import (
     MatchSignals,
     read_match_signals,
+    show_season_ratings,
     signals_conflict,
     write_derived_columns,
+    write_derived_show_rating,
 )
 from src.storage.duplicates import (
     DeclinedPair,
@@ -100,10 +102,14 @@ from src.storage.schema import (
 )
 from src.utils.dates import local_today, merge_seasons_watched_dates, utc_now
 from src.utils.series import (
+    MAX_SEASONS,
+    SEASON_RATINGS_KEY,
     all_seasons_watched,
     reconcile_seasons,
+    season_ratings_of,
     seasons_watched_for_completed,
     status_for_seasons_watched,
+    watched_seasons,
 )
 from src.utils.sorting import (
     SearchMatchTier,
@@ -147,6 +153,11 @@ class FutureCompletionDateError(ValueError):
 class UncorrectableFieldError(ValueError):
     """A correction naming a field the content type does not state — its own
     type so a broken ``DETAIL_FIELDS`` is not answered as a bad request too."""
+
+
+_RATED_BY_SEASONS = (
+    "This show's rating is the mean of its season ratings. Rate its seasons instead."
+)
 
 
 class SaveOutcome(Enum):
@@ -389,6 +400,23 @@ def _corrected_fields(
     return stated
 
 
+def _rated_seasons(
+    metadata: Mapping[str, Any], edits: Mapping[int, int | None]
+) -> dict[int, int]:
+    watched = watched_seasons(metadata)
+    rated = season_ratings_of(metadata)
+    for season, rating in edits.items():
+        if rating is None:
+            rated.pop(season, None)
+        elif season in watched:
+            rated[season] = rating
+        else:
+            raise UncorrectableFieldError(
+                f"Season {season} is not watched, so it cannot be rated."
+            )
+    return rated
+
+
 def _assert_correctable(
     content_type: str, release_year: int | None, creator: str | None
 ) -> None:
@@ -460,6 +488,22 @@ _ENRICHED_PREDICATE = (
     " AND es.enrichment_provider IS NOT NULL"
     " AND es.enrichment_provider != 'none'"
     " AND es.enrichment_quality != 'not_found'"
+)
+
+_TV_METADATA = f"{DETAIL_FIELDS['tv_show'].table_alias}.metadata"
+
+# The SQL reading of ``unrated_watched_seasons``. json_each raises on a blob
+# that does not parse, so it is handed NULL instead, which yields no rows.
+_NEEDS_RATING_PREDICATE = (
+    f"(ci.status = '{ConsumptionStatus.COMPLETED.value}' AND ci.rating IS NULL)"
+    f" OR (ci.status != '{ConsumptionStatus.DNF.value}' AND EXISTS ("
+    "SELECT 1 FROM json_each("
+    f"CASE WHEN json_valid({_TV_METADATA}) THEN {_TV_METADATA} END,"
+    " '$.seasons_watched') watched"
+    f" WHERE json_type({_TV_METADATA}, '$.seasons_watched') = 'array'"
+    f" AND watched.type = 'integer' AND watched.value BETWEEN 1 AND {MAX_SEASONS}"
+    f" AND json_extract({_TV_METADATA},"
+    f" '$.{SEASON_RATINGS_KEY}.\"' || watched.value || '\"') IS NULL))"
 )
 
 
@@ -729,6 +773,8 @@ class SQLiteDB:
             and date_completed > local_today() + MAX_COMPLETION_DATE_SKEW
         ):
             raise FutureCompletionDateError
+        if rating is not None and show_season_ratings(cursor, db_id):
+            raise UncorrectableFieldError(_RATED_BY_SEASONS)
 
         set_parts = ["status = 'completed'", "updated_at = CURRENT_TIMESTAMP"]
         params: list[Any] = []
@@ -929,9 +975,10 @@ class SQLiteDB:
         # was actually stored rather than the one this sync offered.
         write_derived_columns(cursor, db_id)
 
-        season_status_moved = content_type_value == "tv_show" and (
-            self._handle_tv_season_change(cursor, db_id)
-        )
+        season_status_moved = False
+        if content_type_value == "tv_show":
+            row_changed |= write_derived_show_rating(cursor, db_id)
+            season_status_moved = self._handle_tv_season_change(cursor, db_id)
 
         if existing_id is None:
             outcome = SaveOutcome.ADDED
@@ -1241,7 +1288,7 @@ class SQLiteDB:
         content_type: ContentType | None = None,
         status: ConsumptionStatus | list[ConsumptionStatus] | None = None,
         min_rating: int | None = None,
-        unrated_only: bool = False,
+        needs_rating: bool = False,
         limit: int | None = None,
         offset: int = 0,
         sort_by: str = "title",
@@ -1251,7 +1298,8 @@ class SQLiteDB:
         search: str | None = None,
     ) -> list[ContentItem]:
         """A falsy *limit* is no limit, and *offset* is independent of it: an
-        offset with no limit skips and returns the rest.
+        offset with no limit skips and returns the rest. *needs_rating* is a
+        finished item with no rating, or a show with a watched season unrated.
         """
         # An empty status list matches nothing by definition.
         if isinstance(status, list) and not status:
@@ -1268,7 +1316,7 @@ class SQLiteDB:
             content_type=content_type,
             status=status,
             min_rating=min_rating,
-            unrated_only=unrated_only,
+            needs_rating=needs_rating,
             include_ignored=include_ignored,
             ignored_only=ignored_only,
             enrichment=enrichment,
@@ -1289,7 +1337,7 @@ class SQLiteDB:
         content_type: ContentType | None,
         status: ConsumptionStatus | list[ConsumptionStatus] | None,
         min_rating: int | None,
-        unrated_only: bool,
+        needs_rating: bool,
         include_ignored: bool,
         ignored_only: bool,
         enrichment: EnrichmentFilter | None,
@@ -1319,8 +1367,8 @@ class SQLiteDB:
             where += " AND ci.rating >= ?"
             params.append(min_rating)
 
-        if unrated_only:
-            where += " AND ci.rating IS NULL"
+        if needs_rating:
+            where += f" AND ({_NEEDS_RATING_PREDICATE})"
 
         if not include_ignored:
             where += " AND (ci.ignored = 0 OR ci.ignored IS NULL)"
@@ -1540,6 +1588,7 @@ class SQLiteDB:
         rating: int | None | Unset = UNSET,
         review: str | None | Unset = UNSET,
         seasons_watched: list[int] | None = None,
+        season_ratings: Mapping[int, int | None] | None = None,
         genres: list[str] | None = None,
         tags: list[str] | None = None,
         description: str | None = None,
@@ -1547,9 +1596,9 @@ class SQLiteDB:
         creator: str | None = None,
         user_id: int | None = None,
     ) -> bool:
-        """No status empties the list: the dialog hides the checklist for a show
-        whose total never synced. Every field supplied but the status is held
-        from here on.
+        """No status empties the list, and only against a known total does the
+        list complete a show or reopen one. Every field supplied but the status
+        is held from here on. A ``None`` season rating clears that season's.
         """
         if description is not None:
             # Whitespace is not a description: a blank normalises to the clear,
@@ -1578,6 +1627,10 @@ class SQLiteDB:
             )
 
             _assert_correctable(content_type, release_year, creator)
+            if season_ratings and content_type != "tv_show":
+                raise UncorrectableFieldError(
+                    f"A {content_type} has no seasons to rate."
+                )
 
             if content_type == "tv_show":
                 cursor.execute(
@@ -1595,9 +1648,16 @@ class SQLiteDB:
                     if seasons_watched is None:
                         if status == "completed":
                             seasons_watched = seasons_watched_for_completed(
-                                total_seasons
+                                total_seasons, watched_seasons(existing_metadata)
                             )
-                    elif status is UNSET and existing_status != ConsumptionStatus.DNF:
+                    elif (
+                        status is UNSET
+                        and existing_status != ConsumptionStatus.DNF
+                        and (
+                            total_seasons
+                            or existing_status != ConsumptionStatus.COMPLETED
+                        )
+                    ):
                         resolved_status = status_for_seasons_watched(
                             seasons_watched, total_seasons
                         ).value
@@ -1621,6 +1681,20 @@ class SQLiteDB:
                             new_dates[key] = now_iso
                     existing_metadata["seasons_watched"] = seasons_watched
                     existing_metadata["seasons_watched_dates"] = new_dates
+
+                seasons_edited = seasons_watched is not None or bool(season_ratings)
+                if seasons_edited:
+                    rated = _rated_seasons(existing_metadata, season_ratings or {})
+                    if rated:
+                        existing_metadata[SEASON_RATINGS_KEY] = {
+                            str(season): value
+                            for season, value in sorted(rated.items())
+                        }
+                    else:
+                        existing_metadata.pop(SEASON_RATINGS_KEY, None)
+                if rating is not UNSET and season_ratings_of(existing_metadata):
+                    raise UncorrectableFieldError(_RATED_BY_SEASONS)
+                if tv_row and seasons_edited:
                     cursor.execute(
                         "UPDATE tv_show_details SET metadata = ?"
                         " WHERE content_item_id = ?",
@@ -1646,6 +1720,7 @@ class SQLiteDB:
                 f"UPDATE content_items SET {', '.join(set_parts)} WHERE id = ?",
                 params,
             )
+            write_derived_show_rating(cursor, db_id)
 
             record_field_writes(
                 cursor,

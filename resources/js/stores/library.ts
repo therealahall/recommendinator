@@ -115,7 +115,7 @@ export const useLibraryStore = defineStore('library', () => {
       }
       if (typeFilter.value) params.type = typeFilter.value
       if (needsRating.value) {
-        // needs-rating forces completed, so a status param would contradict it.
+        // needs-rating brings its own status rule, so a status param would contradict it.
         params.needs_rating = true
       } else if (statusFilter.value) {
         params.status = statusFilter.value

@@ -19,6 +19,7 @@ from src.utils.matching import Candidate
 from src.utils.series import (
     get_series_name_from_metadata,
     get_series_position_from_metadata,
+    season_ratings_of,
 )
 
 
@@ -46,9 +47,9 @@ def related_item_to_dict(item: ContentItem) -> RelatedItemPayload:
 
 def extract_tv_season_fields(
     item: ContentItem,
-) -> tuple[list[int] | None, int | None]:
+) -> tuple[list[int] | None, int | None, dict[str, int] | None]:
     if get_enum_value(item.content_type) != "tv_show":
-        return None, None
+        return None, None, None
     metadata = item.metadata
     seasons_watched = metadata.get("seasons_watched")
     total_seasons: int | None = None
@@ -58,11 +59,15 @@ def extract_tv_season_fields(
             total_seasons = int(seasons_raw)
         except (ValueError, TypeError):
             pass
-    return seasons_watched, total_seasons
+    season_ratings = {
+        str(season): rating
+        for season, rating in sorted(season_ratings_of(metadata).items())
+    }
+    return seasons_watched, total_seasons, season_ratings
 
 
 def item_to_dict(item: ContentItem) -> dict[str, object]:
-    seasons_watched, total_seasons = extract_tv_season_fields(item)
+    seasons_watched, total_seasons, season_ratings = extract_tv_season_fields(item)
     metadata = item.metadata
     return {
         "external_ids": [pair.model_dump() for pair in item.external_ids],
@@ -80,6 +85,7 @@ def item_to_dict(item: ContentItem) -> dict[str, object]:
         ),
         "ignored": bool(item.ignored),
         "seasons_watched": seasons_watched,
+        "season_ratings": season_ratings,
         "total_seasons": total_seasons,
         # None means the state is unknown (an item not read back from storage),
         # which the wire type presents as "not enriched".

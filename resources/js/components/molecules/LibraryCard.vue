@@ -28,6 +28,14 @@ const sources = computed(() => {
 
 const sourcesLabelId = useId()
 
+// What puts a show in Needs rating while it holds a rating of its own.
+const unratedSeasons = computed(() => {
+  const rated = props.item.season_ratings ?? {}
+  const count = (props.item.seasons_watched ?? []).filter((season) => !(season in rated)).length
+  if (count === 0) return ''
+  return count === 1 ? '1 season unrated' : `${count} seasons unrated`
+})
+
 const emit = defineEmits<{
   edit: [dbId: number]
   merge: [dbId: number]
@@ -83,6 +91,7 @@ function statusTone(status: string): string | undefined {
       <span class="badge" :data-tone="statusTone(item.status)" data-testid="status-badge">
         {{ formatStatusForContentType(item.status, item.content_type) }}
       </span>
+      <span v-if="unratedSeasons" class="badge" data-tone="warning">{{ unratedSeasons }}</span>
       <span v-if="!item.enriched" class="badge">Not enriched</span>
       <span v-if="item.ignored" class="badge" data-tone="warning">Ignored</span>
     </div>

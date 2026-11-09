@@ -89,6 +89,24 @@ describe('LibraryCard', () => {
     expect(labels.filter((label) => label.includes(baseItem.title))).toEqual(labels)
   })
 
+  it('badges a show by the watched seasons it has not rated', () => {
+    const show = {
+      ...baseItem,
+      content_type: 'tv_show',
+      rating: 5,
+      seasons_watched: [1, 2],
+      season_ratings: { '1': 5 },
+    }
+    const wrapper = mount(LibraryCard, { props: { item: show } })
+
+    expect(wrapper.find('.library-meta').text()).toContain('1 season unrated')
+
+    const rated = mount(LibraryCard, {
+      props: { item: { ...show, season_ratings: { '1': 5, '2': 4 } } },
+    })
+    expect(rated.find('.library-meta').text()).not.toContain('unrated')
+  })
+
   it('renders no action buttons when the item has no db_id', () => {
     const wrapper = mount(LibraryCard, { props: { item: { ...baseItem, db_id: null } } })
     expect(wrapper.find('.library-item-actions').exists()).toBe(false)

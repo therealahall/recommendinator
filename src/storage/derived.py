@@ -1,6 +1,7 @@
 import json
 import sqlite3
 from dataclasses import dataclass
+from typing import Any
 
 from src.models.detail_fields import (
     DETAIL_FIELDS,
@@ -14,7 +15,11 @@ from src.storage.merge import (
     regions_conflict,
     stated_region,
 )
-from src.utils.series import get_series_name_from_metadata
+from src.utils.series import (
+    derived_show_rating,
+    get_series_name_from_metadata,
+    season_ratings_of,
+)
 from src.utils.sorting import build_search_text, get_sort_title
 
 
@@ -165,16 +170,40 @@ def backfill_derived_columns(cursor: sqlite3.Cursor) -> None:
         _write_row(cursor, row)
 
 
-def _stated_series(blob: str | None) -> str | None:
+def _parsed_blob(blob: str | None) -> dict[str, Any]:
     if not blob:
-        return None
+        return {}
     try:
         metadata = json.loads(blob)
     except (json.JSONDecodeError, TypeError):
-        return None
-    if not isinstance(metadata, dict):
-        return None
-    return get_series_name_from_metadata(metadata)
+        return {}
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _stated_series(blob: str | None) -> str | None:
+    return get_series_name_from_metadata(_parsed_blob(blob))
+
+
+def show_season_ratings(cursor: sqlite3.Cursor, db_id: int) -> dict[int, int]:
+    cursor.execute(
+        "SELECT metadata FROM tv_show_details WHERE content_item_id = ?", (db_id,)
+    )
+    row = cursor.fetchone()
+    return season_ratings_of(_parsed_blob(row["metadata"] if row else None))
+
+
+def write_derived_show_rating(cursor: sqlite3.Cursor, db_id: int) -> bool:
+    """Every door that can move a show's season ratings runs this, so that its
+    rating is their mean whenever it has any.
+    """
+    derived = derived_show_rating(show_season_ratings(cursor, db_id))
+    if derived is None:
+        return False
+    cursor.execute(
+        "UPDATE content_items SET rating = ? WHERE id = ? AND rating IS NOT ?",
+        (derived, db_id, derived),
+    )
+    return cursor.rowcount > 0
 
 
 def _write_row(cursor: sqlite3.Cursor, row: sqlite3.Row) -> None:

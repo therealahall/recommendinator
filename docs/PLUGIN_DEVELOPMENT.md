@@ -205,8 +205,8 @@ First-party code also reads these unrecognised keys out of the blob:
 | [Length scorer](SCORING.md#content-length-preferences), `src/recommendations/content_length.py` | **book** `num_pages`, `number_of_pages`. **TV show** `number_of_seasons`. **video game** `average_playtime_hours` |
 | Series ordering, `src/utils/series.py` | Series name: `series_name`, or the provider-owned `series_title`. Position: `series_position`, `series_number`, `series_num`, `book_number`, `book_num`, `season`, `season_number`, `season_num`, `part`, `part_number`, `episode`, `episode_number`. Expanding a show into seasons: `number_of_seasons` |
 | [Release gating](SCORING.md#unreleased-items), `src/recommendations/engine.py` | **movie** and **video game** `release_date`. **TV show** `first_air_date` |
-| Season checklist and the [variety ladder](SCORING.md#variety-after-completion), `src/utils/series.py` | `seasons_watched`, `seasons_watched_dates` |
-| Library export, `src/utils/export.py` | `notes` on every type. **TV show** `seasons_watched`, `seasons_watched_dates`. **video game** `playtime_hours` |
+| Season checklist and the [variety ladder](SCORING.md#variety-after-completion), `src/utils/series.py` | `seasons_watched`, `seasons_watched_dates`, `season_ratings` |
+| Library export, `src/utils/export.py` | `notes` on every type. **TV show** `seasons_watched`, `seasons_watched_dates`, `season_ratings`. **video game** `playtime_hours` |
 
 That list grows, so check those files. The rest of the blob is yours.
 

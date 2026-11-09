@@ -94,7 +94,9 @@ These four act on the caller's word alone, and touch only what it named:
 
 - **`complete_content_item`** backs `complete` and `POST /api/complete`. It
   finds or creates the row and applies rating, review, status and date in one
-  transaction. `status` is written outright rather than resolved forward.
+  transaction. `status` is written outright rather than resolved forward. A
+  rating for a show with rated seasons is refused whole, as the edit door
+  refuses it: the show's rating is their mean.
 - **`update_item_from_ui`** backs the web edit modal and `library edit`.
   `status`, `rating` and `review` use the `UNSET` sentinel, because for the last
   two `None` has to mean clear.

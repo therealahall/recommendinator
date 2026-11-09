@@ -803,6 +803,33 @@ class TestExportRoundtrip:
         assert reimported[0].metadata["seasons_watched"] == [1, 2]
         assert latest_season_watched_date(reimported[0]) == date(2026, 3, 9)
 
+    @pytest.mark.parametrize(
+        ("importer", "export"),
+        [(CsvImporter(), export_items_csv), (JsonImporter(), export_items_json)],
+        ids=["csv", "json"],
+    )
+    def test_a_restore_keeps_each_seasons_rating(
+        self, importer: Importer, export: Callable[..., str], tmp_path: Path
+    ) -> None:
+        original = ContentItem(
+            id="rt4",
+            title="Roundtrip Show",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.CURRENTLY_CONSUMING,
+            rating=4,
+            metadata={"seasons_watched": [1, 2], "season_ratings": {"1": 5, "2": 2}},
+        )
+        reimported = _reimport(
+            importer, export([original], ContentType.TV_SHOW), ContentType.TV_SHOW
+        )
+
+        target = SQLiteDB(tmp_path / "restored.db")
+        restored = target.get_content_item(target.save_content_item(reimported[0]))
+
+        assert restored is not None
+        assert restored.metadata.get("season_ratings") == {"1": 5, "2": 2}
+        assert target.get_content_items(needs_rating=True) == []
+
     def test_csv_roundtrip_movie_through_storage_regression(
         self, tmp_path: Path
     ) -> None:

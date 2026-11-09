@@ -519,6 +519,22 @@ def test_complete_endpoint_overwrites_existing_rating_regression(
     assert stored.rating == 2
 
 
+def test_complete_endpoint_answers_a_refused_rating_in_its_own_words(
+    client, mock_components
+):
+    mock_components["storage"].complete_content_item.side_effect = (
+        UncorrectableFieldError("Rate its seasons instead.")
+    )
+
+    response = client.post(
+        "/api/complete",
+        json={"content_type": "tv_show", "title": "Dune", "rating": 1},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Rate its seasons instead."
+
+
 class TestCompletionEndpointRefusesABlankReview:
     """Typed ``str | None``, ``{"review": ""}`` reaches the overwriting completion
     door and erases a review the user wrote."""
@@ -1468,18 +1484,6 @@ def test_list_items_include_ignored_true(client, mock_components):
     assert call_kwargs["include_ignored"] is True
 
 
-def test_list_items_needs_rating_forces_completed_and_unrated(client, mock_components):
-    mock_components["storage"].get_content_items.return_value = []
-
-    response = client.get("/api/items?user_id=1&needs_rating=true")
-    assert response.status_code == 200
-
-    mock_components["storage"].get_content_items.assert_called_once()
-    call_kwargs = mock_components["storage"].get_content_items.call_args[1]
-    assert call_kwargs["status"] == ConsumptionStatus.COMPLETED
-    assert call_kwargs["unrated_only"] is True
-
-
 def test_list_items_needs_rating_overrides_explicit_status(client, mock_components):
     mock_components["storage"].get_content_items.return_value = []
 
@@ -1487,8 +1491,8 @@ def test_list_items_needs_rating_overrides_explicit_status(client, mock_componen
     assert response.status_code == 200
 
     call_kwargs = mock_components["storage"].get_content_items.call_args[1]
-    assert call_kwargs["status"] == ConsumptionStatus.COMPLETED
-    assert call_kwargs["unrated_only"] is True
+    assert call_kwargs["status"] is None
+    assert call_kwargs["needs_rating"] is True
 
 
 def test_list_items_answers_for_a_stored_object_shaped_genre(mock_components, tmp_path):
@@ -1584,6 +1588,7 @@ def test_edit_item_status(client, mock_components):
         rating=UNSET,
         review=UNSET,
         seasons_watched=None,
+        season_ratings=None,
         genres=None,
         tags=None,
         description=None,
@@ -1600,18 +1605,27 @@ def test_edit_tv_show_seasons(client, mock_components):
         title="Test Show",
         content_type=ContentType.TV_SHOW,
         status=ConsumptionStatus.CURRENTLY_CONSUMING,
-        metadata={"seasons": 10, "seasons_watched": [1, 2, 3]},
+        metadata={
+            "seasons": 10,
+            "seasons_watched": [1, 2, 3],
+            "season_ratings": {"2": 4},
+        },
     )
     mock_components["storage"].update_item_from_ui = Mock(return_value=True)
     mock_components["storage"].get_content_item = Mock(return_value=updated_item)
 
     response = client.patch(
         "/api/items/42?user_id=1",
-        json={"status": "currently_consuming", "seasons_watched": [1, 2, 3]},
+        json={
+            "status": "currently_consuming",
+            "seasons_watched": [1, 2, 3],
+            "season_ratings": {"2": 4, "3": None},
+        },
     )
     assert response.status_code == 200
     data = response.json()
     assert data["seasons_watched"] == [1, 2, 3]
+    assert data["season_ratings"] == {"2": 4}
     assert data["total_seasons"] == 10
 
     mock_components["storage"].update_item_from_ui.assert_called_once_with(
@@ -1621,6 +1635,7 @@ def test_edit_tv_show_seasons(client, mock_components):
         rating=UNSET,
         review=UNSET,
         seasons_watched=[1, 2, 3],
+        season_ratings={2: 4, 3: None},
         genres=None,
         tags=None,
         description=None,
@@ -1655,6 +1670,12 @@ def test_edit_rejects_out_of_range_season_regression(client, mock_components):
         },
     )
     assert too_many.status_code == 422
+
+    for season_ratings in ({"0": 4}, {"1": 6}):
+        unratable = client.patch(
+            "/api/items/42?user_id=1", json={"season_ratings": season_ratings}
+        )
+        assert unratable.status_code == 422
 
     mock_components["storage"].update_item_from_ui.assert_not_called()
 
@@ -1877,6 +1898,7 @@ def test_edit_item_manual_metadata(client, mock_components):
         rating=UNSET,
         review=UNSET,
         seasons_watched=None,
+        season_ratings=None,
         genres=["Drama"],
         tags=["slow-burn"],
         description="Hand written.",

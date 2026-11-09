@@ -19,6 +19,8 @@ export interface ContentItemResponse {
   date_completed?: string | null
   ignored: boolean
   seasons_watched: number[] | null
+  /** Each rated season's rating, keyed by its number. */
+  season_ratings?: Record<string, number> | null
   total_seasons: number | null
   release_year: number | null
   series: string | null
@@ -469,6 +471,8 @@ export interface ItemEditRequest {
   rating?: number | null
   review?: string | null
   seasons_watched?: number[] | null
+  /** A null clears that season's rating. */
+  season_ratings?: Record<number, number | null>
   genres?: string[]
   tags?: string[]
   description?: string | null

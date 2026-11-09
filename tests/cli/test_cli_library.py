@@ -199,6 +199,7 @@ class TestLibraryList:
             "date_completed",
             "ignored",
             "seasons_watched",
+            "season_ratings",
             "total_seasons",
             "release_year",
             "series",
@@ -300,20 +301,35 @@ class TestLibraryList:
         assert call_kwargs["offset"] == 10
         assert call_kwargs["include_ignored"] is True
 
-    def test_list_needs_rating_forces_completed_unrated(
-        self, cli_runner: CliRunner
-    ) -> None:
+    def test_list_needs_rating_overrides_status(self, cli_runner: CliRunner) -> None:
         mock_storage = make_storage_mock()
         mock_storage.get_content_items.return_value = []
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["library", "list", "--needs-rating", "--status", "unread"],
+            mock_storage,
+        )
+
+        assert result.exit_code == 0
+        call_kwargs = mock_storage.get_content_items.call_args[1]
+        assert call_kwargs["status"] is None
+        assert call_kwargs["needs_rating"] is True
+
+    def test_list_names_the_unrated_seasons_the_web_card_badges(
+        self, cli_runner: CliRunner
+    ) -> None:
+        show = _make_item(db_id=1, title="Severance", content_type=ContentType.TV_SHOW)
+        show.metadata = {"seasons_watched": [1, 2], "season_ratings": {"1": 5}}
+        mock_storage = make_storage_mock()
+        mock_storage.get_content_items.return_value = [show]
 
         result = _invoke_with_mocks(
             cli_runner, ["library", "list", "--needs-rating"], mock_storage
         )
 
         assert result.exit_code == 0
-        call_kwargs = mock_storage.get_content_items.call_args[1]
-        assert call_kwargs["status"] == ConsumptionStatus.COMPLETED
-        assert call_kwargs["unrated_only"] is True
+        assert "1 season unrated" in result.output
 
 
 class TestLibraryListCreatorColumnRegression:
@@ -416,6 +432,7 @@ class TestLibraryShow:
             "date_completed",
             "ignored",
             "seasons_watched",
+            "season_ratings",
             "total_seasons",
             "release_year",
             "series",
@@ -483,7 +500,11 @@ class TestLibraryShow:
         item = _make_item(
             db_id=1, title="Breaking Bad", content_type=ContentType.TV_SHOW
         )
-        item.metadata = {"seasons_watched": [1, 2, 3], "seasons": "5"}
+        item.metadata = {
+            "seasons_watched": [1, 2, 3],
+            "seasons": "5",
+            "season_ratings": {"3": 2, "1": 5},
+        }
         mock_storage = make_storage_mock()
         mock_storage.get_content_item.return_value = item
 
@@ -496,6 +517,7 @@ class TestLibraryShow:
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert parsed["seasons_watched"] == [1, 2, 3]
+        assert parsed["season_ratings"] == {"1": 5, "3": 2}
         assert parsed["total_seasons"] == 5
 
     def test_show_table_states_the_series_the_title_no_longer_carries(
@@ -655,6 +677,42 @@ class TestLibraryEdit:
         assert result.exit_code == 0
         call_kwargs = mock_storage.update_item_from_ui.call_args[1]
         assert call_kwargs["seasons_watched"] == sent
+
+    def test_edit_sends_each_season_rating_and_clear_it_names(
+        self, cli_runner: CliRunner
+    ) -> None:
+        item = _make_item(db_id=1, title="Show", content_type=ContentType.TV_SHOW)
+        mock_storage = make_storage_mock()
+        mock_storage.get_content_item.return_value = item
+        mock_storage.update_item_from_ui.return_value = True
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["library", "edit", "--id", "1", "--season-rating", "1=5"]
+            + ["--season-rating", "2=2", "--clear-season-rating", "3"],
+            mock_storage,
+        )
+
+        assert result.exit_code == 0, result.output
+        call_kwargs = mock_storage.update_item_from_ui.call_args[1]
+        assert call_kwargs["season_ratings"] == {1: 5, 2: 2, 3: None}
+
+    @pytest.mark.parametrize("value", ["two=4", "2", "2=6", "0=3"])
+    def test_edit_refuses_a_season_rating_it_cannot_read(
+        self, cli_runner: CliRunner, value: str
+    ) -> None:
+        mock_storage = make_storage_mock()
+        mock_storage.get_content_item.return_value = _make_item(db_id=1)
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["library", "edit", "--id", "1", "--season-rating", value],
+            mock_storage,
+        )
+
+        assert result.exit_code != 0
+        assert "--season-rating takes" in result.output
+        mock_storage.update_item_from_ui.assert_not_called()
 
     def test_edit_genres_tags_description(self, cli_runner: CliRunner) -> None:
         item = _make_item(db_id=1, title="Book One")
@@ -987,7 +1045,7 @@ class TestLibraryEditClearing:
         assert stored is not None
         assert stored.rating is None
         assert stored.review == "Loved it"
-        assert storage.get_content_items(user_id=1, unrated_only=True) != []
+        assert storage.get_content_items(user_id=1, needs_rating=True) != []
 
     def test_clear_review_stores_null_regression(
         self, cli_runner: CliRunner, tmp_path: Path

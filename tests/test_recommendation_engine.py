@@ -2057,6 +2057,23 @@ class TestContinuationScorerExclusion:
         assert scored["Show Y (Season 3)"]["continuation"] == 1.0
         assert scored["Show Z (Season 1)"]["genre_match"] > 0.5
 
+    def test_the_next_season_follows_the_latest_season_rated_not_the_show_mean(
+        self, real_engine, real_storage
+    ):
+        """The show's one rating carried a great first season past a bad second."""
+        db_id = real_storage.save_content_item(
+            self._show("y", "Show Y", ConsumptionStatus.CURRENTLY_CONSUMING, 3, (1, 2))
+        )
+        real_storage.update_item_from_ui(db_id, season_ratings={1: 5, 2: 2})
+
+        (season_3,) = real_engine.generate_recommendations(
+            content_type=ContentType.TV_SHOW, count=10
+        )
+
+        assert real_storage.get_content_item(db_id).rating == 4
+        assert season_3.item.title == "Show Y (Season 3)"
+        assert season_3.score_breakdown["continuation"] == pytest.approx(0.25)
+
     def test_the_next_season_of_a_loved_show_outranks_an_unstarted_one_regression(
         self, engine, mock_storage
     ):
@@ -2373,18 +2390,24 @@ class TestAnInProgressItemIsCitedOnItsRatingRegression:
     Real storage, because the signal accessor is what admits it on its rating."""
 
     @staticmethod
-    def _dune_book(real_engine, real_storage, show_rating):
+    def _dune_book(real_engine, real_storage, show_rating, season_ratings=None):
         _save_movie(real_storage, title="Rio Bravo", genre="Western", rating=5)
-        real_storage.save_content_item(
+        show_id = real_storage.save_content_item(
             ContentItem(
                 id="dune-show",
                 title="Dune",
                 content_type=ContentType.TV_SHOW,
                 status=ConsumptionStatus.CURRENTLY_CONSUMING,
                 rating=show_rating,
-                metadata={"genre": "Science Fiction"},
+                metadata={
+                    "genre": "Science Fiction",
+                    "seasons": 4,
+                    "seasons_watched": [1, 2],
+                },
             )
         )
+        if season_ratings:
+            real_storage.update_item_from_ui(show_id, season_ratings=season_ratings)
         _save_book(
             real_storage,
             item_id="dune-book",
@@ -2407,6 +2430,13 @@ class TestAnInProgressItemIsCitedOnItsRatingRegression:
         assert ContentType.TV_SHOW in [
             item.content_type for item in book.contributing_items
         ]
+
+    def test_a_show_part_way_through_lifts_its_book_on_its_rated_seasons(
+        self, real_engine, real_storage
+    ):
+        book = self._dune_book(real_engine, real_storage, None, {1: 5, 2: 5})
+
+        assert book.score_breakdown["adaptation"] == 1.0
 
     def test_an_unrated_show_part_way_through_is_neither_cited_nor_lifting(
         self, real_engine, real_storage

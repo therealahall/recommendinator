@@ -10,7 +10,7 @@ Reads a CSV of one content type, which you pick when you upload the file.
   `pages`, `year_published`, `genre`
 - `movie`: `director`, `year`, `runtime_minutes`, `genre`
 - `tv_show`: `creator`, `seasons_watched`, `seasons_watched_dates`,
-  `total_seasons`, `year`, `genre`
+  `season_ratings`, `total_seasons`, `year`, `genre`
 - `video_game`: `developer`, `platform`, `genre`, `hours_played`
 
 `title` is required and a file without it is refused whole. Unknown columns are
@@ -23,7 +23,8 @@ and `dnf`/`did_not_finish` for did not finish.
 Boolean fields accept `true`/`false`, `1`/`0` and `yes`/`no`. `seasons_watched`
 takes a list, `1,2,5,6`, or a count integer. `seasons_watched_dates` takes a JSON
 object mapping a season number to the UTC instant you finished it,
-`{"3": "2026-07-01T17:42:47+00:00"}`, quoted as one cell.
+`{"3": "2026-07-01T17:42:47+00:00"}`, quoted as one cell. `season_ratings` takes
+the same shape with a 1 to 5 rating per season, `{"3": 4}`.
 
 ## Skipped lines
 
@@ -37,7 +38,7 @@ Reported with the file line they were on:
 
 | Column | Rule |
 |---|---|
-| `rating`, `review` | Fill-only. Written while the stored value is empty, never overwritten. |
+| `rating`, `review`, `season_ratings` | Fill-only. Written while the stored value is empty, never overwritten. A show with season ratings takes its rating from them. |
 | `status` | Forward-only: unread → consuming → completed → dnf. A file can advance a status, never revert a completion. It can move an item to dnf, never out of it: a re-import saying read or completed leaves a dnf item as dnf, so change it with an edit. |
 | `date_completed` | Replaced only by a later date. |
 | `genre` | Combines with other writers' genres; a re-import replaces what this file stated before. |
