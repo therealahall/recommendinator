@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v0.78.0 (2026-11-09)
+
+### Documentation
+
+- **scoring**: Describe franchise matching for adaptations
+  ([`c872507`](https://github.com/therealahall/recommendinator/commit/c872507d89547622a41d94bb8ed71a4f5eaa1848))
+
+### Features
+
+- **recommendations**: Match adaptations across a franchise
+  ([`7d8862a`](https://github.com/therealahall/recommendinator/commit/7d8862a78dbe11397ed1a3ed05f2cd28e9fbcdea))
+
+
 ## v0.77.1 (2026-11-09)
 
 ### Bug Fixes
