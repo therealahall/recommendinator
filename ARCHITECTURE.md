@@ -9,7 +9,7 @@ Parses and normalizes data from external sources, plus one-off files through
 
 | Sources | Content |
 |---------|---------|
-| Goodreads RSS shelves, Calibre-Web OPDS | Books |
+| Calibre-Web OPDS | Books |
 | Steam Web API, GOG OAuth, Epic via Legendary, ROM library scanner | Video games |
 | Sonarr | TV shows |
 | Radarr | Movies |

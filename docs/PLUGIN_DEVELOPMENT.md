@@ -166,8 +166,8 @@ class MovieApiPlugin(SourcePlugin):
 
 ## Metadata keys
 
-`metadata` is free-form, but storage recognises a fixed set of keys per content
-type and lifts those into the type's detail table. Anything else is kept
+`metadata` is free-form, but storage lifts a fixed set of keys per content type
+into the type's detail table. Anything else is kept
 verbatim in the detail row's blob. **A misspelled key is not an error
 anywhere**: the value lands in the blob and never reaches the column the rest of
 the app queries.
@@ -198,8 +198,7 @@ An object is refused rather than stored as its Python repr, and the refusal
 fails the whole item's save: sync reports only `Failed to process '<title>'`
 while the log line names the key.
 
-First-party code reads these keys out of the blob, and none of them is a
-recognised key:
+First-party code also reads these unrecognised keys out of the blob:
 
 | Read by | Keys |
 |---|---|
@@ -208,16 +207,15 @@ recognised key:
 | Season checklist and the [variety ladder](SCORING.md#variety-after-completion), `src/utils/series.py` | `seasons_watched`, `seasons_watched_dates` |
 | Library export, `src/utils/export.py` | `notes` on every type. **TV show** `seasons_watched`, `seasons_watched_dates`. **video game** `playtime_hours` |
 
-That list grows, so check those files. Beyond it and the recognised keys, the
-blob is yours.
+That list grows, so check those files. The rest of the blob is yours.
 
 **Taking one of those keys for your own bookkeeping changes behaviour, with no
-warning and no error at any layer.** Your own `number_of_seasons` re-classifies
-the show's length.
+warning or error.** Your own `number_of_seasons` re-classifies the show's
+length.
 
 RAWG writes `average_playtime_hours`, TMDB writes `series_name` and
 `tmdb_collection_id`. Neither writes a position. Each writer's statement is
-recorded, and the stored value rebuilt from them by rank. Write your own
+recorded and the stored value rebuilt by rank. Write your own
 series name to `series_name`.
 
 The series name and position are the other exception: the first writer to name
@@ -462,20 +460,17 @@ the flag, read it with `parse_ignored_field()` from `importers.rows`, not
 
 **`seasons_watched` is a list of season numbers**, `[1, 2, 5, 6]`, not a count.
 Use `parse_seasons_watched()` from `importers.rows` to convert a string. A bare
-integer is read as a count for backward compatibility, so `5` becomes
-`[1, 2, 3, 4, 5]`. `seasons_watched_dates` maps those season numbers, as
+integer is read as a count, so `5` becomes `[1, 2, 3, 4, 5]`. `seasons_watched_dates` maps those season numbers, as
 strings, to ISO timestamps; anything else is discarded.
 
-**Scrub `requests` errors that may carry secrets.** If your plugin passes a
-secret in the URL or query string, the default `str()` of a `requests` exception
-embeds the full request URL and leaks that credential into raised errors and
-logs. Pass it through `scrub_request_error()` from `src.utils.request_errors`,
+**Scrub `requests` errors that may carry secrets.** A `requests` exception's
+`str()` embeds the full request URL, so a secret in the URL or query string
+leaks into raised errors and logs. Pass it through `scrub_request_error()` from `src.utils.request_errors`,
 which returns only `HTTP <status>` or the exception class name.
 
-**A URL-borne secret also needs `from None`.** Break the chain when the
-credential is in the query string; keep `from error` when it travels in a
-header, where the URL is clean.
-A plugin that sends a credential as a query parameter owes two things, and
+**A URL-borne secret also needs `from None`.** Keep `from error` only when the
+credential travels in a header, where the URL is clean. A plugin sending a
+credential as a query parameter owes two things, and
 `tests/test_credential_url_chains.py` fails until it has both: a handler that
 neither logs the raw error, renders a traceback, nor keeps it as `__cause__`,
 and an entry in that file's `_CREDENTIAL_URL_FUNCTIONS`.
@@ -593,6 +588,11 @@ Providers use the source-plugin folder layout under
 shipping one edits no core file. One you do not want in the repo goes in
 `private/plugins/`: both registries scan it and keep the classes they recognise.
 
+Every request carrying the api key goes through `request_within_origin`, since
+`requests` replays the key onto whatever host a `Location` names.
+`tests/test_credential_url_chains.py` fails a provider calling `requests`
+directly.
+
 Everything above `rate_limit_requests_per_second` works as it does on a source
 plugin; the rest differs:
 
@@ -690,6 +690,8 @@ class MyEnrichmentProvider(EnrichmentProvider):
         return is_numeric_record_id(record_id)
 ```
 
+### Pinning a record
+
 The re-check in `enrich` is what repairs an install: tightening
 `accepts_record_id` leaves a bad pin stored, and only the read drops it. Accept
 only ids you offered — one reaching a URL path is operator-typed.
@@ -700,10 +702,7 @@ Return `None` from `candidate_from_url` only where the record does not exist. Ev
 
 Reach the URL through `link_record`, which compares the host whole — a substring test hands `rawg.io.evil.test` your api key — and whitelists the segment. Narrow that segment against your own id pattern before it reaches a request. `tmdb`, `openlibrary`, `hardcover`, `igdb` and `rawg` each read their own site's links.
 
-Every request carrying the api key goes through `request_within_origin`, since
-`requests` replays the key onto whatever host a `Location` names.
-`tests/test_credential_url_chains.py` fails a provider calling `requests`
-directly.
+### Series ordinals
 
 `fetch_series_ordinal` is separate from the match: asked only while no stronger
 source has positioned the item, and alone it never settles an item's provider or
@@ -715,6 +714,8 @@ so a sub-series' number is not filed under its parent. Your name is written only
 where nothing named the series yet.
 
 Every other field is rebuilt by rank.
+
+### Settings and precedence
 
 Your config needs no entry anywhere: the settings registry reads
 `get_config_schema()` and offers each field under `enrichment.providers.<name>`,
@@ -733,7 +734,7 @@ first; state nothing and you follow every provider that does.
 
 | Plugin | Pattern |
 |---|---|
-| `goodreads_rss` | Simple GET plus pagination, no auth |
+| `calibre_web` | Paginated OPDS feed behind basic auth |
 | `steam` | API-based with rate limiting |
 | `gog` | OAuth API with token refresh |
 | `epic_games` | OAuth API via Legendary |

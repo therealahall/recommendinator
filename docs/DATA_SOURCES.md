@@ -7,7 +7,6 @@ share: managing sources, importing a file, parallel sync, and library export.
 
 | Source | Type | Setup guide | Import method |
 |--------|------|-------------|---------------|
-| **Goodreads (RSS)** | Books | [goodreads_rss](../src/ingestion/sources/goodreads_rss/README.md) | Public shelves, no CSV export needed |
 | **Calibre-Web** | Books | [calibre_web](../src/ingestion/sources/calibre_web/README.md) | OPDS |
 | **Steam** | Games | [steam](../src/ingestion/sources/steam/README.md) | Steam Web API |
 | **GOG** | Games | [gog](../src/ingestion/sources/gog/README.md) | OAuth, library and wishlist |
@@ -90,12 +89,11 @@ Per-source rate limits are enforced inside each plugin and are untouched by this
 ## Library export
 
 Click **Export** on the **Library** tab and pick CSV or JSON. The file covers
-the content type you have selected, or the whole library when none is. Nothing
-else on screen narrows it: the status, search and enrichment filters shape the
-view, not the export.
+the selected content type, or the whole library when none is. The status, search
+and enrichment filters narrow the view, not the export.
 
 Only a single-type export matches the import template. What a re-import may
-change depends on the field, and is usually less than you expect:
+change depends on the field:
 
 | Field | What a re-import can do to it |
 |-------|-------------------------------|
@@ -113,16 +111,15 @@ change depends on the field, and is usually less than you expect:
 
 What a sync or an import states is recorded whether or not the column takes it, so a value is only ever the highest-ranked writer's: `library field-writers --id <id>` lists every writer of a field and `library choose-writer` follows another.
 
-Every row this app exports carries a real `true` or `false` in `ignored`, never
-a blank cell, so re-importing an export replaces your entire ignore list with
-the state it had at export time. That is how you un-ignore items in bulk.
+An export writes `true` or `false` in every row's `ignored`, never a blank, so
+re-importing it restores the ignore list as it stood at export time. That is how
+you un-ignore items in bulk.
 
 `year`, `runtime_minutes`, `total_seasons`, `platform`, `hours_played` and the
-creator columns (`director`, `creator`, `developer`) used to export blank and now
-export correctly, so retake any export you keep as a backup — except a creator
-that arrived through a generic CSV or JSON import before this release, which the
-old write path never stored at all, so it stays blank until you re-import that
-file.
+creator columns (`director`, `creator`, `developer`) used to export blank, so
+retake any export you keep as a backup. A creator that a generic CSV or JSON
+import brought in before this release was never stored, and stays blank until
+you re-import that file.
 
 - **`platform` on a GOG library synced before the platform-shape fix.** Starting
   the app rewrites the stored per-platform flag dict as the platform names it
