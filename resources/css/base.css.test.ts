@@ -458,6 +458,17 @@ describe('library filter row (issue #102)', () => {
   })
 })
 
+describe('enrichment reset controls (issue #273)', () => {
+  it('wraps the reset button onto its own line rather than pushing it off a phone', () => {
+    const source = readFileSync(
+      `${process.cwd()}/resources/js/components/molecules/EnrichmentReset.vue`,
+      'utf8',
+    )
+
+    expect(declaration(ruleBlock(source, '.enrichment-reset'), 'flex-wrap')).toBe('wrap')
+  })
+})
+
 describe('stacking order', () => {
   it('leaves no raw z-index and no unused step, so one scale decides what covers what', () => {
     const declared = [...scale(readBase()).keys()]

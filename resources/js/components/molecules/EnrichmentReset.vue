@@ -106,9 +106,12 @@ function answer(reset: boolean): void {
 </template>
 
 <style scoped>
+/* Unwrapped, the three controls are one unbreakable width wider than a phone,
+   and the toolbar wrapping around the group cannot shrink it. */
 .enrichment-reset {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--space-2);
 }
 </style>
