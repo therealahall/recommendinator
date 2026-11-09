@@ -21,6 +21,7 @@ RETIRED_PLUGINS = (
     "markdown_import",
     "goodreads_csv",
     "storygraph_csv",
+    "goodreads_rss",
 )
 
 
@@ -60,6 +61,19 @@ def test_the_items_a_dropped_source_imported_stay_in_the_library(
     drop_sources_replaced_by_upload(storage)
 
     assert [item.title for item in storage.get_content_items(user_id=1)] == ["Dune"]
+
+
+def test_a_goodreads_rss_source_is_dropped_pointing_at_the_csv_import(
+    storage: StorageManager, caplog: pytest.LogCaptureFixture
+) -> None:
+    storage.sources.upsert(1, "shelves", "goodreads_rss", {"user_id": "12345"})
+
+    with caplog.at_level(logging.WARNING):
+        drop_sources_replaced_by_upload(storage)
+
+    assert storage.sources.get(1, "shelves") is None
+    assert "Removed Goodreads RSS source 'shelves'" in caplog.text
+    assert "import the Goodreads CSV export instead" in caplog.text
 
 
 @pytest.mark.parametrize("plugin", ["steam", "personal_site_games"])
@@ -149,8 +163,9 @@ class TestBothDoorsSweepOnBoot:
                 return_value=MagicMock(spec=RecommendationEngine),
             ),
         ):
-            result = CliRunner().invoke(cli, ["status"])
+            result = CliRunner().invoke(cli, ["source", "list", "--format", "json"])
 
         assert result.exit_code == 0, result.output
+        assert "books_csv" not in result.output
         assert storage.sources.get(1, "books_csv") is None
         assert [item.title for item in storage.get_content_items(user_id=1)] == ["Dune"]

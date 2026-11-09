@@ -16,11 +16,16 @@ logger = logging.getLogger(__name__)
 # this boot — must never be read as removed.
 _REPLACED_BY_UPLOAD = frozenset(importer.name for importer in IMPORTERS)
 
+# Named outright because the plugin was deleted, not merely failing to load:
+# Goodreads answers 404 for every shelf feed, and its CSV export replaces it.
+_GOODREADS_RSS = "goodreads_rss"
+
 
 def drop_sources_replaced_by_upload(storage: StorageManager, user_id: int = 1) -> None:
     """The items those sources imported live in ``content_items`` and are untouched."""
     for source in storage.sources.list(user_id):
-        if source["plugin"] not in _REPLACED_BY_UPLOAD:
+        plugin = source["plugin"]
+        if plugin not in _REPLACED_BY_UPLOAD and plugin != _GOODREADS_RSS:
             continue
         source_id = source["source_id"]
         if not storage.sources.delete(user_id, source_id):
@@ -29,9 +34,16 @@ def drop_sources_replaced_by_upload(storage: StorageManager, user_id: int = 1) -
         # inherit this one's runs, its failure backoff or its credentials.
         storage.sync_runs.delete_for_source(user_id, source_id)
         storage.credentials.delete_for_source(user_id, source_id)
+        if plugin == _GOODREADS_RSS:
+            logger.warning(
+                "Removed Goodreads RSS source '%s' — Goodreads no longer serves "
+                "shelf feeds; import the Goodreads CSV export instead.",
+                sanitize_for_log(source_id),
+            )
+            continue
         logger.warning(
             "Removed file-import source '%s' (%s, %s) — upload the file instead.",
             sanitize_for_log(source_id),
-            sanitize_for_log(source["plugin"]),
+            sanitize_for_log(plugin),
             sanitize_for_log(str(source["config"].get("path") or "no path")),
         )
