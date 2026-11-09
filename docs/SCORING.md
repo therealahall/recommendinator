@@ -31,11 +31,14 @@ An entry of a series you have not started gets no series row, so it scores
 exactly as a standalone with the same other rows. Which entry is offered is the
 job of series filtering below.
 
-A candidate the engine knows nothing about scores near `0.5`, because most
-scorers return a neutral `0.5` with no evidence either way. Genre and creator
-dislike are ordinary contributions rather than a veto: a book by an author you
-rated one star sinks to the bottom on those two rows and keeps whatever the
-rest of the rows earn it. It is never removed from the ranking.
+A candidate the engine knows nothing about scores about `0.39` at the default
+weights: `genre_match` and `creator_match` return a neutral `0.5` with no
+evidence either way, but `tag_overlap` returns `0` with no shared tags and keeps
+its weight, so the mean is `(0.5 × 2 + 0.5 × 1.5 + 0 × 1) / 4.5`.
+
+Genre and creator dislike are ordinary contributions rather than a veto: a book
+by an author you rated one star sinks to the bottom on those two rows and keeps
+whatever the rest of the rows earn it. It is never removed from the ranking.
 
 The one thing applied after the weighted mean is the variety penalty below,
 which has its own row in the same panel.
@@ -117,9 +120,8 @@ average sits under the old key until enrichment runs again.
 
 Set **"Variety After Completion"** above `0.0` (web UI slider, or
 `preferences set-variety <0.0-5.0>`) to stop the recommender marching through
-the genre you just finished. `0.0` turns it off. The value is divided by its
-`5.0` maximum to give the top penalty fraction, so `5.0` zeroes a just-finished
-genre's same-type candidates outright. There is **no score floor**.
+the genre you just finished. `0.0` turns it off, and `5.0` zeroes a
+just-finished genre's same-type candidates outright. There is **no score floor**.
 
 Your five most recent completions each own a rung on a ladder that decays by
 completion date, and every genre cluster that completion reaches sits on its
@@ -133,13 +135,11 @@ it shares, and keeps the largest: after a fantasy litrpg adventure, the next boo
 in that series takes the full rung, another litrpg most of it, an epic fantasy a
 fraction, a thriller nothing.
 
-The penalty is **per content type**. Finishing a fantasy *book* varies your book
-recommendations and leaves fantasy *movies* and *games* alone. Every
-recommendation reports the penalty it took, in the CLI table and JSON and in the
-web **Score Details** panel.
+The penalty is **per content type**: a fantasy *book* leaves fantasy *movies*
+and *games* alone. Every recommendation reports the penalty it took, in the CLI
+and in the web **Score Details** panel.
 
-A series gets no exemption: the next book in one you are partway through takes its
-genre's penalty like any other title.
+A series gets no exemption from its genre's penalty.
 
 A finished **TV season** counts as a completion even while the show is still in
 progress, dated by that season's watched date.
@@ -156,7 +156,7 @@ Something in progress is not offered back to you: the book you are reading, the 
 
 No later season of a show appears until the one in flight is finished, whether or not series are in order.
 
-A rating on something in progress counts toward your taste like any other, and a show's rating between seasons also scores its next season.
+A rating on something in progress counts like one on something finished: it shapes your taste, can be cited as a reason, and lifts what adapts it. Unrated, it does none of those. A show's rating between seasons also scores its next season.
 
 A show with a known season count is scored season by season, so the season in flight leaves on its own. Trakt and Tautulli count episodes per season, which names it. Without counts, as after an import, a show with a season finished is between seasons and its next season is offered, while one with none finished is in season 1. A show with no season count cannot be split, and leaves whole while in progress.
 
