@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import UTC, date, datetime
 
 import pytest
 
@@ -414,6 +414,56 @@ class TestExpandTvShowsMarksTheSeasonInFlight:
             item.status == ConsumptionStatus.UNREAD
             for item in expand_tv_shows_to_seasons([show])
         )
+
+
+class TestExpandTvShowsStopsBeforeAnUnairedSeason:
+    AIRED = {"1": "2020-01-01", "2": "2021-01-01", "3": "2022-01-01"}
+
+    @pytest.mark.parametrize(
+        ("total_seasons", "watched", "air_dates", "offered"),
+        [
+            (4, [1, 2, 3], {**AIRED, "4": "2026-11-01"}, [4]),
+            (5, [1, 2, 3, 4], {**AIRED, "4": "2023-01-01", "5": "2027-01-15"}, []),
+            (4, [1, 2, 3], {**AIRED, "4": None}, []),
+            (5, [1, 2, 3], {**AIRED, "4": None, "5": "2026-01-01"}, []),
+            (4, [1, 2, 3], {"1": None, "2": None}, [4]),
+            (4, [1, 2, 3], AIRED, [4]),
+        ],
+        ids=[
+            "aired",
+            "airs-after-today",
+            "announced-undated",
+            "after-an-undated-one",
+            "nothing-dated",
+            "counted-by-a-sync-after-tmdb-dated-the-rest",
+        ],
+    )
+    def test_only_seasons_aired_by_today_are_offered(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        total_seasons: int,
+        watched: list[int],
+        air_dates: dict[str, str | None],
+        offered: list[int],
+    ) -> None:
+        monkeypatch.setattr(
+            "src.utils.dates.utc_now", lambda: datetime(2026, 11, 8, 12, tzinfo=UTC)
+        )
+        show = ContentItem(
+            id="show1",
+            title="The Show",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            metadata={
+                "total_seasons": total_seasons,
+                "seasons_watched": watched,
+                "season_air_dates": air_dates,
+            },
+        )
+
+        assert [
+            season.metadata["season"] for season in expand_tv_shows_to_seasons([show])
+        ] == offered
 
 
 class TestInProgressSeasons:

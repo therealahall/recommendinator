@@ -166,6 +166,14 @@ Something marked did not finish is never offered back. Rated, it shapes your tas
 
 Giving up on a series entry holds every later entry, whether or not series are in order. Finish or start a later entry and the series resumes after it, in order as usual. A show marked did not finish offers none of its seasons.
 
+## Unreleased items
+
+Nothing is recommended before it is out. A movie or game with a release date after today is held back, and without a date, one whose release year is after this year. A book is judged by its year published, a show by its first air date. An item stating neither counts as released. It stays in your library either way.
+
+A show TMDB has enriched also carries each season's air date. A season airing after today is never offered, and nor is one announced without a date while its show's other seasons have one. No later season is offered past either. A season TMDB did not list, such as one a later sync counted, is judged by the show's first air date.
+
+A show holding an undated or upcoming season is enriched again by the first enrichment run a week after its last, which is how that season's date arrives. A show enriched before this release has no season dates until an enrichment reset re-enriches it.
+
 ## Ignored items
 
 An ignored item stays in your library and shapes nothing you are recommended. It
