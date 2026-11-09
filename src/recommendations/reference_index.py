@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from itertools import islice
 
-from src.models.content import ConsumptionStatus, ContentItem, get_enum_value
+from src.models.content import ContentItem, get_enum_value
 from src.recommendations.constants import (
     CROSS_TYPE_MIN_OVERLAP,
     SCORE_PROXIMITY_THRESHOLD,
@@ -18,7 +18,7 @@ from src.recommendations.genre_clusters import (
 )
 from src.recommendations.scorers import extract_creators, extract_genres
 from src.utils.series import get_series_name
-from src.utils.sorting import get_sort_title, titles_similar
+from src.utils.sorting import normalize_for_search, titles_similar
 
 #: References cited per content type: the candidate's own type, and each other.
 _REFERENCES_PER_TYPE = 3
@@ -70,8 +70,8 @@ class _SignalRecord:
     item: ContentItem
     ordinal: int
     rating: int | None
-    sort_title: str
-    sort_author: str | None
+    title_key: str
+    author_key: str | None
     genre_set: frozenset[str]
     clusters: frozenset[str]
     creators: frozenset[str]
@@ -126,8 +126,8 @@ def _record_for(item: ContentItem, ordinal: int) -> _SignalRecord:
         item=item,
         ordinal=ordinal,
         rating=item.rating,
-        sort_title=get_sort_title(item.title),
-        sort_author=get_sort_title(item.author) if item.author else None,
+        title_key=normalize_for_search(item.title),
+        author_key=normalize_for_search(item.author) if item.author else None,
         genre_set=frozenset(genres),
         clusters=frozenset(get_clusters_for_terms(genres)),
         creators=extract_creators(item),
@@ -174,12 +174,7 @@ class SignalIndex:
 
     def __init__(self, signal_items: Sequence[ContentItem]) -> None:
         records = [
-            _record_for(item, ordinal)
-            for ordinal, item in enumerate(
-                item
-                for item in signal_items
-                if item.status != ConsumptionStatus.CURRENTLY_CONSUMING
-            )
+            _record_for(item, ordinal) for ordinal, item in enumerate(signal_items)
         ]
 
         self._adaptations_by_title: dict[str, list[_SignalRecord]] = {}
@@ -189,12 +184,15 @@ class SignalIndex:
 
         for record in records:
             if record.liked:
-                self._adaptations_by_title.setdefault(record.sort_title, []).append(
-                    record
-                )
-                if record.sort_author:
+                # A title of nothing but punctuation folds to "", which every
+                # other such title would equal.
+                if record.title_key:
+                    self._adaptations_by_title.setdefault(record.title_key, []).append(
+                        record
+                    )
+                if record.author_key:
                     self._adaptations_by_author.setdefault(
-                        record.sort_author, []
+                        record.author_key, []
                     ).append(record)
 
             if record.rating is not None and record.rating < _DISLIKED_RATING:
@@ -208,16 +206,18 @@ class SignalIndex:
 
     def adaptations_of(self, candidate: ContentItem) -> list[ContentItem]:
         """Consumed items of another type that *candidate* adapts."""
-        sort_title = get_sort_title(candidate.title)
-        sort_author = get_sort_title(candidate.author) if candidate.author else None
+        title_key = normalize_for_search(candidate.title)
+        author_key = (
+            normalize_for_search(candidate.author) if candidate.author else None
+        )
 
         matched: dict[int, ContentItem] = {}
-        for record in self._adaptations_by_title.get(sort_title, ()):
+        for record in self._adaptations_by_title.get(title_key, ()):
             if record.item.content_type != candidate.content_type:
                 matched[record.ordinal] = record.item
 
-        if sort_author:
-            for record in self._adaptations_by_author.get(sort_author, ()):
+        if author_key:
+            for record in self._adaptations_by_author.get(author_key, ()):
                 if (
                     record.item.content_type != candidate.content_type
                     and titles_similar(candidate.title, record.item.title)

@@ -23,7 +23,12 @@ from src.recommendations.engine import RecommendationEngine
 from src.recommendations.reference_index import SignalIndex
 from tests.factories import make_item, make_storage_mock
 
-_DERIVERS = ("extract_genres", "extract_creators", "get_series_name", "get_sort_title")
+_DERIVERS = (
+    "extract_genres",
+    "extract_creators",
+    "get_series_name",
+    "normalize_for_search",
+)
 
 
 def _signal_item(index: int, *, genre: str, content_type: ContentType) -> ContentItem:
@@ -126,8 +131,8 @@ class TestDerivedValuesComputedOncePerItemRegression:
             assert counted_derivers["extract_genres", item.id] == 1
             assert counted_derivers["extract_creators", item.id] == 1
             assert counted_derivers["get_series_name", item.id] == 1
-            assert counted_derivers["get_sort_title", item.title] == 1
-            assert counted_derivers["get_sort_title", item.author] == 1
+            assert counted_derivers["normalize_for_search", item.title] == 1
+            assert counted_derivers["normalize_for_search", item.author] == 1
 
 
 class TestMatchingGoesThroughTheIndex:
@@ -410,6 +415,50 @@ class TestAdaptationLookupEdges:
 
         adaptations = SignalIndex([book]).adaptations_of(
             self._film("The Silent Tide", author="Mira Vale")
+        )
+
+        assert adaptations == []
+
+    @pytest.mark.parametrize(
+        ("book_title", "book_author", "film_title", "film_author", "matches"),
+        [
+            ("Dune", "Frank Herbert", "Dune: Part One", "Frank Herbert", True),
+            ("Dune", "Frank Herbert", "Dune: Part One", None, False),
+            ("Dune", "Frank Herbert", "Dune", None, True),
+            ("Mrs. Dalloway", "Virginia Woolf", "Mrs Dalloway", None, True),
+            (
+                "The Fellowship of the Ring",
+                "J.R.R. Tolkien",
+                "The Fellowship of the Ring (Extended Edition)",
+                "J. R. R. Tolkien",
+                True,
+            ),
+        ],
+    )
+    def test_punctuation_does_not_decide_a_match(
+        self,
+        book_title: str,
+        book_author: str,
+        film_title: str,
+        film_author: str | None,
+        matches: bool,
+    ) -> None:
+        """Titles and authors were compared with their punctuation, so a stray full
+        stop or colon kept an adaptation from matching."""
+        book = self._book("book", book_title, rating=5, author=book_author)
+
+        adaptations = SignalIndex([book]).adaptations_of(
+            self._film(film_title, author=film_author)
+        )
+
+        assert [item.id for item in adaptations] == (["book"] if matches else [])
+
+    def test_titles_of_nothing_but_punctuation_do_not_match_each_other(self) -> None:
+        """Folding punctuation away leaves both empty, and two empty keys are equal."""
+        book = self._book("book", "...", rating=5, author="Mira Vale")
+
+        adaptations = SignalIndex([book]).adaptations_of(
+            self._film("?!", author="Mira Vale")
         )
 
         assert adaptations == []
