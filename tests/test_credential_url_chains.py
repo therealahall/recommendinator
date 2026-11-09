@@ -73,7 +73,6 @@ _HTTP_VERBS = frozenset({"delete", "get", "head", "patch", "post", "put", "reque
 _UNCREDENTIALED_CALLERS = frozenset(
     {
         ("src/enrichment/providers/wikidata/wikidata.py", "_get"),
-        ("src/ingestion/sources/goodreads_rss/goodreads_rss.py", "_fetch_page"),
     }
 )
 

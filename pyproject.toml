@@ -19,7 +19,6 @@ dependencies = [
     # from there, and the CLI suite reads them apart.
     "click>=8.2.0,<9.0.0",
     "tabulate>=0.9.0,<1.0.0",
-    "defusedxml>=0.7.1,<1.0.0",
     "python-dotenv>=1.0.0,<2.0.0",
     "requests>=2.31.0,<3.0.0",
     "watchfiles>=0.21.0,<2.0.0",
@@ -42,7 +41,6 @@ dev = [
     "types-click>=7.1.0",
     "types-requests>=2.31.0",
     "types-tabulate>=0.9.0",
-    "types-defusedxml>=0.7.0",
     "python-semantic-release>=9.0.0,<11.0.0",
     # 3.1.60 dropped Actor.name_email_regex, which python-semantic-release
     # 10.6.1 still reads — every release fails on it. Not a direct dependency:
