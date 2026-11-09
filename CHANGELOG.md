@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v0.77.1 (2026-11-09)
+
+### Bug Fixes
+
+- **storage**: Let a sync advance a status edited by hand
+  ([`c42a678`](https://github.com/therealahall/recommendinator/commit/c42a678404829df1137b17b9fb2dd7493f44a7fd))
+
+### Documentation
+
+- Say a sync moves a hand-set status forward
+  ([`b776c7b`](https://github.com/therealahall/recommendinator/commit/b776c7b27a8409112287849d25f4d8635ea99651))
+
+
 ## v0.77.0 (2026-11-09)
 
 ### Bug Fixes
