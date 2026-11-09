@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v0.78.1 (2026-11-09)
+
+### Bug Fixes
+
+- **sync**: Keep sync progress from falling during a run
+  ([`dd97f8d`](https://github.com/therealahall/recommendinator/commit/dd97f8df7b346a3a64de5e919375d54905eb5827))
+
+- **web**: Keep the reset enrichment button on screen at phone width
+  ([`0afcdef`](https://github.com/therealahall/recommendinator/commit/0afcdeff489e3a662fd6c44d20e09162db10e8cc))
+
+
 ## v0.78.0 (2026-11-09)
 
 ### Documentation
