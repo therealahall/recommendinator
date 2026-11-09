@@ -178,8 +178,9 @@ class RecommendationEngine:
         )
 
     def _taste_signals(self, scoring: _ConfiguredScoring) -> _TasteSignals:
-        # Taste-signal items (completed, rated, not ignored) shape preference
-        # analysis, scoring, similarity seeds and references alike (issue #99).
+        # Taste-signal items (completed or in progress, rated, not ignored) shape
+        # preference analysis, scoring, similarity seeds and references alike
+        # (issue #99).
         items = self.storage.get_signal_items(content_type=None)
         return _TasteSignals(
             items=items,

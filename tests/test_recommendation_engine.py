@@ -2285,83 +2285,93 @@ class TestSameSeriesReferenceExclusionRegression:
         assert "Battlestar Galactica" in result_titles
 
 
-class TestInProgressItemsExcludedFromBasisRegression:
-    """Bug reported: items with status CURRENTLY_CONSUMING were showing up in the
-    "based on" / contributing items list displayed alongside each recommendation."""
+class TestAnInProgressItemIsCitedOnItsRatingRegression:
+    """A rated show part way through fed scoring but was dropped before citations
+    and adaptations were built, so it never explained or lifted the book it adapts.
+    Real storage, because the signal accessor is what admits it on its rating."""
 
-    def test_contributing_excludes_currently_consuming(self) -> None:
-        engine = _engine_for_helpers()
-
-        candidate = ContentItem(
-            id="breaking_bad",
-            title="Breaking Bad",
-            content_type=ContentType.TV_SHOW,
+    @staticmethod
+    def _dune_book(real_engine, real_storage, show_rating):
+        _save_movie(real_storage, title="Rio Bravo", genre="Western", rating=5)
+        real_storage.save_content_item(
+            ContentItem(
+                id="dune-show",
+                title="Dune",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.CURRENTLY_CONSUMING,
+                rating=show_rating,
+                metadata={"genre": "Science Fiction"},
+            )
+        )
+        _save_book(
+            real_storage,
+            item_id="dune-book",
+            title="Dune",
             status=ConsumptionStatus.UNREAD,
-            metadata={"genres": ["Drama", "Crime", "Thriller"]},
         )
 
-        in_progress = ContentItem(
-            id="the_wire",
-            title="The Wire",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.CURRENTLY_CONSUMING,
-            rating=5,
-            metadata={"genres": ["Drama", "Crime"]},
+        (book,) = real_engine.generate_recommendations(
+            content_type=ContentType.BOOK, count=5
         )
-        completed = ContentItem(
-            id="sopranos",
-            title="The Sopranos",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-            metadata={"genres": ["Drama", "Crime"]},
+        return book
+
+    def test_a_rated_show_part_way_through_is_cited_and_lifts_its_book(
+        self, real_engine, real_storage
+    ):
+        book = self._dune_book(real_engine, real_storage, 5)
+
+        assert book.score_breakdown["adaptation"] == 1.0
+        assert [item.content_type for item in book.adaptations] == [ContentType.TV_SHOW]
+        assert ContentType.TV_SHOW in [
+            item.content_type for item in book.contributing_items
+        ]
+
+    def test_an_unrated_show_part_way_through_is_neither_cited_nor_lifting(
+        self, real_engine, real_storage
+    ):
+        book = self._dune_book(real_engine, real_storage, None)
+
+        assert "adaptation" not in book.score_breakdown
+        assert book.adaptations == []
+        assert ContentType.TV_SHOW not in [
+            item.content_type for item in book.contributing_items
+        ]
+
+    def test_a_rated_show_between_seasons_is_not_cited_for_its_own_next_season(
+        self, real_engine, real_storage
+    ):
+        """Only an in-progress show has a later season, so only it could cite itself."""
+        real_storage.save_content_item(
+            ContentItem(
+                id="expanse",
+                title="The Expanse",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.CURRENTLY_CONSUMING,
+                rating=5,
+                metadata={
+                    "genre": "Science Fiction",
+                    "total_seasons": 2,
+                    "seasons_watched": [1],
+                },
+            )
+        )
+        real_storage.save_content_item(
+            ContentItem(
+                id="firefly",
+                title="Firefly",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+                metadata={"genre": "Science Fiction"},
+            )
         )
 
-        result = SignalIndex([in_progress, completed]).references_for(
-            candidate, engine.rng
+        (season_two,) = real_engine.generate_recommendations(
+            content_type=ContentType.TV_SHOW, count=5
         )
 
-        result_ids = {item.id for item in result}
-        assert result_ids == {"sopranos"}, (
-            "CURRENTLY_CONSUMING items must be excluded from contributing "
-            "references while completed items must remain"
-        )
-
-    def test_adaptations_exclude_currently_consuming(self) -> None:
-        candidate = ContentItem(
-            id="lotr_movie",
-            title="The Fellowship of the Ring",
-            content_type=ContentType.MOVIE,
-            status=ConsumptionStatus.UNREAD,
-            author="J.R.R. Tolkien",
-        )
-
-        in_progress_book = ContentItem(
-            id="lotr_book_in_progress",
-            title="The Fellowship of the Ring",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.CURRENTLY_CONSUMING,
-            rating=5,
-            author="J.R.R. Tolkien",
-        )
-        completed_book = ContentItem(
-            id="lotr_book_done",
-            title="The Fellowship of the Ring",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-            author="J.R.R. Tolkien",
-        )
-
-        result = SignalIndex([in_progress_book, completed_book]).adaptations_of(
-            candidate
-        )
-
-        result_ids = {item.id for item in result}
-        assert result_ids == {"lotr_book_done"}, (
-            "CURRENTLY_CONSUMING items must be excluded from adaptations "
-            "while completed adaptations must still appear"
-        )
+        assert season_two.item.title == "The Expanse (Season 2)"
+        assert [item.title for item in season_two.contributing_items] == ["Firefly"]
 
 
 class TestIgnoredAndUnratedSignalRegression:

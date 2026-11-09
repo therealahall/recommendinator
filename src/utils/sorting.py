@@ -52,11 +52,12 @@ def _contains_on_word_boundary(shorter: str, longer: str) -> bool:
 
 
 def titles_similar(title1: str, title2: str) -> bool:
-    if not title1 or not title2:
-        return False
+    t1_norm = normalize_for_search(title1)
+    t2_norm = normalize_for_search(title2)
 
-    t1_norm = get_sort_title(title1)
-    t2_norm = get_sort_title(title2)
+    # Punctuation-only titles both fold to "", which must not count as equal.
+    if not t1_norm or not t2_norm:
+        return False
 
     if t1_norm == t2_norm:
         return True
