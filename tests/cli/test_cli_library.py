@@ -1000,7 +1000,7 @@ class TestLibraryEditClearing:
         assert stored is not None
         assert stored.review == "Loved it"
 
-    def test_clearing_the_seasons_holds_the_status_they_derive(
+    def test_clearing_the_seasons_resets_the_status_they_derive(
         self, cli_runner: CliRunner, tmp_path: Path
     ) -> None:
         storage = StorageManager(sqlite_path=tmp_path / "seasons.db")
@@ -1025,7 +1025,7 @@ class TestLibraryEditClearing:
         stored = storage.get_content_item(db_id, user_id=1)
         assert stored is not None
         assert stored.status == ConsumptionStatus.UNREAD
-        assert "status" in stored.manual_fields
+        assert stored.manual_fields == []
 
     @pytest.mark.parametrize("emptied", ["", "   "])
     def test_an_empty_description_is_its_clear_as_the_web_box_is(

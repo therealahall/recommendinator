@@ -866,12 +866,7 @@ class TestManualMetadataEdit:
         assert loaded.metadata.get("genres") == ["Drama", "Thriller"]
         assert loaded.metadata.get("tags") == ["slow-burn"]
         assert loaded.metadata.get("description") == "A tense character study."
-        assert set(loaded.manual_fields) == {
-            "status",
-            "genres",
-            "tags",
-            "description",
-        }
+        assert set(loaded.manual_fields) == {"genres", "tags", "description"}
         # An edit is not enrichment: the item stays in front of the providers,
         # which the holds now keep off these four fields.
         assert loaded.enriched is False

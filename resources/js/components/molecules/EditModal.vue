@@ -115,7 +115,7 @@ const manualNote = computed(() => {
   if (clearedField.value) return `${clearedField.value} is no longer held.`
   return heldFields.value.length
     ? 'A sync and enrichment leave these alone.'
-    : 'Editing a field above holds it against its source.'
+    : 'Editing a field above, status aside, holds it against its source.'
 })
 
 const REFUSED_FIELDS: [string, string][] = [
@@ -180,8 +180,8 @@ function sameList(one: readonly (string | number)[], other: readonly (string | n
   return [...one].sort().every((value, index) => value === ordered[index])
 }
 
-// Only what changed is sent: storage holds every field it receives against its
-// source, so an untouched box must not travel with a rating.
+// Only what changed is sent: storage holds every field but the status against
+// its source, so an untouched box must not travel with a rating.
 const edits = computed<ItemEditRequest>(() => {
   const data: ItemEditRequest = {}
   if (title.value.trim() !== loaded.title) data.title = title.value.trim()
