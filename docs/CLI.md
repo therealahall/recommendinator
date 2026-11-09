@@ -169,19 +169,18 @@ are written as given.
 
 The `--clear-*` flags are the only way to store nothing there, and none may be
 combined with its value flag. `--review ""` is
-refused, pointing you at `--clear-review`, because an empty string is far more
-often a shell accident than an intention. A description is the exception:
-`--description ""` is its clear, whitespace included, matching the emptied box
-the web sends.
+refused in favour of `--clear-review`, since an empty string is usually a shell
+accident. `--description ""` is the exception: it clears, as the web's emptied
+box does.
 
 `--seasons-watched` takes comma-separated season numbers, each 1-200. Repeated
 `--genre` and `--tag` replace the existing lists rather than appending.
 
-Every field an edit writes is held against its source: a later sync and every
-enrichment run leave it alone, and `library show` lists what is held. Two
-exceptions on TV shows: a season past the ones you ticked sends it back to
-in-progress, still held, and a sync carrying episode counts re-derives watched
-seasons, so an untick can return.
+Every field an edit writes but the status is held: syncs and enrichment leave
+it alone, and `library show` lists what is held. A sync moves a status forward,
+never back, so one you set back returns at the next sync whose source states the
+later one. On TV shows, a season past those you ticked sends it back to
+in-progress, and a sync with episode counts can return an untick.
 
 `--creator` corrects the field a title match is vetoed on, so a row with a wrong creator takes the next source stating the true one instead of growing the library another row. `--release-year` corrects the year shown. A year runs 1800-2200 and a creator 500 characters; a book takes no `--release-year`, because `year_published` dates the edition rather than the work.
 
