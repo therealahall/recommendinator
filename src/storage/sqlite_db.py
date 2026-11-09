@@ -79,6 +79,7 @@ from src.storage.item_merges import (
     MergeEvidence,
     MergeRecord,
     absorb_item,
+    absorbed_by,
     list_merges,
     merge_predates_the_ledger,
     unmerge_item,
@@ -1905,6 +1906,25 @@ class SQLiteDB:
                 )
             conn.commit()
             return cursor.rowcount > 0
+
+    def count_merged_items(self, db_id: int) -> int:
+        with self.connection() as conn:
+            return len(absorbed_by(conn.cursor(), db_id))
+
+    def delete_content_item(self, db_id: int, user_id: int) -> list[int]:
+        """Every id deleted, *db_id* first. A row a merge hides is refused: its
+        merge record would cascade away, leaving what it absorbed hidden for good.
+        """
+        with self.connection() as conn:
+            cursor = conn.cursor()
+            merged = absorbed_by(cursor, db_id)
+            cursor.execute(
+                "DELETE FROM content_items"
+                " WHERE id = ? AND user_id = ? AND merged_into IS NULL",
+                (db_id, user_id),
+            )
+            conn.commit()
+            return [db_id, *merged] if cursor.rowcount > 0 else []
 
     def count_items(
         self,

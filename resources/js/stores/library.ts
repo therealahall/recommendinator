@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, nextTick } from 'vue'
 import { useApi } from '@/composables/useApi'
 import { useAppStore } from '@/stores/app'
 import { DEFAULT_SORT, MAX_SEARCH_LENGTH, MERGE_CANDIDATE_LIMIT } from '@/constants/library'
@@ -10,6 +10,7 @@ import type {
   EnrichmentPinResponse,
   EnrichmentRequeueResponse,
   FieldWriters,
+  ItemDeletion,
   ItemEditRequest,
   ItemFieldWritersResponse,
   MergeRecord,
@@ -67,8 +68,14 @@ export const useLibraryStore = defineStore('library', () => {
   const mergeSearching = ref(false)
   const merging = ref(false)
   const mergeError = ref('')
-  const mergeAnnouncement = ref('')
   let mergeTimer: ReturnType<typeof setTimeout> | null = null
+
+  // What deleting the item being confirmed takes with it, read before asking.
+  const deletion = ref<ItemDeletion | null>(null)
+  const deleting = new Set<number>()
+
+  // The sentence the last merge or delete leaves for the live region.
+  const announcement = ref('')
 
   const totalLoaded = computed(() => items.value.length)
 
@@ -78,7 +85,7 @@ export const useLibraryStore = defineStore('library', () => {
     hasMore.value = true
     error.value = ''
     // Cleared before the load a merge triggers, which sets it again afterwards.
-    mergeAnnouncement.value = ''
+    announcement.value = ''
     return load(true)
   }
 
@@ -95,9 +102,9 @@ export const useLibraryStore = defineStore('library', () => {
     const app = useAppStore()
     loading.value = true
     error.value = ''
-    // A scrolled page would otherwise flip the live region back to the merge
-    // sentence, re-announcing it and burying the count this load is about.
-    if (!isReset) mergeAnnouncement.value = ''
+    // A scrolled page would otherwise flip the live region back to the merge or
+    // delete sentence, re-announcing it and burying the count this load is about.
+    if (!isReset) announcement.value = ''
 
     try {
       const params: Record<string, string | number | boolean> = {
@@ -344,7 +351,7 @@ export const useLibraryStore = defineStore('library', () => {
     mergeQuery.value = ''
     mergeCandidates.value = []
     mergeError.value = ''
-    mergeAnnouncement.value = ''
+    announcement.value = ''
   }
 
   function closeMerge() {
@@ -403,7 +410,7 @@ export const useLibraryStore = defineStore('library', () => {
       )
       closeMerge()
       await resetAndLoad()
-      mergeAnnouncement.value =
+      announcement.value =
         `Merged “${record.absorbed_title}” into “${record.survivor_title}”.` +
         ' Undo it from Review duplicates.'
     } catch (err) {
@@ -424,6 +431,46 @@ export const useLibraryStore = defineStore('library', () => {
       syncRow(dbId, { ignored })
     } catch (err) {
       error.value = err instanceof Error ? err.message : 'Failed to update'
+    }
+  }
+
+  async function askDelete(dbId: number) {
+    try {
+      deletion.value = await api.get<ItemDeletion>(`/items/${dbId}/deletion`, {
+        user_id: useAppStore().currentUserId,
+      })
+    } catch (err) {
+      error.value = err instanceof Error ? err.message : 'Failed to load item'
+    }
+  }
+
+  function cancelDelete() {
+    deletion.value = null
+  }
+
+  async function deleteItem(dbId: number) {
+    // A second confirm would send a DELETE that 404s on the row the first removed.
+    deletion.value = null
+    if (deleting.has(dbId)) return
+    deleting.add(dbId)
+    try {
+      const gone = await api.delete<ItemDeletion>(`/items/${dbId}`, {
+        user_id: useAppStore().currentUserId,
+      })
+      const index = items.value.findIndex((one) => one.db_id === dbId)
+      if (index >= 0) {
+        items.value.splice(index, 1)
+        // The next page counts from the server's list, which this row has left.
+        offset.value -= 1
+      }
+      // The same title deleted twice leaves the string unchanged, which no live region re-reads.
+      announcement.value = ''
+      await nextTick()
+      announcement.value = `Deleted “${gone.title}”.`
+    } catch (err) {
+      error.value = err instanceof Error ? err.message : 'Failed to delete'
+    } finally {
+      deleting.delete(dbId)
     }
   }
 
@@ -472,7 +519,8 @@ export const useLibraryStore = defineStore('library', () => {
     mergeSearching,
     merging,
     mergeError,
-    mergeAnnouncement,
+    deletion,
+    announcement,
     totalLoaded,
     resetAndLoad,
     load,
@@ -493,6 +541,9 @@ export const useLibraryStore = defineStore('library', () => {
     setMergeQuery,
     mergeInto,
     toggleIgnore,
+    askDelete,
+    cancelDelete,
+    deleteItem,
     exportUrl,
     exportLibrary,
   }

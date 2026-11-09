@@ -1,11 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
+import { watch } from 'vue'
 import { useLibraryStore } from './library'
 import { MAX_SEARCH_LENGTH } from '@/constants/library'
 
 const mockGet = vi.fn()
 const mockPatch = vi.fn()
 const mockPost = vi.fn()
+const mockDelete = vi.fn()
 
 vi.mock('@/composables/useApi', () => ({
   useApi: () => ({
@@ -13,7 +15,7 @@ vi.mock('@/composables/useApi', () => ({
     post: (...args: unknown[]) => mockPost(...args),
     put: vi.fn(),
     patch: (...args: unknown[]) => mockPatch(...args),
-    delete: vi.fn(),
+    delete: (...args: unknown[]) => mockDelete(...args),
   }),
 }))
 
@@ -29,6 +31,7 @@ describe('useLibraryStore', () => {
     mockGet.mockReset()
     mockPatch.mockReset()
     mockPost.mockReset()
+    mockDelete.mockReset()
   })
 
   it('resetAndLoad fetches items', async () => {
@@ -335,7 +338,7 @@ describe('useLibraryStore', () => {
     expect(mockPost.mock.lastCall![0]).toBe('/merges')
     expect(mockPost.mock.lastCall![1]).toEqual({ survivor_id: 1, absorbed_id: 2 })
     expect(store.mergeAnchor).toBeNull()
-    expect(store.mergeAnnouncement).toContain('Merged “Le Fabuleux Destin d’Amelie Poulain” into “Amelie”')
+    expect(store.announcement).toContain('Merged “Le Fabuleux Destin d’Amelie Poulain” into “Amelie”')
     expect(store.items.map((one) => one.db_id)).toEqual([1])
   })
 
@@ -355,12 +358,66 @@ describe('useLibraryStore', () => {
       absorbed_title: 'Le Fabuleux Destin d’Amelie Poulain',
     })
     await store.mergeInto(1, 2)
-    expect(store.mergeAnnouncement).not.toBe('')
+    expect(store.announcement).not.toBe('')
 
     mockGet.mockResolvedValueOnce([])
     await store.loadMore()
 
-    expect(store.mergeAnnouncement).toBe('')
+    expect(store.announcement).toBe('')
+  })
+
+  it('deleteItem drops the card, and the next page skips no row the server moved up', async () => {
+    const page = Array.from({ length: 50 }, (_, i) => ({
+      db_id: i, title: `Item ${i}`, content_type: 'video_game', status: 'unread', ignored: false,
+    }))
+    mockGet.mockResolvedValue(page)
+    const store = useLibraryStore()
+    await store.resetAndLoad()
+    mockGet.mockResolvedValueOnce({ db_id: 3, title: 'Item 3', merged_count: 2 })
+    await store.askDelete(3)
+
+    mockDelete.mockResolvedValue({ db_id: 3, title: 'Item 3', merged_count: 2 })
+    await store.deleteItem(3)
+    mockGet.mockResolvedValueOnce([])
+    await store.loadMore()
+
+    expect(mockDelete.mock.lastCall![0]).toBe('/items/3')
+    expect(store.items.map((one) => one.db_id)).not.toContain(3)
+    expect(store.deletion).toBeNull()
+    expect(mockGet.mock.lastCall![1].offset).toBe(49)
+  })
+
+  it('deleteItem sends one DELETE for a double-clicked confirm, and reports no failure', async () => {
+    mockGet.mockResolvedValue([{ db_id: 3, title: 'Doom', content_type: 'video_game', status: 'unread' }])
+    const store = useLibraryStore()
+    await store.resetAndLoad()
+    store.deletion = { db_id: 3, title: 'Doom', merged_count: 0 }
+    mockDelete.mockResolvedValue({ db_id: 3, title: 'Doom', merged_count: 0 })
+
+    const first = store.deleteItem(3)
+    expect(store.deletion).toBeNull()
+    await Promise.all([first, store.deleteItem(3)])
+
+    expect(mockDelete).toHaveBeenCalledTimes(1)
+    expect(store.error).toBe('')
+  })
+
+  it('deleteItem re-announces a delete whose title matches the one before', async () => {
+    mockGet.mockResolvedValue([
+      { db_id: 3, title: 'Doom', content_type: 'video_game', status: 'unread' },
+      { db_id: 4, title: 'Doom', content_type: 'video_game', status: 'unread' },
+    ])
+    const store = useLibraryStore()
+    await store.resetAndLoad()
+    const announced: string[] = []
+    watch(() => store.announcement, (said) => announced.push(said), { flush: 'sync' })
+
+    mockDelete.mockResolvedValue({ db_id: 3, title: 'Doom', merged_count: 0 })
+    await store.deleteItem(3)
+    mockDelete.mockResolvedValue({ db_id: 4, title: 'Doom', merged_count: 0 })
+    await store.deleteItem(4)
+
+    expect(announced.filter((said) => said === 'Deleted “Doom”.')).toHaveLength(2)
   })
 
   it('mergeInto keeps a refused merge on the picker, leaving it open to correct', async () => {
@@ -376,7 +433,7 @@ describe('useLibraryStore', () => {
     expect(store.mergeError).toBe('A book cannot absorb a movie.')
     expect(store.mergeAnchor).not.toBeNull()
     expect(store.merging).toBe(false)
-    expect(store.mergeAnnouncement).toBe('')
+    expect(store.announcement).toBe('')
   })
 
   it('openEdit refreshes the card behind the dialog and shows the item\'s pins', async () => {

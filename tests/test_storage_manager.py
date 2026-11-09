@@ -230,7 +230,7 @@ class TestEveryUserOwnedWriteLeavesTheProfileCurrent:
             "science fiction": 5.0
         }
 
-    def test_completing_merging_and_ignoring_each_regenerate_it(
+    def test_completing_merging_ignoring_and_deleting_each_regenerate_it(
         self, temp_storage_manager: StorageManager
     ) -> None:
         """Each stamp is a regeneration; the sync door in between is not one,
@@ -253,7 +253,10 @@ class TestEveryUserOwnedWriteLeavesTheProfileCurrent:
         temp_storage_manager.set_item_ignored(survivor, True)
         ignored_at = self._stored(temp_storage_manager)["generated_at"]
 
-        assert completed_at < merged_at < ignored_at
+        temp_storage_manager.delete_content_item(survivor, user_id=1)
+        deleted_at = self._stored(temp_storage_manager)["generated_at"]
+
+        assert completed_at < merged_at < ignored_at < deleted_at
         stored = self._stored(temp_storage_manager)
         implied = self._implied_now(temp_storage_manager)
         del stored["generated_at"], implied["generated_at"]

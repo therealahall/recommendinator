@@ -8,7 +8,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
-from src.cli.commands import library
 from src.models.content import (
     MAX_CREATOR_LENGTH,
     MAX_DESCRIPTION_LENGTH,
@@ -44,6 +43,7 @@ from src.utils.sorting import MAX_SEARCH_LENGTH
 from src.web.api._library import (
     ContentItemResponse,
     IgnoreItemResponse,
+    ItemDeletionResponse,
     LibraryRebuildResponse,
 )
 from tests.factories import make_storage_mock
@@ -1194,6 +1194,91 @@ class TestLibraryIgnore:
         assert restored.ignored is False
 
 
+class TestLibraryDelete:
+    def test_the_prompt_counts_the_merged_items_and_yes_deletes_them_and_covers(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        storage, db_ids = _duplicate_library(tmp_path)
+        survivor = db_ids[0]
+        for absorbed in db_ids[1:3]:
+            assert _merge(cli_runner, storage, survivor, absorbed).exit_code == 0
+        config = {"storage": {"database_path": str(tmp_path / "duplicates.db")}}
+        covers = tmp_path / "covers"
+        covers.mkdir()
+        for db_id in db_ids:
+            (covers / f"{db_id}-0123456789abcdef").write_bytes(b"art")
+
+        declined = _invoke_with_mocks(
+            cli_runner,
+            ["library", "delete", str(survivor)],
+            storage,
+            config=config,
+            input_text="n\n",
+        )
+        deleted = _invoke_with_mocks(
+            cli_runner,
+            ["library", "delete", str(survivor), "--yes", "--format", "json"],
+            storage,
+            config=config,
+        )
+
+        assert "Its 2 merged item(s) will also be deleted." in declined.output
+        assert "Aborted." in declined.output
+        assert deleted.exit_code == 0, deleted.output
+        parsed = json.loads(deleted.output)
+        assert set(parsed) == set(ItemDeletionResponse.model_fields)
+        assert parsed["merged_count"] == 2
+        listed = _json(cli_runner, storage, ["library", "list"])
+        assert [item["db_id"] for item in listed] == [db_ids[3]]
+        assert [path.name for path in covers.iterdir()] == [
+            f"{db_ids[3]}-0123456789abcdef"
+        ]
+
+    def test_an_unknown_item_is_refused(self, cli_runner: CliRunner) -> None:
+        mock_storage = make_storage_mock()
+        mock_storage.get_content_item.return_value = None
+
+        result = _invoke_with_mocks(
+            cli_runner, ["library", "delete", "999", "--yes"], mock_storage
+        )
+
+        assert result.exit_code != 0
+        assert "Item 999 not found." in result.output
+        mock_storage.delete_content_item.assert_not_called()
+
+    def test_a_deleted_rom_comes_back_as_a_new_item_when_its_file_returns(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        storage = StorageManager(sqlite_path=tmp_path / "library.db")
+        config = {"storage": {"database_path": str(tmp_path / "library.db")}}
+        root = tmp_path / "roms"
+        root.mkdir()
+        rom = root / "Metroid Prime.iso"
+        rom.write_bytes(b"rom")
+        storage.sources.upsert(1, "roms", "roms", {"paths": [str(root)]}, enabled=True)
+        update = ["update", "--source", "roms"]
+        assert _invoke_with_mocks(cli_runner, update, storage, config).exit_code == 0
+        (first,) = _json(cli_runner, storage, ["library", "list"])
+        rom.unlink()
+
+        deleted = _invoke_with_mocks(
+            cli_runner,
+            ["library", "delete", str(first["db_id"]), "--yes"],
+            storage,
+            config,
+        )
+        after_delete = _json(cli_runner, storage, ["library", "list"])
+        rom.write_bytes(b"rom")
+        resynced = _invoke_with_mocks(cli_runner, update, storage, config)
+
+        assert deleted.exit_code == 0, deleted.output
+        assert after_delete == []
+        assert resynced.exit_code == 0, resynced.output
+        (back,) = _json(cli_runner, storage, ["library", "list"])
+        assert back["title"] == first["title"]
+        assert back["db_id"] != first["db_id"]
+
+
 class TestLibraryExport:
     def test_export_to_file(self, cli_runner: CliRunner, tmp_path: Path) -> None:
         items = [_make_item(db_id=1, title="Book One")]
@@ -1972,19 +2057,6 @@ class TestDuplicatesOperatorPath:
         assert {block["copies"][0]["title"] for block in offered["suggestions"]} == set(
             titles[:5]
         )
-
-    def test_no_library_verb_deletes_an_item(
-        self, cli_runner: CliRunner, tmp_path: Path
-    ) -> None:
-        storage, db_ids = _duplicate_library(tmp_path)
-
-        gone = _invoke_with_mocks(
-            cli_runner, ["library", "delete", "--id", str(db_ids[0])], storage
-        )
-
-        assert gone.exit_code != 0
-        assert "delete" not in library.commands
-        assert len(_json(cli_runner, storage, ["library", "list"])) == len(db_ids)
 
 
 class TestLibraryEditCorrections:

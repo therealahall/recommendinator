@@ -3,7 +3,7 @@ import { computed, nextTick, onMounted, ref, watch, onUnmounted } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useLibraryStore } from '@/stores/library'
 import { useDataStore } from '@/stores/data'
-import { rescueFocus } from '@/utils/focus'
+import { keepFocusInList, rescueFocus } from '@/utils/focus'
 import LibraryFilters from '@/components/organisms/LibraryFilters.vue'
 import LibraryCard from '@/components/molecules/LibraryCard.vue'
 import LoadingRows from '@/components/molecules/LoadingRows.vue'
@@ -17,6 +17,7 @@ const sentinel = ref<HTMLDivElement | null>(null)
 const editTrigger = ref<HTMLElement | null>(null)
 const mergeTrigger = ref<HTMLElement | null>(null)
 const heading = ref<HTMLElement | null>(null)
+const grid = ref<HTMLElement | null>(null)
 
 // Not showIgnored: it only ever adds rows, so it cannot be what emptied the list.
 const filtered = computed(() =>
@@ -30,7 +31,7 @@ const counted = computed(() =>
 // The skeleton is aria-hidden and the empty states carry their own words, so without this a load and every filter change are silent.
 const loadAnnouncement = computed(() => {
   if (lib.loading) return 'Loading library…'
-  if (lib.mergeAnnouncement) return lib.mergeAnnouncement
+  if (lib.announcement) return lib.announcement
   if (lib.items.length === 0) return ''
   if (lib.searchAnnouncement) return lib.searchAnnouncement
   return lib.hasMore ? `${counted.value} loaded` : `All ${counted.value} loaded`
@@ -114,6 +115,16 @@ function onCloseMerge() {
 async function onMergeInto(survivorId: number, absorbedId: number) {
   await lib.mergeInto(survivorId, absorbedId)
   if (!lib.mergeAnchor) await returnFromMerge()
+}
+
+function onConfirmDelete(dbId: number): Promise<void> {
+  return keepFocusInList(
+    grid,
+    heading,
+    lib.items.findIndex((item) => item.db_id === dbId),
+    () => lib.items.map((item) => String(item.db_id)),
+    () => lib.deleteItem(dbId),
+  )
 }
 
 let observer: IntersectionObserver | null = null
@@ -219,14 +230,18 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <div v-if="lib.items.length > 0" class="library-grid">
+    <div v-if="lib.items.length > 0" ref="grid" class="library-grid">
       <LibraryCard
         v-for="(item, index) in lib.items"
         :key="item.db_id ?? index"
         :item="item"
+        :deletion="lib.deletion?.db_id === item.db_id ? lib.deletion : null"
         @edit="onEdit"
         @merge="onMerge"
         @toggle-ignore="(dbId: number, ignored: boolean) => lib.toggleIgnore(dbId, ignored)"
+        @delete="lib.askDelete"
+        @confirm-delete="onConfirmDelete"
+        @cancel-delete="lib.cancelDelete"
       />
     </div>
 

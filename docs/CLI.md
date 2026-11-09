@@ -37,8 +37,8 @@ file to send anyone to.
 ## Confirmations
 
 The commands that destroy stored data — `source clear-secret`, `source remove`,
-`settings clear-secret`, `preferences reset`, `enrichment reset` and
-`auth disconnect` — each prompt first, naming what goes.
+`settings clear-secret`, `preferences reset`, `enrichment reset`,
+`library delete` and `auth disconnect` — each prompt first, naming what goes.
 So does overwriting an existing `--output` file, in `import-template` and
 `library export`. Pass `--yes` to skip the prompt in a script.
 
@@ -227,6 +227,15 @@ uv run python -m src.cli library unignore --id 42 --format json
 ```
 
 `--format json` emits what `PATCH /api/items/<id>/ignore` answers.
+
+### `library delete`
+
+```bash
+uv run python -m src.cli library delete 42
+uv run python -m src.cli library delete 42 --yes --format json
+```
+
+Deletes the item, every item merged into it, and their cached covers, for a source shut down or a file removed. The prompt says how many merged items go with it; `--yes` skips it. Nothing remembers the item, so a source that still has it brings it back as a new item on its next sync. The web's **Delete** action on a library card does the same. `--format json` emits what `DELETE /api/items/<id>` answers.
 
 ### Duplicates and merges
 

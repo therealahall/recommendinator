@@ -332,3 +332,7 @@ def ignore_result_to_dict(db_id: int, title: str, ignored: bool) -> dict[str, ob
         "ignored": ignored,
         "message": f"Item '{title}' {'ignored' if ignored else 'unignored'}",
     }
+
+
+def deletion_to_dict(db_id: int, title: str, merged_count: int) -> dict[str, object]:
+    return {"db_id": db_id, "title": title, "merged_count": merged_count}

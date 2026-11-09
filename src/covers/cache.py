@@ -33,6 +33,12 @@ def cache_path(cache_dir: Path, db_id: int, cover_url: str) -> Path:
     return cache_dir / f"{db_id}-{digest}"
 
 
+def remove(cache_dir: Path, db_id: int) -> None:
+    # Every file the item ever had: each cover URL it was named under left one.
+    for path in cache_dir.glob(f"{db_id}-*"):
+        path.unlink(missing_ok=True)
+
+
 def store(path: Path, data: bytes) -> None:
     # Renamed into place: a reader must never open a half-written download.
     path.parent.mkdir(parents=True, exist_ok=True)
