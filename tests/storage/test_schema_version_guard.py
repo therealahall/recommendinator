@@ -317,7 +317,7 @@ class TestATableThatArrivedWithoutAVersionBump:
         db = SQLiteDB(db_path)
         kept = db.save_content_item(_a_book("calibre_web", "c:1", "Deadhouse Gates"))
         refused = db.save_content_item(
-            _a_book("goodreads_rss", "2", "Deadhouse Gates (Malazan Book 2)")
+            _a_book("goodreads_csv", "2", "Deadhouse Gates (Malazan Book 2)")
         )
 
         assert [
@@ -717,7 +717,7 @@ class TestWhatCountsAsADatabaseWithNoTables:
 class TestUpgradingALibraryWrittenUnderTheOldTitleRules:
     _FERAL_GODS = (
         (
-            "goodreads_rss",
+            "goodreads_csv",
             "57905101",
             "The Gate of the Feral Gods (Dungeon Crawler Carl, #4)",
             "gate of the feral gods dungeon crawler carl 4",
@@ -994,14 +994,14 @@ class TestUpgradingALibraryWrittenUnderTheOldTitleRules:
             None,
         ),
         (
-            "goodreads_rss",
+            "goodreads_csv",
             "57905101",
             "The Gate of the Feral Gods (Dungeon Crawler Carl, #4)",
             "gate of the feral gods dungeon crawler carl 4",
             "Matt Dinniman",
         ),
         (
-            "goodreads_rss",
+            "goodreads_csv",
             "57905102",
             "The Gate of the Feral Gods (Dungeon Crawler Carl, #4)",
             "gate of the feral gods dungeon crawler carl 4",

@@ -232,13 +232,13 @@ class FakeDevicePlugin(_FakeAccountPlugin):
         return "Fake Device"
 
 
-FAILED_PLUGIN_MODULE = "goodreads_rss"
+FAILED_PLUGIN_MODULE = "calibre_web"
 FAILED_PLUGIN_REASON = "ModuleNotFoundError: No module named 'nonesuch'"
-UNLOADED_PLUGIN = "goodreads_rss_shelves"
+UNLOADED_PLUGIN = "calibre_web_opds"
 
 UNLOADED_PLUGIN_DETAIL = (
-    "Plugin 'goodreads_rss_shelves' is not loaded. Modules that failed to "
-    "import: goodreads_rss: ModuleNotFoundError: No module named 'nonesuch'"
+    "Plugin 'calibre_web_opds' is not loaded. Modules that failed to "
+    "import: calibre_web: ModuleNotFoundError: No module named 'nonesuch'"
 )
 
 

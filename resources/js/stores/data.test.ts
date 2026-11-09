@@ -1010,7 +1010,7 @@ describe('useDataStore', () => {
         },
       ]
       const importErrors = [
-        { module: 'goodreads_rss', reason: "ModuleNotFoundError: No module named 'defusedxml'" },
+        { module: 'calibre_web', reason: "ModuleNotFoundError: No module named 'nonesuch'" },
       ]
       mockGet.mockResolvedValueOnce({ plugins, import_errors: importErrors })
 

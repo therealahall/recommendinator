@@ -2453,7 +2453,7 @@ class TestLibraryFieldSwitcher:
             title="Dune",
             content_type=ContentType.BOOK,
             status=ConsumptionStatus.UNREAD,
-            source="goodreads_rss",
+            source="goodreads_csv",
             author="Frank Herbert",
             metadata={"series_name": "Dune Chronicles"},
         )

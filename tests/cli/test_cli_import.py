@@ -213,7 +213,7 @@ class TestARefusedImport:
     def test_a_format_name_that_is_not_ours_lists_the_ones_that_are(
         self, storage: StorageManager, books_csv: Path
     ) -> None:
-        result = _import(storage, books_csv, "--importer", "goodreads_rss")
+        result = _import(storage, books_csv, "--importer", "goodreads_xml")
 
         assert result.exit_code == 2
         assert "goodreads_csv" in result.stderr

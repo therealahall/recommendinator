@@ -267,18 +267,18 @@ class TestPluginRegistryAbstractClassRegression:
 
 
 class TestPluginImportFailureRegression:
-    """Symptom: a broken private module, then goodreads_rss in a container without
-    defusedxml, vanished from every listing."""
+    """Symptom: a broken private module, then a built-in plugin in a container
+    missing one of its dependencies, vanished from every listing."""
 
     def test_a_builtin_module_that_raises_is_reported_with_its_reason(
         self, clean_registry: PluginRegistry
     ) -> None:
-        """The defusedxml incident: goodreads_rss dies, the rest still load."""
+        """One built-in plugin dies on a missing dependency, the rest still load."""
         real_import = importlib.import_module
 
         def import_module(name: str, *args: Any, **kwargs: Any) -> Any:
-            if name == "src.ingestion.sources.goodreads_rss":
-                raise ModuleNotFoundError("No module named 'defusedxml'")
+            if name == "src.ingestion.sources.calibre_web":
+                raise ModuleNotFoundError("No module named 'nonesuch'")
             return real_import(name, *args, **kwargs)
 
         with (
@@ -290,9 +290,9 @@ class TestPluginImportFailureRegression:
             clean_registry.discover_plugins()
 
         assert clean_registry.get_import_errors() == {
-            "goodreads_rss": "ModuleNotFoundError: No module named 'defusedxml'"
+            "calibre_web": "ModuleNotFoundError: No module named 'nonesuch'"
         }
-        assert "goodreads_rss" not in clean_registry.get_all_plugins()
+        assert "calibre_web" not in clean_registry.get_all_plugins()
         assert "steam" in clean_registry.get_all_plugins()
 
 

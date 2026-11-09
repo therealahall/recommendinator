@@ -159,7 +159,7 @@ def test_a_provider_outranks_the_source_on_the_page_count_and_the_description(
 ) -> None:
     db = SQLiteDB(tmp_path / "provider.db")
     db_id = db.save_content_item(
-        _book("goodreads_rss", pages=662, description="A feed blurb.")
+        _book("calibre_web", pages=662, description="A feed blurb.")
     )
     _provider_states(
         db,
@@ -226,7 +226,7 @@ def test_genres_and_tags_combine_rather_than_the_top_ranked_writer_winning(
 ) -> None:
     db = SQLiteDB(tmp_path / "lists.db")
     db_id = db.save_content_item(
-        _book("goodreads_rss", genres=["Science Fiction"], tags=["owned"])
+        _book("calibre_web", genres=["Science Fiction"], tags=["owned"])
     )
     _provider_states(
         db,
@@ -246,7 +246,7 @@ def test_a_disabled_provider_drops_out_and_returns_when_it_is_enabled_again(
     tmp_path: Path,
 ) -> None:
     db = SQLiteDB(tmp_path / "disabled.db")
-    db_id = db.save_content_item(_book("goodreads_rss", pages=662))
+    db_id = db.save_content_item(_book("calibre_web", pages=662))
     _provider_states(db, db_id, "openlibrary", FieldWrite("pages", 722))
 
     switched_off = WriterRanks(disabled=frozenset({"openlibrary"}))
@@ -429,7 +429,7 @@ def test_a_legacy_row_ranks_below_the_source_that_claimed_the_field(
     tmp_path: Path,
 ) -> None:
     db = SQLiteDB(tmp_path / "legacy.db")
-    db_id = db.save_content_item(_book("goodreads_rss", description="A feed blurb."))
+    db_id = db.save_content_item(_book("calibre_web", description="A feed blurb."))
     _states(
         db,
         db_id,
@@ -461,7 +461,7 @@ def test_the_library_serves_the_provider_over_the_feed_that_first_filled_it(
 ) -> None:
     db = SQLiteDB(tmp_path / "served.db")
     db_id = db.save_content_item(
-        _book("goodreads_rss", pages=662, description="A feed blurb.")
+        _book("calibre_web", pages=662, description="A feed blurb.")
     )
 
     _enriches(
@@ -494,7 +494,7 @@ def test_a_description_the_operator_typed_is_untouched_by_a_later_run(
     tmp_path: Path,
 ) -> None:
     db = SQLiteDB(tmp_path / "held_description.db")
-    db_id = db.save_content_item(_book("goodreads_rss", description="A feed blurb."))
+    db_id = db.save_content_item(_book("calibre_web", description="A feed blurb."))
     assert db.update_item_from_ui(db_id=db_id, description="As I read it.") is True
 
     _enriches(db, db_id, "openlibrary", description="Set on Arrakis.")
@@ -508,11 +508,11 @@ def test_a_provider_switched_off_in_the_settings_stops_being_served(
     tmp_path: Path,
 ) -> None:
     db = SQLiteDB(tmp_path / "switched_off.db")
-    db_id = db.save_content_item(_book("goodreads_rss", pages=662))
+    db_id = db.save_content_item(_book("calibre_web", pages=662))
     _enriches(db, db_id, "openlibrary", pages=722)
 
     SettingsStore(db).set("enrichment.providers.openlibrary.enabled", False)
-    db.save_content_item(_book("goodreads_rss", pages=662))
+    db.save_content_item(_book("calibre_web", pages=662))
 
     stored = db.get_content_item(db_id)
     assert stored is not None
@@ -524,7 +524,7 @@ def test_a_provider_matching_with_an_empty_result_states_nothing(
 ) -> None:
     db = SQLiteDB(tmp_path / "empty_match.db")
     db_id = db.save_content_item(
-        _book("goodreads_rss", pages=662, description="A feed blurb.")
+        _book("calibre_web", pages=662, description="A feed blurb.")
     )
     before = db.get_content_item(db_id)
 
@@ -551,7 +551,7 @@ def test_a_genre_the_operator_typed_is_served_alone_rather_than_combined(
     tmp_path: Path,
 ) -> None:
     db = SQLiteDB(tmp_path / "manual_genres.db")
-    db_id = db.save_content_item(_book("goodreads_rss", genres=["Science Fiction"]))
+    db_id = db.save_content_item(_book("calibre_web", genres=["Science Fiction"]))
     assert db.update_item_from_ui(db_id=db_id, genres=["Literary Fiction"]) is True
 
     _enriches(db, db_id, "openlibrary", genres=["Adventure"])
@@ -580,7 +580,7 @@ def test_reordering_providers_restores_the_higher_ranked_value_without_asking_on
     tmp_path: Path,
 ) -> None:
     db = SQLiteDB(tmp_path / "reorder.db")
-    db_id = db.save_content_item(_book("goodreads_rss"))
+    db_id = db.save_content_item(_book("calibre_web"))
     _enriches(db, db_id, "openlibrary", description="A")
     _enriches(db, db_id, "hardcover", description="B")
     settings = SettingsStore(db)
@@ -602,7 +602,7 @@ def test_switching_a_provider_off_empties_the_field_only_it_stated_until_it_is_b
     tmp_path: Path,
 ) -> None:
     db = SQLiteDB(tmp_path / "switched_off.db")
-    db_id = db.save_content_item(_book("goodreads_rss"))
+    db_id = db.save_content_item(_book("calibre_web"))
     _enriches(db, db_id, "openlibrary", description="Only OpenLibrary said this")
     settings = SettingsStore(db)
 
@@ -622,7 +622,7 @@ def test_switching_a_provider_off_empties_the_field_only_it_stated_until_it_is_b
 def _two_providers_describing(tmp_path: Path, name: str) -> tuple[SQLiteDB, int]:
     """Both describing the book, OpenLibrary ranked over Hardcover."""
     db = SQLiteDB(tmp_path / f"{name}.db")
-    db_id = db.save_content_item(_book("goodreads_rss"))
+    db_id = db.save_content_item(_book("calibre_web"))
     SettingsStore(db).set(PROVIDER_ORDER_KEY, ["openlibrary", "hardcover"])
     _enriches(db, db_id, "openlibrary", description="A")
     _enriches(db, db_id, "hardcover", description="B")
@@ -733,7 +733,7 @@ def test_a_reorder_moves_the_stored_value_on_every_item_the_pass_walks(
     storage.settings.set(PROVIDER_ORDER_KEY, ["openlibrary", "hardcover"])
     ids: list[int] = []
     for title in ("Dune", "Emma"):
-        db_id = storage.save_content_item(_book("goodreads_rss", title))
+        db_id = storage.save_content_item(_book("calibre_web", title))
         _enriches(storage.sqlite_db, db_id, "openlibrary", title=title, description="A")
         _enriches(storage.sqlite_db, db_id, "hardcover", title=title, description="B")
         ids.append(db_id)
@@ -753,7 +753,7 @@ def test_a_stop_ends_the_pass_after_the_item_in_flight_and_frees_the_claim(
 ) -> None:
     storage = StorageManager(sqlite_path=tmp_path / "stopped.db")
     for title in ("Dune", "Emma"):
-        storage.save_content_item(_book("goodreads_rss", title))
+        storage.save_content_item(_book("calibre_web", title))
     rebuild_one = storage.rebuild_item
 
     def stop_once_one_is_in_flight(db_id: int) -> bool:
@@ -774,7 +774,7 @@ def test_a_stop_leaves_an_owed_rebuild_for_the_next_start_rather_than_restarting
 ) -> None:
     storage = StorageManager(sqlite_path=tmp_path / "stopped_owing.db")
     ids = [
-        storage.save_content_item(_book("goodreads_rss", title))
+        storage.save_content_item(_book("calibre_web", title))
         for title in ("Dune", "Emma")
     ]
     rebuild_one = storage.rebuild_item
@@ -821,7 +821,7 @@ def test_a_precedence_change_during_a_pass_is_walked_before_the_pass_ends(
     storage.settings.set(PROVIDER_ORDER_KEY, ["openlibrary", "hardcover"])
     ids: list[int] = []
     for title in ("Dune", "Emma"):
-        db_id = storage.save_content_item(_book("goodreads_rss", title))
+        db_id = storage.save_content_item(_book("calibre_web", title))
         _enriches(storage.sqlite_db, db_id, "openlibrary", title=title, description="A")
         _enriches(storage.sqlite_db, db_id, "hardcover", title=title, description="B")
         ids.append(db_id)
@@ -854,7 +854,7 @@ def test_a_precedence_change_landing_as_the_pass_ends_is_still_walked(
     storage.settings.set(PROVIDER_ORDER_KEY, ["openlibrary", "hardcover"])
     ids: list[int] = []
     for title in ("Dune", "Emma"):
-        db_id = storage.save_content_item(_book("goodreads_rss", title))
+        db_id = storage.save_content_item(_book("calibre_web", title))
         _enriches(storage.sqlite_db, db_id, "openlibrary", title=title, description="A")
         _enriches(storage.sqlite_db, db_id, "hardcover", title=title, description="B")
         ids.append(db_id)
@@ -888,7 +888,7 @@ def test_an_item_that_raises_is_named_in_the_errors_and_the_walk_goes_on(
 ) -> None:
     storage = StorageManager(sqlite_path=tmp_path / "raising_item.db")
     ids = [
-        storage.save_content_item(_book("goodreads_rss", title))
+        storage.save_content_item(_book("calibre_web", title))
         for title in ("Dune", "Emma")
     ]
     rebuild_one = storage.rebuild_item
@@ -911,7 +911,7 @@ def test_the_shipped_precedence_beats_the_provider_that_enriched_first(
     tmp_path: Path,
 ) -> None:
     db = SQLiteDB(tmp_path / "shipped_precedence.db")
-    db_id = db.save_content_item(_book("goodreads_rss", pages=662))
+    db_id = db.save_content_item(_book("calibre_web", pages=662))
 
     _enriches(db, db_id, "openlibrary", pages=722)
     _enriches(db, db_id, "hardcover", pages=700)
@@ -925,12 +925,12 @@ def test_the_precedence_the_operator_set_decides_between_two_matches(
     tmp_path: Path,
 ) -> None:
     db = SQLiteDB(tmp_path / "precedence.db")
-    db_id = db.save_content_item(_book("goodreads_rss", pages=662))
+    db_id = db.save_content_item(_book("calibre_web", pages=662))
     _enriches(db, db_id, "openlibrary", pages=722)
     _enriches(db, db_id, "hardcover", pages=700)
 
     SettingsStore(db).set(PROVIDER_ORDER_KEY, ["hardcover", "openlibrary"])
-    db.save_content_item(_book("goodreads_rss", pages=662))
+    db.save_content_item(_book("calibre_web", pages=662))
 
     stored = db.get_content_item(db_id)
     assert stored is not None
@@ -970,7 +970,7 @@ def test_a_source_corrects_the_creator_the_completion_door_typed(
         )
     )
 
-    synced = db.save_content_item(_book("goodreads_rss"))
+    synced = db.save_content_item(_book("calibre_web"))
 
     stored = db.get_content_item(db_id)
     assert synced == db_id
