@@ -383,8 +383,8 @@ def _order_over(
     return SeriesOrder(items) if series_order is None else series_order
 
 
-def _watched_seasons(item: ContentItem) -> set[int]:
-    raw = item.metadata.get("seasons_watched")
+def watched_seasons(metadata: Mapping[str, Any]) -> set[int]:
+    raw = metadata.get("seasons_watched")
     if not isinstance(raw, list):
         return set()
     return {
@@ -392,6 +392,46 @@ def _watched_seasons(item: ContentItem) -> set[int]:
         for season in raw
         if isinstance(season, int) and 1 <= season <= MAX_SEASONS
     }
+
+
+SEASON_RATINGS_KEY = "season_ratings"
+
+
+def season_ratings_of(metadata: Mapping[str, Any]) -> dict[int, int]:
+    """Watched seasons only, so an import rating one ahead of the list is inert."""
+    raw = metadata.get(SEASON_RATINGS_KEY)
+    if not isinstance(raw, dict):
+        return {}
+    watched = watched_seasons(metadata)
+    return {
+        season: rating
+        for key, rating in raw.items()
+        if (season := _season_number(key)) is not None
+        and season in watched
+        and isinstance(rating, int)
+        and 1 <= rating <= 5
+    }
+
+
+def derived_show_rating(season_ratings: Mapping[int, int]) -> int | None:
+    """The mean rounded half up: ``round`` rounds half to even, so 2.5 is 2."""
+    if not season_ratings:
+        return None
+    count = len(season_ratings)
+    return (2 * sum(season_ratings.values()) + count) // (2 * count)
+
+
+def latest_season_rating(metadata: Mapping[str, Any]) -> int | None:
+    ratings = season_ratings_of(metadata)
+    return ratings[max(ratings)] if ratings else None
+
+
+def unrated_watched_seasons(metadata: Mapping[str, Any]) -> list[int]:
+    return sorted(watched_seasons(metadata) - season_ratings_of(metadata).keys())
+
+
+def unrated_seasons_label(count: int) -> str:
+    return f"{count} season{'' if count == 1 else 's'} unrated"
 
 
 def total_seasons_of(item: ContentItem) -> int | None:
@@ -420,7 +460,7 @@ def in_progress_seasons(item: ContentItem) -> set[int]:
     ):
         return set()
 
-    watched = _watched_seasons(item)
+    watched = watched_seasons(item.metadata)
     begun = {
         season
         for season, episodes in _season_counts(
@@ -447,7 +487,7 @@ def inject_season_progress_tracking(
         if item.content_type != ContentType.TV_SHOW:
             continue
 
-        watched = _watched_seasons(item)
+        watched = watched_seasons(item.metadata)
         if not watched:
             continue
 
@@ -479,10 +519,13 @@ def status_for_seasons_watched(
     return ConsumptionStatus.CURRENTLY_CONSUMING
 
 
-def seasons_watched_for_completed(total_seasons: int | None) -> list[int] | None:
+def seasons_watched_for_completed(
+    total_seasons: int | None, watched: Iterable[int]
+) -> list[int] | None:
+    """Keeps a season watched past a stale total, and so its rating."""
     if not total_seasons or total_seasons < 1:
         return None
-    return list(range(1, min(total_seasons, MAX_SEASONS) + 1))
+    return sorted({*watched, *range(1, min(total_seasons, MAX_SEASONS) + 1)})
 
 
 def merge_seasons_watched(existing: Any, incoming: Any) -> list[int] | None:
@@ -635,7 +678,7 @@ def expand_tv_shows_to_seasons(items: list[ContentItem]) -> list[ContentItem]:
         base_id = item.id or ""
         show_title = item.title
 
-        watched_set = _watched_seasons(item)
+        watched_set = watched_seasons(item.metadata)
         # The show's status describes whichever season is in flight, so copying
         # it onto all of them would mark seasons never started as in progress.
         active_seasons = in_progress_seasons(item)

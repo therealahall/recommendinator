@@ -52,7 +52,11 @@ const emit = defineEmits<{
 const dialog = ref<InstanceType<typeof ModalDialog> | null>(null)
 const modalContent = computed(() => dialog.value?.surface ?? null)
 
-const isTvShow = computed(() => props.item.content_type === 'tv_show' && props.item.total_seasons)
+// Up to the highest watched season too: a show whose source states no count,
+// or too few, still lists every season it can be rated on.
+const seasonCount = Math.max(props.item.total_seasons ?? 0, ...(props.item.seasons_watched ?? []))
+
+const isTvShow = computed(() => props.item.content_type === 'tv_show' && seasonCount > 0)
 
 const title = ref(props.item.title)
 const status = ref(props.initialStatus || props.item.status)
@@ -61,6 +65,7 @@ const review = ref(props.item.review || '')
 const creator = ref(props.item.author ?? '')
 const releaseYear = ref(props.item.release_year?.toString() ?? '')
 const seasonsWatched = ref<number[]>([...(props.item.seasons_watched ?? [])])
+const seasonRatings = ref<Record<number, number | null>>({ ...props.item.season_ratings })
 const genres = ref<string[]>([...(props.item.genres ?? [])])
 const tags = ref<string[]>([...(props.item.tags ?? [])])
 const description = ref(props.item.description ?? '')
@@ -73,6 +78,7 @@ const loaded = {
   creator: creator.value.trim(),
   releaseYear: releaseYear.value.trim(),
   seasons: [...seasonsWatched.value],
+  seasonRatings: { ...seasonRatings.value },
   genres: [...genres.value],
   tags: [...tags.value],
   description: description.value.trim(),
@@ -138,16 +144,44 @@ function refusalFor(inputId: string) {
 
 const hasReleaseYear = computed(() => RELEASE_YEAR_TYPES.includes(props.item.content_type))
 
-// Handlers, not watchers: a watcher each way retriggers the other. A season
-// ticked on an abandoned show leaves it abandoned, as the API does.
+function onSeasonRate(season: number, value: number | null) {
+  seasonRatings.value = { ...seasonRatings.value, [season]: value }
+}
+
+function ratingOf(ratings: Record<number, number | null>, season: number): number | null {
+  return ratings[season] ?? null
+}
+
+// Read off watched seasons only: un-watching one drops its rating on save.
+const ratedSeasons = computed(() =>
+  seasonsWatched.value
+    .map((season) => ratingOf(seasonRatings.value, season))
+    .filter((value): value is number => value !== null),
+)
+
+// The server's rule, so the dialog shows what saving will store: the mean
+// rounded half up, which Math.round already does for a positive mean.
+const derivedRating = computed(() => {
+  const count = ratedSeasons.value.length
+  if (count === 0) return null
+  return Math.round(ratedSeasons.value.reduce((sum, value) => sum + value, 0) / count)
+})
+
+const derivedNote = computed(() =>
+  derivedRating.value === null ? '' : `${derivedRating.value} out of 5, the mean of its season ratings`,
+)
+
+// Handlers, not watchers: a watcher each way retriggers the other.
+// Status and seasons derive from each other only against a stated count: with
+// none, no number of watched seasons is all of them. A season ticked on an
+// abandoned show leaves it abandoned, as the API does.
 function onSeasonsChange(watched: number[]) {
   seasonsWatched.value = watched
-  if (!isTvShow.value || status.value === 'dnf') return
-  const total = props.item.total_seasons!
-  const rendered = watched.filter((season) => season <= total).length
-  if (rendered === 0) {
+  const total = props.item.total_seasons
+  if (!isTvShow.value || !total || status.value === 'dnf') return
+  if (watched.length === 0) {
     status.value = 'unread'
-  } else if (rendered >= total) {
+  } else if (watched.length >= total) {
     status.value = 'completed'
   } else {
     status.value = 'currently_consuming'
@@ -155,10 +189,12 @@ function onSeasonsChange(watched: number[]) {
 }
 
 function seasonsForStatus() {
-  if (!isTvShow.value) return
+  const total = props.item.total_seasons
+  if (!isTvShow.value || !total) return
   // "In progress" says nothing about which seasons, so it leaves them alone.
   if (status.value === 'completed') {
-    seasonsWatched.value = Array.from({ length: props.item.total_seasons! }, (_, i) => i + 1)
+    const every = Array.from({ length: total }, (_, i) => i + 1)
+    seasonsWatched.value = [...new Set([...seasonsWatched.value, ...every])].sort((a, b) => a - b)
   } else if (status.value === 'unread') {
     seasonsWatched.value = []
   }
@@ -187,7 +223,8 @@ const edits = computed<ItemEditRequest>(() => {
   const data: ItemEditRequest = {}
   if (title.value.trim() !== loaded.title) data.title = title.value.trim()
   if (status.value !== loaded.status) data.status = status.value
-  if (rating.value !== loaded.rating) data.rating = rating.value
+  // A show with rated seasons takes its rating from them, so it sends none.
+  if (derivedRating.value === null && rating.value !== loaded.rating) data.rating = rating.value
   if (review.value.trim() !== loaded.review) data.review = review.value.trim() || null
   if (creator.value.trim() !== loaded.creator) data.creator = creator.value.trim()
   if (releaseYear.value.trim() !== loaded.releaseYear) {
@@ -195,6 +232,14 @@ const edits = computed<ItemEditRequest>(() => {
   }
   if (isTvShow.value && !sameList(seasonsWatched.value, loaded.seasons)) {
     data.seasons_watched = seasonsWatched.value
+  }
+  const rerated = seasonsWatched.value.filter(
+    (season) => ratingOf(seasonRatings.value, season) !== ratingOf(loaded.seasonRatings, season),
+  )
+  if (isTvShow.value && rerated.length > 0) {
+    data.season_ratings = Object.fromEntries(
+      rerated.map((season) => [season, ratingOf(seasonRatings.value, season)]),
+    )
   }
   if (!sameList(genres.value, loaded.genres)) data.genres = genres.value
   if (!sameList(tags.value, loaded.tags)) data.tags = tags.value
@@ -323,7 +368,9 @@ function searchRecords() {
 
     <div class="edit-field">
       <label id="edit-rating-label">Rating</label>
-      <StarRating v-model="rating" aria-labelledby="edit-rating-label" />
+      <!-- Mounted while silent: inserted populated it reads as content (4.1.3). -->
+      <p v-if="isTvShow" class="edit-modal-note" data-testid="derived-rating" role="status" aria-live="polite">{{ derivedNote }}</p>
+      <StarRating v-if="derivedRating === null" v-model="rating" aria-labelledby="edit-rating-label" />
     </div>
 
     <div class="edit-field">
@@ -340,8 +387,10 @@ function searchRecords() {
     <div v-if="isTvShow" class="edit-field">
       <SeasonChecklist
         :model-value="seasonsWatched"
-        :total-seasons="item.total_seasons!"
+        :total-seasons="seasonCount"
+        :ratings="seasonRatings"
         @update:model-value="onSeasonsChange"
+        @rate="onSeasonRate"
       />
     </div>
 

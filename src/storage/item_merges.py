@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-from src.storage.derived import write_derived_columns
+from src.storage.derived import write_derived_columns, write_derived_show_rating
 from src.storage.merge import (
     ALLOWED_DETAIL_TABLES,
     carry_detail_metadata,
@@ -104,6 +104,7 @@ def absorb_item(
     carry_detail_metadata(cursor, survivor_id, absorbed_id)
     merge_enrichment_status(cursor, survivor_id, absorbed_id)
     write_derived_columns(cursor, survivor_id)
+    write_derived_show_rating(cursor, survivor_id)
     restore = _what_this_merge_wrote(before, _survivor_state(cursor, survivor_id))
     restore["dead_covers"] = _carry_dead_covers(cursor, survivor_id, absorbed_id)
     # What it absorbed comes with it: no row may hide behind a hidden row.
@@ -375,6 +376,7 @@ def _restore_survivor(
     for table, row in state.get("children", {}).items():
         _restore_child(cursor, table, survivor_id, row)
     write_derived_columns(cursor, survivor_id)
+    write_derived_show_rating(cursor, survivor_id)
 
 
 def _restore_child(

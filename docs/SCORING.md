@@ -10,7 +10,7 @@ settings < per-user preferences**.
 | `creator_match` | Prefers authors, directors and developers you have enjoyed, and demotes ones you have not | 1.5 |
 | `tag_overlap` | How many of a consumed item's tags the item shares, scaled by how you rated it. Each tag counts once: in full when the item has the same tag, half when it has a related tag from the same genre cluster. A consumed item with more tags can lift a match higher | 1.0 |
 | `content_length` | Soft penalty for a length mismatch. Counts only for a content type with a length preference other than `any` | 1.0 |
-| `continuation` | Scores the later entries and seasons of a series you have begun by how you rated its entries of the same content type, a show part-way through included: 5 stars is 100%, 3 is 50%, 1 is 0%, and none rated is 50%. Counts only where an earlier entry is finished or begun, and not while any entry of that series is in progress | 1.0 |
+| `continuation` | Scores the later entries and seasons of a series you have begun by how you rated its entries of the same content type: 5 stars is 100%, 3 is 50%, 1 is 0%, and none rated is 50%. A show's next season is scored by the latest season you rated, not the show's rating. Counts only where an earlier entry is finished or begun, and not while any entry of that series is in progress | 1.0 |
 | `adaptation` | Boosts a film, show or game adapting something you rated well, and the source behind an adaptation you loved. An item adapts one of another type when either's title or series name matches the other's, a trailing "Collection" aside, or when they share an author and a similar title. Counts only for an item that adapts something | 1.5 |
 
 ## One score, fully explained
@@ -156,7 +156,9 @@ Something in progress is not offered back to you: the book you are reading, the 
 
 No later season of a show appears until the one in flight is finished, whether or not series are in order.
 
-A rating on something in progress counts like one on something finished: it shapes your taste, can be cited as a reason, and lifts what adapts it. Unrated, it does none of those. A show's rating between seasons also scores its next season.
+A rating on something in progress counts like one on something finished: it shapes your taste, can be cited as a reason, and lifts what adapts it. Unrated, it does none of those.
+
+Each watched season of a show takes its own rating. Once one is rated, the show's rating is their mean rounded half up, so seasons rated 5 and 2 make a 4, and a half-watched show counts on what you have rated. Its next season is scored by the latest season rated, so a great first season does not carry a weak second.
 
 A show with a known season count is scored season by season, so the season in flight leaves on its own. Trakt and Tautulli count episodes per season, which names it. Without counts, as after an import, a show with a season finished is between seasons and its next season is offered, while one with none finished is in season 1. A show with no season count cannot be split, and leaves whole while in progress.
 

@@ -1,17 +1,37 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, useId } from 'vue'
 import AppIcon from '@/components/atoms/AppIcon.vue'
+import StarRating from '@/components/atoms/StarRating.vue'
 
 const props = defineProps<{
   totalSeasons: number
   modelValue: number[]
+  /** Each watched season's rating; left out where the host rates none. */
+  ratings?: Record<number, number | null>
 }>()
 
 const emit = defineEmits<{
   'update:modelValue': [value: number[]]
+  rate: [season: number, rating: number | null]
 }>()
 
 const watchedSet = computed(() => new Set(props.modelValue))
+
+const labelPrefix = useId()
+
+// Pre-computed rather than looked up in the v-for, which re-runs every render.
+const ratingRows = computed(() => {
+  const ratings = props.ratings
+  if (!ratings) return []
+  return props.modelValue
+    .filter((season) => season <= props.totalSeasons)
+    .sort((a, b) => a - b)
+    .map((season) => ({
+      season,
+      labelId: `${labelPrefix}-season-${season}`,
+      rating: ratings[season] ?? null,
+    }))
+})
 
 const renderedWatched = computed(
   () => props.modelValue.filter((season) => season <= props.totalSeasons).length,
@@ -77,6 +97,16 @@ function deselectAll() {
         {{ season }}
       </label>
     </div>
+    <ul v-if="ratingRows.length" class="season-ratings" aria-label="Season ratings">
+      <li v-for="row in ratingRows" :key="row.season" class="season-rating-row">
+        <span :id="row.labelId">Season {{ row.season }}</span>
+        <StarRating
+          :model-value="row.rating"
+          :aria-labelledby="row.labelId"
+          @update:model-value="emit('rate', row.season, $event)"
+        />
+      </li>
+    </ul>
   </div>
 </template>
 
@@ -113,6 +143,24 @@ function deselectAll() {
   color: var(--text-secondary);
   cursor: pointer;
   transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.season-ratings {
+  list-style: none;
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.season-rating-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
 }
 
 .season-checkbox:has(:focus-visible) {

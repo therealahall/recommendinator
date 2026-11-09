@@ -13,7 +13,11 @@ from typing import Any
 
 from src.ingestion.importers.base import ImporterError
 from src.utils.dates import parse_iso_timestamp
-from src.utils.series import MAX_SEASONS, split_series_from_title
+from src.utils.series import (
+    MAX_SEASONS,
+    SEASON_RATINGS_KEY,
+    split_series_from_title,
+)
 from src.utils.text import sanitize_for_log
 
 logger = logging.getLogger(__name__)
@@ -182,36 +186,61 @@ def parse_seasons_watched(value: str | int | list[int] | None) -> list[int]:
         return []
 
 
-def parse_seasons_watched_dates(value: Any) -> dict[str, str]:
-    """An unparseable timestamp is dropped: stored, it would read back as a
-    watch date that is not one.
-    """
+def _season_entries(value: Any) -> list[tuple[str, Any]]:
+    """A CSV cell holds the map as JSON text, a JSON file as an object."""
     if isinstance(value, str):
         try:
             value = json.loads(value)
         except json.JSONDecodeError:
-            return {}
+            return []
     if not isinstance(value, Mapping):
-        return {}
+        return []
+    return [
+        (str(season), raw)
+        for key, raw in value.items()
+        if (season := _season_number(key)) is not None
+    ]
 
-    dates: dict[str, str] = {}
-    for key, raw in value.items():
-        season = _season_number(key)
-        if (
-            season is not None
-            and isinstance(raw, str)
-            and parse_iso_timestamp(raw) is not None
-        ):
-            dates[str(season)] = raw
-    return dates
+
+def parse_seasons_watched_dates(value: Any) -> dict[str, str]:
+    """An unparseable timestamp is dropped: stored, it would read back as a
+    watch date that is not one.
+    """
+    return {
+        season: raw
+        for season, raw in _season_entries(value)
+        if isinstance(raw, str) and parse_iso_timestamp(raw) is not None
+    }
+
+
+def parse_season_ratings(value: Any) -> dict[str, int]:
+    return {
+        season: raw
+        for season, raw in _season_entries(value)
+        if type(raw) is int and 1 <= raw <= 5
+    }
 
 
 def normalize_watched_seasons(metadata: dict[str, Any]) -> None:
     if "seasons_watched" in metadata:
         metadata["seasons_watched"] = parse_seasons_watched(metadata["seasons_watched"])
 
-    dates = parse_seasons_watched_dates(metadata.get("seasons_watched_dates"))
-    if dates:
-        metadata["seasons_watched_dates"] = dates
+    _store_season_map(
+        metadata,
+        "seasons_watched_dates",
+        parse_seasons_watched_dates(metadata.get("seasons_watched_dates")),
+    )
+    _store_season_map(
+        metadata,
+        SEASON_RATINGS_KEY,
+        parse_season_ratings(metadata.get(SEASON_RATINGS_KEY)),
+    )
+
+
+def _store_season_map(
+    metadata: dict[str, Any], key: str, parsed: Mapping[str, Any]
+) -> None:
+    if parsed:
+        metadata[key] = parsed
     else:
-        metadata.pop("seasons_watched_dates", None)
+        metadata.pop(key, None)

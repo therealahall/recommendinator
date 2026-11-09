@@ -43,7 +43,9 @@ const emptyTitle = computed(() => {
 })
 
 const emptyHint = computed(() => {
-  if (lib.needsRating) return 'Every item you have finished already carries one.'
+  if (lib.needsRating) {
+    return 'Every item you have finished, and every season you have watched, already carries one.'
+  }
   return filtered.value
     ? 'Widen the filters above, or clear them to see the whole library.'
     : 'Sync a source or import a file, and what it brings back lands here.'

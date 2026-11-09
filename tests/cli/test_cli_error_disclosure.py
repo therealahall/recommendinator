@@ -29,7 +29,7 @@ from src.models.content import (
 )
 from src.sources.service import SOURCE_ID_RULE, SOURCE_MISCONFIGURED_DETAIL
 from src.storage.accounts import AccountStore
-from src.storage.manager import StorageManager
+from src.storage.manager import StorageManager, UncorrectableFieldError
 from tests.factories import make_storage_mock
 from tests.fakes.source_plugins import FakeCodePasteFlow, FakeFilePlugin
 
@@ -85,6 +85,23 @@ class TestCompleteHidesTheWriteThatFailed:
 
         _assert_verbose(result, COMPLETE_FAILED)
         assert "Traceback" not in result.output
+
+    def test_a_refused_rating_is_shown_in_its_own_words(
+        self, cli_runner: CliRunner
+    ) -> None:
+        storage = make_storage_mock()
+        storage.complete_content_item.side_effect = UncorrectableFieldError(
+            "Rate its seasons instead."
+        )
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["complete", "--type", "tv_show", "--title", "Dune", "--rating", "1"],
+            storage,
+        )
+
+        assert result.exit_code != 0
+        assert "Error: Rate its seasons instead." in result.output
 
 
 class TestTheAccountWritesHideTheFaultToo:

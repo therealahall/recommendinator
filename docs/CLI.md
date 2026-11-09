@@ -137,8 +137,10 @@ uv run python -m src.cli library list --needs-rating --type movie
   filters. A term matches exactly, as a substring, or through typo tolerance,
   and all three are always in play. It is capped at 200 characters, the same
   bound `GET /api/items` and the web search box enforce.
-- `--needs-rating` forces completed status, overriding `--status`, and composes
-  with `--type`.
+- `--needs-rating` lists completed items with no rating and shows with a watched
+  season unrated, whatever their status. It overrides `--status` and composes
+  with `--type`. The **Rating** column counts a show's unrated seasons, and
+  `library show` lists them.
 
 ### `library show`
 
@@ -154,6 +156,8 @@ uv run python -m src.cli library edit --id 42 --clear-rating
 uv run python -m src.cli library edit --id 42 --clear-review
 uv run python -m src.cli library edit --id 42 --seasons-watched 1,2,3
 uv run python -m src.cli library edit --id 42 --clear-seasons
+uv run python -m src.cli library edit --id 42 --season-rating 1=5 --season-rating 2=2
+uv run python -m src.cli library edit --id 42 --clear-season-rating 2
 uv run python -m src.cli library edit --id 42 --genre Action --tag co-op --description "A grand adventure."
 uv run python -m src.cli library edit --id 42 --clear-genres --clear-tags --description ""
 uv run python -m src.cli library edit --id 42 --release-year 1993 --creator "id Software"
@@ -187,6 +191,15 @@ in-progress, and a sync with episode counts can return an untick.
 `--status dnf` marks an item did not finish. No sync or season change moves it
 out of `dnf`; another `--status` or `complete` does. `library list --status dnf`
 lists them, as the web's **Did not finish** filter does.
+
+#### Season ratings
+
+`--season-rating SEASON=RATING` rates one watched season 1-5, and
+`--clear-season-rating SEASON` removes one; both repeat. Un-watching a season
+drops its rating. A show with any season rated takes its
+rating from them, their mean rounded half up, so `--rating` and `--clear-rating`
+are refused on it: rate its seasons instead. A sync never overwrites that
+rating. A show with no season rated keeps a rating of its own.
 
 `--creator` corrects the field a title match is vetoed on, so a row with a wrong creator takes the next source stating the true one instead of growing the library another row. `--release-year` corrects the year shown. A year runs 1800-2200 and a creator 500 characters; a book takes no `--release-year`, because `year_published` dates the edition rather than the work.
 

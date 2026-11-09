@@ -43,6 +43,7 @@ from src.utils.series import (
     find_earliest_recommendable,
     held_by_abandonment,
     inject_season_progress_tracking,
+    latest_season_rating,
     should_recommend_item,
 )
 
@@ -103,6 +104,11 @@ def _collapse_duplicate_db_ids(
             seen.add(db_id)
         collapsed.append(entry)
     return collapsed
+
+
+def _continuation_rating(show: ContentItem) -> int | None:
+    latest = latest_season_rating(show.metadata)
+    return latest if latest is not None else show.rating
 
 
 # Shuffle source for engines built without one.  Shared rather than per-engine
@@ -261,13 +267,13 @@ class RecommendationEngine:
             series_tracking = inject_season_progress_tracking(
                 show_level_unconsumed, series_tracking
             )
-            # A rated show part-way through feeds taste like any rated item, but
-            # names no series, so this is how its verdict on the seasons watched
-            # reaches its next season's continuation.
+            # A show part-way through names no series, so this is how it reaches
+            # its next season's continuation: by the latest season rated, as a
+            # great first season does not vouch for a bad latest one.
             begun_show_ratings = {
-                show.title: [show.rating]
+                show.title: [rating]
                 for show in show_level_unconsumed
-                if show.rating is not None
+                if (rating := _continuation_rating(show)) is not None
             }
 
         logger.info(

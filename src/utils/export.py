@@ -45,6 +45,8 @@ _ALL_CSV_COLUMNS: list[str] = [
     "ignored",
 ]
 
+_SEASON_MAP_COLUMNS = frozenset({"seasons_watched_dates", "season_ratings"})
+
 
 def _item_to_export_dict(
     item: ContentItem, content_type: ContentType, for_csv: bool = False
@@ -81,7 +83,7 @@ def _item_to_export_dict(
         if column == "seasons_watched" and isinstance(value, list):
             # One cell holds the whole list.
             value = ",".join(str(season) for season in value) if for_csv else value
-        elif column == "seasons_watched_dates" and isinstance(value, dict):
+        elif column in _SEASON_MAP_COLUMNS and isinstance(value, dict):
             value = json.dumps(value, sort_keys=True) if for_csv else value
         elif column in LIST_VALUED_COLUMNS:
             # One cell holds one of them, and a row stored before the codec

@@ -124,6 +124,8 @@ class ContentItemResponse(BaseModel):
     date_completed: str | None = None
     ignored: bool = False
     seasons_watched: list[int] | None = None
+    #: Each rated season's rating, keyed by its number.
+    season_ratings: dict[str, int] | None = None
     total_seasons: int | None = None
     release_year: int | None = None
     series: str | None = None
@@ -194,6 +196,17 @@ class ItemEditRequest(BaseModel):
     review: str | None = None
     seasons_watched: list[Annotated[int, Field(ge=1, le=MAX_SEASONS)]] | None = Field(
         None, max_length=MAX_SEASONS
+    )
+    season_ratings: (
+        dict[
+            Annotated[int, Field(ge=1, le=MAX_SEASONS)],
+            Annotated[int, Field(ge=1, le=5)] | None,
+        ]
+        | None
+    ) = Field(
+        None,
+        max_length=MAX_SEASONS,
+        description="Each season's rating; a null clears that season's",
     )
     genres: list[Annotated[str, Field(max_length=MAX_GENRE_TAG_LENGTH)]] | None = Field(
         None, max_length=MAX_GENRES, description="Manual genres (overwrite)"
@@ -294,7 +307,10 @@ def list_items(
     ),
     needs_rating: bool = Query(
         False,
-        description="Only return completed items that have no rating yet",
+        description=(
+            "Only completed items with no rating, and shows with a watched season"
+            " unrated (overrides status)"
+        ),
     ),
 ) -> list[ContentItemResponse]:
     content_type = None
@@ -323,16 +339,16 @@ def list_items(
             detail="Invalid sort_by. Valid options: created_at, rating, title, updated_at",
         )
 
-    # needs_rating means "completed AND unrated": completed status is implied
-    # and takes precedence over any explicitly-passed status param.
+    # A show waiting on a season's rating may be in progress, so needs_rating
+    # brings its own status rule and drops any explicitly-passed one.
     if needs_rating:
-        consumption_status = ConsumptionStatus.COMPLETED
+        consumption_status = None
 
     items = storage.get_content_items(
         user_id=user_id,
         content_type=content_type,
         status=consumption_status,
-        unrated_only=needs_rating,
+        needs_rating=needs_rating,
         limit=limit,
         offset=offset,
         sort_by=sort_by.lower(),
@@ -511,6 +527,7 @@ def edit_item(
             rating=request.rating if "rating" in supplied else UNSET,
             review=request.review if "review" in supplied else UNSET,
             seasons_watched=request.seasons_watched,
+            season_ratings=request.season_ratings,
             genres=request.genres,
             tags=request.tags,
             description=request.description,
@@ -620,6 +637,8 @@ def mark_complete(
 
     try:
         db_id = storage.complete_content_item(item)
+    except UncorrectableFieldError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
     except Exception as error:
         # The failing write is this request's title, author and review.
         logger.error("Error marking content as completed: %s", exception_for_log(error))

@@ -24,8 +24,9 @@ from src.storage.merge import (
     stated_region,
 )
 from src.storage.schema import write_enrichment_complete
-from src.storage.sqlite_db import SaveOutcome, SQLiteDB
+from src.storage.sqlite_db import SaveOutcome, SQLiteDB, UncorrectableFieldError
 from src.utils.item_serialization import item_to_dict
+from src.utils.series import latest_season_rating
 from src.utils.sorting import build_search_text, get_sort_title
 from tests.factories import drop_the_ledger_write_guard
 
@@ -380,51 +381,61 @@ def test_get_content_items_with_filters(temp_db: SQLiteDB) -> None:
     assert len(books) == 6
 
 
-def test_get_content_items_unrated_only(temp_db: SQLiteDB) -> None:
-    items = [
-        ContentItem(
-            id="completed_rated",
-            title="Completed Rated",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-            source="calibre_web",
-        ),
-        ContentItem(
-            id="completed_unrated",
-            title="Completed Unrated",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=None,
-            source="calibre_web",
-        ),
-        ContentItem(
-            id="unread_unrated",
-            title="Unread Unrated",
-            content_type=ContentType.MOVIE,
-            status=ConsumptionStatus.UNREAD,
-            rating=None,
-            source="radarr",
-        ),
-    ]
-    for item in items:
-        temp_db.save_content_item(item)
+def test_needs_rating_is_a_finish_unrated_or_a_watched_season_unrated(
+    temp_db: SQLiteDB,
+) -> None:
+    def show(item_id: str, rated: dict[int, int]) -> None:
+        db_id = temp_db.save_content_item(
+            ContentItem(
+                id=item_id,
+                title=item_id,
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.CURRENTLY_CONSUMING,
+                source="trakt",
+                metadata={"seasons": 4, "seasons_watched": [1, 2]},
+            )
+        )
+        temp_db.update_item_from_ui(db_id, season_ratings=rated)
 
-    unrated = temp_db.get_content_items(unrated_only=True)
-    assert {item.id for item in unrated} == {"completed_unrated", "unread_unrated"}
+    for item_id, status, rating in (
+        ("completed_rated", ConsumptionStatus.COMPLETED, 5),
+        ("completed_unrated", ConsumptionStatus.COMPLETED, None),
+        ("unread_unrated", ConsumptionStatus.UNREAD, None),
+    ):
+        temp_db.save_content_item(
+            ContentItem(
+                id=item_id,
+                title=item_id,
+                content_type=ContentType.BOOK,
+                status=status,
+                rating=rating,
+                source="calibre_web",
+            )
+        )
+    show("one_season_unrated", {1: 5})
+    show("every_season_rated", {1: 5, 2: 3})
 
-    completed_unrated = temp_db.get_content_items(
-        status=ConsumptionStatus.COMPLETED, unrated_only=True
+    needing = temp_db.get_content_items(needs_rating=True)
+
+    assert {item.id for item in needing} == {"completed_unrated", "one_season_unrated"}
+
+
+def test_a_show_given_up_on_never_waits_on_a_season_rating(temp_db: SQLiteDB) -> None:
+    temp_db.save_content_item(
+        ContentItem(
+            id="abandoned_show",
+            title="Abandoned Show",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.DNF,
+            source="trakt",
+            metadata={"seasons": 4, "seasons_watched": [1, 2]},
+        )
     )
-    assert {item.id for item in completed_unrated} == {"completed_unrated"}
 
-    movie_unrated = temp_db.get_content_items(
-        content_type=ContentType.MOVIE, unrated_only=True
-    )
-    assert {item.id for item in movie_unrated} == {"unread_unrated"}
+    assert temp_db.get_content_items(needs_rating=True) == []
 
 
-def test_get_content_items_unrated_only_respects_ignored(temp_db: SQLiteDB) -> None:
+def test_get_content_items_needs_rating_respects_ignored(temp_db: SQLiteDB) -> None:
     visible = ContentItem(
         id="visible_unrated",
         title="Visible Unrated",
@@ -446,14 +457,10 @@ def test_get_content_items_unrated_only_respects_ignored(temp_db: SQLiteDB) -> N
     temp_db.save_content_item(visible)
     temp_db.save_content_item(hidden)
 
-    visible_only = temp_db.get_content_items(
-        status=ConsumptionStatus.COMPLETED, unrated_only=True, include_ignored=False
-    )
+    visible_only = temp_db.get_content_items(needs_rating=True, include_ignored=False)
     assert {item.id for item in visible_only} == {"visible_unrated"}
 
-    with_ignored = temp_db.get_content_items(
-        status=ConsumptionStatus.COMPLETED, unrated_only=True, include_ignored=True
-    )
+    with_ignored = temp_db.get_content_items(needs_rating=True, include_ignored=True)
     assert {item.id for item in with_ignored} == {
         "visible_unrated",
         "ignored_unrated",
@@ -2544,6 +2551,26 @@ class TestUpdateItemFromUi:
         assert retrieved is not None
         assert retrieved.status == ConsumptionStatus.COMPLETED
 
+    def test_seasons_alone_never_reopen_a_finished_show_with_no_total(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """With no count no list is all of it, so a finished show read as begun."""
+        db_id = temp_db.save_content_item(
+            ContentItem(
+                id="ui_7",
+                title="Uncounted Show",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.COMPLETED,
+                metadata={"seasons_watched": [1]},
+            )
+        )
+
+        temp_db.update_item_from_ui(db_id=db_id, seasons_watched=[1, 2])
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.status == ConsumptionStatus.COMPLETED
+
     def test_update_wrong_user(self, temp_db: SQLiteDB) -> None:
         item = ContentItem(
             id="ui_9",
@@ -3625,6 +3652,173 @@ class TestSeasonsWatchedSyncUnionRegression:
         retrieved = temp_db.get_content_item(db_id)
         assert retrieved is not None
         assert retrieved.metadata["seasons_watched"] == [1, 2, 5]
+
+
+class TestSeasonRatings:
+    @staticmethod
+    def _show(temp_db: SQLiteDB, rating: int | None = None) -> int:
+        return temp_db.save_content_item(
+            ContentItem(
+                id="trakt:rated",
+                title="Rated Show",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.CURRENTLY_CONSUMING,
+                rating=rating,
+                source="trakt",
+                metadata={"seasons": 4, "seasons_watched": [1, 2]},
+            )
+        )
+
+    def _rating(self, temp_db: SQLiteDB, db_id: int) -> int | None:
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        return retrieved.rating
+
+    def test_the_show_takes_the_half_up_mean_of_its_rated_seasons(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """``round`` takes 3.5 to 4 but 2.5 to 2, half to even."""
+        db_id = self._show(temp_db)
+
+        temp_db.update_item_from_ui(db_id, season_ratings={1: 5, 2: 2})
+        assert self._rating(temp_db, db_id) == 4
+
+        temp_db.update_item_from_ui(db_id, season_ratings={1: 3})
+        assert self._rating(temp_db, db_id) == 3
+
+    def test_unwatching_a_season_takes_its_rating_and_its_share_of_the_mean(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        db_id = self._show(temp_db)
+        temp_db.update_item_from_ui(db_id, season_ratings={1: 5, 2: 2})
+
+        temp_db.update_item_from_ui(db_id, seasons_watched=[1])
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.metadata["season_ratings"] == {"1": 5}
+        assert retrieved.rating == 5
+
+    def test_a_show_with_rated_seasons_refuses_a_rating_of_its_own(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        db_id = self._show(temp_db)
+        temp_db.update_item_from_ui(db_id, season_ratings={1: 4})
+
+        with pytest.raises(UncorrectableFieldError):
+            temp_db.update_item_from_ui(db_id, rating=1)
+
+        assert self._rating(temp_db, db_id) == 4
+
+    def test_a_season_not_watched_cannot_be_rated(self, temp_db: SQLiteDB) -> None:
+        db_id = self._show(temp_db)
+
+        with pytest.raises(UncorrectableFieldError, match="Season 3"):
+            temp_db.update_item_from_ui(db_id, season_ratings={3: 4})
+
+    def test_an_import_rates_the_show_by_its_watched_seasons_alone(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        db_id = temp_db.save_content_item(
+            ContentItem(
+                id="csv:rated",
+                title="Imported Show",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.CURRENTLY_CONSUMING,
+                rating=1,
+                source="generic_csv",
+                metadata={
+                    "seasons": 4,
+                    "seasons_watched": [1, 2],
+                    "season_ratings": {"1": 5, "2": 4, "3": 1},
+                },
+            )
+        )
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.rating == 5
+        assert latest_season_rating(retrieved.metadata) == 4
+
+    def test_a_sync_leaves_the_derived_rating_and_a_completion_refuses_one(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        db_id = self._show(temp_db)
+        temp_db.update_item_from_ui(db_id, season_ratings={1: 4})
+
+        self._show(temp_db, rating=1)
+        with pytest.raises(UncorrectableFieldError, match="Rate its seasons"):
+            temp_db.complete_content_item(
+                ContentItem(
+                    id=None,
+                    title="Rated Show",
+                    content_type=ContentType.TV_SHOW,
+                    status=ConsumptionStatus.COMPLETED,
+                    rating=1,
+                )
+            )
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.rating == 4
+        assert retrieved.status == ConsumptionStatus.CURRENTLY_CONSUMING
+
+    def test_completing_keeps_a_season_watched_past_a_stale_total_and_its_rating(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        db_id = temp_db.save_content_item(
+            ContentItem(
+                id="trakt:stale",
+                title="Stale Total",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.CURRENTLY_CONSUMING,
+                source="trakt",
+                metadata={
+                    "seasons": 2,
+                    "seasons_watched": [3],
+                    "season_ratings": {"3": 4},
+                },
+            )
+        )
+
+        temp_db.update_item_from_ui(db_id, status="completed")
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.metadata["seasons_watched"] == [1, 2, 3]
+        assert retrieved.metadata["season_ratings"] == {"3": 4}
+
+    def test_undoing_a_merge_that_rated_the_survivor_by_seasons_restores_its_rating(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        rated = self._show(temp_db)
+        temp_db.update_item_from_ui(rated, season_ratings={1: 5, 2: 4})
+        survivor = temp_db.save_content_item(
+            ContentItem(
+                id="sonarr:rated",
+                title="The Same Show, Renamed",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.CURRENTLY_CONSUMING,
+                rating=1,
+                source="sonarr",
+                metadata={"seasons": 4, "seasons_watched": [1, 2]},
+            )
+        )
+
+        record = temp_db.merge_content_items(survivor, rated, MergeEvidence.MANUAL)
+        assert self._rating(temp_db, survivor) == 5
+
+        temp_db.unmerge_content_items(record.id)
+        assert self._rating(temp_db, survivor) == 1
+
+    def test_a_show_with_no_rated_seasons_keeps_an_editable_rating(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        db_id = self._show(temp_db, rating=3)
+
+        temp_db.update_item_from_ui(db_id, rating=5)
+
+        assert self._rating(temp_db, db_id) == 5
 
 
 class TestTvSeasonCountFromTraktMetadata:

@@ -40,7 +40,7 @@ const unreadLabel = computed(() =>
 
 const statusLockNotice = computed(() =>
   props.needsRating
-    ? 'Status filter removed. Status is locked to Completed while Needs rating is on.'
+    ? 'Status filter removed. Needs rating shows Completed items, and shows with a season unrated.'
     : ''
 )
 
@@ -126,7 +126,7 @@ onUnmounted(() => {
           <option value="completed">Completed</option>
           <option value="dnf">Did not finish</option>
         </select>
-        <span v-else class="help-text">Status: Completed while Needs rating is on.</span>
+        <span v-else class="help-text">Status: Completed, or a season watched, while Needs rating is on.</span>
         <select class="field toolbar-select" aria-label="Enrichment" :value="enrichmentFilter" @change="emit('filterChange', 'enrichment', ($event.target as HTMLSelectElement).value)">
           <option value="">All Items</option>
           <option value="enriched">Enriched</option>

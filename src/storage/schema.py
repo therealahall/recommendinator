@@ -36,12 +36,14 @@ from src.storage.merge import (
     normalize_title_for_matching,
 )
 from src.utils.series import (
+    SEASON_RATINGS_KEY,
     SERIES_AUTHORITY_KEY,
     SERIES_NAME_KEY,
     SERIES_POSITION_KEY,
     SeriesAuthority,
     get_series_name_from_metadata,
     split_series_from_title,
+    watched_seasons,
 )
 
 
@@ -111,7 +113,7 @@ class SyncRunDict(TypedDict):
 # Changing ``normalize_title_for_matching``, ``get_sort_title`` or
 # ``build_search_text`` needs a bump and a step to rewrite what the old one
 # stored, or dedup lookups stop matching and duplicates accumulate in silence.
-_SCHEMA_VERSION = 35
+_SCHEMA_VERSION = 36
 
 # Rows for these keys are unreachable from the app but would still
 # be overlaid onto config, so they are pruned once on upgrade.
@@ -495,6 +497,8 @@ def create_schema(conn: sqlite3.Connection) -> None:
         _clear_orphaned_series_guesses(cursor)
     if stored_version < 35:
         _drop_status_holds(cursor)
+    if stored_version < 36:
+        _rate_watched_seasons_as_their_show(cursor)
 
     # Filled after the repair, which recovers a creator that existed only in a
     # blob. Unguarded because the fill selects the rows that need it rather
@@ -1285,6 +1289,31 @@ def _drop_status_holds(cursor: sqlite3.Cursor) -> None:
         " AND writer_kind = ?",
         (WriterBand.MANUAL.value,),
     )
+
+
+def _rate_watched_seasons_as_their_show(cursor: sqlite3.Cursor) -> None:
+    """Each watched season takes the one rating its show held, so the rating the
+    show now derives from them is the one it already had.
+    """
+    cursor.execute(
+        "SELECT td.content_item_id, td.metadata, ci.rating FROM tv_show_details td"
+        " JOIN content_items ci ON ci.id = td.content_item_id"
+        " WHERE ci.rating IS NOT NULL"
+    )
+    for row in cursor.fetchall():
+        blob = _stored_blob(row["metadata"])
+        if blob is None or SEASON_RATINGS_KEY in blob:
+            continue
+        watched = watched_seasons(blob)
+        if not watched:
+            continue
+        blob[SEASON_RATINGS_KEY] = {
+            str(season): row["rating"] for season in sorted(watched)
+        }
+        cursor.execute(
+            "UPDATE tv_show_details SET metadata = ? WHERE content_item_id = ?",
+            (json.dumps(blob), row["content_item_id"]),
+        )
 
 
 def _record_the_library_as_legacy(cursor: sqlite3.Cursor) -> None:

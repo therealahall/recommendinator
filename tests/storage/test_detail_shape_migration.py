@@ -28,6 +28,7 @@ _BEFORE_THE_ORDINAL_LADDER = 21
 _BEFORE_THE_SERIES_ALIASES_FOLDED = 22
 _BEFORE_THE_RETIRED_KEYS_WENT = 24
 _BEFORE_THE_ORPHANED_POSITIONS_WENT = 30
+_BEFORE_SEASONS_WERE_RATED = 35
 
 
 def _needs_enrichment(db: SQLiteDB, db_id: int) -> int:
@@ -1258,3 +1259,37 @@ class TestAnObjectStrandedInAListColumnMigration:
             stats["enriched"] + stats["pending"] + stats["not_found"] + stats["failed"]
             == stats["total"]
         )
+
+
+def test_the_upgrade_rates_each_watched_season_as_its_show(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    seed = SQLiteDB(db_path)
+
+    def show(item_id: str, rating: int | None) -> int:
+        return seed.save_content_item(
+            ContentItem(
+                id=item_id,
+                title=item_id,
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.COMPLETED,
+                rating=rating,
+                source="trakt",
+                metadata={"seasons": 3, "seasons_watched": [1, 2, 3]},
+            )
+        )
+
+    rated = show("trakt:1", 4)
+    unrated = show("trakt:2", None)
+    with seed.connection() as conn:
+        conn.execute(f"PRAGMA user_version = {_BEFORE_SEASONS_WERE_RATED}")
+        conn.commit()
+
+    db = SQLiteDB(db_path)
+
+    upgraded = db.get_content_item(rated)
+    assert upgraded is not None
+    assert upgraded.metadata["season_ratings"] == {"1": 4, "2": 4, "3": 4}
+    assert upgraded.rating == 4
+    untouched = db.get_content_item(unrated)
+    assert untouched is not None
+    assert "season_ratings" not in untouched.metadata
