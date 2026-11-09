@@ -13,13 +13,11 @@ from src.ingestion.importers.rows import csv_field, parse_slashed_date, read_csv
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.utils.series import split_series_from_title
 
-# did-not-finish maps to completed because a rated-then-abandoned book is a real
-# preference signal; the raw status is kept in metadata so no fidelity is lost.
 STATUS_MAP: dict[str, ConsumptionStatus] = {
     "read": ConsumptionStatus.COMPLETED,
     "currently-reading": ConsumptionStatus.CURRENTLY_CONSUMING,
     "to-read": ConsumptionStatus.UNREAD,
-    "did-not-finish": ConsumptionStatus.COMPLETED,
+    "did-not-finish": ConsumptionStatus.DNF,
 }
 
 

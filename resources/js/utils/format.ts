@@ -96,6 +96,7 @@ export function formatRelativeTime(iso: string, now: Date = new Date()): string 
 export function formatStatusForContentType(status: string, contentType: string): string {
   if (status === 'currently_consuming') return 'In Progress'
   if (status === 'completed') return 'Completed'
+  if (status === 'dnf') return 'Did not finish'
   if (status === 'unread') {
     if (contentType === 'video_game') return 'Unplayed'
     if (contentType === 'movie' || contentType === 'tv_show') return 'Unwatched'

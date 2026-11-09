@@ -1145,7 +1145,7 @@ class SQLiteDB:
     def _handle_tv_season_change(self, cursor: sqlite3.Cursor, db_id: int) -> bool:
         """Status follows the season list: a show completes when every season of
         a known total is watched, and returns to currently_consuming when a new
-        season appears. An ignored show is never touched.
+        season appears. An ignored or abandoned show is never touched.
         """
         cursor.execute(
             "SELECT ci.status, ci.ignored, td.seasons, td.metadata"
@@ -1155,7 +1155,7 @@ class SQLiteDB:
             (db_id,),
         )
         row = cursor.fetchone()
-        if not row or row["ignored"]:
+        if not row or row["ignored"] or row["status"] == ConsumptionStatus.DNF:
             return False
 
         total_seasons = row["seasons"]
@@ -1426,7 +1426,11 @@ class SQLiteDB:
         return self.get_content_items(
             user_id=user_id,
             content_type=content_type,
-            status=[ConsumptionStatus.COMPLETED, ConsumptionStatus.CURRENTLY_CONSUMING],
+            status=[
+                ConsumptionStatus.COMPLETED,
+                ConsumptionStatus.CURRENTLY_CONSUMING,
+                ConsumptionStatus.DNF,
+            ],
             min_rating=min_rating,
             limit=limit,
             include_ignored=include_ignored,
@@ -1593,7 +1597,7 @@ class SQLiteDB:
                             seasons_watched = seasons_watched_for_completed(
                                 total_seasons
                             )
-                    elif status is UNSET:
+                    elif status is UNSET and existing_status != ConsumptionStatus.DNF:
                         resolved_status = status_for_seasons_watched(
                             seasons_watched, total_seasons
                         ).value
@@ -1631,7 +1635,10 @@ class SQLiteDB:
             if review is not UNSET:
                 set_parts.append("review = ?")
                 params.append(corrected["review"])
-            if resolved_status == "completed" and existing_status != "completed":
+            if (
+                resolved_status in ("completed", "dnf")
+                and existing_status != resolved_status
+            ):
                 set_parts.append("date_completed = COALESCE(date_completed, ?)")
                 params.append(local_today().isoformat())
             params.append(db_id)

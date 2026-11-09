@@ -138,10 +138,11 @@ function refusalFor(inputId: string) {
 
 const hasReleaseYear = computed(() => RELEASE_YEAR_TYPES.includes(props.item.content_type))
 
-// Handlers, not watchers: a watcher each way retriggers the other.
+// Handlers, not watchers: a watcher each way retriggers the other. A season
+// ticked on an abandoned show leaves it abandoned, as the API does.
 function onSeasonsChange(watched: number[]) {
   seasonsWatched.value = watched
-  if (!isTvShow.value) return
+  if (!isTvShow.value || status.value === 'dnf') return
   const total = props.item.total_seasons!
   const rendered = watched.filter((season) => season <= total).length
   if (rendered === 0) {
@@ -316,6 +317,7 @@ function searchRecords() {
         <option value="unread">{{ formatStatusForContentType('unread', item.content_type) }}</option>
         <option value="currently_consuming">In Progress</option>
         <option value="completed">Completed</option>
+        <option value="dnf">Did not finish</option>
       </select>
     </div>
 

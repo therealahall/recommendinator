@@ -57,6 +57,7 @@ class ConsumptionStatus(str, Enum):
     UNREAD = "unread"
     CURRENTLY_CONSUMING = "currently_consuming"
     COMPLETED = "completed"
+    DNF = "dnf"
 
 
 class ExternalId(BaseModel):

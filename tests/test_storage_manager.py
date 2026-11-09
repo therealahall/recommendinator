@@ -305,6 +305,12 @@ class TestGetConsumptionItemsRegression:
         manager.save_content_item(
             _book("unread", "Backlog Book", ConsumptionStatus.UNREAD, None)
         )
+        manager.save_content_item(
+            _book("dnf-rated", "Rated DNF", ConsumptionStatus.DNF, rating=2)
+        )
+        manager.save_content_item(
+            _book("dnf-unrated", "Unrated DNF", ConsumptionStatus.DNF, None)
+        )
         ignored_db_id = manager.save_content_item(
             _book("ignored", "Ignored Book", ConsumptionStatus.COMPLETED, rating=5)
         )
@@ -318,7 +324,13 @@ class TestGetConsumptionItemsRegression:
         self._seed_library(temp_storage_manager)
 
         titles = {item.title for item in temp_storage_manager.get_consumption_items()}
-        assert titles == {"Rated Book", "Unrated Book", "In Progress"}
+        assert titles == {
+            "Rated Book",
+            "Unrated Book",
+            "In Progress",
+            "Rated DNF",
+            "Unrated DNF",
+        }
 
     def test_consumption_set_is_wider_than_the_signal_set_regression(
         self, temp_storage_manager: StorageManager
@@ -332,6 +344,6 @@ class TestGetConsumptionItemsRegression:
         }
         signal = {item.title for item in temp_storage_manager.get_signal_items()}
 
-        assert signal == {"Rated Book"}
+        assert signal == {"Rated Book", "Rated DNF"}
         assert signal < consumption
-        assert consumption - signal == {"Unrated Book", "In Progress"}
+        assert consumption - signal == {"Unrated Book", "In Progress", "Unrated DNF"}

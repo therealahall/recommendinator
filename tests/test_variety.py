@@ -368,8 +368,9 @@ class TestVarietyLadderUsesInAppCompletions:
     ``date_completed`` NULL, so the ladder — which sorts undated events last —
     ranked a years-old imported completion above it and demoted the wrong genre."""
 
+    @pytest.mark.parametrize("finished_as", ["completed", "dnf"])
     def test_in_app_completion_outranks_older_import_regression(
-        self, tmp_path: Path
+        self, tmp_path: Path, finished_as: str
     ) -> None:
         storage = SQLiteDB(tmp_path / "variety.db")
         storage.save_content_item(
@@ -392,7 +393,7 @@ class TestVarietyLadderUsesInAppCompletions:
             )
         )
 
-        storage.update_item_from_ui(db_id=scifi_id, status="completed")
+        storage.update_item_from_ui(db_id=scifi_id, status=finished_as)
 
         ladder = build_variety_ladder(storage.get_content_items())
 

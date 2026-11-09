@@ -3005,6 +3005,111 @@ class TestSeriesTrackingFullSetRegression:
         assert self._titles(real_engine) == ["Second Foundation (Signal Saga #3)"]
 
 
+class TestDidNotFinish:
+    @staticmethod
+    def _abandon_the_first_witcher(storage, *, ignored=False) -> int:
+        """The only rating is the abandoned entry's 2, so a run that returns
+        anything at all proves that rating reached the taste signal."""
+        _save_book(
+            storage,
+            item_id="w1",
+            title="The Last Wish (Witcher #1)",
+            status=ConsumptionStatus.DNF,
+            rating=2,
+            ignored=ignored,
+        )
+        second = _save_book(
+            storage,
+            item_id="w2",
+            title="Blood of Elves (Witcher #2)",
+            status=ConsumptionStatus.UNREAD,
+        )
+        _save_book(
+            storage,
+            item_id="w3",
+            title="Time of Contempt (Witcher #3)",
+            status=ConsumptionStatus.UNREAD,
+        )
+        _save_book(
+            storage, item_id="h", title="Hyperion", status=ConsumptionStatus.UNREAD
+        )
+        return second
+
+    @staticmethod
+    def _titles(engine, config=None):
+        recs = engine.generate_recommendations(
+            content_type=ContentType.BOOK, count=5, user_preference_config=config
+        )
+        return {rec.item.title for rec in recs}
+
+    def test_an_abandoned_entry_holds_every_later_one(self, real_engine, real_storage):
+        self._abandon_the_first_witcher(real_storage)
+
+        assert self._titles(real_engine) == {"Hyperion"}
+
+    def test_the_hold_applies_with_series_order_off(self, real_engine, real_storage):
+        self._abandon_the_first_witcher(real_storage)
+
+        assert self._titles(
+            real_engine, UserPreferenceConfig(series_in_order=False)
+        ) == {"Hyperion"}
+
+    def test_an_ignored_abandoned_entry_holds_nothing_regression(
+        self, real_engine, real_storage
+    ):
+        self._abandon_the_first_witcher(real_storage, ignored=True)
+        _save_book(
+            real_storage,
+            item_id="d",
+            title="Dune",
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+        )
+
+        assert self._titles(real_engine) == {
+            "Hyperion",
+            "Blood of Elves (Witcher #2)",
+        }
+
+    def test_finishing_a_later_entry_resumes_the_series_after_it(
+        self, real_engine, real_storage
+    ):
+        second = self._abandon_the_first_witcher(real_storage)
+        real_storage.update_item_from_ui(db_id=second, status="completed")
+
+        assert self._titles(real_engine) == {
+            "Hyperion",
+            "Time of Contempt (Witcher #3)",
+        }
+
+    def test_a_show_given_up_part_way_yields_no_season(self, real_engine, real_storage):
+        for item_id, title, status, watched in (
+            ("gave-up", "Abandoned Show", ConsumptionStatus.DNF, [1, 2, 3]),
+            ("fresh", "Fresh Show", ConsumptionStatus.UNREAD, []),
+        ):
+            real_storage.save_content_item(
+                ContentItem(
+                    id=item_id,
+                    title=title,
+                    content_type=ContentType.TV_SHOW,
+                    status=status,
+                    rating=3 if status == ConsumptionStatus.DNF else None,
+                    metadata={
+                        "genres": ["Drama"],
+                        "total_seasons": 5,
+                        "seasons_watched": watched,
+                    },
+                )
+            )
+
+        recs = real_engine.generate_recommendations(
+            content_type=ContentType.TV_SHOW, count=10
+        )
+
+        titles = [rec.item.title for rec in recs]
+        assert titles and all(title.startswith("Fresh Show") for title in titles)
+
+
 class TestHalfNumberedEntryScoringRegression:
     """A fractional position was never next, so #2.5 scored as already consumed."""
 

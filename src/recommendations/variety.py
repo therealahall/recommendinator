@@ -31,8 +31,11 @@ def top_penalty_for_preference(variety_penalty: float) -> PenaltyFraction:
     return PenaltyFraction(min(max(fraction, 0.0), 1.0))
 
 
+_FINISHED_WITH = (ConsumptionStatus.COMPLETED, ConsumptionStatus.DNF)
+
+
 def _is_completion_event(item: ContentItem) -> bool:
-    if item.status == ConsumptionStatus.COMPLETED:
+    if item.status in _FINISHED_WITH:
         return True
     if (
         item.content_type == ContentType.TV_SHOW
@@ -44,7 +47,7 @@ def _is_completion_event(item: ContentItem) -> bool:
 
 
 def _completion_recency(item: ContentItem) -> date | None:
-    if item.status == ConsumptionStatus.COMPLETED:
+    if item.status in _FINISHED_WITH:
         if item.date_completed is None and item.content_type == ContentType.TV_SHOW:
             return latest_season_watched_date(item)
         return item.date_completed

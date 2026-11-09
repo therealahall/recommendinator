@@ -70,7 +70,7 @@ One pass runs at a time: it claims the job, heartbeats the item it is on, and en
 | Field | Rule |
 |-------|------|
 | `rating`, `review` | Fill-only, so a re-import cannot erase either |
-| `status` | Forward-only, through `resolve_status_forward` (`src/storage/merge.py`) |
+| `status` | Forward-only, through `resolve_status_forward` (`src/storage/merge.py`). `dnf` ranks above every source status, so no sync leaves it |
 | `date_completed` | Later date wins |
 | `ignored` | Only a stated `True` or `False` wins, in either direction. `None` leaves the stored flag alone |
 
@@ -79,7 +79,7 @@ One pass runs at a time: it claims the job, heartbeats the item it is on, and en
 After the upsert, `_handle_tv_season_change` regresses a completed TV show to
 `currently_consuming` when the season count rises above the seasons the user
 checked off. It needs an existing `seasons_watched` list and skips ignored
-items.
+and `dnf` items.
 
 The enrichment door runs that same pass when it saves:
 

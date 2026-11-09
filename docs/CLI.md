@@ -182,6 +182,12 @@ never back, so one you set back returns at the next sync whose source states the
 later one. On TV shows, a season past those you ticked sends it back to
 in-progress, and a sync with episode counts can return an untick.
 
+#### Did not finish
+
+`--status dnf` marks an item did not finish. No sync or season change moves it
+out of `dnf`; another `--status` or `complete` does. `library list --status dnf`
+lists them, as the web's **Did not finish** filter does.
+
 `--creator` corrects the field a title match is vetoed on, so a row with a wrong creator takes the next source stating the true one instead of growing the library another row. `--release-year` corrects the year shown. A year runs 1800-2200 and a creator 500 characters; a book takes no `--release-year`, because `year_published` dates the edition rather than the work.
 
 `--title` renames the item, up to 500 characters and never blank. The source

@@ -702,6 +702,30 @@ def should_recommend_item(
     )
 
 
+def held_by_abandonment(
+    item: ContentItem,
+    series_tracking: dict[str, set[float]],
+    abandoned: dict[str, set[float]],
+    series_order: SeriesOrder,
+) -> bool:
+    """Every entry after one the operator did not finish is held, until an entry
+    after the abandoned one is consumed; the series then resumes after that.
+    """
+    located = series_order.locate(item)
+    if located is None:
+        return False
+    series_key, position = located
+    given_up = max(
+        (p for p in abandoned.get(series_key, ()) if p < position), default=None
+    )
+    if given_up is None:
+        return False
+    return not any(
+        given_up < consumed < position
+        for consumed in series_tracking.get(series_key, ())
+    )
+
+
 def find_earliest_recommendable(
     series_key: str,
     series_tracking: dict[str, set[float]],

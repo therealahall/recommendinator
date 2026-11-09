@@ -54,6 +54,8 @@ STATUS_MAP: dict[str, ConsumptionStatus] = {
     "to_watch": ConsumptionStatus.UNREAD,
     "to_play": ConsumptionStatus.UNREAD,
     "wishlist": ConsumptionStatus.UNREAD,
+    "dnf": ConsumptionStatus.DNF,
+    "did_not_finish": ConsumptionStatus.DNF,
 }
 
 STATUS_DISPLAY: dict[str, dict[str, str]] = {

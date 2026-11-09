@@ -415,6 +415,19 @@ describe('EditModal', () => {
     wrapper.unmount()
   })
 
+  it('ticking a season on a show marked did not finish leaves its status alone', async () => {
+    const wrapper = mount(EditModal, {
+      props: { item: { ...tvItem, status: 'dnf' }, saving: false, saveError: '' },
+      attachTo: document.body,
+    })
+
+    await wrapper.findAll('.season-checkbox')[2].trigger('click')
+    await wrapper.findAll('.btn-primary').find(b => b.text().includes('Save'))!.trigger('click')
+
+    expect(wrapper.emitted('save')![0][1]).toEqual({ seasons_watched: [1, 2, 3] })
+    wrapper.unmount()
+  })
+
   it('opened as Mark complete it preselects completed, and the choice stays editable', async () => {
     const wrapper = mount(EditModal, {
       props: { item: tvItem, saving: false, saveError: '', initialStatus: 'completed' },
