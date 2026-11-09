@@ -20,6 +20,7 @@ from src.models.content import (
 from src.recommendations import reference_index as reference_index_module
 from src.recommendations.constants import CROSS_TYPE_MIN_OVERLAP
 from src.recommendations.engine import RecommendationEngine
+from src.recommendations.preferences import split_creators
 from src.recommendations.reference_index import SignalIndex
 from tests.factories import make_item, make_storage_mock
 
@@ -132,7 +133,8 @@ class TestDerivedValuesComputedOncePerItemRegression:
             assert counted_derivers["extract_creators", item.id] == 1
             assert counted_derivers["get_series_name", item.id] == 1
             assert counted_derivers["normalize_for_search", item.title] == 1
-            assert counted_derivers["normalize_for_search", item.author] == 1
+            for name in split_creators(item.author):
+                assert counted_derivers["normalize_for_search", name] == 1
 
 
 class TestMatchingGoesThroughTheIndex:
@@ -399,16 +401,77 @@ class TestAdaptationLookupEdges:
 
         assert adaptations == []
 
-    def test_a_shared_creator_and_a_similar_title_is_an_adaptation(self) -> None:
+    @pytest.mark.parametrize(
+        ("book_author", "film_author"),
+        [
+            ("Mira Vale", "Mira Vale"),
+            ("Mira Vale, Otto Krane", "Otto Krane"),
+            ("Otto Krane", "Mira Vale, Otto Krane"),
+        ],
+    )
+    def test_a_shared_creator_and_a_similar_title_is_an_adaptation(
+        self, book_author: str, film_author: str
+    ) -> None:
         """Both sides need a creator for this branch to fire, which for items read
-        from storage only became possible once every content type carried one."""
-        book = self._book("book", "The Silent Tide", rating=5, author="Mira Vale")
+        from storage only became possible once every content type carried one. The
+        whole joined credit was the key, so a co-credited work never matched."""
+        book = self._book("book", "The Silent Tide", rating=5, author=book_author)
 
         adaptations = SignalIndex([book]).adaptations_of(
-            self._film("The Silent Tide: Part One", author="Mira Vale")
+            self._film("The Silent Tide: Part One", author=film_author)
         )
 
         assert [item.id for item in adaptations] == ["book"]
+
+    @pytest.mark.parametrize(
+        ("liked", "candidate"),
+        [
+            (
+                (
+                    ContentType.BOOK,
+                    "Harry Potter and the Philosopher's Stone",
+                    "Harry Potter",
+                ),
+                (ContentType.TV_SHOW, "Harry Potter", None),
+            ),
+            (
+                (ContentType.VIDEO_GAME, "The Witcher 3: Wild Hunt", "The Witcher"),
+                (ContentType.BOOK, "The Last Wish", "The Witcher"),
+            ),
+            (
+                (ContentType.BOOK, "Dune", "Dune"),
+                (ContentType.MOVIE, "Dune: Part Two", "Dune Collection"),
+            ),
+        ],
+    )
+    def test_a_shared_franchise_is_an_adaptation_across_types(
+        self,
+        liked: tuple[ContentType, str, str],
+        candidate: tuple[ContentType, str, str | None],
+    ) -> None:
+        """Only an identical title matched, so a show named for a book series never
+        cited the books it adapts."""
+        liked_type, liked_title, liked_series = liked
+        candidate_type, candidate_title, candidate_series = candidate
+        signal = make_item(
+            item_id="liked",
+            title=liked_title,
+            content_type=liked_type,
+            status=ConsumptionStatus.COMPLETED,
+            rating=4,
+            metadata={"series_name": liked_series},
+        )
+        unconsumed = make_item(
+            item_id="candidate",
+            title=candidate_title,
+            content_type=candidate_type,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"series_name": candidate_series} if candidate_series else None,
+        )
+
+        adaptations = SignalIndex([signal]).adaptations_of(unconsumed)
+
+        assert [item.id for item in adaptations] == ["liked"]
 
     def test_a_shared_author_with_an_unrelated_title_is_not_an_adaptation(self) -> None:
         book = self._book("book", "Dust Roads", rating=5, author="Mira Vale")
@@ -464,7 +527,7 @@ class TestAdaptationLookupEdges:
         assert adaptations == []
 
     def test_a_same_type_signal_item_is_never_an_adaptation(self) -> None:
-        """An adaptation is the same work in another medium, not the same medium."""
+        """An adaptation crosses media: a same-type match is continuation's to score."""
         book = self._book("book", "The Silent Tide", rating=5, author="Mira Vale")
         candidate = make_item(
             item_id="other-edition",
