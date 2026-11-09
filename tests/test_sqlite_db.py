@@ -2562,39 +2562,48 @@ class TestUpdateItemFromUi:
         assert retrieved is not None
         assert retrieved.status == ConsumptionStatus.UNREAD
 
-    def test_sync_leaves_a_status_the_operator_set_backward(
+    @staticmethod
+    def _synced_after_a_status_edit(
+        temp_db: SQLiteDB, edited: str, synced: ConsumptionStatus
+    ) -> ContentItem:
+        def book(status: ConsumptionStatus) -> ContentItem:
+            return ContentItem(
+                id="ui_10",
+                title="Sync Test Book",
+                content_type=ContentType.BOOK,
+                status=status,
+                source="storygraph_csv",
+                date_completed=(
+                    date(2026, 3, 1) if status is ConsumptionStatus.COMPLETED else None
+                ),
+            )
+
+        db_id = temp_db.save_content_item(book(ConsumptionStatus.UNREAD))
+        temp_db.update_item_from_ui(db_id=db_id, status=edited)
+        temp_db.save_content_item(book(synced))
+        stored = temp_db.get_content_item(db_id)
+        assert stored is not None
+        return stored
+
+    def test_a_sync_completes_a_book_marked_in_progress_by_hand(
         self, temp_db: SQLiteDB
     ) -> None:
-        """Forward-only would re-complete a book put back to unread to re-read,
-        every sync, for ever."""
-        item = ContentItem(
-            id="ui_10",
-            title="Sync Test Book",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=4,
+        """A status edit held the field, so the completion a source reported
+        later never landed."""
+        stored = self._synced_after_a_status_edit(
+            temp_db, "currently_consuming", ConsumptionStatus.COMPLETED
         )
-        db_id = temp_db.save_content_item(item)
 
-        temp_db.update_item_from_ui(db_id=db_id, status="unread", rating=None)
+        assert stored.status == ConsumptionStatus.COMPLETED
+        assert stored.date_completed == date(2026, 3, 1)
+        assert stored.manual_fields == []
 
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.status == ConsumptionStatus.UNREAD
-        assert retrieved.rating is None
-
-        resync_item = ContentItem(
-            id="ui_10",
-            title="Sync Test Book",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
+    def test_a_sync_never_moves_a_hand_set_status_back(self, temp_db: SQLiteDB) -> None:
+        stored = self._synced_after_a_status_edit(
+            temp_db, "completed", ConsumptionStatus.CURRENTLY_CONSUMING
         )
-        temp_db.save_content_item(resync_item)
 
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.status == ConsumptionStatus.UNREAD
-        assert "status" in retrieved.manual_fields
+        assert stored.status == ConsumptionStatus.COMPLETED
 
 
 class TestEditDoorNeverStoresABlankReview:
@@ -2628,7 +2637,7 @@ class TestEditDoorNeverStoresABlankReview:
         retrieved = temp_db.get_content_item(db_id)
         assert retrieved is not None
         assert retrieved.review is None
-        assert retrieved.manual_fields == ["review", "status"]
+        assert retrieved.manual_fields == ["review"]
 
 
 class TestUpdateItemFromUiRegression:
@@ -3221,6 +3230,29 @@ class TestTvSeasonSyncRegression:
         assert retrieved.status == ConsumptionStatus.CURRENTLY_CONSUMING
         assert retrieved.metadata is not None
         assert str(retrieved.metadata.get("seasons")) == "51"
+
+    def test_a_sync_calling_a_show_completed_leaves_an_unticked_season_open(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """The door advances the unheld status, so only the season list,
+        decided after it, keeps the show in progress."""
+        show = ContentItem(
+            id="tv_sync_untick",
+            title="Severance",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            source="tautulli",
+            metadata={"seasons": 3, "seasons_watched": [1, 2, 3]},
+        )
+        db_id = temp_db.save_content_item(show)
+        temp_db.update_item_from_ui(db_id=db_id, seasons_watched=[1, 2])
+
+        temp_db.save_content_item(show.model_copy(update={"metadata": {}}))
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.status == ConsumptionStatus.CURRENTLY_CONSUMING
+        assert retrieved.metadata["seasons_watched"] == [1, 2]
 
     def test_sync_new_season_does_not_regress_when_ignored(
         self, temp_db: SQLiteDB
@@ -4706,28 +4738,6 @@ class TestManualFieldHolds:
             ("description", "A test chamber comedy.")
         ]
 
-    def test_a_status_set_back_to_unwatched_is_not_restored_by_the_next_sync(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """Recording nothing for a user-owned field would let the forward
-        resolution hand the old status straight back."""
-        watched = ContentItem(
-            id="1399",
-            title="Severance",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.COMPLETED,
-            source="trakt",
-        )
-        db_id = temp_db.save_content_item(watched)
-        temp_db.update_item_from_ui(db_id=db_id, status="unread")
-
-        temp_db.save_content_item(watched)
-
-        stored = temp_db.get_content_item(db_id)
-        assert stored is not None
-        assert stored.status == ConsumptionStatus.UNREAD
-        assert self._manual_writes(temp_db, db_id) == [("status", "unread")]
-
     def test_a_cleared_rating_is_not_refilled_by_the_next_sync(
         self, temp_db: SQLiteDB
     ) -> None:
@@ -4795,27 +4805,6 @@ class TestManualFieldHolds:
         assert stored.manual_fields == ["creator"]
         assert temp_db.clear_manual_field(db_id, "creator") is True
 
-    def test_completing_an_item_keeps_its_status_held(self, temp_db: SQLiteDB) -> None:
-        """The completion door is the operator's own, so the status it writes
-        stays held rather than dropping back to what a source may state."""
-        db_id = self._steam_game(temp_db, "Valve")
-        temp_db.update_item_from_ui(db_id=db_id, status="unread")
-
-        temp_db.complete_content_item(
-            ContentItem(
-                id="620",
-                title="Portal 2",
-                content_type=ContentType.VIDEO_GAME,
-                status=ConsumptionStatus.COMPLETED,
-                source="steam",
-            )
-        )
-
-        stored = temp_db.get_content_item(db_id)
-        assert stored is not None
-        assert stored.status == ConsumptionStatus.COMPLETED
-        assert stored.manual_fields == ["status"]
-
     def test_a_sync_carrying_no_genres_leaves_the_held_ones_standing(
         self, temp_db: SQLiteDB
     ) -> None:
@@ -4846,88 +4835,6 @@ class TestManualFieldHolds:
         assert stored is not None
         assert stored.metadata["genres"] == ["Puzzle-Platformer"]
         assert stored.manual_fields == ["genres"]
-
-    def test_ticking_every_season_keeps_the_derived_status_held(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """The checklist is the operator stating the status, so the hold an
-        earlier edit took covers the status this edit derives."""
-        db_id = temp_db.save_content_item(
-            ContentItem(
-                id="1399",
-                title="Severance",
-                content_type=ContentType.TV_SHOW,
-                status=ConsumptionStatus.UNREAD,
-                source="trakt",
-                metadata={"seasons": 2},
-            )
-        )
-        temp_db.update_item_from_ui(db_id=db_id, status="unread")
-
-        temp_db.update_item_from_ui(db_id=db_id, seasons_watched=[1, 2])
-
-        stored = temp_db.get_content_item(db_id)
-        assert stored is not None
-        assert stored.status == ConsumptionStatus.COMPLETED
-        assert stored.manual_fields == ["status"]
-
-    def test_a_sync_finding_a_new_season_cannot_take_the_status_hold_off(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """Only the clear door ends a hold, so a season count a source raised
-        must not leave the status open to whatever the next sync states."""
-        db_id = temp_db.save_content_item(
-            ContentItem(
-                id="1399",
-                title="Severance",
-                content_type=ContentType.TV_SHOW,
-                status=ConsumptionStatus.UNREAD,
-                source="trakt",
-                metadata={"seasons": 2},
-            )
-        )
-        temp_db.update_item_from_ui(
-            db_id=db_id, status="completed", seasons_watched=[1, 2]
-        )
-
-        temp_db.save_content_item(
-            ContentItem(
-                id="1399",
-                title="Severance",
-                content_type=ContentType.TV_SHOW,
-                status=ConsumptionStatus.UNREAD,
-                source="trakt",
-                metadata={"seasons": 3},
-            )
-        )
-
-        stored = temp_db.get_content_item(db_id)
-        assert stored is not None
-        assert stored.manual_fields == ["status"]
-
-    def test_absorbing_a_duplicate_keeps_the_status_held(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """A merge is the operator's own action, so the status it carries across
-        stays as held as the one it replaced."""
-        kept = self._steam_game(temp_db, "Valve")
-        temp_db.update_item_from_ui(db_id=kept, status="unread")
-        absorbed = temp_db.save_content_item(
-            ContentItem(
-                id="portal-2",
-                title="Portal 2 Sixense Bundle",
-                content_type=ContentType.VIDEO_GAME,
-                status=ConsumptionStatus.COMPLETED,
-                source="gog",
-            )
-        )
-
-        temp_db.merge_content_items(kept, absorbed, MergeEvidence.MANUAL)
-
-        stored = temp_db.get_content_item(kept)
-        assert stored is not None
-        assert stored.status == ConsumptionStatus.COMPLETED
-        assert stored.manual_fields == ["status"]
 
 
 class TestRenamingAnItem:

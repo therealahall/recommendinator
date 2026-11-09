@@ -110,7 +110,7 @@ class SyncRunDict(TypedDict):
 # Changing ``normalize_title_for_matching``, ``get_sort_title`` or
 # ``build_search_text`` needs a bump and a step to rewrite what the old one
 # stored, or dedup lookups stop matching and duplicates accumulate in silence.
-_SCHEMA_VERSION = 34
+_SCHEMA_VERSION = 35
 
 # Rows for these keys are unreachable from the app but would still
 # be overlaid onto config, so they are pruned once on upgrade.
@@ -492,6 +492,8 @@ def create_schema(conn: sqlite3.Connection) -> None:
         cursor.execute("DROP TABLE IF EXISTS cover_backfill_job")
     if stored_version < 32:
         _clear_orphaned_series_guesses(cursor)
+    if stored_version < 35:
+        _drop_status_holds(cursor)
 
     # Filled after the repair, which recovers a creator that existed only in a
     # blob. Unguarded because the fill selects the rows that need it rather
@@ -1270,6 +1272,18 @@ def _name_a_held_creator_as_its_type_does(cursor: sqlite3.Cursor) -> None:
             " (SELECT id FROM content_items WHERE content_type = ?)",
             (field.metadata_key, CREATOR_FIELD, WriterBand.MANUAL.value, content_type),
         )
+
+
+def _drop_status_holds(cursor: sqlite3.Cursor) -> None:
+    """Status is never held, so a sync may advance it. The carry above and every
+    status edit before this version recorded one, and the sync door withdraws
+    its offer for any field a manual row holds.
+    """
+    cursor.execute(
+        "DELETE FROM content_item_field_writes WHERE field = 'status'"
+        " AND writer_kind = ?",
+        (WriterBand.MANUAL.value,),
+    )
 
 
 def _record_the_library_as_legacy(cursor: sqlite3.Cursor) -> None:

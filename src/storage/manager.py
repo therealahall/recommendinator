@@ -374,7 +374,7 @@ class StorageManager:
         user_id: int | None = None,
     ) -> bool:
         """The explicit-user-action door: it writes only the fields supplied,
-        overwrites them freely, and holds each one against its source.
+        overwrites them freely, and holds each but the status against its source.
         """
         updated = self.sqlite_db.update_item_from_ui(
             db_id=db_id,

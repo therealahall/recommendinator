@@ -355,7 +355,6 @@ def _metadata_blob(raw: str | None) -> dict[str, Any]:
 def _corrected_fields(
     *,
     title: str | Unset,
-    status: str | Unset,
     rating: int | None | Unset,
     review: str | None | Unset,
     genres: list[str] | None,
@@ -370,7 +369,6 @@ def _corrected_fields(
     """
     unsent: dict[str, Any] = {
         "title": title,
-        "status": status,
         "rating": rating,
         "review": review,
     }
@@ -1176,9 +1174,8 @@ class SQLiteDB:
         if finished == (row["status"] == "completed"):
             return False
 
-        # The one write a status hold does not refuse: the season list deciding
-        # it is held by nobody, so a season the operator has not seen makes the
-        # status they set stale rather than a correction.
+        # Backward too, unlike the door: a season the operator has not seen
+        # makes the completion stale, whoever set it.
         cursor.execute(
             "UPDATE content_items SET status = ?,"
             " updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -1546,7 +1543,8 @@ class SQLiteDB:
         user_id: int | None = None,
     ) -> bool:
         """No status empties the list: the dialog hides the checklist for a show
-        whose total never synced. Every field supplied is held from here on.
+        whose total never synced. Every field supplied but the status is held
+        from here on.
         """
         if description is not None:
             # Whitespace is not a description: a blank normalises to the clear,
@@ -1565,7 +1563,6 @@ class SQLiteDB:
             resolved_status = existing_status if status is UNSET else status
             corrected = _corrected_fields(
                 title=title,
-                status=status,
                 rating=rating,
                 review=review,
                 genres=genres,
@@ -1599,9 +1596,6 @@ class SQLiteDB:
                         resolved_status = status_for_seasons_watched(
                             seasons_watched, total_seasons
                         ).value
-                        # Held like a stated one: unheld, the next sync
-                        # forward-resolves it back to what it was.
-                        corrected["status"] = resolved_status
 
                 if tv_row and seasons_watched is not None:
                     now_iso = utc_now().isoformat()

@@ -227,13 +227,35 @@ def test_a_creator_hold_already_carried_is_renamed_on_the_next_upgrade(
     assert upgraded.clear_manual_field(db_id, "creator", user_id=1) is True
 
 
-def test_a_held_status_still_refuses_the_next_sync_after_the_upgrade(
+def test_the_upgrade_drops_a_status_hold_so_a_sync_advances_it(
     tmp_path: Path,
 ) -> None:
+    """Left in place, the hold kept the sync door from advancing the status."""
     db_path = tmp_path / "held-status.db"
-    db_id = _seed_a_library_holding(db_path, held=["status"])
-    storage = StorageManager(sqlite_path=db_path)
+    db_id = StorageManager(sqlite_path=db_path).save_content_item(
+        ContentItem(
+            id="movie-1",
+            title="Arrival",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+        ),
+        user_id=1,
+    )
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            "INSERT INTO content_item_field_writes (content_item_id, field,"
+            " writer_kind, writer, value_json, written_at)"
+            " VALUES (?, 'status', 'manual', 'operator', '\"unread\"', '')",
+            (db_id,),
+        )
+        conn.execute("PRAGMA user_version = 34")
+        conn.commit()
+    finally:
+        conn.close()
+    assert _writes_in_band(db_path, db_id) == [("status", "unread")]
 
+    storage = StorageManager(sqlite_path=db_path)
     storage.save_content_item(
         ContentItem(
             id="movie-1",
@@ -246,7 +268,8 @@ def test_a_held_status_still_refuses_the_next_sync_after_the_upgrade(
 
     item = storage.get_content_item(db_id, user_id=1)
     assert item is not None
-    assert item.status == ConsumptionStatus.UNREAD
+    assert item.status == ConsumptionStatus.COMPLETED
+    assert _writes_in_band(db_path, db_id) == []
 
 
 def _seed_manually_enriched_db(
