@@ -51,8 +51,9 @@ given plugin exposes.
 
 **Remove** drops a DB-backed source and every credential stored under its id,
 whether or not its plugin is still installed. Remove deletes no library items,
-and the app cannot delete one at all, so the rows a removed source wrote stay
-put and a re-added source syncs straight back into them.
+so the rows a removed source wrote stay put and a re-added source syncs straight
+back into them. Delete one by hand with `library delete` or a library card's
+**Delete** action.
 
 Sensitive values are never returned by the API. The UI shows a "set" / "unset"
 badge with **Replace** and **Clear** actions.

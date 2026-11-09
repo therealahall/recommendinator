@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import AfterValidator, BaseModel, Field, StringConstraints
 
+from src.library.delete import delete_item
 from src.library.field_choice import UnfollowableWriterError, follow_writer
 from src.library.rebuild import start_library_rebuild
 from src.models.content import (
@@ -36,6 +37,7 @@ from src.storage.manager import (
 from src.utils.export import export_items_csv, export_items_json
 from src.utils.item_serialization import (
     completion_to_dict,
+    deletion_to_dict,
     field_writers_to_dict,
     ignore_result_to_dict,
     item_to_dict,
@@ -43,7 +45,7 @@ from src.utils.item_serialization import (
 from src.utils.series import MAX_SEASONS
 from src.utils.sorting import MAX_SEARCH_LENGTH
 from src.utils.text import exception_for_log, is_blank
-from src.web.guards import RequiredStorage
+from src.web.guards import RequiredConfig, RequiredStorage
 from src.web.responses import SurrogateSafeResponse
 
 logger = logging.getLogger(__name__)
@@ -169,6 +171,12 @@ class IgnoreItemResponse(BaseModel):
     title: str
     ignored: bool
     message: str
+
+
+class ItemDeletionResponse(BaseModel):
+    db_id: int
+    title: str
+    merged_count: int
 
 
 class ItemEditRequest(BaseModel):
@@ -416,6 +424,35 @@ def get_single_item(
         raise HTTPException(status_code=404, detail="Item not found")
 
     return _item_to_response(item)
+
+
+@router.get("/items/{db_id}/deletion", response_model=ItemDeletionResponse)
+def preview_item_deletion(
+    db_id: int,
+    storage: RequiredStorage,
+    user_id: int = Query(1, ge=1, description="User ID for authorization"),
+) -> ItemDeletionResponse:
+    """What deleting the item takes with it, for the confirmation to state."""
+    item = _item_or_404(storage, db_id, user_id)
+    return ItemDeletionResponse.model_validate(
+        deletion_to_dict(db_id, item.title, storage.count_merged_items(db_id))
+    )
+
+
+@router.delete("/items/{db_id}", response_model=ItemDeletionResponse)
+def delete_library_item(
+    db_id: int,
+    storage: RequiredStorage,
+    config: RequiredConfig,
+    user_id: int = Query(1, ge=1, description="User ID for authorization"),
+) -> ItemDeletionResponse:
+    item = _item_or_404(storage, db_id, user_id)
+    deleted = delete_item(storage, config, db_id, user_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return ItemDeletionResponse.model_validate(
+        deletion_to_dict(db_id, item.title, len(deleted) - 1)
+    )
 
 
 def _edit_bound_crossed(request: ItemEditRequest) -> str | None:

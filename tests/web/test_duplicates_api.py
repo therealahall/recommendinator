@@ -256,12 +256,6 @@ def test_lifting_a_refusal_nobody_made_refuses_by_id(client: TestClient) -> None
     assert response.json()["detail"] == "Items 1 and 2 are not a declined pair."
 
 
-def test_no_route_here_offers_to_delete_an_item(client: TestClient) -> None:
-    absorbed = _ids(client, "Deadhouse Gates (Malazan Book 2)")
-
-    assert client.delete(f"/api/items/{absorbed}").status_code == 405
-
-
 def test_an_empty_library_answers_an_empty_view_on_every_listing(
     tmp_path: Path,
 ) -> None:

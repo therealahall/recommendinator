@@ -54,6 +54,7 @@ from src.sources.service import SOURCE_MISCONFIGURED_DETAIL, resolve_inputs
 from src.storage.field_writes import FieldWriter, WriterBand
 from src.storage.manager import (
     UNSET,
+    MergeEvidence,
     SavedItem,
     SaveOutcome,
     StorageManager,
@@ -1973,6 +1974,46 @@ def test_clearing_a_field_nobody_holds_is_a_404(mock_components, tmp_path):
     assert unknown.status_code == 404
 
 
+def test_deleting_a_survivor_takes_its_merged_items_and_their_covers(
+    mock_components, tmp_path
+):
+    storage = StorageManager(sqlite_path=tmp_path / "library.db")
+    survivor, *absorbed = [
+        storage.save_content_item(
+            ContentItem(
+                id=f"{title}.iso",
+                source="roms",
+                title=title,
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.UNREAD,
+            ),
+            user_id=1,
+        )
+        for title in ("Metroid Prime", "Metroid Prime GC", "Metroid Prime Wii")
+    ]
+    for db_id in absorbed:
+        storage.merge_content_items(survivor, db_id, MergeEvidence.MANUAL, user_id=1)
+    covers = tmp_path / "covers"
+    covers.mkdir()
+    for db_id in (survivor, *absorbed):
+        (covers / f"{db_id}-0123456789abcdef").write_bytes(b"art")
+    client = _client_on(mock_components["app"], storage)
+    app_state.config = {"storage": {"database_path": str(tmp_path / "library.db")}}
+
+    asked = client.get(f"/api/items/{survivor}/deletion?user_id=1")
+    deleted = client.delete(f"/api/items/{survivor}?user_id=1")
+
+    assert asked.json() == {
+        "db_id": survivor,
+        "title": "Metroid Prime",
+        "merged_count": 2,
+    }
+    assert deleted.json() == asked.json()
+    assert client.get("/api/items?user_id=1").json() == []
+    assert list(covers.iterdir()) == []
+    assert client.delete(f"/api/items/{survivor}?user_id=1").status_code == 404
+
+
 def test_the_switcher_offers_every_writer_and_the_field_follows_the_one_picked(
     mock_components, tmp_path
 ):
@@ -3146,6 +3187,15 @@ _GUARDED_ENDPOINTS = [
         body={"ignored": True},
     ),
     _Endpoint("GET", "/api/items/{db_id}", ("storage",), url="/api/items/1"),
+    _Endpoint(
+        "GET",
+        "/api/items/{db_id}/deletion",
+        ("storage",),
+        url="/api/items/1/deletion",
+    ),
+    _Endpoint(
+        "DELETE", "/api/items/{db_id}", ("storage", "config"), url="/api/items/1"
+    ),
     _Endpoint(
         "PATCH",
         "/api/items/{db_id}",

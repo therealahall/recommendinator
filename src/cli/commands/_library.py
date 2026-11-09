@@ -18,6 +18,7 @@ from src.cli._shared import (
     write_output_file,
 )
 from src.ingestion.source_labels import label_for_source
+from src.library.delete import delete_item
 from src.library.field_choice import UnfollowableWriterError, follow_writer
 from src.library.rebuild import start_library_rebuild
 from src.models.content import (
@@ -62,6 +63,7 @@ from src.utils.duplicate_serialization import (
 )
 from src.utils.export import export_items_csv, export_items_json
 from src.utils.item_serialization import (
+    deletion_to_dict,
     field_writers_to_dict,
     ignore_result_to_dict,
     item_to_dict,
@@ -945,6 +947,61 @@ def library_unignore(
 ) -> None:
     """Unignore an item (include in recommendations again)."""
     _apply_ignored(ctx, item_id, user_id, output_format, False)
+
+
+@library.command(
+    "delete",
+    help="Delete an item and the items merged into it (DELETE /api/items/{id}).",
+)
+@click.argument("item_id", type=int)
+@click.option("--yes", is_flag=True, help="Skip the confirmation prompt")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format",
+)
+@click.option(
+    "--user",
+    "user_id",
+    type=int,
+    default=1,
+    help="User ID",
+)
+@click.pass_context
+def library_delete(
+    ctx: click.Context, item_id: int, yes: bool, output_format: str, user_id: int
+) -> None:
+    storage = ctx.obj["storage"]
+
+    item = storage.get_content_item(item_id, user_id=user_id)
+    if item is None:
+        abort_with(f"Item {item_id} not found.")
+
+    if not yes:
+        merged = storage.count_merged_items(item_id)
+        also = f" Its {merged} merged item(s) will also be deleted." if merged else ""
+        if not click.confirm(
+            f"Delete '{item.title}' (#{item_id})?{also} A source that still has"
+            " it brings it back on its next sync.",
+            default=False,
+        ):
+            click.echo("Aborted.")
+            return
+
+    deleted = delete_item(storage, ctx.obj["config"], item_id, user_id)
+    if not deleted:
+        abort_with(f"Item {item_id} not found.")
+
+    title = item.title
+    merged_count = len(deleted) - 1
+    with_merged = f" and {merged_count} merged item(s)" if merged_count else ""
+    emit_view(
+        output_format,
+        lambda: deletion_to_dict(item_id, title, merged_count),
+        f"Deleted item {item_id}{with_merged}.",
+    )
 
 
 @library.command("export")

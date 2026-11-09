@@ -107,7 +107,7 @@ def absorb_item(
     restore = _what_this_merge_wrote(before, _survivor_state(cursor, survivor_id))
     restore["dead_covers"] = _carry_dead_covers(cursor, survivor_id, absorbed_id)
     # What it absorbed comes with it: no row may hide behind a hidden row.
-    restore["repointed"] = _absorbed_by(cursor, absorbed_id)
+    restore["repointed"] = absorbed_by(cursor, absorbed_id)
     cursor.execute(
         "UPDATE content_items SET merged_into = ? WHERE id = ? OR merged_into = ?",
         (survivor_id, absorbed_id, absorbed_id),
@@ -266,7 +266,7 @@ def _later_merge_id(
     return int(row["id"]) if row is not None else None
 
 
-def _absorbed_by(cursor: sqlite3.Cursor, db_id: int) -> list[int]:
+def absorbed_by(cursor: sqlite3.Cursor, db_id: int) -> list[int]:
     cursor.execute("SELECT id FROM content_items WHERE merged_into = ?", (db_id,))
     return [int(row["id"]) for row in cursor.fetchall()]
 

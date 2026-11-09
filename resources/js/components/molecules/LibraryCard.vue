@@ -1,13 +1,16 @@
 <script setup lang="ts">
 import { computed, useId } from 'vue'
-import type { ContentItemResponse } from '@/types/api'
+import type { ContentItemResponse, ItemDeletion } from '@/types/api'
 import AppIcon from '@/components/atoms/AppIcon.vue'
 import ItemCover from '@/components/atoms/ItemCover.vue'
+import ConfirmPanel from '@/components/molecules/ConfirmPanel.vue'
 import { contentTypeGlyph } from '@/constants/contentTypes'
 import { formatContentType, formatSeries, formatStatusForContentType } from '@/utils/format'
 
 const props = defineProps<{
   item: ContentItemResponse
+  /** Set while this card's delete awaits an answer. */
+  deletion?: ItemDeletion | null
 }>()
 
 const series = computed(() => formatSeries(props.item.series, props.item.series_index))
@@ -29,7 +32,19 @@ const emit = defineEmits<{
   edit: [dbId: number]
   merge: [dbId: number]
   toggleIgnore: [dbId: number, ignored: boolean]
+  delete: [dbId: number]
+  confirmDelete: [dbId: number]
+  cancelDelete: []
 }>()
+
+// The card shows none of the items merged into it, so the question names them.
+const deleteQuestion = computed(() => {
+  const merged = props.deletion?.merged_count ?? 0
+  const also = merged
+    ? ` Its ${merged} merged ${merged === 1 ? 'item' : 'items'} will also be deleted.`
+    : ''
+  return `Delete “${props.item.title}”?${also} A source that still has it brings it back on its next sync.`
+})
 
 // A status the API has not taught this build about gets the neutral tone rather
 // than the "completed" green the old fallthrough painted it.
@@ -112,6 +127,20 @@ function statusTone(status: string): string | undefined {
       >
         {{ item.ignored ? 'Unignore' : 'Ignore' }}
       </button>
+      <button
+        class="btn btn-small btn-secondary"
+        :aria-label="`Delete: ${item.title}`"
+        @click="emit('delete', item.db_id!)"
+      >Delete</button>
     </div>
+    <ConfirmPanel
+      v-if="deletion"
+      :message="deleteQuestion"
+      confirm-label="Delete"
+      cancel-label="Keep it"
+      destructive
+      @cancel="emit('cancelDelete')"
+      @confirm="emit('confirmDelete', item.db_id!)"
+    />
   </div>
 </template>

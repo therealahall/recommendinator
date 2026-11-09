@@ -4,6 +4,7 @@ import { createTestingPinia } from '@pinia/testing'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import LibraryPage from './LibraryPage.vue'
 import EditModal from '@/components/molecules/EditModal.vue'
+import LibraryCard from '@/components/molecules/LibraryCard.vue'
 import MergePickerModal from '@/components/molecules/MergePickerModal.vue'
 import LoadingRows from '@/components/molecules/LoadingRows.vue'
 import { useLibraryStore } from '@/stores/library'
@@ -31,7 +32,11 @@ function testRouter() {
   })
 }
 
-function mountPage(overrides: Record<string, unknown> = {}, attachTo?: HTMLElement) {
+function mountPage(
+  overrides: Record<string, unknown> = {},
+  attachTo?: HTMLElement,
+  stubs: Record<string, boolean> = {},
+) {
   const wrapper = mount(LibraryPage, {
     attachTo,
     global: {
@@ -41,6 +46,7 @@ function mountPage(overrides: Record<string, unknown> = {}, attachTo?: HTMLEleme
         LibraryCard: true,
         EditModal: true,
         MergePickerModal: true,
+        ...stubs,
       },
     },
   })
@@ -262,6 +268,39 @@ describe('LibraryPage search behaviour', () => {
     await flushPromises()
 
     expect(lib.mergeInto).toHaveBeenCalledWith(1, 2)
+    expect(document.activeElement).toBe(wrapper.get('h2').element)
+    wrapper.unmount()
+  })
+
+  async function deleteFocusedCard(titles: string[]) {
+    const items = titles.map((title, i) => ({
+      db_id: i + 1, title, content_type: 'video_game', status: 'unread', external_ids: [],
+    }))
+    const page = mountPage({ items, loading: false }, document.body, { LibraryCard: false })
+    vi.mocked(page.lib.deleteItem).mockImplementation(async () => {
+      page.lib.items = page.lib.items.slice(1)
+    })
+    await page.wrapper.vm.$nextTick()
+    const first = page.wrapper.findComponent(LibraryCard)
+    ;(first.get(`[aria-label="Delete: ${titles[0]}"]`).element as HTMLElement).focus()
+
+    first.vm.$emit('confirmDelete', 1)
+    await flushPromises()
+    return page
+  }
+
+  it('lands the keyboard on the next card when a delete takes the focused one away', async () => {
+    const { wrapper, lib } = await deleteFocusedCard(['Metroid Prime', 'Doom'])
+
+    expect(lib.deleteItem).toHaveBeenCalledWith(1)
+    expect(wrapper.findComponent(LibraryCard).element.contains(document.activeElement)).toBe(true)
+    expect(wrapper.findComponent(LibraryCard).text()).toContain('Doom')
+    wrapper.unmount()
+  })
+
+  it('lands the keyboard on the heading when a delete takes the last card away', async () => {
+    const { wrapper } = await deleteFocusedCard(['Metroid Prime'])
+
     expect(document.activeElement).toBe(wrapper.get('h2').element)
     wrapper.unmount()
   })

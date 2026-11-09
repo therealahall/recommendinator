@@ -54,6 +54,13 @@ export interface ItemFieldWritersResponse {
   fields: FieldWriters[]
 }
 
+/** What deleting an item takes with it: asked before, and answered after. */
+export interface ItemDeletion {
+  db_id: number
+  title: string
+  merged_count: number
+}
+
 /** A library item named as the reason for another one. */
 export interface RelatedItemResponse {
   db_id: number | null

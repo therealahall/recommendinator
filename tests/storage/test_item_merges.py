@@ -1,5 +1,4 @@
 import json
-import re
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -922,18 +921,29 @@ def test_no_write_door_reaches_the_row_behind_a_merge(db: SQLiteDB) -> None:
     assert _snapshot(db, absorbed_id) == before
 
 
-def test_no_door_in_src_deletes_a_content_row() -> None:
-    doors = re.compile(r"delete\s+from\s+content_items\b", re.IGNORECASE)
-    assert doors.search("DELETE FROM content_items WHERE id = ?")
-    src = Path(__file__).resolve().parents[2] / "src"
+def test_only_a_visible_row_is_deleted_and_it_takes_every_row_merged_into_it(
+    db: SQLiteDB,
+) -> None:
+    """A hidden row's delete would cascade its merge record away, leaving the rows
+    it had absorbed hidden with no record naming them, so no undo reaches them."""
+    survivor_id = _save(db, "steam", "620", title="Portal 2")
+    middle_id = _save(db, "gog", "1207658961", title="Portal Two")
+    earliest_id = _save(db, "roms", "portal2.iso", title="Portal 2 USA")
+    db.merge_content_items(middle_id, earliest_id, MergeEvidence.MANUAL)
+    db.merge_content_items(survivor_id, middle_id, MergeEvidence.MANUAL)
 
-    offenders = [
-        str(module.relative_to(src))
-        for module in sorted(src.rglob("*.py"))
-        if doors.search(module.read_text(encoding="utf-8"))
-    ]
+    assert db.delete_content_item(middle_id, user_id=1) == []
+    assert db.delete_content_item(survivor_id, user_id=2) == []
+    deleted = db.delete_content_item(survivor_id, user_id=1)
 
-    assert offenders == []
+    assert sorted(deleted) == sorted([survivor_id, middle_id, earliest_id])
+    for db_id in deleted:
+        assert _snapshot(db, db_id) == {table: [] for table, _ in _ROW_TABLES}
+    assert db.list_content_item_merges(user_id=1) == []
+
+    reimported = _save(db, "roms", "portal2.iso", title="Portal 2 USA")
+    assert reimported not in deleted
+    assert [item.db_id for item in db.get_content_items()] == [reimported]
 
 
 def test_a_survivor_gains_the_series_the_absorbed_row_states_and_undoes_out_of_it(

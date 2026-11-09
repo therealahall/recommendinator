@@ -90,7 +90,7 @@ The enrichment door runs that same pass when it saves:
 
 #### User-action doors
 
-These three overwrite freely and write only what the caller supplied:
+These four act on the caller's word alone, and touch only what it named:
 
 - **`complete_content_item`** backs `complete` and `POST /api/complete`. It
   finds or creates the row and applies rating, review, status and date in one
@@ -103,6 +103,8 @@ These three overwrite freely and write only what the caller supplied:
 - **`set_item_ignored`** backs the Ignore buttons
   (`PATCH /api/items/{id}/ignore`) and `library ignore` / `library unignore`. It
   writes `ignored` alone.
+- **`delete_content_item`** backs `DELETE /api/items/{id}` and `library delete`.
+  It refuses a hidden (merged-away) row, and takes the rows merged into it along.
 
 **`date_completed` is never replaced silently.** A completion carrying no date
 fills an empty column with today and keeps an existing date. A named date is

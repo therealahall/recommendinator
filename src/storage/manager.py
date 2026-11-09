@@ -358,6 +358,17 @@ class StorageManager:
             refresh_profile(self, user_id)
         return changed
 
+    def count_merged_items(self, db_id: int) -> int:
+        return self.sqlite_db.count_merged_items(db_id)
+
+    def delete_content_item(self, db_id: int, user_id: int) -> list[int]:
+        """Every id deleted, *db_id* first; empty when nothing was."""
+        with self._save_lock:
+            deleted = self.sqlite_db.delete_content_item(db_id, user_id)
+        if deleted:
+            refresh_profile(self, user_id)
+        return deleted
+
     def update_item_from_ui(
         self,
         db_id: int,

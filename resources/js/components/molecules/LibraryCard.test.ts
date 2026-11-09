@@ -60,6 +60,24 @@ describe('LibraryCard', () => {
     expect(wrapper.emitted('toggleIgnore')).toEqual([[1, true]])
   })
 
+  it('asks before deleting, saying how many merged items go with it', async () => {
+    const wrapper = mount(LibraryCard, { props: { item: baseItem } })
+    const action = wrapper
+      .findAll('.library-item-actions button')
+      .find((button) => button.text() === 'Delete')
+    await action!.trigger('click')
+    expect(wrapper.emitted('delete')).toEqual([[1]])
+    expect(wrapper.find('[data-testid="confirm-panel"]').exists()).toBe(false)
+
+    await wrapper.setProps({ deletion: { db_id: 1, title: baseItem.title, merged_count: 2 } })
+    expect(wrapper.get('[data-testid="confirm-panel"]').text()).toContain(
+      '2 merged items will also be deleted',
+    )
+    await wrapper.get('[data-testid="confirm-panel-confirm"]').trigger('click')
+
+    expect(wrapper.emitted('confirmDelete')).toEqual([[1]])
+  })
+
   it.each([false, true])('names the item in every action, ignored: %s', (ignored) => {
     const wrapper = mount(LibraryCard, { props: { item: { ...baseItem, ignored } } })
 
