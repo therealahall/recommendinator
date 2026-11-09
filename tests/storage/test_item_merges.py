@@ -465,7 +465,7 @@ def test_a_resync_after_a_merge_keeps_the_better_founded_of_the_two_ordinals(
     )
     absorbed_id = _save(
         db,
-        "goodreads_rss",
+        "goodreads_csv",
         "2",
         title="Persepolis Rising: An Expanse Novel",
         content_type=ContentType.BOOK,
@@ -984,7 +984,7 @@ def test_a_survivor_keeps_the_better_founded_of_two_ordinals(db: SQLiteDB) -> No
     )
     absorbed_id = _save(
         db,
-        "goodreads_rss",
+        "goodreads_csv",
         "2",
         title="Persepolis Rising: An Expanse Novel",
         content_type=ContentType.BOOK,
@@ -1010,7 +1010,7 @@ def test_a_resync_after_a_merge_of_two_series_keeps_the_survivor_in_its_own(
     and would count the survivor's own ordinal out of its series."""
     absorbed_id = _save(
         db,
-        "goodreads_rss",
+        "goodreads_csv",
         "2",
         title="Persepolis Rising: An Expanse Novel",
         content_type=ContentType.BOOK,

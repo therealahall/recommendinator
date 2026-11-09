@@ -515,7 +515,11 @@ class TestUpdateWorkersFlag:
         self._db_path = tmp_path / "test.db"
         _steam_source(self._db_path)
         StorageManager(sqlite_path=self._db_path).sources.upsert(
-            1, "goodreads_rss", "goodreads_rss", {"user_id": "12345"}, enabled=True
+            1,
+            "calibre_web",
+            "calibre_web",
+            {"url": "http://localhost:8083", "username": "reader"},
+            enabled=True,
         )
 
     def _config_with_sources(
@@ -558,7 +562,7 @@ class TestUpdateWorkersFlag:
                 return_value=[],
             ),
             patch(
-                "src.ingestion.sources.goodreads_rss.GoodreadsRssPlugin.validate_config",
+                "src.ingestion.sources.calibre_web.CalibreWebPlugin.validate_config",
                 return_value=[],
             ),
         ):
@@ -592,7 +596,7 @@ class TestUpdateWorkersFlag:
                 return_value=[],
             ),
             patch(
-                "src.ingestion.sources.goodreads_rss.GoodreadsRssPlugin.validate_config",
+                "src.ingestion.sources.calibre_web.CalibreWebPlugin.validate_config",
                 return_value=[],
             ),
         ):
@@ -626,7 +630,7 @@ class TestUpdateWorkersFlag:
                 return_value=[],
             ),
             patch(
-                "src.ingestion.sources.goodreads_rss.GoodreadsRssPlugin.validate_config",
+                "src.ingestion.sources.calibre_web.CalibreWebPlugin.validate_config",
                 return_value=[],
             ),
         ):

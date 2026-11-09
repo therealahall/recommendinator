@@ -111,6 +111,12 @@ def mock_config():
 #: A source is a source_configs row; the mocked storage answers from here.
 SOURCE_ROWS: dict[str, Any] = {}
 
+CALIBRE_WEB_CONFIG = {
+    "url": "http://localhost:8083",
+    "username": "reader",
+    "password": "secret",
+}
+
 
 def configure_source(source_id, plugin, **config):
     SOURCE_ROWS[source_id] = {
@@ -129,7 +135,7 @@ def configure_source(source_id, plugin, **config):
 def mock_components(mock_config):
     reset_sync_manager()
     SOURCE_ROWS.clear()
-    configure_source("goodreads_rss", "goodreads_rss", user_id="12345")
+    configure_source("calibre_web", "calibre_web", **CALIBRE_WEB_CONFIG)
 
     mock_storage_manager = make_storage_mock()
     mock_storage_manager.credentials.get_for_source.return_value = {}
@@ -334,7 +340,7 @@ class TestStatusRecommendationsConfig:
 def test_sync_sources_lists_all_with_enabled_flag(client):
     """The UI renders disabled sources in a muted state instead of hiding them
     entirely, so the listing endpoint must surface them."""
-    configure_source("goodreads_rss", "goodreads_rss", user_id="12345")
+    configure_source("calibre_web", "calibre_web", **CALIBRE_WEB_CONFIG)
     configure_source("steam", "steam", enabled=False)
     configure_source("sonarr", "sonarr", url="http://localhost:8989")
     configure_source("radarr", "radarr", url="http://localhost:7878", enabled=False)
@@ -344,7 +350,7 @@ def test_sync_sources_lists_all_with_enabled_flag(client):
     sources = response.json()
     by_id = {s["id"]: s for s in sources}
 
-    assert by_id["goodreads_rss"]["enabled"] is True
+    assert by_id["calibre_web"]["enabled"] is True
     assert by_id["sonarr"]["enabled"] is True
     assert by_id["steam"]["enabled"] is False
     assert by_id["radarr"]["enabled"] is False
@@ -549,17 +555,17 @@ def test_update_endpoint(client, mock_components):
 
     with (
         patch(
-            "src.ingestion.sources.goodreads_rss.GoodreadsRssPlugin.fetch",
+            "src.ingestion.sources.calibre_web.CalibreWebPlugin.fetch",
             return_value=iter([mock_item]),
         ),
         patch(
-            "src.ingestion.sources.goodreads_rss.GoodreadsRssPlugin.validate_config",
+            "src.ingestion.sources.calibre_web.CalibreWebPlugin.validate_config",
             return_value=[],
         ),
     ):
         mock_components["storage"].save_content_item.return_value = 1
 
-        response = client.post("/api/update", json={"source": "goodreads_rss"})
+        response = client.post("/api/update", json={"source": "calibre_web"})
 
         assert response.status_code == 200
         data = response.json()
@@ -633,11 +639,11 @@ def test_update_endpoint_all_sources(client, mock_components):
 
     with (
         patch(
-            "src.ingestion.sources.goodreads_rss.GoodreadsRssPlugin.fetch",
+            "src.ingestion.sources.calibre_web.CalibreWebPlugin.fetch",
             return_value=iter([mock_book]),
         ),
         patch(
-            "src.ingestion.sources.goodreads_rss.GoodreadsRssPlugin.validate_config",
+            "src.ingestion.sources.calibre_web.CalibreWebPlugin.validate_config",
             return_value=[],
         ),
         patch(
@@ -657,7 +663,7 @@ def test_update_endpoint_all_sources(client, mock_components):
         data = response.json()
         assert "message" in data
         assert "sources" in data
-        assert "goodreads_rss" in data["sources"]
+        assert "calibre_web" in data["sources"]
         assert "steam" in data["sources"]
 
 
@@ -674,7 +680,7 @@ def test_update_all_excludes_a_misconfigured_source_and_names_it(
     with (
         patch("src.web.api._sync.get_sync_manager", return_value=sync_manager),
         patch(
-            "src.ingestion.sources.goodreads_rss.GoodreadsRssPlugin.validate_config",
+            "src.ingestion.sources.calibre_web.CalibreWebPlugin.validate_config",
             return_value=[],
         ),
     ):
@@ -682,7 +688,7 @@ def test_update_all_excludes_a_misconfigured_source_and_names_it(
 
     assert response.status_code == 200
     data = response.json()
-    assert data["sources"] == ["goodreads_rss"]
+    assert data["sources"] == ["calibre_web"]
     assert data["message"].startswith(
         "Steam: Source is not properly configured — check its 'api_key' setting."
     )
@@ -700,8 +706,8 @@ def test_update_all_refuses_with_a_4xx_when_every_source_is_misconfigured(
     with (
         patch("src.web.api._sync.get_sync_manager", return_value=sync_manager),
         patch(
-            "src.ingestion.sources.goodreads_rss.GoodreadsRssPlugin.validate_config",
-            return_value=["'user_id' is empty"],
+            "src.ingestion.sources.calibre_web.CalibreWebPlugin.validate_config",
+            return_value=["'url' is required"],
         ),
     ):
         response = client.post("/api/update", json={"source": "all"})
@@ -709,8 +715,8 @@ def test_update_all_refuses_with_a_4xx_when_every_source_is_misconfigured(
     assert response.status_code == 400
     detail = response.json()["detail"]
     assert (
-        "Goodreads (Public Shelves via RSS): Source is not properly configured — "
-        "check its 'user_id' setting." in detail
+        "Calibre-Web: Source is not properly configured — "
+        "check its 'url' setting." in detail
     )
     assert (
         "Steam: Source is not properly configured — check its 'api_key' setting."
@@ -826,7 +832,7 @@ def _sync_a_source_typed(client, content_type):
     """Returns the response and the content type auto-enrichment was started with,
     which is the only place the endpoint's reading of the config value is observable."""
     app_state.config["enrichment"] = {"enabled": True, "auto_enrich_on_sync": True}
-    configure_source("typed", "goodreads_rss", content_type=content_type)
+    configure_source("typed", "roms", content_type=content_type)
     sync_manager = Mock(spec=SyncManager)
     sync_manager.is_running.return_value = False
     sync_manager.start_sync.return_value = None
@@ -840,7 +846,7 @@ def _sync_a_source_typed(client, content_type):
             return_value=enrichment_manager,
         ),
         patch(
-            "src.ingestion.sources.goodreads_rss.GoodreadsRssPlugin.validate_config",
+            "src.ingestion.sources.roms.roms.RomScannerPlugin.validate_config",
             return_value=[],
         ),
     ):
@@ -855,10 +861,10 @@ class TestUpdateEnrichmentContentType:
     """What ``inputs.<id>.content_type`` does to the enrichment auto-start."""
 
     def test_a_valid_content_type_narrows_the_enrichment(self, client, mock_components):
-        response, started_with = _sync_a_source_typed(client, "book")
+        response, started_with = _sync_a_source_typed(client, "video_game")
 
         assert response.status_code == 200
-        assert started_with is ContentType.BOOK
+        assert started_with is ContentType.VIDEO_GAME
 
     def test_an_unknown_content_type_enriches_every_type(
         self, client, mock_components, caplog
@@ -2379,14 +2385,14 @@ class TestUpdateEndpoint409Conflict:
             mock_get_sync_manager.return_value = mock_manager
 
             with patch(
-                "src.ingestion.sources.goodreads_rss.GoodreadsRssPlugin.validate_config",
+                "src.ingestion.sources.calibre_web.CalibreWebPlugin.validate_config",
                 return_value=[],
             ):
-                response = client.post("/api/update", json={"source": "goodreads_rss"})
+                response = client.post("/api/update", json={"source": "calibre_web"})
 
             assert response.status_code == 409
             assert response.json()["detail"] == "A sync is already in progress"
-            assert mock_manager.start_sync.call_args.args[0] == "goodreads_rss"
+            assert mock_manager.start_sync.call_args.args[0] == "calibre_web"
 
     def test_update_allows_different_sources_concurrently(
         self, client: TestClient, mock_components: dict
@@ -2399,23 +2405,19 @@ class TestUpdateEndpoint409Conflict:
         assert manager.is_running("Steam") is True
 
         with patch(
-            "src.ingestion.sources.goodreads_rss.GoodreadsRssPlugin.validate_config",
+            "src.ingestion.sources.calibre_web.CalibreWebPlugin.validate_config",
             return_value=[],
         ):
             with patch(
                 "src.web.sync_dispatch.execute_multi_source_sync",
-                return_value=[
-                    SyncJob(source="goodreads_rss", status=SyncStatus.RUNNING)
-                ],
+                return_value=[SyncJob(source="calibre_web", status=SyncStatus.RUNNING)],
             ):
-                response = client.post("/api/update", json={"source": "goodreads_rss"})
+                response = client.post("/api/update", json={"source": "calibre_web"})
 
         assert response.status_code == 200, response.text
         assert "Sync started" in response.json()["message"]
         assert manager.is_running("Steam") is True
-        assert "goodreads_rss" in {
-            job["source"] for job in manager.get_status()["jobs"]
-        }
+        assert "calibre_web" in {job["source"] for job in manager.get_status()["jobs"]}
 
 
 class TestSyncingEverythingWaitsForTheRunInFlight:
@@ -2440,9 +2442,9 @@ class TestSyncingEverythingWaitsForTheRunInFlight:
         manager = get_sync_manager()
         with patch("src.web.sync_manager.threading.Thread"):
             manager.start_sync(source="All Sources", sync_function=lambda _job: 0)
-            allowed = client.post("/api/update", json={"source": "goodreads_rss"})
+            allowed = client.post("/api/update", json={"source": "calibre_web"})
             manager.start_sync(source=ALL_SOURCES_KEY, sync_function=lambda _job: 0)
-            refused = client.post("/api/update", json={"source": "goodreads_rss"})
+            refused = client.post("/api/update", json={"source": "calibre_web"})
 
         assert allowed.status_code != 409, allowed.text
         assert refused.status_code == 409
@@ -2456,14 +2458,14 @@ class TestASourceAnotherProcessHoldsIsRefused:
         mock_components["storage"].sync_runs.claim.return_value = None
 
         with patch(
-            "src.ingestion.sources.goodreads_rss.GoodreadsRssPlugin.validate_config",
+            "src.ingestion.sources.calibre_web.CalibreWebPlugin.validate_config",
             return_value=[],
         ):
-            response = client.post("/api/update", json={"source": "goodreads_rss"})
+            response = client.post("/api/update", json={"source": "calibre_web"})
 
         assert response.status_code == 409
         assert response.json()["detail"] == already_syncing_detail(
-            mock_components["storage"], ["goodreads_rss"]
+            mock_components["storage"], ["calibre_web"]
         )
 
     def test_a_started_sync_claims_the_source_it_names(
@@ -2473,20 +2475,20 @@ class TestASourceAnotherProcessHoldsIsRefused:
 
         with (
             patch(
-                "src.ingestion.sources.goodreads_rss.GoodreadsRssPlugin.validate_config",
+                "src.ingestion.sources.calibre_web.CalibreWebPlugin.validate_config",
                 return_value=[],
             ),
             patch("src.web.sync_dispatch.execute_multi_source_sync", return_value=[]),
         ):
-            response = client.post("/api/update", json={"source": "goodreads_rss"})
+            response = client.post("/api/update", json={"source": "calibre_web"})
 
         assert response.status_code == 200, response.text
-        assert storage.sync_runs.claim.call_args.args == (1, "goodreads_rss")
+        assert storage.sync_runs.claim.call_args.args == (1, "calibre_web")
 
     def test_syncing_everything_names_the_source_it_could_not_claim(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        configure_source("shelf", "goodreads_rss", user_id="999")
+        configure_source("shelf", "calibre_web", **CALIBRE_WEB_CONFIG)
         storage = mock_components["storage"]
         storage.sync_runs.claim.side_effect = lambda _user, source_id: (
             None if source_id == "shelf" else 7
@@ -2494,7 +2496,7 @@ class TestASourceAnotherProcessHoldsIsRefused:
 
         with (
             patch(
-                "src.ingestion.sources.goodreads_rss.GoodreadsRssPlugin.validate_config",
+                "src.ingestion.sources.calibre_web.CalibreWebPlugin.validate_config",
                 return_value=[],
             ),
             patch("src.web.sync_dispatch.execute_multi_source_sync", return_value=[]),
@@ -2540,7 +2542,7 @@ class TestUpdateEndpointParallelSync:
                 side_effect=self._make_capture(captured_kwargs, completion),
             ),
             patch(
-                "src.ingestion.sources.goodreads_rss.GoodreadsRssPlugin.validate_config",
+                "src.ingestion.sources.calibre_web.CalibreWebPlugin.validate_config",
                 return_value=[],
             ),
         ):
@@ -2563,7 +2565,7 @@ class TestUpdateEndpointParallelSync:
                 side_effect=self._make_capture(captured_kwargs, completion),
             ),
             patch(
-                "src.ingestion.sources.goodreads_rss.GoodreadsRssPlugin.validate_config",
+                "src.ingestion.sources.calibre_web.CalibreWebPlugin.validate_config",
                 return_value=[],
             ),
         ):
@@ -2675,7 +2677,7 @@ class TestSyncStatusNamesTheSourceThatFailedRegression:
                 side_effect=fake_execute,
             ),
             patch(
-                "src.ingestion.sources.goodreads_rss.GoodreadsRssPlugin.validate_config",
+                "src.ingestion.sources.calibre_web.CalibreWebPlugin.validate_config",
                 return_value=[],
             ),
         ):
@@ -2701,18 +2703,18 @@ class TestSyncStatusBoundsThePerItemErrorList:
 
         with (
             patch(
-                "src.ingestion.sources.goodreads_rss.GoodreadsRssPlugin.validate_config",
+                "src.ingestion.sources.calibre_web.CalibreWebPlugin.validate_config",
                 return_value=[],
             ),
             patch(
-                "src.ingestion.sources.goodreads_rss.GoodreadsRssPlugin.fetch",
+                "src.ingestion.sources.calibre_web.CalibreWebPlugin.fetch",
                 return_value=iter(
                     make_item(f"Book {index}", item_id=f"b{index}")
                     for index in range(failures)
                 ),
             ),
         ):
-            response = client.post("/api/update", json={"source": "goodreads_rss"})
+            response = client.post("/api/update", json={"source": "calibre_web"})
             assert recorded.wait(timeout=5.0), "background sync did not record a run"
 
         assert response.status_code == 200, response.text
@@ -2737,20 +2739,20 @@ class TestUpdateEndpointRecordsTheRun:
 
         with (
             patch(
-                "src.ingestion.sources.goodreads_rss.GoodreadsRssPlugin.validate_config",
+                "src.ingestion.sources.calibre_web.CalibreWebPlugin.validate_config",
                 return_value=[],
             ),
             patch(
-                "src.ingestion.sources.goodreads_rss.GoodreadsRssPlugin.fetch",
+                "src.ingestion.sources.calibre_web.CalibreWebPlugin.fetch",
                 return_value=iter([make_item("Dune", item_id="b1")]),
             ),
         ):
-            response = client.post("/api/update", json={"source": "goodreads_rss"})
+            response = client.post("/api/update", json={"source": "calibre_web"})
             assert recorded.wait(timeout=5.0), "background sync did not record a run"
 
         assert response.status_code == 200, response.text
         args, kwargs = storage.sync_runs.record.call_args
-        assert args == (1, "goodreads_rss")
+        assert args == (1, "calibre_web")
         assert kwargs["status"] == "completed"
 
 
@@ -3247,7 +3249,7 @@ _GUARDED_ENDPOINTS = [
         "POST",
         "/api/sync/sources",
         ("storage",),
-        body={"id": "my_books", "plugin": "goodreads_rss"},
+        body={"id": "my_books", "plugin": "calibre_web"},
     ),
     _Endpoint(
         "DELETE",

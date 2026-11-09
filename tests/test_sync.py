@@ -458,7 +458,7 @@ class TestAClaimOutlastsTheWaitAndTheSilence:
 
 
 class TestEverySyncLeavesARun:
-    _SOURCE_ID = "goodreads_rss"
+    _SOURCE_ID = "fake_books"
 
     @pytest.fixture()
     def storage(self, tmp_path: Path) -> StorageManager:
@@ -474,9 +474,9 @@ class TestEverySyncLeavesARun:
     @staticmethod
     def _plugin(items: int) -> MagicMock:
         plugin = MagicMock(spec=SourcePlugin)
-        plugin.name = "goodreads_rss"
-        plugin.display_name = "Goodreads RSS"
-        plugin.get_source_identifier.return_value = "goodreads_rss"
+        plugin.name = "fake_books"
+        plugin.display_name = "Fake Books"
+        plugin.get_source_identifier.return_value = "fake_books"
         plugin.fetch.return_value = iter(
             [make_item(f"Book {index}", item_id=f"b{index}") for index in range(items)]
         )
@@ -499,7 +499,7 @@ class TestEverySyncLeavesARun:
     def test_each_source_of_one_run_lands_its_own_row(
         self, storage: StorageManager
     ) -> None:
-        remedy = "Make the Goodreads profile public, then sync again."
+        remedy = "Check the Calibre-Web password, then sync again."
         failing = self._plugin(0)
         failing.name = "calibre_web"
         failing.fetch.side_effect = SourceError("calibre_web", remedy)
@@ -518,7 +518,7 @@ class TestEverySyncLeavesARun:
             (run["source_id"], run["status"], tuple(run["errors"]))
             for run in storage.sync_runs.latest_per_source(1).values()
         } == {
-            ("goodreads_rss", "completed", ()),
+            ("fake_books", "completed", ()),
             ("calibre_web", "failed", (remedy,)),
         }
 

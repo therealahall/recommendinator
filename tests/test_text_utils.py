@@ -49,7 +49,7 @@ class TestHumanizeSourceIdAcronyms:
         ("source_id", "expected"),
         [
             ("finished_tv_shows", "Finished TV Shows"),
-            ("goodreads_rss", "Goodreads RSS"),
+            ("shelves_rss", "Shelves RSS"),
         ],
     )
     def test_an_acronym_word_comes_from_the_map_not_from_capitalize(

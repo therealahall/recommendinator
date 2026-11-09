@@ -892,7 +892,7 @@ class TestWhatTheSaveDoorMatchesOnTitle:
         self, temp_db: SQLiteDB
     ) -> None:
         herbert = temp_db.save_content_item(
-            self._book("goodreads_rss", "234225", "Dune", "Frank Herbert")
+            self._book("goodreads_csv", "234225", "Dune", "Frank Herbert")
         )
 
         freed = temp_db.save_content_item(
@@ -905,7 +905,7 @@ class TestWhatTheSaveDoorMatchesOnTitle:
         self, temp_db: SQLiteDB
     ) -> None:
         temp_db.save_content_item(
-            self._book("goodreads_rss", "234225", "Dune", "Frank Herbert")
+            self._book("goodreads_csv", "234225", "Dune", "Frank Herbert")
         )
         freed = temp_db.save_content_item(
             self._book("calibre_web", "calibre:dune-novel", "Dune", "Alexander Freed")
@@ -1077,7 +1077,7 @@ class TestWhatTheSaveDoorMatchesOnTitle:
     ) -> None:
         """``author`` is fill-only, so a placeholder written once is permanent."""
         shelved = temp_db.save_content_item(
-            self._book("goodreads_rss", "57905101", "Dungeon Crawler Carl", "Dinniman")
+            self._book("goodreads_csv", "57905101", "Dungeon Crawler Carl", "Dinniman")
         )
 
         imported = temp_db.save_content_item(

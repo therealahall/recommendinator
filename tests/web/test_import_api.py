@@ -98,7 +98,7 @@ class TestARefusedFile:
     def test_an_unknown_format_name_lists_the_ones_that_exist(
         self, client: TestClient
     ) -> None:
-        response = _upload(client, importer="goodreads_rss")
+        response = _upload(client, importer="goodreads_xml")
 
         assert response.status_code == 400
         assert "goodreads_csv" in response.json()["detail"]

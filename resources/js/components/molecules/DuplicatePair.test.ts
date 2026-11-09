@@ -117,7 +117,7 @@ describe('DuplicatePair', () => {
       copies: [
         ['calibre', 'Calibre'],
         ['openlibrary', 'Openlibrary'],
-        ['goodreads_rss', 'Goodreads RSS'],
+        ['goodreads_csv', 'Goodreads CSV'],
       ].map(([source, source_name], index) => ({
         db_id: 3 + index,
         title: 'Dune',
@@ -133,7 +133,7 @@ describe('DuplicatePair', () => {
 
     expect(new Set(names).size).toBe(6)
     expect(names).toContain('Merge, keeping “Dune” from Calibre, row 3, suggested to keep')
-    expect(names).toContain('“Dune” from Goodreads RSS, row 5 is not the same work')
+    expect(names).toContain('“Dune” from Goodreads CSV, row 5 is not the same work')
   })
 
   it('marks the copy the page reports offering in another block as well', () => {
