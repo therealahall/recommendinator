@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v0.79.0 (2026-11-11)
+
+### Features
+
+- **library**: Add a did-not-finish status
+  ([`68b4f8a`](https://github.com/therealahall/recommendinator/commit/68b4f8ad9873ee3f52f65e1d4d7d9320cd58459d))
+
+- **library**: Delete an item from the library
+  ([`fcf14b3`](https://github.com/therealahall/recommendinator/commit/fcf14b3f29e7a9b373d054e897515f840d942839))
+
+
 ## v0.78.1 (2026-11-09)
 
 ### Bug Fixes
