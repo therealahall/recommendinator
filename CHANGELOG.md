@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.80.0 (2026-11-11)
+
+### Features
+
+- **recommendations**: Hold back unreleased items and unaired seasons
+  ([`3cd019b`](https://github.com/therealahall/recommendinator/commit/3cd019b617727201622e53badf6ec106d03a7054))
+
+
 ## v0.79.0 (2026-11-11)
 
 ### Features
