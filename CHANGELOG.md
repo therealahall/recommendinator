@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.81.0 (2026-11-11)
+
+### Features
+
+- **library**: Rate TV shows season by season
+  ([`6ae5596`](https://github.com/therealahall/recommendinator/commit/6ae5596fb57ccd5681b23ff33c3964c0e0e9d64f))
+
+
 ## v0.80.0 (2026-11-11)
 
 ### Features
