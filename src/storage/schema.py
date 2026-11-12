@@ -1933,18 +1933,23 @@ def requeue_enrichment_status(
 def enriched_before_ids(
     conn: sqlite3.Connection,
     cutoff: datetime,
+    provider: str,
     content_type: str | None = None,
     user_id: int | None = None,
     content_item_id: int | None = None,
 ) -> list[int]:
-    """*cutoff* is UTC, formatted as the ``CURRENT_TIMESTAMP`` a run stamps."""
+    """*cutoff* is UTC, formatted as the ``CURRENT_TIMESTAMP`` a run stamps.
+    *provider* is the one credited with the match, not ``_enrichment_scope``'s
+    any-provider-that-wrote filter.
+    """
     query, params = _enrichment_scope(None, content_type, user_id, content_item_id)
     cursor = conn.cursor()
     cursor.execute(
         "SELECT content_item_id FROM enrichment_status"
         " WHERE needs_enrichment = 0 AND last_enriched_at <= ?"
+        " AND enrichment_provider = ?"
         f" AND content_item_id IN ({query})",
-        [cutoff.strftime("%Y-%m-%d %H:%M:%S"), *params],
+        [cutoff.strftime("%Y-%m-%d %H:%M:%S"), provider, *params],
     )
     return [int(row["content_item_id"]) for row in cursor.fetchall()]
 

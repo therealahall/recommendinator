@@ -1,4 +1,5 @@
 import sqlite3
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -23,6 +24,7 @@ from src.storage.field_writes import (
 from src.storage.item_merges import MergeEvidence
 from src.storage.manager import StorageManager
 from src.storage.schema import create_user
+from src.utils.dates import utc_now
 
 
 def save_unenriched(
@@ -727,6 +729,93 @@ class TestEnrichmentStats:
         assert stats["pending"] == 1
         assert stats["by_provider"] == {"tmdb": 1}
         assert stats["by_quality"] == {"high": 1}
+
+
+class TestTheWeeklyRefreshAsksAgainForAnUndatedSeason:
+    PAST, FUTURE = "2020-01-01", "2099-01-01"
+    WATCHED_TWO_OF_THREE = {"total_seasons": 3, "seasons_watched": [1, 2]}
+
+    def requeued(
+        self,
+        tmp_path: Path,
+        metadata: dict[str, Any],
+        provider: str = "tmdb",
+        quality: str = "high",
+        days_since: int = 8,
+    ) -> bool:
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        db_id = storage_manager.save_content_item(
+            ContentItem(
+                id="show",
+                title="Show",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.UNREAD,
+                metadata=metadata,
+            )
+        )
+        storage_manager.enrichment.mark_complete(db_id, provider, quality)
+        later = utc_now() + timedelta(days=days_since)
+        with patch("src.storage.enrichment_status.utc_now", return_value=later):
+            storage_manager.enrichment.requeue_pending_seasons()
+        status = storage_manager.enrichment.status(db_id)
+        assert status is not None
+        return status["needs_enrichment"]
+
+    @pytest.mark.parametrize(
+        ("air_dates", "expected"),
+        [
+            pytest.param(None, True, id="enriched_before_tmdb_dated_seasons"),
+            pytest.param({"1": PAST, "2": PAST}, True, id="a_sync_counted_a_season"),
+            pytest.param({"1": PAST, "2": PAST, "3": FUTURE}, True, id="dated_ahead"),
+            pytest.param(
+                {"1": PAST, "2": PAST, "3": PAST}, False, id="every_one_aired"
+            ),
+        ],
+    )
+    def test_an_unwatched_season_is_asked_about_until_it_has_aired(
+        self, tmp_path: Path, air_dates: dict[str, str] | None, expected: bool
+    ) -> None:
+        metadata: dict[str, Any] = dict(self.WATCHED_TWO_OF_THREE)
+        if air_dates is not None:
+            metadata["season_air_dates"] = air_dates
+        assert self.requeued(tmp_path, metadata) is expected
+
+    @pytest.mark.parametrize(
+        "metadata",
+        [
+            pytest.param(
+                {
+                    "total_seasons": 2,
+                    "seasons_watched": [1, 2],
+                    "season_air_dates": {"1": PAST, "2": None},
+                },
+                id="the_undated_season_is_watched",
+            ),
+            pytest.param({}, id="no_season_count"),
+        ],
+    )
+    def test_a_show_with_nothing_left_to_air_is_left_alone(
+        self, tmp_path: Path, metadata: dict[str, Any]
+    ) -> None:
+        assert self.requeued(tmp_path, metadata) is False
+
+    @pytest.mark.parametrize(
+        ("provider", "quality", "days_since"),
+        [
+            pytest.param("tmdb", "high", 1, id="enriched_this_week"),
+            pytest.param("tvmaze", "high", 8, id="another_provider_holds_no_dates"),
+            pytest.param("none", "not_found", 8, id="tmdb_could_not_find_it"),
+        ],
+    )
+    def test_a_show_tmdb_cannot_date_this_week_is_not_asked(
+        self, tmp_path: Path, provider: str, quality: str, days_since: int
+    ) -> None:
+        assert (
+            self.requeued(
+                tmp_path, dict(self.WATCHED_TWO_OF_THREE), provider, quality, days_since
+            )
+            is False
+        )
 
 
 class TestTagsAndDescriptionStorage:

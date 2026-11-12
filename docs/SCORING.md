@@ -174,7 +174,7 @@ Nothing is recommended before it is out. A movie or game with a release date aft
 
 A show TMDB has enriched also carries each season's air date. A season airing after today is never offered, and nor is one announced without a date while its show's other seasons have one. No later season is offered past either. A season TMDB did not list, such as one a later sync counted, is judged by the show's first air date.
 
-A show holding an undated or upcoming season is enriched again by the first enrichment run a week after its last, which is how that season's date arrives. A show enriched before this release has no season dates until an enrichment reset re-enriches it.
+A TMDB-enriched show with an unwatched season TMDB has not dated, or dated after today, is enriched again by the first enrichment run a week after its last, which is how that season's date arrives.
 
 ## Ignored items
 

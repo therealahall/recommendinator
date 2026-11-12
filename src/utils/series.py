@@ -646,12 +646,19 @@ def _last_aired_season(item: ContentItem, total_seasons: int, today: date) -> in
 
 
 def awaits_a_season(item: ContentItem, today: date) -> bool:
-    air_dates = item.metadata.get("season_air_dates")
-    if not isinstance(air_dates, dict):
-        return False
+    """A season a sync counted that TMDB never listed, or a show enriched before
+    TMDB dated seasons at all, is undated: only another enrichment can date it.
+    """
+    stored = item.metadata.get("season_air_dates")
+    air_dates = stored if isinstance(stored, dict) else {}
+    seasons = set(range(1, min(total_seasons_of(item) or 0, MAX_SEASONS) + 1))
+    seasons |= {
+        season for key in air_dates if (season := _season_number(key)) is not None
+    }
     return any(
-        (aired := parse_calendar_date(raw)) is None or aired > today
-        for raw in air_dates.values()
+        (aired := parse_calendar_date(air_dates.get(str(season)))) is None
+        or aired > today
+        for season in seasons - watched_seasons(item.metadata)
     )
 
 
