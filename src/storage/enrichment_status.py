@@ -23,6 +23,9 @@ from src.utils.dates import utc_now
 from src.utils.series import awaits_a_season
 
 PENDING_SEASON_REFRESH = timedelta(days=7)
+# Season air dates come from TMDB alone: a show another provider matched, or
+# none did, would be asked again every week for dates it can never supply.
+SEASON_DATING_PROVIDER = "tmdb"
 
 
 @dataclass(frozen=True)
@@ -133,6 +136,7 @@ class EnrichmentStore:
             stale = enriched_before_ids(
                 conn,
                 now - PENDING_SEASON_REFRESH,
+                SEASON_DATING_PROVIDER,
                 ContentType.TV_SHOW.value,
                 user_id,
                 content_item_id,
