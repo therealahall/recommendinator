@@ -288,6 +288,56 @@ class TestWhatAListColumnStillAccepts:
         assert detail_fields.to_json_array(value) == expected
 
 
+class TestACommaJoinedStringStoresOneNamePerPart:
+    """A CSV cell and the export's own genre column arrive comma-joined, and
+    stored whole they read back as one name no genre cluster matches."""
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            ("Fantasy, Science Fiction", '["Fantasy", "Science Fiction"]'),
+            (" a , ,b ", '["a", "b"]'),
+            (" , , ", None),
+            ("", None),
+            (["Drama, Romance"], '["Drama, Romance"]'),
+            ('["Drama, Romance"]', '["Drama, Romance"]'),
+        ],
+        ids=[
+            "comma_joined",
+            "padded_with_an_empty_part",
+            "only_commas_and_spaces",
+            "empty_string",
+            "list_element_with_a_comma",
+            "array_element_with_a_comma",
+        ],
+    )
+    def test_a_bare_string_is_split_and_a_list_is_kept(
+        self, value: Any, expected: str | None
+    ) -> None:
+        """A list element is already one name, so only a bare string splits."""
+        assert detail_fields.to_json_array(value) == expected
+
+    def test_a_comma_joined_genre_reads_back_as_separate_genres(
+        self, tmp_path: Path
+    ) -> None:
+        """Stored whole, the book declared one genre the normalizer drops."""
+        db = SQLiteDB(tmp_path / "comma-genre.db")
+
+        db_id = db.save_content_item(
+            ContentItem(
+                id="comma-genre",
+                title="Hyperion",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+                metadata={"genre": "Fantasy, Science Fiction"},
+            )
+        )
+        stored = db.get_content_item(db_id)
+
+        assert stored is not None
+        assert stored.metadata["genres"] == ["Fantasy", "Science Fiction"]
+
+
 class TestWhatATextColumnStillAccepts:
     """``to_text`` is the codec behind every CREATOR and TEXT column and every
     shipped plugin writes at least one of them, so a guard that reached one shape

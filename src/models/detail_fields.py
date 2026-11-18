@@ -64,13 +64,16 @@ def to_float(value: Any) -> float | None:
 
 
 def to_json_array(value: Any) -> str | None:
-    """A bare string is wrapped: ``"Drama"`` alone reads back as a string
-    nothing parses.
+    """A bare string is a CSV cell or the export's own comma-joined column, so it
+    is split: stored whole it reads back as one name nothing matches.
     """
     if value is None:
         return None
     if isinstance(value, str):
-        return value if value.startswith("[") else json.dumps([value])
+        if value.startswith("["):
+            return value
+        names = [name.strip() for name in value.split(",")]
+        return json.dumps([name for name in names if name]) if any(names) else None
     entries = value if isinstance(value, list) else [value]
     for entry in entries:
         if entry is not None and not isinstance(entry, _TEXT_SCALARS):
