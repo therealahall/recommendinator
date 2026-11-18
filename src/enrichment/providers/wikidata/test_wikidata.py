@@ -6,12 +6,17 @@ import requests
 
 from src import __version__ as APP_VERSION
 from src.enrichment.provider_base import (
+    ProviderError,
     SeriesOrdinal,
+    accepts_a_pin,
+    offers_candidates,
     states_a_match,
     states_a_series_ordinal,
 )
 from src.enrichment.providers.wikidata.wikidata import WikidataProvider
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.models.detail_fields import PIN_KEY
+from src.utils.matching import Candidate
 from src.utils.series import SeriesAuthority
 
 _REQUESTS = "src.enrichment.providers.wikidata.wikidata.requests.get"
@@ -530,6 +535,162 @@ class TestWikidataSeriesOrdinal:
             assert agent.startswith(f"Recommendinator/{APP_VERSION}")
             assert "python-requests" not in agent
             assert "Mozilla" not in agent
+
+
+def _pinned(item: ContentItem, record_id: str) -> ContentItem:
+    item.metadata[PIN_KEY] = {"wikidata": record_id}
+    return item
+
+
+class TestWikidataCandidates:
+    @pytest.fixture
+    def provider(self) -> WikidataProvider:
+        return WikidataProvider()
+
+    def test_offers_the_entities_the_series_pass_would_weigh_in_wikidatas_order(
+        self, provider: WikidataProvider
+    ) -> None:
+        """Wikidata offered the picker nothing, so which entity the series pass
+        took could only be seen by querying wbsearchentities by hand."""
+        with patch(_REQUESTS) as mock_get:
+            mock_get.side_effect = [
+                _response(
+                    _search(
+                        {"id": "Q133855", "label": "Dune", "aliases": ["Dune I"]},
+                        {"id": "Q55811171", "label": "Dune"},
+                        {"id": "Q8", "label": "Dune Messiah Collected"},
+                        {"id": "Q190192", "label": "Dune"},
+                    )
+                ),
+                _response(_statements(_LITERARY_WORK, year=1965)),
+                _response(_statements(_FILM, year=2021)),
+                _response(_statements(_LITERARY_WORK)),
+            ]
+            offered = provider.search(_item("Dune", ContentType.BOOK), {})
+
+        assert offered == [
+            Candidate(
+                record_id="Q133855", title="Dune", year=1965, also_titled=("Dune I",)
+            ),
+            Candidate(record_id="Q190192", title="Dune", year=None),
+        ]
+
+    def test_searches_under_the_title_the_series_pass_searches(
+        self, provider: WikidataProvider
+    ) -> None:
+        """A candidate list searched under another title would show entities the
+        series pass never weighed."""
+        with patch(_REQUESTS) as mock_get:
+            mock_get.side_effect = [_response(_search())]
+            provider.search(_item("Ultima™ VII"), {})
+
+        assert mock_get.call_args.kwargs["params"]["search"] == "Ultima VII"
+
+    def test_a_failed_request_raises_rather_than_offering_nothing(
+        self, provider: WikidataProvider
+    ) -> None:
+        """An outage read as an empty list would pass for Wikidata knowing no
+        such work."""
+        with (
+            patch(_REQUESTS, side_effect=requests.ConnectionError("down")),
+            pytest.raises(ProviderError),
+        ):
+            provider.search(_item("Dune", ContentType.BOOK), {})
+
+
+class TestWikidataPin:
+    @pytest.fixture
+    def provider(self) -> WikidataProvider:
+        return WikidataProvider()
+
+    def test_is_offered_to_the_picker_and_pinnable(
+        self, provider: WikidataProvider
+    ) -> None:
+        assert offers_candidates(provider) is True
+        assert accepts_a_pin(provider) is True
+
+    @pytest.mark.parametrize(
+        ("record_id", "accepted"),
+        [
+            ("Q42", True),
+            ("Q245006", True),
+            ("42", False),
+            ("Q0", False),
+            ("Q042", False),
+            ("q42", False),
+            ("Q٤٢", False),
+            ("Q42\n", False),
+            ("Q42/statements", False),
+            ("", False),
+        ],
+    )
+    def test_accepts_only_a_qid(
+        self, provider: WikidataProvider, record_id: str, accepted: bool
+    ) -> None:
+        """A pinned id is spliced into the statements URL's path, so anything
+        but a whole QID would reach a path Wikidata never offered."""
+        assert provider.accepts_record_id(record_id) is accepted
+
+    def test_a_pinned_entity_is_read_without_a_search(
+        self, provider: WikidataProvider
+    ) -> None:
+        """The series pass ignored a pin, so an item it matched to the wrong
+        entity could not be moved onto the right one."""
+        item = _pinned(_item("Dune", ContentType.BOOK, year=1965), "Q133855")
+
+        with patch(_REQUESTS) as mock_get:
+            mock_get.side_effect = [
+                _response(
+                    _statements(
+                        _LITERARY_WORK, year=1965, series=_DUNE_NOVELS, ordinal="1"
+                    )
+                ),
+                _response("Dune"),
+            ]
+            ordinal = provider.fetch_series_ordinal(item, {})
+
+        assert ordinal == SeriesOrdinal(position=1.0, series_name="Dune")
+        assert mock_get.call_args_list[0].args[0].endswith("/Q133855/statements")
+        assert all(
+            call.kwargs.get("params") is None for call in mock_get.call_args_list
+        )
+
+    def test_a_pin_overrides_the_match_gate(self, provider: WikidataProvider) -> None:
+        """The pin is the operator's word on an entity the gate would reject, a
+        year apart here, so it must not be re-gated away."""
+        item = _pinned(_item("Neverwinter Nights: Enhanced Edition", year=2018), "Q2")
+
+        with patch(_REQUESTS) as mock_get:
+            mock_get.side_effect = [
+                _response(_statements(_VIDEO_GAME, year=1991, series="Q3")),
+                _response("Neverwinter Nights"),
+            ]
+            ordinal = provider.fetch_series_ordinal(item, {})
+
+        assert ordinal == SeriesOrdinal(position=None, series_name="Neverwinter Nights")
+
+    def test_a_malformed_pin_falls_back_to_the_search(
+        self, provider: WikidataProvider
+    ) -> None:
+        """A stored id the provider no longer admits must never reach the URL."""
+        item = _pinned(_item("Final Fantasy VIII", year=1999), "../Q1")
+
+        with patch(_REQUESTS) as mock_get:
+            mock_get.side_effect = [
+                _response(_search({"id": "Q245006", "label": "Final Fantasy VIII"})),
+                _response(
+                    _statements(
+                        _VIDEO_GAME, year=1999, series=_FINAL_FANTASY, ordinal="8"
+                    )
+                ),
+                _response("Final Fantasy"),
+            ]
+            ordinal = provider.fetch_series_ordinal(item, {})
+
+        assert ordinal == SeriesOrdinal(position=8.0, series_name="Final Fantasy")
+        assert mock_get.call_args_list[0].kwargs["params"]["search"] == (
+            "Final Fantasy VIII"
+        )
 
 
 class TestWikidataStandsAside:

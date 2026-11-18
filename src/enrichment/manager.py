@@ -405,8 +405,8 @@ class EnrichmentManager:
         )
 
     def can_offer_candidates(self, scope: ContentType) -> bool:
-        """Searching is its own capability: Wikidata takes part in a run, stating
-        series ordinals, yet has no records to offer the picker.
+        """Searching is its own capability: a provider can take part in a run,
+        stating series ordinals, yet have no records to offer the picker.
         """
         return self._any_enabled(scope, offers_candidates)
 
