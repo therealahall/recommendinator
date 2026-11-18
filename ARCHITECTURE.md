@@ -511,10 +511,11 @@ unsupported because the Python wheel ecosystem is too thin there.
 
 `Dockerfile` is multi-stage:
 
-1. **frontend-builder**, `node:24-slim` running `pnpm build` into
+1. **frontend-builder**, `node:26-slim` running `pnpm build` into
    `src/web/static/dist/`.
-2. **builder**, `python:3.11-slim` running `uv sync --locked` into `/app/.venv`.
-3. **runtime**, `python:3.11-slim` with the `appuser` non-root account,
+2. **builder**, `python:3.14-slim` running `uv sync --locked` into `/app/.venv`.
+   The minor is `.python-version`'s, and the build refuses to download any other.
+3. **runtime**, `python:3.14-slim` with the `appuser` non-root account,
    application source, frontend dist, the venv and the entrypoint script. Its
    `ENTRYPOINT` is `/app/docker/entrypoint.sh` (which bootstraps `config.yaml`
    from `example.yaml` on first run), `CMD` starts uvicorn, and `HEALTHCHECK` is
