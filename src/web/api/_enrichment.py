@@ -302,6 +302,7 @@ def requeue_enrichment(
     storage: RequiredStorage,
     config: RequiredConfig,
 ) -> EnrichmentRequeueResponse:
+    """Enrich one item again with every stored value standing, unlike a reset with item_id."""
     _item_or_404(storage, request.item_id, request.user_id)
     storage.enrichment.requeue(request.item_id)
     started = EnrichmentManager(storage, config).start_enrichment(
