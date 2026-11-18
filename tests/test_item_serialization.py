@@ -88,6 +88,35 @@ def test_a_series_the_title_no_longer_states_reaches_both_interfaces(
     assert serialized["series_index"] == expected
 
 
+def test_a_books_year_published_reaches_both_interfaces() -> None:
+    """A book declares no release year, so without this key its year reached
+    neither interface."""
+    serialized = item_to_dict(make_item(metadata={"year_published": "1965"}))
+
+    assert serialized["year_published"] == 1965
+    assert serialized["release_year"] is None
+
+
+@pytest.mark.parametrize(
+    "content_type",
+    [ContentType.MOVIE, ContentType.TV_SHOW, ContentType.VIDEO_GAME],
+)
+def test_a_type_that_declares_no_year_published_carries_none(
+    content_type: ContentType,
+) -> None:
+    """A stray key in the metadata blob must not pass for a year the type never
+    states."""
+    serialized = item_to_dict(
+        make_item(
+            content_type=content_type,
+            metadata={"release_year": 2016, "year_published": 1999},
+        )
+    )
+
+    assert serialized["year_published"] is None
+    assert serialized["release_year"] == 2016
+
+
 def test_the_cover_reaches_both_interfaces_as_this_apps_own_route() -> None:
     item = make_item(db_id=7, cover_url="https://covers.example/1.jpg")
 

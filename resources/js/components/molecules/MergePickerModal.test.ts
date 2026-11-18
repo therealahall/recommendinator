@@ -19,6 +19,7 @@ function item(db_id: number, title: string): ContentItemResponse {
     seasons_watched: null,
     total_seasons: null,
     release_year: 2001,
+    year_published: null,
     series: null,
     series_index: null,
     enriched: true,

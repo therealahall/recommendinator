@@ -10,7 +10,7 @@ from src.enrichment.manager import EnrichmentStart
 from src.enrichment.provider_base import pins_of
 from src.enrichment.registry import get_enrichment_registry
 from src.models.content import ContentItem, get_enum_value
-from src.models.detail_fields import text_names, to_int
+from src.models.detail_fields import detail_field_for, text_names, to_int
 from src.storage.enrichment_status import ResetCounts
 from src.storage.field_rebuild import RANK_FREE_FIELDS
 from src.storage.field_writes import StoredFieldWrite, WriterBand
@@ -69,6 +69,9 @@ def extract_tv_season_fields(
 def item_to_dict(item: ContentItem) -> dict[str, object]:
     seasons_watched, total_seasons, season_ratings = extract_tv_season_fields(item)
     metadata = item.metadata
+    # Read through the declaration so a stray blob key on a type with no such
+    # column never passes for a year.
+    published = detail_field_for(get_enum_value(item.content_type), "year_published")
     return {
         "external_ids": [pair.model_dump() for pair in item.external_ids],
         "db_id": item.db_id,
@@ -93,6 +96,9 @@ def item_to_dict(item: ContentItem) -> dict[str, object]:
         "manual_fields": list(item.manual_fields),
         "pinned": pins_of(metadata),
         "release_year": to_int(metadata.get("release_year")),
+        "year_published": (
+            None if published is None else to_int(published.value_from(metadata))
+        ),
         "series": get_series_name_from_metadata(metadata),
         "series_index": get_series_position_from_metadata(metadata),
         "genres": metadata.get("genres") or [],

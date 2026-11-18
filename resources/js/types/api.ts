@@ -23,6 +23,8 @@ export interface ContentItemResponse {
   season_ratings?: Record<string, number> | null
   total_seasons: number | null
   release_year: number | null
+  /** A book's year: the edition's, so it is kept apart from a release year. */
+  year_published: number | null
   series: string | null
   series_index: number | null
   enriched: boolean
