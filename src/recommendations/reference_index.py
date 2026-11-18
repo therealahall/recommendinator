@@ -12,10 +12,7 @@ from src.recommendations.constants import (
     CROSS_TYPE_MIN_OVERLAP,
     SCORE_PROXIMITY_THRESHOLD,
 )
-from src.recommendations.genre_clusters import (
-    cluster_similarity,
-    get_clusters_for_terms,
-)
+from src.recommendations.genre_clusters import cluster_similarity, item_clusters
 from src.recommendations.preferences import split_creators
 from src.recommendations.scorers import extract_creators, extract_genres
 from src.utils.series import get_series_name
@@ -146,7 +143,7 @@ def _record_for(item: ContentItem, ordinal: int) -> _SignalRecord:
         franchise_keys=_franchise_keys(item.title, series_name),
         author_keys=_author_keys(item),
         genre_set=frozenset(genres),
-        clusters=frozenset(get_clusters_for_terms(genres)),
+        clusters=frozenset(item_clusters(item)),
         creators=extract_creators(item),
         series_keys=frozenset(series_keys),
     )
@@ -158,7 +155,7 @@ def _profile_of(candidate: ContentItem) -> _CandidateProfile:
     return _CandidateProfile(
         content_type=get_enum_value(candidate.content_type),
         genre_set=frozenset(genres),
-        clusters=frozenset(get_clusters_for_terms(genres)),
+        clusters=frozenset(item_clusters(candidate)),
         creators=extract_creators(candidate),
         series_key=series_name.lower() if series_name is not None else None,
     )

@@ -2,6 +2,7 @@ import pytest
 
 from src.recommendations.genre_clusters import CLUSTERS, get_clusters_for_terms
 from src.recommendations.genre_normalizer import (
+    cluster_terms,
     extract_and_normalize_genres,
     normalize_term,
     normalize_terms,
@@ -115,6 +116,31 @@ class TestNormalizeTermIndividual:
     )
     def test_a_provider_genre_reaches_its_cluster(self, raw: str, cluster: str) -> None:
         terms = extract_and_normalize_genres({"genres": [raw]})
+        assert cluster in get_clusters_for_terms(terms)
+
+    @pytest.mark.parametrize(
+        ("key", "raw", "cluster"),
+        [
+            ("genres", "Role-playing (RPG)", "rpg_narrative"),
+            ("genres", "Real Time Strategy (RTS)", "strategy_tactics"),
+            ("genres", "Turn-based strategy (TBS)", "strategy_tactics"),
+            ("genres", "Simulator", "simulation_sandbox"),
+            (
+                "themes",
+                "4X (explore, expand, exploit, and exterminate)",
+                "strategy_tactics",
+            ),
+            ("themes", "Science fiction", "science_fiction"),
+            ("themes", "Warfare", "war_military"),
+            ("themes", "Kids", "animation_family"),
+        ],
+    )
+    def test_an_igdb_genre_or_theme_reaches_its_cluster(
+        self, key: str, raw: str, cluster: str
+    ) -> None:
+        """Regression: IGDB's parenthesised genre names passed through unmapped, so
+        a game only IGDB enriched reached no mechanics cluster at all."""
+        terms = cluster_terms("video_game", {key: [raw]})
         assert cluster in get_clusters_for_terms(terms)
 
 

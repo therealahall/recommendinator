@@ -141,6 +141,13 @@ and in the web **Score Details** panel.
 
 A series gets no exemption from its genre's penalty.
 
+A **game's** clusters come from its genres and its IGDB themes, never its tags.
+Game genres name mechanics (RPG, shooter, strategy), so without themes a fantasy
+RPG and a sci-fi RPG land on the same rung; store tags are too noisy to fill the
+gap ('War' on a racing game). A game enriched before IGDB stated themes
+separately has none until `enrichment reset --provider igdb` re-enriches it.
+Books, movies and shows still cluster from genres and tags.
+
 A finished **TV season** counts as a completion even while the show is still in
 progress, dated by that season's watched date.
 

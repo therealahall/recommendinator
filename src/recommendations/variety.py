@@ -5,11 +5,7 @@ from typing import NewType
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.user_preferences import UserPreferenceConfig
-from src.recommendations.genre_clusters import (
-    cluster_coverage,
-    get_clusters_for_terms,
-)
-from src.recommendations.genre_normalizer import extract_and_normalize_genres
+from src.recommendations.genre_clusters import cluster_coverage, item_clusters
 from src.utils.series import latest_season_watched_date
 
 #: A penalty as a *fraction* of a candidate's score, in ``[0.0, 1.0]``. Distinct
@@ -79,7 +75,7 @@ def build_variety_ladder(
     for item in completed:
         if len(ladder) >= steps:
             break
-        clusters = get_clusters_for_terms(extract_and_normalize_genres(item.metadata))
+        clusters = item_clusters(item)
         if clusters <= placed:
             continue
         ladder.append(
@@ -91,7 +87,7 @@ def build_variety_ladder(
 
 
 def variety_penalty_for(item: ContentItem, ladder: list[VarietyRung]) -> float:
-    clusters = get_clusters_for_terms(extract_and_normalize_genres(item.metadata))
+    clusters = item_clusters(item)
     # Coverage of the rung, not similarity to it: a symmetric measure puts the
     # candidate's own clusters in the denominator, so richer enrichment alone
     # would soften the penalty for repeating what was just finished.

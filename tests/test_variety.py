@@ -257,6 +257,66 @@ class TestVarietyPenaltyFor:
         assert broad == pytest.approx(focused)
 
 
+def _game(
+    title: str,
+    themes: list[str],
+    tags: list[str],
+    status: ConsumptionStatus = ConsumptionStatus.UNREAD,
+) -> ContentItem:
+    return ContentItem(
+        id=title.lower().replace(" ", "_"),
+        title=title,
+        content_type=ContentType.VIDEO_GAME,
+        status=status,
+        date_completed=(
+            date(2026, 1, 1) if status is ConsumptionStatus.COMPLETED else None
+        ),
+        metadata={"genres": ["Role-playing (RPG)"], "themes": themes, "tags": tags},
+    )
+
+
+class TestGameClustersComeFromGenresAndThemes:
+    def test_a_store_tag_adds_no_cluster_to_a_game(self) -> None:
+        """Regression: RAWG's uploader tags fed a game's clusters, so 'War' put
+        1943 in war_military and 'Family' put Forza in animation_family."""
+        fantasy_rpg = _game(
+            "Planescape", ["Fantasy"], ["War", "Family"], ConsumptionStatus.COMPLETED
+        )
+
+        [(rung, _penalty)] = build_variety_ladder([fantasy_rpg])
+
+        assert rung == {"rpg_narrative", "fantasy"}
+
+    def test_a_fantasy_rpg_and_a_science_fiction_rpg_share_only_part_of_a_rung(
+        self,
+    ) -> None:
+        """Regression: with genres alone both games claimed only rpg_narrative,
+        so a sci-fi RPG took a fantasy RPG's whole penalty."""
+        ladder = build_variety_ladder(
+            [_game("Planescape", ["Fantasy"], [], ConsumptionStatus.COMPLETED)]
+        )
+
+        penalty = variety_penalty_for(
+            _game("Mass Effect", ["Science fiction"], []), ladder
+        )
+
+        assert penalty == pytest.approx(VARIETY_TOP_PENALTY / 2)
+
+    def test_a_book_still_clusters_from_its_tags(self) -> None:
+        """Only games drop tags: a book's shelves are its themes."""
+        book = ContentItem(
+            id="dune",
+            title="Dune",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"tags": ["Science Fiction"]},
+        )
+
+        assert variety_penalty_for(
+            book, [(frozenset({"science_fiction"}), 1.0)]
+        ) == pytest.approx(1.0)
+
+
 class TestOngoingTvShowFinishedSeasons:
     """A finished season of an ongoing TV show counts as a completion event."""
 
