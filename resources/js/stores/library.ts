@@ -9,6 +9,7 @@ import type {
   EnrichmentCandidatesResponse,
   EnrichmentPinResponse,
   EnrichmentRequeueResponse,
+  EnrichmentResetResponse,
   FieldWriters,
   ItemDeletion,
   ItemEditRequest,
@@ -223,16 +224,19 @@ export const useLibraryStore = defineStore('library', () => {
     if (index >= 0) items.value[index] = { ...items.value[index], ...fields }
   }
 
+  async function readEditing(dbId: number) {
+    const item = await api.get<ContentItemResponse>(`/items/${dbId}`, {
+      user_id: useAppStore().currentUserId,
+    })
+    editingItem.value = item
+    pinned.value = item.pinned ?? {}
+    syncRow(dbId, item)
+    await loadFieldWriters(dbId)
+  }
+
   async function openEdit(dbId: number) {
-    const app = useAppStore()
     try {
-      const item = await api.get<ContentItemResponse>(`/items/${dbId}`, {
-        user_id: app.currentUserId,
-      })
-      editingItem.value = item
-      pinned.value = item.pinned ?? {}
-      syncRow(dbId, item)
-      await loadFieldWriters(dbId)
+      await readEditing(dbId)
     } catch (err) {
       error.value = err instanceof Error ? err.message : 'Failed to load item'
     }
@@ -324,6 +328,25 @@ export const useLibraryStore = defineStore('library', () => {
       pinMessage.value = result.message
     } catch (err) {
       editError.value = err instanceof Error ? err.message : 'Failed to queue a retry'
+    }
+  }
+
+  // The destructive door retry deliberately is not: the providers' values go
+  // and the item is rebuilt, as the CLI's `enrichment reset --id` does. Re-read
+  // after, or a save from the open dialog writes the deleted values back as holds.
+  async function resetItemEnrichment(dbId: number, hard: boolean) {
+    editError.value = ''
+    pinMessage.value = ''
+    try {
+      const result = await api.post<EnrichmentResetResponse>('/enrichment/reset', {
+        item_id: dbId,
+        hard,
+        user_id: useAppStore().currentUserId,
+      })
+      pinMessage.value = result.message
+      await readEditing(dbId)
+    } catch (err) {
+      editError.value = err instanceof Error ? err.message : 'Failed to reset enrichment'
     }
   }
 
@@ -534,6 +557,7 @@ export const useLibraryStore = defineStore('library', () => {
     findPinCandidates,
     pinEnrichment,
     retryEnrichment,
+    resetItemEnrichment,
     loadFieldWriters,
     chooseFieldWriter,
     openMerge,

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, nextTick, watch } from 'vue'
+import { ref, computed, nextTick, shallowRef, watch } from 'vue'
 import type {
   ContentItemResponse,
   EnrichmentCandidate,
@@ -21,6 +21,8 @@ import SeasonChecklist from '@/components/molecules/SeasonChecklist.vue'
 import TagInput from '@/components/atoms/TagInput.vue'
 import ConfirmPanel from '@/components/molecules/ConfirmPanel.vue'
 import FieldWriterList from '@/components/molecules/FieldWriterList.vue'
+import ToggleSwitch from '@/components/atoms/ToggleSwitch.vue'
+import { resetQuestion } from '@/utils/enrichmentReset'
 
 const props = defineProps<{
   item: ContentItemResponse
@@ -33,7 +35,7 @@ const props = defineProps<{
   pinned?: Record<string, string>
   pinCandidates?: EnrichmentCandidate[]
   pinSearching?: boolean
-  /** What the server said about the last pin or retry, '' before either. */
+  /** What the server said about the last pin, retry or reset, '' before any. */
   pinMessage?: string
   /** Left out where the host has not wired the switcher, which hides it. */
   fieldWriters?: FieldWriters[]
@@ -46,6 +48,7 @@ const emit = defineEmits<{
   pinSearch: [dbId: number, query: string]
   pin: [dbId: number, provider: string, recordId: string | null]
   retryEnrichment: [dbId: number]
+  resetEnrichment: [dbId: number, hard: boolean]
   close: []
 }>()
 
@@ -70,19 +73,23 @@ const genres = ref<string[]>([...(props.item.genres ?? [])])
 const tags = ref<string[]>([...(props.item.tags ?? [])])
 const description = ref(props.item.description ?? '')
 
-const loaded = {
-  title: title.value.trim(),
-  status: props.item.status,
-  rating: props.item.rating,
-  review: review.value.trim(),
-  creator: creator.value.trim(),
-  releaseYear: releaseYear.value.trim(),
-  seasons: [...seasonsWatched.value],
-  seasonRatings: { ...seasonRatings.value },
-  genres: [...genres.value],
-  tags: [...tags.value],
-  description: description.value.trim(),
+function baseline(item: ContentItemResponse) {
+  return {
+    title: item.title.trim(),
+    status: item.status,
+    rating: item.rating,
+    review: (item.review || '').trim(),
+    creator: (item.author ?? '').trim(),
+    releaseYear: item.release_year?.toString() ?? '',
+    seasons: [...(item.seasons_watched ?? [])],
+    seasonRatings: { ...item.season_ratings },
+    genres: [...(item.genres ?? [])],
+    tags: [...(item.tags ?? [])],
+    description: (item.description ?? '').trim(),
+  }
 }
+
+const loaded = shallowRef(baseline(props.item))
 
 const refusal = ref<HTMLElement | null>(null)
 const manualHeading = ref<HTMLElement | null>(null)
@@ -221,33 +228,57 @@ function sameList(one: readonly (string | number)[], other: readonly (string | n
 // its source, so an untouched box must not travel with a rating.
 const edits = computed<ItemEditRequest>(() => {
   const data: ItemEditRequest = {}
-  if (title.value.trim() !== loaded.title) data.title = title.value.trim()
-  if (status.value !== loaded.status) data.status = status.value
+  const was = loaded.value
+  if (title.value.trim() !== was.title) data.title = title.value.trim()
+  if (status.value !== was.status) data.status = status.value
   // A show with rated seasons takes its rating from them, so it sends none.
-  if (derivedRating.value === null && rating.value !== loaded.rating) data.rating = rating.value
-  if (review.value.trim() !== loaded.review) data.review = review.value.trim() || null
-  if (creator.value.trim() !== loaded.creator) data.creator = creator.value.trim()
-  if (releaseYear.value.trim() !== loaded.releaseYear) {
+  if (derivedRating.value === null && rating.value !== was.rating) data.rating = rating.value
+  if (review.value.trim() !== was.review) data.review = review.value.trim() || null
+  if (creator.value.trim() !== was.creator) data.creator = creator.value.trim()
+  if (releaseYear.value.trim() !== was.releaseYear) {
     data.release_year = releaseYear.value.trim()
   }
-  if (isTvShow.value && !sameList(seasonsWatched.value, loaded.seasons)) {
+  if (isTvShow.value && !sameList(seasonsWatched.value, was.seasons)) {
     data.seasons_watched = seasonsWatched.value
   }
   const rerated = seasonsWatched.value.filter(
-    (season) => ratingOf(seasonRatings.value, season) !== ratingOf(loaded.seasonRatings, season),
+    (season) => ratingOf(seasonRatings.value, season) !== ratingOf(was.seasonRatings, season),
   )
   if (isTvShow.value && rerated.length > 0) {
     data.season_ratings = Object.fromEntries(
       rerated.map((season) => [season, ratingOf(seasonRatings.value, season)]),
     )
   }
-  if (!sameList(genres.value, loaded.genres)) data.genres = genres.value
-  if (!sameList(tags.value, loaded.tags)) data.tags = tags.value
-  if (description.value.trim() !== loaded.description) {
+  if (!sameList(genres.value, was.genres)) data.genres = genres.value
+  if (!sameList(tags.value, was.tags)) data.tags = tags.value
+  if (description.value.trim() !== was.description) {
     data.description = description.value.trim()
   }
   return data
 })
+
+// A reset or a writer choice rebuilds the item under the open dialog. Each field
+// not edited here takes the rebuilt value: kept stale, the next save would
+// write back what the rebuild dropped, as a hold.
+watch(
+  () => props.item,
+  (item) => {
+    const edited = edits.value
+    const now = baseline(item)
+    if (!('title' in edited)) title.value = item.title
+    if (!('status' in edited)) status.value = now.status
+    if (!('rating' in edited)) rating.value = now.rating
+    if (!('review' in edited)) review.value = item.review || ''
+    if (!('creator' in edited)) creator.value = item.author ?? ''
+    if (!('release_year' in edited)) releaseYear.value = now.releaseYear
+    if (!('seasons_watched' in edited)) seasonsWatched.value = [...now.seasons]
+    if (!('season_ratings' in edited)) seasonRatings.value = { ...now.seasonRatings }
+    if (!('genres' in edited)) genres.value = [...now.genres]
+    if (!('tags' in edited)) tags.value = [...now.tags]
+    if (!('description' in edited)) description.value = item.description ?? ''
+    loaded.value = now
+  },
+)
 
 const dirty = computed(() => Object.keys(edits.value).length > 0)
 const { confirming, requestClose, keepEditing } = useDiscardGuard(
@@ -301,6 +332,22 @@ watch(
     rescueFocus(pinHeading.value)
   },
 )
+
+const resetHard = ref(false)
+const confirmingReset = ref(false)
+
+const resetAsked = computed(() =>
+  resetQuestion(
+    `Re-queue “${props.item.title}” for enrichment?`,
+    'wherever this item holds one',
+    resetHard.value,
+  ),
+)
+
+function answerReset(reset: boolean) {
+  confirmingReset.value = false
+  if (reset) emit('resetEnrichment', props.item.db_id!, resetHard.value)
+}
 
 function searchRecords() {
   if (props.pinSearching) return
@@ -449,7 +496,20 @@ function searchRecords() {
         <button class="btn btn-secondary" @click="emit('retryEnrichment', item.db_id!)">
           Enrich this again
         </button>
+        <ToggleSwitch v-model="resetHard" label="Drop unclaimed values too" />
+        <button type="button" class="btn btn-danger" @click="confirmingReset = true">
+          Reset enrichment
+        </button>
       </div>
+      <ConfirmPanel
+        v-if="confirmingReset"
+        :message="resetAsked"
+        confirm-label="Reset"
+        cancel-label="Keep it"
+        destructive
+        @cancel="answerReset(false)"
+        @confirm="answerReset(true)"
+      />
       <!-- Mounted whether or not it has anything to say: a region inserted
            already populated reads as content rather than a status change. -->
       <p id="edit-pin-note" class="edit-modal-note" role="status" aria-live="polite">{{ pinNote }}</p>
