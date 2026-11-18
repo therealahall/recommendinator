@@ -349,11 +349,11 @@ def test_a_merge_combines_the_genres_and_takes_the_higher_count_of_both_rows(
     assert survivor.metadata["seasons"] == 2
 
 
-def test_a_merge_raising_the_season_count_unfinishes_a_completed_show(
+def test_a_merge_raising_the_season_count_unfinishes_a_completed_show_and_undoing_it_completes_it_again(
     db: SQLiteDB,
 ) -> None:
-    """The operator completed it at one season and the absorbed row knows of two,
-    so the survivor has an unwatched season the moment the merge returns."""
+    """The flip happens after the restore record is taken, so only the undo's
+    season re-check can put the operator's completed status back."""
     survivor_id = _save(
         db,
         "plex",
@@ -372,12 +372,19 @@ def test_a_merge_raising_the_season_count_unfinishes_a_completed_show(
         metadata={"seasons": 2},
     )
 
-    db.merge_content_items(survivor_id, absorbed_id, MergeEvidence.MANUAL)
+    record = db.merge_content_items(survivor_id, absorbed_id, MergeEvidence.MANUAL)
 
     survivor = db.get_content_item(survivor_id)
     assert survivor is not None
     assert survivor.metadata["seasons"] == 2
     assert get_enum_value(survivor.status) == "currently_consuming"
+
+    db.unmerge_content_items(record.id)
+
+    restored = db.get_content_item(survivor_id)
+    assert restored is not None
+    assert restored.metadata["seasons"] == 1
+    assert get_enum_value(restored.status) == "completed"
 
 
 def _legacy_show(title: str, genres: list[str], seasons: int) -> ContentItem:
