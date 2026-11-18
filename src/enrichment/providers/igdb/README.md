@@ -24,7 +24,7 @@ uv run python -m src.cli settings set-secret enrichment.providers.igdb.client_se
 
 ## Behavior
 - Names the series from the game's collection, falling back to its franchise, and never states a position: no collection, franchise or membership record at IGDB holds one. A game in neither grouping gets nothing.
-- Fills `genres`, `tags` from IGDB's themes, the summary as the description, an `https` cover and `release_year`. It searches under the shared cleaned title (`clean_game_title_for_search` in `src/utils/text.py`) and compares IGDB's alternative names too, so a store's capitalisation and trademark symbols still resolve.
+- Fills `genres`, `themes` (kept apart from `tags`, since a game's genre clusters read themes and not store tags), the summary as the description, an `https` cover and `release_year`. It searches under the shared cleaned title (`clean_game_title_for_search` in `src/utils/text.py`) and compares IGDB's alternative names too, so a store's capitalisation and trademark symbols still resolve.
 - Offers each search result as a candidate to pin, and takes a pin on IGDB's numeric game id, which it then looks up in place of searching the title.
 - Reads a `https://www.igdb.com/games/<slug>` link pasted in the picker, `www.` or not, offering the game that slug names.
 - Mints a Twitch app access token on first use and holds it in memory for its stated lifetime. Nothing persists it — only the two credentials it is minted from are stored. A rejected token is minted once more and the call retried; a second rejection fails the item.

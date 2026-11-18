@@ -111,12 +111,15 @@ def _result(game: dict[str, Any], quality: str) -> EnrichmentResult:
     year = _release_year(game)
     if year is not None:
         extra["release_year"] = year
+    # Kept apart from the tags RAWG fills: a game's clusters read these and not
+    # those, which carry uploader noise.
+    themes = _names(game.get("themes"))
+    if themes:
+        extra["themes"] = themes
 
     genres = _names(game.get("genres"))
-    themes = _names(game.get("themes"))
     return EnrichmentResult(
         genres=genres or None,
-        tags=themes or None,
         description=str(game.get("summary") or "").strip() or None,
         cover_url=_https_cover(game.get("cover")),
         extra_metadata=extra,
