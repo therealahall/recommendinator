@@ -25,8 +25,11 @@ describe('StatusBar', () => {
   })
 
   it('is hidden when statusMessage is empty', () => {
-    const wrapper = mount(StatusBar)
+    // A detached element has no computed style, so v-show's display: none only
+    // shows up once the bar is in the document.
+    const wrapper = mount(StatusBar, { attachTo: document.body })
     expect(wrapper.find('.status-bar').isVisible()).toBe(false)
+    wrapper.unmount()
   })
 
   it('is visible with correct content and aria-atomic when statusMessage is set', () => {
