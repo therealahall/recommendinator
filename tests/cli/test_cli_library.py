@@ -202,6 +202,7 @@ class TestLibraryList:
             "season_ratings",
             "total_seasons",
             "release_year",
+            "year_published",
             "series",
             "series_index",
             "enriched",
@@ -435,6 +436,7 @@ class TestLibraryShow:
             "season_ratings",
             "total_seasons",
             "release_year",
+            "year_published",
             "series",
             "series_index",
             "enriched",
@@ -594,6 +596,78 @@ class TestLibraryShowCreatorLabelRegression:
         assert len(_labelled_rows(result.output, "Director")) == 1
         assert "N/A" in _labelled_rows(result.output, "Director")[0]
         assert _labelled_rows(result.output, "Author") == []
+
+
+class TestLibraryShowYearRowRegression:
+    """A book states no release year, so a row read from it alone printed N/A
+    for every book while its year_published column held the year."""
+
+    @staticmethod
+    def _show(cli_runner: CliRunner, item: ContentItem) -> str:
+        mock_storage = make_storage_mock()
+        mock_storage.get_content_item.return_value = item
+        result = _invoke_with_mocks(
+            cli_runner, ["library", "show", "--id", "7"], mock_storage
+        )
+        assert result.exit_code == 0
+        return result.output
+
+    @pytest.mark.parametrize(
+        ("year", "shown"), [(1965, "1965"), (None, "N/A")], ids=["stored", "none"]
+    )
+    def test_a_book_shows_its_year_published(
+        self, cli_runner: CliRunner, year: int | None, shown: str
+    ) -> None:
+        item = _make_item(db_id=7)
+        item.metadata = {} if year is None else {"year_published": year}
+
+        output = self._show(cli_runner, item)
+
+        rows = _labelled_rows(output, "Year Published")
+        assert len(rows) == 1
+        assert shown in rows[0]
+        assert _labelled_rows(output, "Release Year") == []
+
+    @pytest.mark.parametrize(
+        "content_type",
+        [ContentType.MOVIE, ContentType.TV_SHOW, ContentType.VIDEO_GAME],
+    )
+    @pytest.mark.parametrize(
+        ("year", "shown"), [(2016, "2016"), (None, "N/A")], ids=["stored", "none"]
+    )
+    def test_every_other_type_shows_its_release_year(
+        self,
+        cli_runner: CliRunner,
+        content_type: ContentType,
+        year: int | None,
+        shown: str,
+    ) -> None:
+        item = _make_item(db_id=7, content_type=content_type)
+        item.metadata = {} if year is None else {"release_year": year}
+
+        output = self._show(cli_runner, item)
+
+        rows = _labelled_rows(output, "Release Year")
+        assert len(rows) == 1
+        assert shown in rows[0]
+        assert _labelled_rows(output, "Year Published") == []
+
+    def test_json_carries_the_books_year_published(self, cli_runner: CliRunner) -> None:
+        item = _make_item(db_id=7)
+        item.metadata = {"year_published": 1965}
+        mock_storage = make_storage_mock()
+        mock_storage.get_content_item.return_value = item
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["library", "show", "--id", "7", "--format", "json"],
+            mock_storage,
+        )
+
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert parsed["year_published"] == 1965
+        assert parsed["release_year"] is None
 
 
 class TestLibraryEdit:

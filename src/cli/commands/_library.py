@@ -37,7 +37,7 @@ from src.models.content import (
     EnrichmentFilter,
     get_enum_value,
 )
-from src.models.detail_fields import DETAIL_FIELDS
+from src.models.detail_fields import DETAIL_FIELDS, RELEASE_YEAR_FIELDS
 from src.storage.manager import (
     MAX_DECLINE_OTHERS,
     SUGGESTION_PAGE_DEFAULT,
@@ -392,12 +392,17 @@ def library_show(
         # A book has an author and a movie a director, so the row is labelled
         # with the creator column the type declares: "director" as "Director".
         creator_label = DETAIL_FIELDS[content_type].creator_column.title()
-        release_year = serialized["release_year"]
+        # A book declares no release year: its year is the edition's, under
+        # its own name.
+        year_key = (
+            "release_year" if content_type in RELEASE_YEAR_FIELDS else "year_published"
+        )
+        year = serialized[year_key]
         table_data = [
             ["Title", item.title],
             ["Series", series_label(item.metadata)],
             [creator_label, item.author or "N/A"],
-            ["Release Year", "N/A" if release_year is None else release_year],
+            [year_key.replace("_", " ").title(), "N/A" if year is None else year],
             ["Type", content_type],
             ["Status", get_enum_value(item.status)],
             ["Rating", "N/A" if item.rating is None else item.rating],
