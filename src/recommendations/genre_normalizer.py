@@ -242,6 +242,12 @@ NORMALIZATIONS: MappingProxyType[str, str] = MappingProxyType(
         "deckbuilding": "deckbuilder",
         "deck-building": "deckbuilder",
         "board games": "board game",
+        # IGDB genre names
+        "role-playing (rpg)": "rpg",
+        "real time strategy (rts)": "rts",
+        "turn-based strategy (tbs)": "turn-based",
+        "simulator": "simulation",
+        "4x (explore, expand, exploit, and exterminate)": "4x",
     }
 )
 
@@ -1151,13 +1157,24 @@ def _terms_from_text(raw: str) -> list[str]:
     return [term.strip() for term in raw.split(",")]
 
 
-def extract_and_normalize_genres(metadata: dict[str, Any] | None) -> list[str]:
+_TERM_KEYS: tuple[str, ...] = ("genre", "genres", "tags", "themes")
+
+# A game's genres name mechanics and its store tags are a free vocabulary
+# ('War' on 1943, 'Family' on Forza), so its themes come from IGDB's curated list.
+_CLUSTER_KEYS: dict[str, tuple[str, ...]] = {
+    "video_game": ("genre", "genres", "themes"),
+}
+
+
+def _normalized_terms(
+    metadata: dict[str, Any] | None, keys: tuple[str, ...]
+) -> list[str]:
     if not metadata:
         return []
 
     terms: list[str] = []
 
-    for key in ("genre", "genres", "tags"):
+    for key in keys:
         value = metadata.get(key)
         if not value:
             continue
@@ -1167,3 +1184,12 @@ def extract_and_normalize_genres(metadata: dict[str, Any] | None) -> list[str]:
             terms.extend(value)
 
     return normalize_terms(terms)
+
+
+def extract_and_normalize_genres(metadata: dict[str, Any] | None) -> list[str]:
+    return _normalized_terms(metadata, _TERM_KEYS)
+
+
+def cluster_terms(content_type: str, metadata: dict[str, Any] | None) -> list[str]:
+    """The terms an item's genre clusters are read from."""
+    return _normalized_terms(metadata, _CLUSTER_KEYS.get(content_type, _TERM_KEYS))

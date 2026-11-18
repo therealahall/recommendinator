@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from src.models.content import ContentItem, get_enum_value
+from src.recommendations.genre_normalizer import cluster_terms
+
 CLUSTERS: dict[str, set[str]] = {
     "science_fiction": {
         "science fiction",
@@ -653,6 +656,12 @@ def get_clusters_for_terms(terms: list[str]) -> set[str]:
         if matching:
             clusters.update(matching)
     return clusters
+
+
+def item_clusters(item: ContentItem) -> set[str]:
+    return get_clusters_for_terms(
+        cluster_terms(get_enum_value(item.content_type), item.metadata)
+    )
 
 
 def cluster_similarity(

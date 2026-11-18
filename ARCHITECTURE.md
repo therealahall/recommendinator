@@ -299,6 +299,9 @@ Invariants:
 (`genre_clusters.py`) map genre and tag terms onto a fixed set of thematic
 clusters, through which tag overlap gives a related tag part credit, so a book
 tagged "space warfare" reaches a TV show tagged "war".
+An item's own clusters (`item_clusters`) read genres and tags, except a game's,
+which read genres and IGDB `themes`: game genres name mechanics and store tags
+are noise, so themes are the only clean thematic source a game has.
 Compound terms like "Sci-Fi & Fantasy" split first (`genre_normalizer.py`).
 
 **Adaptations and reference items are matched through an index**
