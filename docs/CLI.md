@@ -530,7 +530,7 @@ Your edits, pins, ratings and reviews stand, since a hard reset never drops the 
 
 Nothing else drops a row: `requeue`, pinning an item, clearing that pin and a cover found permanently gone each re-queue the item with every ledger row standing.
 
-`reset --id` does all of that for one item — dropping what every provider stated about it, rebuilding it, re-queuing it — and then enriches it, waiting for the run. It takes no `--provider` or `--type` beside it.
+`reset --id` does all of that for one item — dropping what every provider stated about it, rebuilding it, re-queuing it — and then enriches it, waiting for the run. It takes no `--provider` or `--type` beside it. It is what **Reset enrichment** opens in the library's edit dialog, mirroring `POST /api/enrichment/reset` with `item_id`.
 
 `requeue --id` is the door for an item a run left on a timeout or a 503: it puts the item back in front of the providers with every value it holds standing, then enriches it. It is what **Enrich this again** opens in the library's edit dialog, mirroring `POST /api/enrichment/requeue`.
 
