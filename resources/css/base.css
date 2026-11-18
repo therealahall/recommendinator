@@ -1902,6 +1902,7 @@ button.rec-score {
 .edit-pin-actions {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: var(--space-3);
   margin: var(--space-3) 0;
 }

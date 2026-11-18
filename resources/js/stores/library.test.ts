@@ -3,6 +3,7 @@ import { setActivePinia, createPinia } from 'pinia'
 import { watch } from 'vue'
 import { useLibraryStore } from './library'
 import { MAX_SEARCH_LENGTH } from '@/constants/library'
+import type { ContentItemResponse, FieldWriters } from '@/types/api'
 
 const mockGet = vi.fn()
 const mockPatch = vi.fn()
@@ -497,6 +498,50 @@ describe('useLibraryStore', () => {
     expect(mockPost.mock.lastCall![0]).toBe('/enrichment/requeue')
     expect(mockPost.mock.lastCall![1]).toMatchObject({ item_id: 7 })
     expect(store.pinMessage).toBe(QUEUED.message)
+  })
+
+  it('resetItemEnrichment asks the reset door for the one item, so its provider values go', async () => {
+    const store = useLibraryStore()
+    const reset = { message: 'Reset 1 item(s) for re-enrichment. Enriching it now.', count: 1, run: 'started' }
+    mockPost.mockResolvedValue(reset)
+    mockGet
+      .mockResolvedValueOnce({ db_id: 7, title: 'Book', content_type: 'book', status: 'unread', genres: [] })
+      .mockResolvedValueOnce({ item_id: 7, fields: [] })
+
+    await store.resetItemEnrichment(7, true)
+
+    expect(mockPost.mock.lastCall![0]).toBe('/enrichment/reset')
+    expect(mockPost.mock.lastCall![1]).toEqual({ item_id: 7, hard: true, user_id: 1 })
+    expect(store.pinMessage).toBe(reset.message)
+  })
+
+  it('resetItemEnrichment re-reads the item, so the dialog cannot save the dropped values back', async () => {
+    const store = useLibraryStore()
+    store.editingItem = { db_id: 7, title: 'Book', content_type: 'book', status: 'unread', genres: ['Wrong'] } as ContentItemResponse
+    store.fieldWriters = [{ field: 'genres', chosen: null, note: '', writers: [{ writer: 'rawg', band: 'provider', value: 'Wrong' }] }] as FieldWriters[]
+    mockPost.mockResolvedValue({ message: 'Reset 1 item(s) for re-enrichment.', count: 1, run: 'started' })
+    mockGet
+      .mockResolvedValueOnce({ db_id: 7, title: 'Book', content_type: 'book', status: 'unread', genres: [] })
+      .mockResolvedValueOnce({ item_id: 7, fields: [] })
+
+    await store.resetItemEnrichment(7, false)
+
+    expect(mockGet.mock.calls.map((call) => call[0])).toEqual(['/items/7', '/items/7/field-writers'])
+    expect(store.editingItem!.genres).toEqual([])
+    expect(store.fieldWriters).toEqual([])
+    expect(store.editError).toBe('')
+  })
+
+  it('resetItemEnrichment says a refused reset in the dialog, not as a stale note', async () => {
+    const store = useLibraryStore()
+    mockPost.mockResolvedValueOnce(QUEUED)
+    await store.retryEnrichment(7)
+
+    mockPost.mockRejectedValueOnce(new Error('Item not found'))
+    await store.resetItemEnrichment(7, false)
+
+    expect(store.pinMessage).toBe('')
+    expect(store.editError).toBe('Item not found')
   })
 
   it('a repeat blanks the note while it waits, so the same sentence is announced again', async () => {

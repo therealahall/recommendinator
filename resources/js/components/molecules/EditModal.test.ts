@@ -250,6 +250,78 @@ describe('EditModal', () => {
     wrapper.unmount()
   })
 
+  it('a rebuilt item replaces the fields not edited here, so a save cannot restore what a reset dropped', async () => {
+    const stale = { ...defaultItem, description: 'The wrong record’s blurb' }
+    const wrapper = mount(EditModal, {
+      props: { item: stale, saving: false, saveError: '', pinned: {} },
+      attachTo: document.body,
+    })
+
+    await wrapper.get('#edit-title').setValue('My title')
+    await wrapper.setProps({ item: { ...stale, description: null } })
+
+    expect((wrapper.get('#edit-description').element as HTMLTextAreaElement).value).toBe('')
+    expect((wrapper.get('#edit-title').element as HTMLInputElement).value).toBe('My title')
+    await wrapper.findAll('button').find(b => b.text() === 'Save')!.trigger('click')
+    expect(wrapper.emitted('save')).toEqual([[1, { title: 'My title' }]])
+    wrapper.unmount()
+  })
+
+  function resetButton(wrapper: ReturnType<typeof mount>) {
+    return wrapper.findAll('button').find(b => b.text() === 'Reset enrichment')!
+  }
+
+  it('a reset sends nothing until confirmed, so one stray click cannot drop provider values', async () => {
+    const wrapper = mount(EditModal, {
+      props: { item: defaultItem, saving: false, saveError: '', pinned: {} },
+      attachTo: document.body,
+    })
+
+    await resetButton(wrapper).trigger('click')
+    expect(wrapper.emitted('resetEnrichment')).toBeUndefined()
+    const asked = wrapper.get('[data-testid="confirm-panel"]').text()
+    expect(asked).toContain('Re-queue “Test Book” for enrichment?')
+    expect(asked).not.toContain('cover art')
+
+    await wrapper.get('[data-testid="confirm-panel-confirm"]').trigger('click')
+
+    expect(wrapper.emitted('resetEnrichment')).toEqual([[1, false]])
+    expect(wrapper.emitted('retryEnrichment')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('cancelling a reset emits nothing, so keeping the values keeps them', async () => {
+    const wrapper = mount(EditModal, {
+      props: { item: defaultItem, saving: false, saveError: '', pinned: {} },
+      attachTo: document.body,
+    })
+
+    await resetButton(wrapper).trigger('click')
+    await wrapper.get('[data-testid="confirm-panel-cancel"]').trigger('click')
+
+    expect(wrapper.find('[data-testid="confirm-panel"]').exists()).toBe(false)
+    expect(wrapper.emitted('resetEnrichment')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('a hard reset warns that unclaimed values and cover art go before sending hard', async () => {
+    const wrapper = mount(EditModal, {
+      props: { item: defaultItem, saving: false, saveError: '', pinned: {} },
+      attachTo: document.body,
+    })
+
+    await wrapper.get('[role="switch"][aria-label="Drop unclaimed values too"]').trigger('click')
+    await resetButton(wrapper).trigger('click')
+    const asked = wrapper.get('[data-testid="confirm-panel"]').text()
+    expect(asked).toContain('deletes the values no writer ever claimed, wherever this item holds one')
+    expect(asked).toContain('cover art included')
+
+    await wrapper.get('[data-testid="confirm-panel-confirm"]').trigger('click')
+
+    expect(wrapper.emitted('resetEnrichment')).toEqual([[1, true]])
+    wrapper.unmount()
+  })
+
   it('clearing one of several holds names the one that went, not the standing sentence', async () => {
     const held = { ...defaultItem, manual_fields: ['creator', 'release_year'] }
     const wrapper = mount(EditModal, {

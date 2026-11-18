@@ -273,6 +273,7 @@ onUnmounted(() => {
       @pin-search="lib.findPinCandidates"
       @pin="lib.pinEnrichment"
       @retry-enrichment="lib.retryEnrichment"
+      @reset-enrichment="lib.resetItemEnrichment"
       @close="onCloseEdit"
     />
 
