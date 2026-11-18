@@ -693,7 +693,7 @@ class MyEnrichmentProvider(EnrichmentProvider):
 
 ### Pinning a record
 
-The re-check in `enrich` is what repairs an install: tightening
+The re-check where the pin is read, in `enrich` or `fetch_series_ordinal`, is what repairs an install: tightening
 `accepts_record_id` leaves a bad pin stored, and only the read drops it. Accept
 only ids you offered — one reaching a URL path is operator-typed.
 

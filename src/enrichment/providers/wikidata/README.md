@@ -38,6 +38,8 @@ uv run python -m src.cli settings set enrichment.providers.wikidata.enabled true
 - Takes a search hit only where `P31` matches the item's content type and, where
   the item carries a year, the entity's own is within three. A wrong entity's
   series replaces every weaker source's, so an ambiguous search writes nothing.
+- Offers the picker (`enrichment candidates`, `/enrichment/candidates`) the same entities the series pass weighs, in Wikidata's order, each with its QID as the record id.
+- Takes a pinned QID (`enrichment pin --provider wikidata --record Q…`) as the work itself: its statements are read directly, with no search and neither the type nor the year gate. Any other id is refused.
 - Searches for a game under the shared cleaned title (`clean_game_title_for_search`
   in `src/utils/text.py`): a Wikidata label carries neither the trademark symbol
   nor the edition suffix a store puts on the name. Other content types search
