@@ -59,7 +59,7 @@ identify beyond doubt, by type and release year, is left alone.
 
 **Hardcover** fills genres, description, cover, publish year and where in its series a book sits. It matches on an ISBN where your source supplies one, otherwise on title and author, and refuses a title that matches two books rather than guess. OpenLibrary fills what Hardcover leaves or refuses, so enabling both is worthwhile. Create a free account at [hardcover.app](https://hardcover.app/) and copy the token from **Account > API**.
 
-**IGDB** fills genres, tags from its themes, the summary, a cover and the release year, and names a game's series — its collection, else its franchise, never a position. It ships last, filling what RAWG leaves. Register an application at [dev.twitch.tv/console/apps](https://dev.twitch.tv/console/apps), then copy its client ID and secret.
+**IGDB** fills genres, themes (kept apart from tags, and what a game's genre clusters read), the summary, a cover and the release year, and names a game's series — its collection, else its franchise, never a position. It ships last, filling what RAWG leaves. Register an application at [dev.twitch.tv/console/apps](https://dev.twitch.tv/console/apps), then copy its client ID and secret.
 
 ### How providers combine
 
