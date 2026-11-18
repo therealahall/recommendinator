@@ -560,6 +560,9 @@ DETAIL_FIELDS: dict[str, ContentTypeFields] = {
                 column="tags",
                 select_alias="game_tags",
             ),
+            # IGDB's curated themes: a game's genres name mechanics, so its
+            # genre clusters read these rather than the store tags above.
+            DetailField("themes", FieldKind.FREE_FORM, FieldOwner.WRITER),
             DetailField(
                 "description",
                 FieldKind.TEXT,

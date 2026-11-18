@@ -250,12 +250,23 @@ class TestIGDBEnrichment:
 
         assert result is not None
         assert result.genres == ["Role-playing (RPG)"]
-        assert result.tags == ["Fantasy"]
         assert result.description == "The Nameless One wakes in a mortuary."
         assert result.cover_url == (
             "https://images.igdb.com/igdb/image/upload/t_cover_big/co1x2y.jpg"
         )
-        assert result.extra_metadata == {"release_year": _RELEASE_YEAR}
+        assert result.extra_metadata == {
+            "release_year": _RELEASE_YEAR,
+            "themes": ["Fantasy"],
+        }
+
+    def test_themes_are_stated_apart_from_tags(self, provider: IGDBProvider) -> None:
+        """Regression: themes were stated as tags, where RAWG's uploader tags
+        buried them and a game's clusters could not tell the two apart."""
+        result = _run(_served(_game()), provider.enrich)
+
+        assert result is not None
+        assert result.tags is None
+        assert result.as_metadata()["themes"] == ["Fantasy"]
 
     def test_a_game_igdb_cannot_match_is_not_found_rather_than_partial(
         self, provider: IGDBProvider
@@ -286,7 +297,7 @@ class TestIGDBEnrichment:
     ) -> None:
         result = _run(_served(_game(first_release_date="soon")), provider.enrich)
 
-        assert result is not None and result.extra_metadata == {}
+        assert result is not None and "release_year" not in result.extra_metadata
 
     @pytest.mark.parametrize(
         "url", ["http://images.igdb.com/co1x2y.jpg", {"src": 1}, None]

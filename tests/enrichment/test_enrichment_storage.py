@@ -818,6 +818,23 @@ class TestTheWeeklyRefreshAsksAgainForAnUndatedSeason:
         )
 
 
+class TestGameThemesStorage:
+    def test_a_restated_theme_list_replaces_the_stored_one(
+        self, tmp_path: Path
+    ) -> None:
+        """Regression: an undeclared key only fills a gap in the blob, so a game
+        re-enriched with corrected themes would keep its first list."""
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        db_id = save_unenriched(storage_manager, "game", ContentType.VIDEO_GAME)
+
+        provider_enriches(storage_manager, db_id, "igdb", themes=["Fantasy"])
+        provider_enriches(storage_manager, db_id, "igdb", themes=["Science fiction"])
+
+        item = storage_manager.get_content_item(db_id)
+        assert item is not None
+        assert item.metadata["themes"] == ["Science fiction"]
+
+
 class TestTagsAndDescriptionStorage:
     @pytest.fixture
     def storage_manager(self, tmp_path: Path) -> StorageManager:
