@@ -1,10 +1,12 @@
 from datetime import date
+from pathlib import Path
 
 import pytest
 
 from src.ingestion.importers.base import ImportedRow, ParsedRow, SkippedRow
 from src.ingestion.importers.storygraph_csv.storygraph_csv import StorygraphCsvImporter
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.storage.sqlite_db import SQLiteDB
 
 IMPORTER = StorygraphCsvImporter()
 
@@ -147,6 +149,22 @@ class TestExport:
         assert parsed[0].item.rating == 4
         assert parsed[0].item.status == ConsumptionStatus.COMPLETED
         assert parsed[0].item.id is None
+
+
+class TestStoredTags:
+    def test_a_comma_joined_tags_cell_is_stored_one_tag_per_value(
+        self, tmp_path: Path
+    ) -> None:
+        """Stored whole, an unenriched book's tags normalised to nothing."""
+        db = SQLiteDB(tmp_path / "storygraph-tags.db")
+        parsed = items(
+            "Tagged,Some Author,,,,read," + "," * 15 + '"fantasy, favorites",\n'
+        )
+
+        stored = db.get_content_item(db.save_content_item(parsed[0]))
+
+        assert stored is not None
+        assert stored.metadata["tags"] == ["fantasy", "favorites"]
 
 
 class TestQuarterStarRatings:
