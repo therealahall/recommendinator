@@ -1880,6 +1880,23 @@ def enrichment_reset_count(
     return int(cursor.fetchone()[0])
 
 
+def _legacy_clause(item: str, provider: str) -> tuple[str, list[str]]:
+    legacy, dropped = WriterBand.LEGACY.value, WriterBand.PROVIDER.value
+    return (
+        "EXISTS (SELECT 1 FROM content_item_field_writes w"
+        f" WHERE {merge_group_clause('w.content_item_id', item)}"
+        " AND w.writer_kind = ?"
+        " AND NOT EXISTS (SELECT 1 FROM content_item_field_writes surviving"
+        f" WHERE {merge_group_clause('surviving.content_item_id', item)}"
+        # A choice names a writer instead of stating a value, so it cannot keep
+        # a field filled once the reset takes the rows it points at.
+        " AND surviving.field = w.field AND surviving.writer_kind NOT IN (?, ?)"
+        " AND NOT (surviving.writer_kind = ?"
+        f" AND ({provider} IS NULL OR surviving.writer = {provider}))))",
+        [legacy, legacy, WriterBand.CHOSEN.value, dropped],
+    )
+
+
 def enrichment_legacy_count(
     conn: sqlite3.Connection,
     provider: str | None = None,
@@ -1888,20 +1905,11 @@ def enrichment_legacy_count(
     content_item_id: int | None = None,
 ) -> int:
     query, params = _enrichment_scope(provider, content_type, user_id, content_item_id)
-    legacy, dropped = WriterBand.LEGACY.value, WriterBand.PROVIDER.value
+    legacy, legacy_params = _legacy_clause("scope.id", "?")
     cursor = conn.cursor()
     cursor.execute(
-        f"SELECT COUNT(*) FROM ({query}) scope"
-        " WHERE EXISTS (SELECT 1 FROM content_item_field_writes w"
-        f" WHERE {merge_group_clause('w.content_item_id', 'scope.id')}"
-        " AND w.writer_kind = ?"
-        " AND NOT EXISTS (SELECT 1 FROM content_item_field_writes surviving"
-        f" WHERE {merge_group_clause('surviving.content_item_id', 'scope.id')}"
-        # A choice names a writer instead of stating a value, so it cannot keep
-        # a field filled once the reset takes the rows it points at.
-        " AND surviving.field = w.field AND surviving.writer_kind NOT IN (?, ?)"
-        " AND NOT (surviving.writer_kind = ? AND (? IS NULL OR surviving.writer = ?))))",
-        [*params, legacy, legacy, WriterBand.CHOSEN.value, dropped, provider, provider],
+        f"SELECT COUNT(*) FROM ({query}) scope WHERE {legacy}",
+        [*params, *legacy_params, provider, provider],
     )
     counted: int = cursor.fetchone()[0]
     return counted
@@ -1978,16 +1986,37 @@ def _enrichment_group(
     return {row[0]: row[1] for row in cursor.fetchall()}
 
 
-def _provider_writers(
-    cursor: sqlite3.Cursor, scope: str, params: tuple[int, ...]
-) -> set[str]:
-    cursor.execute(
-        "SELECT DISTINCT w.writer FROM content_item_field_writes w"
-        f" JOIN content_items ci ON {merge_group_clause('w.content_item_id', 'ci.id')}"
-        f" WHERE w.writer_kind = ? AND {scope}",
-        (WriterBand.PROVIDER.value, *params),
+def _counts_by_provider(
+    cursor: sqlite3.Cursor, user_id: int | None
+) -> tuple[dict[str, int], dict[str, int]]:
+    """Per provider, what :func:`enrichment_reset_count` and
+    :func:`enrichment_legacy_count` give for it, in one pass: the Data tab
+    polls this through a run, and a scan per provider grew with each one added.
+    """
+    # Each row that puts an item in a provider's scope, moved to the survivor
+    # of its merge group: merge_group_clause's grouping, read from the far end.
+    pairs = (
+        "SELECT DISTINCT ci.id AS id, pair.provider AS provider FROM"
+        " (SELECT content_item_id, enrichment_provider AS provider"
+        " FROM enrichment_status WHERE enrichment_provider IS NOT NULL"
+        " UNION SELECT content_item_id, writer FROM content_item_field_writes"
+        " WHERE writer_kind = ?) pair"
+        " JOIN content_items member ON member.id = pair.content_item_id"
+        " JOIN content_items ci ON ci.id = COALESCE(member.merged_into, member.id)"
+        " WHERE ci.merged_into IS NULL AND pair.provider != 'none'"
     )
-    return {row[0] for row in cursor.fetchall()}
+    params: list[str | int] = [WriterBand.PROVIDER.value]
+    if user_id:
+        pairs += " AND ci.user_id = ?"
+        params.append(user_id)
+    legacy, legacy_params = _legacy_clause("scope.id", "scope.provider")
+    cursor.execute(
+        f"SELECT scope.provider, COUNT(*), SUM({legacy}) FROM ({pairs}) scope"
+        " GROUP BY scope.provider ORDER BY scope.provider",
+        [*legacy_params, *params],
+    )
+    rows = cursor.fetchall()
+    return {row[0]: row[1] for row in rows}, {row[0]: row[2] for row in rows}
 
 
 def get_enrichment_stats(
@@ -2045,21 +2074,14 @@ def get_enrichment_stats(
     by_quality = _enrichment_group(
         cursor, source, f"{es}enrichment_quality", scope, params
     )
-    reset_scopes = by_provider.keys() | _provider_writers(cursor, scope, params)
-    resettable_by_provider = {
-        name: enrichment_reset_count(conn, name, user_id=user_id)
-        for name in sorted(reset_scopes - {"none"})
-    }
+    resettable_by_provider, legacy_by_provider = _counts_by_provider(cursor, user_id)
 
     return {
         "total": total_items,
         "resettable": enrichment_reset_count(conn, user_id=user_id),
         "legacy_items": enrichment_legacy_count(conn, user_id=user_id),
         "resettable_by_provider": resettable_by_provider,
-        "legacy_by_provider": {
-            name: enrichment_legacy_count(conn, name, user_id=user_id)
-            for name in resettable_by_provider
-        },
+        "legacy_by_provider": legacy_by_provider,
         "enriched": enriched,
         "pending": needs_enrichment + untracked,
         "not_found": by_quality.get("not_found", 0),

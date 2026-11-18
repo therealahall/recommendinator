@@ -23,7 +23,7 @@ from src.storage.field_writes import (
 )
 from src.storage.item_merges import MergeEvidence
 from src.storage.manager import StorageManager
-from src.storage.schema import create_user
+from src.storage.schema import create_user, get_enrichment_stats
 from src.utils.dates import utc_now
 
 
@@ -729,6 +729,93 @@ class TestEnrichmentStats:
         assert stats["pending"] == 1
         assert stats["by_provider"] == {"tmdb": 1}
         assert stats["by_quality"] == {"high": 1}
+
+    def library_of_many_providers(self, storage_manager: StorageManager) -> None:
+        def save(item_id: str, user_id: int | None = None) -> int:
+            return save_unenriched(
+                storage_manager, item_id, user_id=user_id, source="radarr"
+            )
+
+        credited = save("credited")
+        storage_manager.enrichment.mark_complete(credited, "tmdb", "high")
+        written = save("written")
+        provider_enriches(storage_manager, written, "rawg", genres=["Co-op"])
+        both = save("both")
+        library_holds(storage_manager, both, description="From before the ledger")
+        provider_enriches(storage_manager, both, "tmdb", description="What tmdb says")
+        provider_enriches(storage_manager, both, "rawg", genres=["Drama"])
+        storage_manager.enrichment.mark_complete(both, "tmdb", "high")
+        survivor = save("survivor")
+        absorbed = save("absorbed")
+        library_holds(storage_manager, absorbed, runtime=90)
+        provider_enriches(storage_manager, absorbed, "openlibrary", runtime=95)
+        storage_manager.merge_content_items(survivor, absorbed, MergeEvidence.MANUAL)
+        not_found = save("not_found")
+        storage_manager.enrichment.mark_complete(not_found, "none", "not_found")
+        with storage_manager.sqlite_db.connection() as conn:
+            other_user = create_user(conn, username="other")
+        theirs = save("theirs", user_id=other_user)
+        library_holds(storage_manager, theirs, description="Theirs")
+        provider_enriches(storage_manager, theirs, "igdb", description="What igdb says")
+
+    @pytest.mark.parametrize(
+        ("user_id", "providers"),
+        [
+            (None, {"tmdb", "rawg", "openlibrary", "igdb"}),
+            (1, {"tmdb", "rawg", "openlibrary"}),
+        ],
+    )
+    def test_the_per_provider_maps_agree_with_each_providers_own_count(
+        self,
+        storage_manager: StorageManager,
+        user_id: int | None,
+        providers: set[str],
+    ) -> None:
+        """Regression: a grouped pass that drifts from the scope a reset acts on."""
+        self.library_of_many_providers(storage_manager)
+        enrichment = storage_manager.enrichment
+
+        stats = enrichment.stats(user_id=user_id)
+        resettable = stats["resettable_by_provider"]
+        legacy = stats["legacy_by_provider"]
+
+        assert isinstance(resettable, dict) and isinstance(legacy, dict)
+        assert resettable.keys() == legacy.keys() == providers
+        assert {name: (resettable[name], legacy[name]) for name in providers} == {
+            name: (
+                enrichment.reset_count(provider=name, user_id=user_id),
+                enrichment.legacy_count(provider=name, user_id=user_id),
+            )
+            for name in providers
+        }
+        assert legacy["rawg"] == 0 and legacy["tmdb"] == legacy["openlibrary"] == 1
+        assert {
+            name: enrichment.reset(provider=name, user_id=user_id).requeued
+            for name in sorted(providers)
+        } == resettable
+
+    def test_stats_issue_as_many_statements_for_many_providers_as_for_one(
+        self, storage_manager: StorageManager
+    ) -> None:
+        """Regression: each provider present cost its own scan of the library."""
+
+        def statements_for_stats() -> int:
+            issued: list[str] = []
+            with storage_manager.sqlite_db.connection() as conn:
+                conn.set_trace_callback(issued.append)
+                get_enrichment_stats(conn)
+                conn.set_trace_callback(None)
+            return len(issued)
+
+        single = save_unenriched(storage_manager, "single")
+        provider_enriches(storage_manager, single, "tmdb", genres=["Action"])
+        for_one = statements_for_stats()
+        for index, name in enumerate(["rawg", "igdb", "openlibrary", "omdb"]):
+            db_id = save_unenriched(storage_manager, f"item{index}")
+            provider_enriches(storage_manager, db_id, name, genres=["Action"])
+            storage_manager.enrichment.mark_complete(db_id, name, "high")
+
+        assert statements_for_stats() == for_one
 
 
 class TestTheWeeklyRefreshAsksAgainForAnUndatedSeason:
