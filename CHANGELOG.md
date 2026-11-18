@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.81.3 (2026-11-18)
+
+### Bug Fixes
+
+- **storage**: Split a comma-joined string written to a list column
+  ([`f03e1a3`](https://github.com/therealahall/recommendinator/commit/f03e1a34f45ae8b1605017ac46ad65354dda77c1))
+
+
 ## v0.81.2 (2026-11-18)
 
 ### Bug Fixes
