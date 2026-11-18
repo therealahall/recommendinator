@@ -3,6 +3,7 @@ import { computed, ref, useId } from 'vue'
 import ConfirmPanel from '@/components/molecules/ConfirmPanel.vue'
 import ToggleSwitch from '@/components/atoms/ToggleSwitch.vue'
 import type { EnrichmentProvider } from '@/types/api'
+import { resetQuestion } from '@/utils/enrichmentReset'
 
 const props = defineProps<{
   /** Human-readable content-type scope, '' for every type. */
@@ -49,22 +50,13 @@ const legacySubject = computed(() =>
     : `held by at least ${props.legacy[provider.value] ?? 0} item(s)`,
 )
 
-const question = computed(() => {
-  const asked =
-    `Re-queue ${subject.value} for enrichment (${scope.value})? Everything ` +
-    'those providers stated goes — genres, tags, descriptions, runtimes and ' +
-    'the rest — and each item is rebuilt on what its sources, your edits and ' +
-    'its pins say. The next run refills it from rate-limited APIs.'
-  if (!hard.value) return asked
-  return (
-    asked +
-    ` It also deletes the values no writer ever claimed, ${legacySubject.value}, ` +
-    'cover art included: the next enrichment run refetches a cover, and anything ' +
-    'else comes back only when the writer that supplied it states it again. Your ' +
-    'edits, pins, ratings and reviews stay, but a creator you typed at the ' +
-    'completion door before this release goes with the rest.'
-  )
-})
+const question = computed(() =>
+  resetQuestion(
+    `Re-queue ${subject.value} for enrichment (${scope.value})?`,
+    legacySubject.value,
+    hard.value,
+  ),
+)
 
 function answer(reset: boolean): void {
   confirming.value = false
