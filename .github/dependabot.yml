@@ -60,5 +60,11 @@ updates:
     groups:
       base-images:
         patterns: ["*"]
+    # The python tag's minor is .python-version's, and a bump to it is a
+    # change to that file, uv.lock, requires-python and the CI matrix together,
+    # not a base-image chore. Digest moves within the minor still arrive.
+    ignore:
+      - dependency-name: "python"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
     commit-message:
       prefix: "chore"
