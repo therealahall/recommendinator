@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v0.81.2 (2026-11-18)
+
+### Bug Fixes
+
+- **cli**: Show a book's year as Year Published in library show
+  ([`6292889`](https://github.com/therealahall/recommendinator/commit/629288980ddf1fbd67ef4461590eb57183051d11))
+
+- **library**: Carry a book's year_published in the item payload
+  ([`2201bb0`](https://github.com/therealahall/recommendinator/commit/2201bb059cf4615ee6423d892c09faa3600dbce5))
+
+
 ## v0.81.1 (2026-11-18)
 
 ### Bug Fixes
