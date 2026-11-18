@@ -1,6 +1,50 @@
 # CHANGELOG
 
 
+## v0.81.1 (2026-11-18)
+
+### Bug Fixes
+
+- **deps**: Bump opentelemetry-api to 1.45.2 for CVE-2026-126360
+  ([`8053cd3`](https://github.com/therealahall/recommendinator/commit/8053cd383b76c17916e60765b931cf5ef1ba2a51))
+
+- **docker**: Build the python stages on the 3.14 base the venv needs
+  ([`1b412a2`](https://github.com/therealahall/recommendinator/commit/1b412a2d347f131917613cf6ba2d6e84e8879146))
+
+- **recommendations**: Re-date unaired seasons without an enrichment reset
+  ([`72afca2`](https://github.com/therealahall/recommendinator/commit/72afca2db085ee9bc01a444a996e3b0fc4627474))
+
+### Chores
+
+- Bump python from 3.14-slim to 3.15-slim in the base-images group
+  ([`5dadfcc`](https://github.com/therealahall/recommendinator/commit/5dadfcc51f5d5fd1253d9c3afbaaa9286bfb71ad))
+
+- Bump the actions group with 2 updates
+  ([`8eec983`](https://github.com/therealahall/recommendinator/commit/8eec98391cf0ba6bcde664b137bd7a66b7bd1f7f))
+
+- Bump the frontend group with 4 updates
+  ([`8db752a`](https://github.com/therealahall/recommendinator/commit/8db752a213bcbbfd087e36996fbbd97426e52b0f))
+
+- Bump the python group with 5 updates
+  ([`2897496`](https://github.com/therealahall/recommendinator/commit/289749608f74d8451fafd5b5e2644fd880313251))
+
+- **deps**: Keep dependabot from moving the python base minor
+  ([`57c2f3c`](https://github.com/therealahall/recommendinator/commit/57c2f3cc0370f4cef439cc59089c5b14b7eae946))
+
+### Documentation
+
+- **docker**: Name 3.14 as the python minor the base must match
+  ([`0a4ca8b`](https://github.com/therealahall/recommendinator/commit/0a4ca8b7ffdc6ac0fc9041b164015b1165390425))
+
+### Testing
+
+- **storage**: Assert undoing a merge completes a show again
+  ([`159264f`](https://github.com/therealahall/recommendinator/commit/159264f00b30f882e9f6645a21bf6ba5b26ce80e))
+
+- **web**: Attach the status bar before asserting it is hidden
+  ([`5b2aeba`](https://github.com/therealahall/recommendinator/commit/5b2aebae7e5cce36f851c7bbb525301fb8837d93))
+
+
 ## v0.81.0 (2026-11-11)
 
 ### Features
