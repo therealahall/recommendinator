@@ -1555,6 +1555,28 @@ def test_get_single_item(client, mock_components):
     mock_components["storage"].get_content_item.assert_called_once_with(42, user_id=1)
 
 
+def test_a_books_year_published_reaches_the_web_response(mock_components, tmp_path):
+    """The response model drops a key it does not declare, so a year the CLI JSON
+    carried could still reach the web as nothing."""
+    storage = StorageManager(sqlite_path=tmp_path / "year.db")
+    db_id = storage.save_content_item(
+        ContentItem(
+            title="Dune",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            metadata={"year_published": 1965},
+        ),
+        user_id=1,
+    )
+    client = _client_on(mock_components["app"], storage)
+
+    response = client.get(f"/api/items/{db_id}?user_id=1")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["year_published"] == 1965
+    assert response.json()["release_year"] is None
+
+
 def test_get_single_item_not_found(client, mock_components):
     mock_components["storage"].get_content_item = Mock(return_value=None)
 

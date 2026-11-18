@@ -128,6 +128,8 @@ class ContentItemResponse(BaseModel):
     season_ratings: dict[str, int] | None = None
     total_seasons: int | None = None
     release_year: int | None = None
+    #: A book's year: the edition's, so it is kept apart from a release year.
+    year_published: int | None = None
     series: str | None = None
     series_index: float | None = None
     enriched: bool = False

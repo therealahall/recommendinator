@@ -20,6 +20,7 @@ const baseItem = {
   seasons_watched: null,
   total_seasons: null,
   release_year: null,
+  year_published: null,
   series: null,
   series_index: null,
   enriched: true,
