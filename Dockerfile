@@ -30,9 +30,16 @@ RUN pnpm build
 # =============================================================================
 # Builder
 # =============================================================================
-FROM python:3.15-slim@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928 AS builder
+# The minor must be the one .python-version names. Dependabot moves this tag on
+# its own (dependabot.yml ignores minors so it moves only the digest), and when
+# the two disagree uv fetches its own interpreter for the venv, which the runtime
+# stage never gets: the image starts without a single dependency on sys.path.
+FROM python:3.14-slim@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170 AS builder
 
 COPY --from=ghcr.io/astral-sh/uv:0.10.7@sha256:edd1fd89f3e5b005814cc8f777610445d7b7e3ed05361f9ddfae67bebfe8456a /uv /bin/uv
+
+# Makes that mismatch a build failure at `uv sync` instead of a broken image.
+ENV UV_PYTHON_DOWNLOADS=never
 
 WORKDIR /app
 
@@ -57,7 +64,7 @@ RUN uv sync --locked
 # =============================================================================
 # Same digest as the builder: the venv copied in below was built against that
 # interpreter and its shared libraries.
-FROM python:3.15-slim@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928 AS runtime
+FROM python:3.14-slim@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170 AS runtime
 
 WORKDIR /app
 
