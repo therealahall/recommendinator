@@ -1,6 +1,7 @@
 import logging
 import re
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 import requests
@@ -12,10 +13,12 @@ from src.enrichment.provider_base import (
     ProviderError,
     SeriesOrdinal,
     log_search_title,
+    pinned_record,
 )
 from src.models.content import ContentItem, ContentType
 from src.utils.matching import (
     MINIMUM_TITLE_SIMILARITY,
+    Candidate,
     best_match_index,
     normalize_title,
     title_similarity,
@@ -180,6 +183,25 @@ def _narrowest(
     )
 
 
+@dataclass(frozen=True)
+class _Entity:
+    entity_id: str
+    titles: list[str]
+    year: int | None
+    statements: dict[str, Any]
+
+
+def _candidate(entity: _Entity) -> Candidate:
+    # A hit passes the similarity floor only by naming at least one title.
+    title, *others = entity.titles
+    return Candidate(
+        record_id=entity.entity_id,
+        title=title,
+        year=entity.year,
+        also_titled=tuple(dict.fromkeys(other for other in others if other != title)),
+    )
+
+
 def _item_year(item: ContentItem) -> int | None:
     """A book's ``year_published`` is its edition's, and a reprint drifts far
     enough from the work for ``best_match_index`` to reject the right entity.
@@ -225,21 +247,20 @@ class WikidataProvider(EnrichmentProvider):
     def validate_config(self, config: dict[str, Any]) -> list[str]:
         return []
 
+    def search(self, item: ContentItem, config: dict[str, Any]) -> list[Candidate]:
+        search_title, content_type = self._searched(item)
+        return [
+            _candidate(entity) for entity in self._validated(search_title, content_type)
+        ]
+
+    def accepts_record_id(self, record_id: str) -> bool:
+        # fullmatch: '$' alone admits a trailing newline into the URL path.
+        return QID.fullmatch(record_id) is not None
+
     def fetch_series_ordinal(
         self, item: ContentItem, config: dict[str, Any]
     ) -> SeriesOrdinal | None:
-        content_type = (
-            item.content_type
-            if isinstance(item.content_type, ContentType)
-            else ContentType(item.content_type)
-        )
-        search_title, _marked_up_series = split_series_from_title(item.title)
-        if content_type is ContentType.VIDEO_GAME:
-            # Store shelves carry trademarks and edition suffixes Wikidata's
-            # labels never do; the other three types name no editions.
-            search_title = clean_game_title_for_search(search_title)
-        log_search_title(logger, item.title, search_title)
-
+        search_title, content_type = self._searched(item)
         statements = self._matched_entity(item, search_title, content_type)
         if statements is None:
             return None
@@ -255,24 +276,53 @@ class WikidataProvider(EnrichmentProvider):
         series_name, position = _narrowest(search_title, named)
         return SeriesOrdinal(position=position, series_name=series_name)
 
+    def _searched(self, item: ContentItem) -> tuple[str, ContentType]:
+        content_type = (
+            item.content_type
+            if isinstance(item.content_type, ContentType)
+            else ContentType(item.content_type)
+        )
+        search_title, _marked_up_series = split_series_from_title(item.title)
+        if content_type is ContentType.VIDEO_GAME:
+            # Store shelves carry trademarks and edition suffixes Wikidata's
+            # labels never do; the other three types name no editions.
+            search_title = clean_game_title_for_search(search_title)
+        log_search_title(logger, item.title, search_title)
+        return search_title, content_type
+
     def _matched_entity(
         self, item: ContentItem, search_title: str, content_type: ContentType
     ) -> dict[str, Any] | None:
-        allowed = INSTANCE_OF_BY_TYPE[content_type]
-        validated: list[tuple[list[str], int | None, dict[str, Any]]] = []
+        pinned = pinned_record(item, self.name)
+        if pinned is not None and self.accepts_record_id(pinned):
+            # The operator's word on the entity: neither the type nor the year
+            # gate re-decides it.
+            return self._statements(pinned)
 
+        validated = self._validated(search_title, content_type)
+        index = best_match_index(
+            search_title,
+            _item_year(item),
+            [(entity.titles, entity.year) for entity in validated],
+        )
+        return None if index is None else validated[index].statements
+
+    def _validated(self, search_title: str, content_type: ContentType) -> list[_Entity]:
+        allowed = INSTANCE_OF_BY_TYPE[content_type]
+        validated: list[_Entity] = []
         for hit in self._plausible_hits(search_title):
             statements = self._statements(str(hit["id"]))
             if not _instance_of(statements) & allowed:
                 continue
-            validated.append((_hit_titles(hit), _stated_year(statements), statements))
-
-        index = best_match_index(
-            search_title,
-            _item_year(item),
-            [(titles, year) for titles, year, _statements in validated],
-        )
-        return None if index is None else validated[index][2]
+            validated.append(
+                _Entity(
+                    entity_id=str(hit["id"]),
+                    titles=_hit_titles(hit),
+                    year=_stated_year(statements),
+                    statements=statements,
+                )
+            )
+        return validated
 
     def _plausible_hits(self, search_title: str) -> list[dict[str, Any]]:
         payload = self._get(
@@ -290,7 +340,10 @@ class WikidataProvider(EnrichmentProvider):
 
         plausible: list[dict[str, Any]] = []
         for hit in hits if isinstance(hits, list) else []:
-            if not isinstance(hit, dict) or not QID.match(str(hit.get("id", ""))):
+            # Every offered id must be one a pin accepts.
+            if not isinstance(hit, dict) or not self.accepts_record_id(
+                str(hit.get("id", ""))
+            ):
                 continue
             similarity = _best_similarity(search_title, _hit_titles(hit))
             if similarity < MINIMUM_TITLE_SIMILARITY:

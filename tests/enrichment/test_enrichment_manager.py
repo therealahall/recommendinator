@@ -2380,19 +2380,76 @@ class TestPinnedProviderRecord:
     ) -> None:
         db_id = storage_manager.save_content_item(self._movie())
         manager = self._manager(storage_manager)
-        manager.registry.register(WikidataProvider())
+        manager.registry.register(OrdinalOnlyProvider("series_only"))
 
         with pytest.raises(PinRefused) as refused:
             manager.pin(
                 db_id,
                 storage_manager.get_content_item(db_id),
-                "wikidata",
+                "series_only",
                 "Q1128199",
                 user_id=1,
             )
 
         assert "pin one of mock." in str(refused.value)
         assert "enrichment_ids" not in storage_manager.get_content_item(db_id).metadata
+
+    def test_wikidata_takes_a_qid_pin_and_refuses_any_other_id(
+        self, storage_manager: StorageManager
+    ) -> None:
+        """Wikidata refused every pin, so a series it matched to the wrong
+        entity had no way onto the right one from either interface."""
+        db_id = storage_manager.save_content_item(self._movie())
+        manager = self._manager(storage_manager)
+        manager.registry.register(WikidataProvider())
+
+        with pytest.raises(PinRefused, match="cannot look up record '1128199'"):
+            manager.pin(
+                db_id,
+                storage_manager.get_content_item(db_id),
+                "wikidata",
+                "1128199",
+                user_id=1,
+            )
+        pins, _started = manager.pin(
+            db_id,
+            storage_manager.get_content_item(db_id),
+            "wikidata",
+            "Q1128199",
+            user_id=1,
+        )
+        manager._wait_for_completion()
+
+        assert pins == {"wikidata": "Q1128199"}
+        stored = storage_manager.get_content_item(db_id)
+        assert stored.metadata["enrichment_ids"] == {"wikidata": "Q1128199"}
+
+    def test_wikidata_rows_reach_the_picker(
+        self, storage_manager: StorageManager
+    ) -> None:
+        """The picker listed only the providers that enrich, so the entity the
+        series pass weighed was invisible to both interfaces."""
+        db_id = storage_manager.save_content_item(self._movie())
+        manager = self._manager(storage_manager)
+        manager.registry.register(WikidataProvider())
+        manager.config["enrichment"]["providers"]["wikidata"] = {"enabled": True}
+        statements = {
+            "P31": [{"rank": "normal", "value": {"type": "value", "content": "Q11424"}}]
+        }
+
+        with patch(
+            "src.enrichment.providers.wikidata.wikidata.requests.get",
+            side_effect=[
+                MagicMock(
+                    status_code=200,
+                    json=lambda: {"search": [{"id": "Q1128199", "label": "Prey"}]},
+                ),
+                MagicMock(status_code=200, json=lambda: statements),
+            ],
+        ):
+            offered = manager.candidates(storage_manager.get_content_item(db_id))
+
+        assert offered == [("wikidata", Candidate(record_id="Q1128199", title="Prey"))]
 
     def test_a_provider_named_in_another_case_pins_under_the_name_runs_read(
         self, storage_manager: StorageManager
