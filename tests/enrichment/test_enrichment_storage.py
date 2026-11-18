@@ -217,9 +217,36 @@ class TestEnrichmentStatusMethods:
         status = storage_manager.enrichment.status(db_id)
         assert status is not None and status["needs_enrichment"] is True
 
-    def test_a_reset_commits_each_item_before_it_walks_to_the_next(
+    def test_a_reset_commits_once_per_batch_not_once_per_item(
         self, storage_manager: StorageManager
     ) -> None:
+        """A whole-library reset paid one fsync per item and hung the request."""
+        items = [save_unenriched(storage_manager, f"item{n}") for n in range(5)]
+        for runtime, db_id in enumerate(items, start=100):
+            provider_enriches(storage_manager, db_id, "tmdb", runtime=runtime)
+        sqlite_db = storage_manager.sqlite_db
+        opened = sqlite_db._get_connection
+        commits: list[str] = []
+
+        def traced() -> sqlite3.Connection:
+            conn = opened()
+            conn.set_trace_callback(
+                lambda statement: statement == "COMMIT" and commits.append(statement)
+            )
+            return conn
+
+        with (
+            patch("src.storage.sqlite_db._RESET_COMMIT_BATCH", 2),
+            patch.object(sqlite_db, "_get_connection", side_effect=traced),
+        ):
+            assert sqlite_db.reset_provider_writes(items, "tmdb") == items
+
+        assert len(commits) == 3
+
+    def test_a_reset_commits_each_batch_before_it_walks_to_the_next(
+        self, storage_manager: StorageManager
+    ) -> None:
+        """The walk must never hold the write lock across the whole library."""
         first = save_unenriched(storage_manager, "item1")
         second = save_unenriched(storage_manager, "item2")
         provider_enriches(storage_manager, first, "tmdb", runtime=137)
@@ -242,10 +269,39 @@ class TestEnrichmentStatusMethods:
                     reader.close()
             committed(cursor, db_id)
 
-        with patch("src.storage.sqlite_db.write_derived_columns", side_effect=peek):
+        with (
+            patch("src.storage.sqlite_db._RESET_COMMIT_BATCH", 1),
+            patch("src.storage.sqlite_db.write_derived_columns", side_effect=peek),
+        ):
             storage_manager.sqlite_db.reset_provider_writes([first, second], "tmdb")
 
         assert seen == [0]
+
+    def test_a_reset_persists_the_final_partial_batch(
+        self, storage_manager: StorageManager
+    ) -> None:
+        """Items past the last full batch were left uncommitted when the walk ended."""
+        items = [save_unenriched(storage_manager, f"item{n}") for n in range(3)]
+        for db_id in items:
+            provider_enriches(storage_manager, db_id, "tmdb", runtime=137)
+
+        with patch("src.storage.sqlite_db._RESET_COMMIT_BATCH", 2):
+            assert storage_manager.enrichment.reset(provider="tmdb").stripped == 3
+
+        reader = sqlite3.connect(storage_manager.sqlite_db.db_path)
+        try:
+            rows = reader.execute(
+                "SELECT ci.id, mv.runtime FROM content_items ci"
+                " JOIN movie_details mv ON mv.content_item_id = ci.id"
+                " ORDER BY ci.id"
+            ).fetchall()
+            tmdb_writes = reader.execute(
+                "SELECT COUNT(*) FROM content_item_field_writes WHERE writer = 'tmdb'"
+            ).fetchone()[0]
+        finally:
+            reader.close()
+        assert rows == [(db_id, None) for db_id in items]
+        assert tmdb_writes == 0
 
     def test_reset_by_provider_leaves_the_field_another_provider_also_stated(
         self, storage_manager: StorageManager

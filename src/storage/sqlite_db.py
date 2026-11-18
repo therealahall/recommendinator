@@ -226,6 +226,10 @@ def _surrogate_free(item: ContentItem) -> ContentItem:
 # SQLITE_LIMIT_VARIABLE_NUMBER default of 999.
 _IN_CLAUSE_CHUNK_SIZE = 500
 
+# A whole-library reset never holds the write lock across every item, yet
+# never pays one fsync per item either.
+_RESET_COMMIT_BATCH = 200
+
 # ORDER BY clause for each sort_by option get_content_items() accepts. Every
 # one ends in ci.id so the ordering is total: a page boundary falling inside a
 # tie would let two adjacent pages repeat one row and drop another.
@@ -708,7 +712,9 @@ class SQLiteDB:
                 self._rebuild_from_ledger(
                     cursor, db_id, clear_fields=frozenset(dropped - remaining)
                 )
-                conn.commit()
+                if len(stripped) % _RESET_COMMIT_BATCH == 0:
+                    conn.commit()
+            conn.commit()
         return stripped
 
     def clear_cover_url(self, db_id: int) -> bool:
