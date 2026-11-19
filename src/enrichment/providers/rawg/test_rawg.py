@@ -267,6 +267,29 @@ class TestRAWGProviderEnrichment:
 
 
 class TestRAWGPinnedRecord:
+    def test_a_pinned_game_returning_404_settles_not_found_without_searching(
+        self,
+    ) -> None:
+        """Raising for status before checking 404 turns a delisted pin into a failure."""
+        item = ContentItem(
+            id="game1",
+            title="Prey",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"enrichment_ids": {"rawg": "3328"}},
+        )
+
+        with patch(
+            "src.enrichment.providers.rawg.rawg.requests.get",
+            return_value=_response(None, status=404),
+        ) as mock_get:
+            result = RAWGProvider().enrich(item, {"api_key": "test-api-key"})
+
+        assert result is not None
+        assert result.match_quality == "not_found"
+        mock_get.assert_called_once()
+        assert mock_get.call_args.args[0] == "https://api.rawg.io/api/games/3328"
+
     def test_a_pinned_record_is_fetched_without_searching_by_title(self) -> None:
         item = ContentItem(
             id="game1",
