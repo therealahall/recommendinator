@@ -61,5 +61,9 @@ jobs:
       # pnpm-lock.yaml is the whole input, so nothing is installed first. A
       # moderate advisory in build-only tooling is not worth stopping a merge
       # for; high is.
+      # Verified 2026-11-19: GHSA-fc5q-39xc-vjpf (picomatch) was withdrawn
+      # on 2026-11-18; the registry audit no longer reports it, so no audit
+      # exception is needed.
+      # https://github.com/advisories/GHSA-fc5q-39xc-vjpf
       - name: Audit the frontend lockfile
         run: pnpm audit --audit-level=high
