@@ -527,20 +527,29 @@ uv run python -m src.cli enrichment pin --id 42 --provider rawg --record 41494
 uv run python -m src.cli enrichment pin --id 42 --provider rawg --clear
 ```
 
+### Pinning a record
+
 An item whose title matches nothing, or the wrong thing, is pointed at a record
-by hand: `candidates` searches every enabled provider (add `--query` to search
-under a different title, or to paste one provider's own record link, which is
-read instead of searched), `pin` binds the item to one of them, and `--clear`
-hands it back to title matching. `candidates` needs enrichment on with a
-provider that searches the item's type. A pin then enriches the item and waits
-for the run; a clear rebuilds it at once and leaves it queued.
+by hand. `candidates` searches every enabled provider: `--query` searches under
+another title, or reads a pasted provider record link instead. `pin` binds the
+item to one result, and `--clear` hands it back to title matching.
+
+`candidates` needs enrichment on with a provider that searches the item's type.
+A pin then enriches the item and waits for the run; a clear rebuilds it at once
+and leaves it queued.
 
 Only a provider that reads a pin can be pinned, and only to an id it can look
 up; the refusal names the ones that can.
 
+### Resetting
+
 `reset` deletes what the providers in scope stated from the ledger — across a merge group, so a survivor and the rows merged into it go together — and rebuilds each item on what is left standing: what its sources said, your own edits and its pins. A field only a provider ever filled is emptied, and the item is queued for the run that refills it.
 
 `--provider` reaches every item that provider wrote a ledger row for, not only the ones credited to it for the match, so resetting one provider takes back its word everywhere it spoke.
+
+Pinning an item to a new record drops what that provider stated from its last one, as `reset` would. Nothing else drops a row: `requeue`, clearing a pin and a cover found permanently gone each re-queue the item with every ledger row standing.
+
+### Hard reset
 
 `--hard` takes the unclaimed band with it: what the library held before the ledger existed, which nothing else deletes. Only the writer that supplied a value stating it again brings it back, so a re-sync or a re-enrich restores most of it. It is the recourse for a value a provider stated once and has gone quiet about. In bulk it starts no run.
 
@@ -548,11 +557,13 @@ Your edits, pins, ratings and reviews stand, since a hard reset never drops the 
 
 `enrichment status` counts the items holding a field the unclaimed band alone would be left to fill, and so does the confirmation. Both are a floor: an item whose genres merge a legacy row with a source's keeps a claimed row, escapes the count, and still loses the legacy entries.
 
-Pinning an item to a new record drops what that provider stated from its last one, as `reset` would. Nothing else drops a row: `requeue`, clearing a pin and a cover found permanently gone each re-queue the item with every ledger row standing.
+### One item
 
 `reset --id` does all of that for one item — dropping what every provider stated about it, rebuilding it, re-queuing it — and then enriches it, waiting for the run. It takes no `--provider` or `--type` beside it. It is what **Reset enrichment** opens in the library's edit dialog, mirroring `POST /api/enrichment/reset` with `item_id`.
 
 `requeue --id` is the door for an item a run left on a timeout or a 503: it puts the item back in front of the providers with every value it holds standing, then enriches it. It is what **Enrich this again** opens in the library's edit dialog, mirroring `POST /api/enrichment/requeue`.
+
+### Watching and stopping a run
 
 `enrichment job` and `enrichment stop` reach the run whatever started it — the
 Data tab, another terminal, a backgrounded process — because the job lives in
