@@ -8,7 +8,7 @@ from typing import Any
 
 from src.models.detail_fields import ContentTypeFields
 from src.utils.dates import merge_seasons_watched_dates
-from src.utils.series import reconcile_seasons
+from src.utils.series import SEASON_RATINGS_KEY, reconcile_seasons
 from src.utils.sorting import FUZZY_MATCH_THRESHOLD
 
 __all__ = [
@@ -467,6 +467,12 @@ def _carried_metadata(keep_raw: Any, dup_raw: Any) -> str | None:
     )
     if combined_dates is not None:
         merged["seasons_watched_dates"] = combined_dates
+
+    # Exception: keep absorbed-only season ratings, with the survivor winning ties.
+    keep_ratings = keep_meta.get(SEASON_RATINGS_KEY)
+    dup_ratings = dup_meta.get(SEASON_RATINGS_KEY)
+    if isinstance(keep_ratings, dict) and isinstance(dup_ratings, dict):
+        merged[SEASON_RATINGS_KEY] = {**dup_ratings, **keep_ratings}
 
     return json.dumps(merged)
 
