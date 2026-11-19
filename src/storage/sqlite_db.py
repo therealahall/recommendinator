@@ -380,6 +380,7 @@ def _corrected_fields(
     title: str | Unset,
     rating: int | None | Unset,
     review: str | None | Unset,
+    date_completed: date | Unset,
     genres: list[str] | None,
     tags: list[str] | None,
     description: str | None,
@@ -408,6 +409,8 @@ def _corrected_fields(
     )
     if "review" in stated:
         stated["review"] = (stated["review"] or "").strip() or None
+    if date_completed is not UNSET:
+        stated["date_completed"] = date_completed.isoformat()
     return stated
 
 
@@ -790,6 +793,12 @@ class SQLiteDB:
         if date_completed is not UNSET:
             set_parts.append("date_completed = ?")
             params.append(date_completed.isoformat())
+            record_field_writes(
+                cursor,
+                db_id,
+                MANUAL_WRITER,
+                [FieldWrite("date_completed", date_completed.isoformat())],
+            )
         else:
             set_parts.append("date_completed = COALESCE(date_completed, ?)")
             params.append(local_today().isoformat())
@@ -907,8 +916,6 @@ class SQLiteDB:
                 offered["ignored"] = 1 if item.ignored else 0
 
             # A held field is the operator's, so the sync withdraws the offer.
-            # Only these reach here: no rank protects a column the ledger does
-            # not rebuild.
             for field in read_manual_fields(cursor, existing_id):
                 offered.pop(field, None)
 
@@ -1639,6 +1646,7 @@ class SQLiteDB:
                 title=title,
                 rating=rating,
                 review=review,
+                date_completed=date_completed,
                 genres=genres,
                 tags=tags,
                 description=description,
@@ -1731,7 +1739,7 @@ class SQLiteDB:
                 params.append(corrected["review"])
             if date_completed is not UNSET:
                 set_parts.append("date_completed = ?")
-                params.append(date_completed.isoformat())
+                params.append(corrected["date_completed"])
             elif (
                 resolved_status in ("completed", "dnf")
                 and existing_status != resolved_status
