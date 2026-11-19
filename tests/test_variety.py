@@ -188,8 +188,6 @@ class TestBuildVarietyLadder:
         assert shared > older_only
 
     def test_a_one_star_completion_claims_its_rung_like_a_five_star_one(self) -> None:
-        """Catches the ladder being narrowed to liked completions: a genre just
-        finished and hated still needs a rest from the next recommendations."""
         hated = _completed("Hated", ["Fantasy"], completed_on=date(2026, 1, 2))
         hated.rating = 1
         loved = _completed("Loved", ["Science Fiction"], completed_on=date(2026, 1, 1))
@@ -264,8 +262,7 @@ class TestVarietyPenaltyFor:
     def test_a_candidate_sharing_no_tag_takes_the_rung_of_its_genre_cluster(
         self,
     ) -> None:
-        """Catches the ladder keying on tags: a space opera right after a
-        cyberpunk novel is the same science fiction run variety should break."""
+        """Catches the ladder keying on tags rather than genre clusters."""
         ladder = build_variety_ladder([_completed("Neon Saint", ["Cyberpunk"])])
 
         assert variety_penalty_for(

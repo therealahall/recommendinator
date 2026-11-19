@@ -109,8 +109,6 @@ class TestScoringPipeline:
         assert result[0].aggregate_score == 0.0
 
     def test_an_item_with_no_metadata_scores_the_documented_bare_score(self) -> None:
-        """Catches drift from the bare-item score SCORING.md states: neutral
-        genre and creator rows, and tag_overlap's 0 keeping its weight."""
         context = _build_context(
             consumed=[make_item(rating=5, author="Ursula K. Le Guin", genres="Fantasy")]
         )
@@ -133,9 +131,7 @@ class TestScoringPipeline:
     def test_a_sequel_sits_a_continuation_row_from_an_identical_standalone(
         self,
     ) -> None:
-        """Catches continuation dropping its read of the series rating: after a
-        1-star first book the sequel scores 4.5/5.5 of a standalone otherwise the
-        same, and after a 5-star one it gains a full-marks row instead."""
+        """Catches continuation no longer reading the series rating."""
 
         def sequel_and_standalone(first_book_rating: int) -> tuple[float, float]:
             shared = {"author": "Ilse Varden", "genres": "Fantasy"}
