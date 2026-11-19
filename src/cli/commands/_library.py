@@ -45,12 +45,14 @@ from src.storage.manager import (
     DeclinedPair,
     DuplicateSide,
     DuplicateSuggestion,
+    FutureCompletionDateError,
     MergeError,
     MergeEvidence,
     StorageManager,
     UncorrectableFieldError,
     unset_if_none,
 )
+from src.utils.dates import parse_completion_date_input
 from src.utils.duplicate_serialization import (
     ALSO_OFFERED_NOTE,
     decline_refusal_message,
@@ -498,6 +500,11 @@ def _parsed_season_ratings(
 )
 @click.option("--review", default=None, help="New review text")
 @click.option(
+    "--date-completed",
+    metavar="YYYY-MM-DD",
+    help="Correct the completion date; omitted keeps it or dates a new completion local today",
+)
+@click.option(
     "--clear-review",
     is_flag=True,
     help="Remove the review text",
@@ -587,6 +594,7 @@ def library_edit(
     rating: int | None,
     clear_rating: bool,
     review: str | None,
+    date_completed: str | None,
     clear_review: bool,
     seasons_watched: str | None,
     clear_seasons: bool,
@@ -609,6 +617,7 @@ def library_edit(
         and rating is None
         and not clear_rating
         and review is None
+        and date_completed is None
         and not clear_review
         and seasons_watched is None
         and not clear_seasons
@@ -627,7 +636,7 @@ def library_edit(
             "--clear-rating, --review, --clear-review, --seasons-watched, "
             "--clear-seasons, --season-rating, --clear-season-rating, --genre, "
             "--clear-genres, --tag, --clear-tags, --description, --release-year, "
-            "--creator.",
+            "--creator, --date-completed.",
             err=True,
         )
         raise click.Abort()
@@ -674,6 +683,11 @@ def library_edit(
             abort_with("--creator cannot be empty.")
         if len(creator) > MAX_CREATOR_LENGTH:
             abort_with(f"--creator must be at most {MAX_CREATOR_LENGTH} characters.")
+
+    try:
+        completed_on = parse_completion_date_input(date_completed)
+    except ValueError as error:
+        abort_with(str(error))
 
     storage = ctx.obj["storage"]
 
@@ -751,6 +765,7 @@ def library_edit(
             status=unset_if_none(status_str),
             rating=None if clear_rating else unset_if_none(rating),
             review=None if clear_review else unset_if_none(review),
+            date_completed=unset_if_none(completed_on),
             seasons_watched=parsed_seasons,
             season_ratings=rated_seasons,
             genres=genre_list,
@@ -760,7 +775,7 @@ def library_edit(
             creator=creator,
             user_id=user_id,
         )
-    except UncorrectableFieldError as error:
+    except (UncorrectableFieldError, FutureCompletionDateError) as error:
         abort_with(str(error))
 
     if not updated:

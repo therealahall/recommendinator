@@ -472,6 +472,7 @@ export interface ItemEditRequest {
   status?: string
   rating?: number | null
   review?: string | null
+  date_completed?: string
   seasons_watched?: number[] | null
   /** A null clears that season's rating. */
   season_ratings?: Record<number, number | null>

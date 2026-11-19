@@ -1,5 +1,6 @@
 import logging
 from collections.abc import Callable
+from datetime import date
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query
@@ -29,11 +30,13 @@ from src.models.content import (
 from src.storage.manager import (
     UNSET,
     VALID_SORT_OPTIONS,
+    FutureCompletionDateError,
     StorageManager,
     UncorrectableFieldError,
     Unset,
     unset_if_none,
 )
+from src.utils.dates import parse_completion_date_input
 from src.utils.export import export_items_csv, export_items_json
 from src.utils.item_serialization import (
     completion_to_dict,
@@ -102,6 +105,10 @@ class CompletionRequest(BaseModel):
     )
     rating: int | None = Field(None, ge=1, le=5, description="Rating (1-5)")
     review: CompletionReviewText | None = Field(None, description="Review text")
+    date_completed: str | None = Field(
+        None,
+        description="Completion date (YYYY-MM-DD); omitted preserves the date or uses local today",
+    )
 
 
 class CompletionResponse(BaseModel):
@@ -196,6 +203,10 @@ class ItemEditRequest(BaseModel):
     status: str | None = Field(None, description="Status value")
     rating: int | None = Field(None, ge=1, le=5)
     review: str | None = None
+    date_completed: str | None = Field(
+        None,
+        description="Completion date (YYYY-MM-DD); omitted leaves the date unchanged",
+    )
     seasons_watched: list[Annotated[int, Field(ge=1, le=MAX_SEASONS)]] | None = Field(
         None, max_length=MAX_SEASONS
     )
@@ -237,6 +248,13 @@ class ItemEditRequest(BaseModel):
 
 def _item_to_response(item: "ContentItem") -> ContentItemResponse:
     return ContentItemResponse.model_validate(item_to_dict(item))
+
+
+def _completion_date_or_400(value: str | None) -> date | None:
+    try:
+        return parse_completion_date_input(value)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
 
 
 def _item_or_404(storage: StorageManager, db_id: int, user_id: int) -> ContentItem:
@@ -521,6 +539,7 @@ def edit_item(
     if crossed is not None:
         raise HTTPException(status_code=400, detail=crossed)
 
+    completed_on = _completion_date_or_400(request.date_completed)
     try:
         success = storage.update_item_from_ui(
             db_id=db_id,
@@ -536,8 +555,9 @@ def edit_item(
             release_year=request.corrected_year,
             creator=request.creator,
             user_id=user_id,
+            date_completed=unset_if_none(completed_on),
         )
-    except UncorrectableFieldError as error:
+    except (UncorrectableFieldError, FutureCompletionDateError) as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     if not success:
         raise HTTPException(status_code=404, detail="Item not found")
@@ -635,11 +655,12 @@ def mark_complete(
         status=ConsumptionStatus.COMPLETED,
         rating=request.rating,
         review=request.review,
+        date_completed=_completion_date_or_400(request.date_completed),
     )
 
     try:
         db_id = storage.complete_content_item(item)
-    except UncorrectableFieldError as error:
+    except (UncorrectableFieldError, FutureCompletionDateError) as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     except Exception as error:
         # The failing write is this request's title, author and review.

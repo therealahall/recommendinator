@@ -56,6 +56,19 @@ function mountPage(
 }
 
 describe('LibraryPage search behaviour', () => {
+  it('passes an earlier date correction from the editor to the library save action', async () => {
+    const { wrapper, lib } = mountPage({
+      editingItem: { db_id: 1, title: 'Dune', content_type: 'book', status: 'completed', rating: null, date_completed: '2024-01-01' },
+    }, document.body, { EditModal: false })
+    await wrapper.vm.$nextTick()
+    await wrapper.get('#edit-date-completed').setValue('1999-06-15')
+    await wrapper.findAll('.btn-primary').find(b => b.text() === 'Save')!.trigger('click')
+    await flushPromises()
+
+    expect(lib.saveEdit).toHaveBeenCalledWith(1, { date_completed: '1999-06-15' })
+    wrapper.unmount()
+  })
+
   it('offers the only route to duplicates review', async () => {
     const { wrapper } = mountPage()
     await wrapper.vm.$nextTick()

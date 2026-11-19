@@ -27,6 +27,19 @@ def parse_calendar_date(raw: object) -> date | None:
         return None
 
 
+def parse_completion_date_input(value: str | None) -> date | None:
+    """An explicit calendar day, excluding timestamps and ISO week dates."""
+    if value is None:
+        return None
+    try:
+        parsed = date.fromisoformat(value)
+        if parsed.isoformat() == value:
+            return parsed
+    except ValueError:
+        pass
+    raise ValueError("Completion date must be a calendar date in YYYY-MM-DD format.")
+
+
 def _as_utc(value: datetime) -> datetime:
     """Return *value* as an aware UTC datetime, assuming a naive value is UTC."""
     return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
