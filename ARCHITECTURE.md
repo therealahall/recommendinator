@@ -276,8 +276,8 @@ Invariants:
 - The engine's output is one declared record (`record.py`). Both interfaces
   serialise it through `to_payload`, which is what keeps `recommend --format
   json` and `GET /api/recommendations` one document.
-- The taste signal is completed and in-progress items that are **rated** and
-  **not ignored**, across all content types: a rated show part-way through feeds
+- The taste signal is completed, in-progress and did-not-finish items that are
+  **rated** and **not ignored**, across all content types: a rated show part-way through feeds
   taste, references and adaptations like a completed one, and scales its next
   season's `continuation`. Nothing else shapes
   preferences or scoring. Two facts sit outside it and are answered from wider
