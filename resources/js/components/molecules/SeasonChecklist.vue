@@ -8,11 +8,14 @@ const props = defineProps<{
   modelValue: number[]
   /** Each watched season's rating; left out where the host rates none. */
   ratings?: Record<number, number | null>
+  /** Offers a next season, for a show whose source states no count. */
+  extendable?: boolean
 }>()
 
 const emit = defineEmits<{
   'update:modelValue': [value: number[]]
   rate: [season: number, rating: number | null]
+  addSeason: []
 }>()
 
 const watchedSet = computed(() => new Set(props.modelValue))
@@ -71,8 +74,16 @@ function deselectAll() {
 <template>
   <div>
     <div class="season-controls">
-      <button class="btn btn-small btn-secondary" type="button" @click="selectAll">Select All</button>
-      <button class="btn btn-small btn-secondary" type="button" @click="deselectAll">Deselect All</button>
+      <template v-if="totalSeasons > 0">
+        <button class="btn btn-small btn-secondary" type="button" @click="selectAll">Select All</button>
+        <button class="btn btn-small btn-secondary" type="button" @click="deselectAll">Deselect All</button>
+      </template>
+      <button
+        v-if="extendable"
+        class="btn btn-small btn-secondary"
+        type="button"
+        @click="emit('addSeason')"
+      >Add season {{ totalSeasons + 1 }}</button>
       <span
         class="season-counter"
         role="status"

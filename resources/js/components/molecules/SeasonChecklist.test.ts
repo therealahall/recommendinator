@@ -53,4 +53,23 @@ describe('SeasonChecklist watched marker', () => {
     await wrapper.setProps({ modelValue: [2] })
     expect(seasonTwo().find('svg').exists()).toBe(true)
   })
+
+  // Regression: the grid rendered exactly the count it was given, so a show
+  // with none stated had no season to tick.
+  it('offers the next season only where the count is unknown', async () => {
+    const extendable = mount(SeasonChecklist, {
+      props: { totalSeasons: 0, modelValue: [], extendable: true },
+    })
+    const fixed = mount(SeasonChecklist, {
+      props: { totalSeasons: 3, modelValue: [] },
+    })
+    const adder = (wrapper: typeof fixed) =>
+      wrapper.findAll('button').find((one) => one.text().startsWith('Add season'))
+
+    await adder(extendable)!.trigger('click')
+
+    expect(adder(extendable)!.text()).toBe('Add season 1')
+    expect(extendable.emitted('addSeason')).toHaveLength(1)
+    expect(adder(fixed)).toBeUndefined()
+  })
 })
