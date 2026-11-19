@@ -198,14 +198,16 @@ An object is refused rather than stored as its Python repr, and the refusal
 fails the whole item's save: sync reports only `Failed to process '<title>'`
 while the log line names the key.
 
-First-party code also reads these unrecognised keys out of the blob:
+First-party code also reads metadata directly, including keys kept in the blob:
 
 | Read by | Keys |
 |---|---|
 | [Length scorer](SCORING.md#content-length-preferences), `src/recommendations/content_length.py` | **book** `num_pages`, `number_of_pages`. **TV show** `number_of_seasons`. **video game** `average_playtime_hours` |
-| Series ordering, `src/utils/series.py` | Series name: `series_name`, or the provider-owned `series_title`. Position: `series_position`, `series_number`, `series_num`, `book_number`, `book_num`, `season`, `season_number`, `season_num`, `part`, `part_number`, `episode`, `episode_number`. Expanding a show into seasons: `number_of_seasons` |
+| Series ordering, `src/utils/series.py` | Series name: `series_name`, or the provider-owned `series_title`. Position: `series_position`, `series_number`, `series_num`, `book_number`, `book_num`, `season`, `season_number`, `season_num`, `part`, `part_number`, `episode`, `episode_number` |
+| Show-to-season expansion, `src/utils/series.py` | **TV show** `total_seasons`, `seasons`, then `number_of_seasons`: the first value convertible to an integer supplies the season count. Storage recognises `total_seasons` as an alias of `seasons`; `number_of_seasons` stays in the blob. |
 | [Release gating](SCORING.md#unreleased-items), `src/recommendations/engine.py` | **movie** and **video game** `release_date`. **TV show** `first_air_date` |
 | Season checklist and the [variety ladder](SCORING.md#variety-after-completion), `src/utils/series.py` | `seasons_watched`, `seasons_watched_dates`, `season_ratings` |
+| Season progress, `src/utils/series.py` | **TV show** `episodes_watched_by_season` maps season numbers to integer watched-episode counts. On a `currently_consuming` show, positive counts for seasons absent from `seasons_watched` identify seasons in progress. Expansion marks those seasons `currently_consuming`, excluding them from recommendations, and holds later seasons back until they finish. |
 | Library export, `src/utils/export.py` | `notes` on every type. **TV show** `seasons_watched`, `seasons_watched_dates`, `season_ratings`. **video game** `playtime_hours` |
 
 That list grows, so check those files. The rest of the blob is yours.
