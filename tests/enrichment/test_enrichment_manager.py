@@ -27,6 +27,7 @@ from src.enrichment.provider_base import (
     ProviderRefusedError,
     ProviderUnreadableError,
     SeriesOrdinal,
+    pinned_record,
 )
 from src.enrichment.providers.tmdb.tmdb import TMDBProvider
 from src.enrichment.providers.wikidata.wikidata import WikidataProvider
@@ -44,7 +45,11 @@ from src.storage.field_writes import (
 from src.storage.manager import StorageManager
 from src.storage.schema import _LEGACY_EXTERNAL_ID_SOURCE
 from src.utils.matching import Candidate
-from src.utils.series import expand_tv_shows_to_seasons
+from src.utils.series import (
+    expand_tv_shows_to_seasons,
+    get_series_name_from_metadata,
+    get_series_position_from_metadata,
+)
 from tests.factories import make_storage_mock
 
 
@@ -3026,6 +3031,54 @@ class TestAnOrdinalCountedInAnotherSeries:
         item = storage_manager.get_content_item(db_id)
         assert item.metadata["series_name"] == "Star Wars Collection"
         assert "series_position" not in item.metadata
+
+
+class PinnableSeriesProvider(OrdinalOnlyProvider):
+    def accepts_record_id(self, record_id: str) -> bool:
+        return record_id.startswith("Q")
+
+    def fetch_series_ordinal(
+        self, item: ContentItem, config: dict[str, Any]
+    ) -> SeriesOrdinal | None:
+        pinned = pinned_record(item, self.name)
+        if pinned == "Q462":
+            return SeriesOrdinal(position=4.0, series_name="Star Wars")
+        if pinned == "Q1":
+            return None
+        return SeriesOrdinal(position=2.0, series_name="Star Wars Legends")
+
+
+class TestAPinnedSeriesPass:
+    @staticmethod
+    def _pinned(tmp_path: Path, record_id: str) -> ContentItem:
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        db_id = save_movie(storage_manager, "A New Hope")
+        manager = manager_over(storage_manager, PinnableSeriesProvider())
+        manager.start_enrichment(content_type=ContentType.MOVIE)
+        assert manager._wait_for_completion()
+        wrong = storage_manager.get_content_item(db_id)
+        assert wrong.metadata["series_name"] == "Star Wars Legends"
+
+        manager.pin(db_id, wrong, "ordinal", record_id, user_id=1)
+        assert manager._wait_for_completion()
+        return storage_manager.get_content_item(db_id)
+
+    def test_a_pin_replaces_the_series_a_wrong_match_stored_regression(
+        self, tmp_path: Path
+    ) -> None:
+        item = self._pinned(tmp_path, "Q462")
+
+        assert item.metadata["series_name"] == "Star Wars"
+        assert item.metadata["series_position"] == 4.0
+
+    def test_a_pin_to_a_work_in_no_series_drops_the_wrong_one_regression(
+        self, tmp_path: Path
+    ) -> None:
+        item = self._pinned(tmp_path, "Q1")
+
+        assert get_series_name_from_metadata(item.metadata) is None
+        assert get_series_position_from_metadata(item.metadata) is None
+        assert "series_position_authority" not in item.metadata
 
 
 class CollectionNamingProvider(MockProvider):

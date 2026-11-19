@@ -528,7 +528,7 @@ Your edits, pins, ratings and reviews stand, since a hard reset never drops the 
 
 `enrichment status` counts the items holding a field the unclaimed band alone would be left to fill, and so does the confirmation. Both are a floor: an item whose genres merge a legacy row with a source's keeps a claimed row, escapes the count, and still loses the legacy entries.
 
-Nothing else drops a row: `requeue`, pinning an item, clearing that pin and a cover found permanently gone each re-queue the item with every ledger row standing.
+Pinning an item to a new record drops what that provider stated from its last one, as `reset` would. Nothing else drops a row: `requeue`, clearing a pin and a cover found permanently gone each re-queue the item with every ledger row standing.
 
 `reset --id` does all of that for one item — dropping what every provider stated about it, rebuilding it, re-queuing it — and then enriches it, waiting for the run. It takes no `--provider` or `--type` beside it. It is what **Reset enrichment** opens in the library's edit dialog, mirroring `POST /api/enrichment/reset` with `item_id`.
 
