@@ -13,7 +13,7 @@ settings < per-user preferences**.
 | `continuation` | Scores the later entries and seasons of a series you have begun by how you rated its entries of the same content type: 5 stars is 100%, 3 is 50%, 1 is 0%, and none rated is 50%. A show's next season is scored by the latest season you rated, or by the show's rating when no season is rated. Counts only where an earlier entry is finished or begun, and not while any entry of that series is in progress | 1.0 |
 | `adaptation` | Boosts a film, show or game adapting something you rated well, and the source behind an adaptation you loved. An item adapts one of another type when either's title or series name matches the other's, a trailing "Collection" aside, or when they share an author and a similar title. Counts only for an item that adapts something | 1.5 |
 
-Tags and genre clusters are different things. A tag is one of an item's own terms, such as `Cyberpunk` or `War`. A genre cluster is one of the coarse themes those terms group into, such as science fiction, so two items can share a genre cluster without sharing a tag. Of the scorers only `tag_overlap` reads genre clusters, and the variety penalty reads nothing else.
+Tags and genre clusters are different things. A tag is one of an item's own terms, such as `Cyberpunk` or `War`. A genre cluster is one of the coarse themes those terms group into, such as science fiction, so two items can share a genre cluster without sharing a tag. Of the scorers only `tag_overlap` reads genre clusters: `genre_match` reads tags, and `adaptation` matches titles and authors. The variety penalty reads genre clusters and nothing else.
 
 ## One score, fully explained
 
@@ -45,25 +45,28 @@ whatever the rest of the rows earn it. It is never removed from the ranking.
 The one thing applied after the weighted mean is the variety penalty below,
 which has its own row in the same panel.
 
-## Settled questions, as worked examples
+## Scoring expectations, checked
 
-Each row is a scoring question with its agreed answer. The example is the answer worked through, and the test fails if scoring stops giving it. Scores are row values unless marked as the mean.
+Each row is one expectation from an interview with the operator in November 2026, held away from the code and then checked against it. A met row's test fails if scoring stops meeting it. A row not met keeps the code's behaviour until the operator chooses between the code and the expectation.
 
-| Question | Agreed answer | Example and expected outcome | Test |
+| Operator's expectation | Worked example | Code | Test |
 |---|---|---|---|
-| How far does a 1-star item pull related candidates down, and which scorer does it? | `genre_match`, `creator_match` and `continuation` pull down, each toward 0 on its own row, so the drag is one row among several and never a veto. `tag_overlap` never pulls down: a match on a 1-star item still connects, at half a 5-star match's lift | Book 1 rated 1, then book 2 against a standalone by the same author with the same genres: `continuation` 0, so book 2's mean is 4.5/5.5 of the standalone's. Book 1 rated 5 gives book 2 a full-marks row instead | `tests/test_scoring_pipeline.py::TestScoringPipeline::test_a_sequel_sits_a_continuation_row_from_an_identical_standalone` |
-| | | An author rated only 1, against one never read: `creator_match` below the stranger's 0.5 | `tests/test_scorers.py::TestCreatorMatchScorer::test_a_creator_rated_only_one_star_scores_below_a_stranger` |
-| | | Romance rated 2 five times, horror 5 five times: `genre_match` at most 0.25 for romance | `tests/test_scorers.py::TestGenreMatchScorer::test_loved_average_and_disliked_genres_separate_even_under_a_shared_term` |
-| | | A `War` candidate after a 1-star item tagged only `War`: `tag_overlap` 1/6. After a 5-star one: 1/3 | `tests/test_scorers.py::TestTagOverlapScorer::test_a_one_star_match_scores_half_a_five_star_one` |
-| Does `continuation` read series ratings? | Yes: the mean of the rated entries of that series and content type, 5 stars 1.0, 3 stars 0.5, 1 star 0. Unrated entries are left out, and a series with none rated scores 0.5 | Entries 1 to 3 rated 5, 3 and unrated, scoring entry 4: 0.75 | `tests/test_scorers.py::TestContinuationScorer::test_the_rating_averages_only_the_rated_entries_of_that_series` |
-| Does variety after completion key on tags or genre clusters? | Genre clusters only. A 1-star completion claims a rung like any other | A space opera right after a cyberpunk novel, no tag shared: the full top rung, since both sit in the science fiction genre cluster | `tests/test_variety.py::TestVarietyPenaltyFor::test_a_candidate_sharing_no_tag_takes_the_rung_of_its_genre_cluster` |
-| | | A 1-star fantasy completion after a 5-star science fiction one: fantasy takes the top rung | `tests/test_variety.py::TestBuildVarietyLadder::test_a_one_star_completion_claims_its_rung_like_a_five_star_one` |
-| How big is the `+2` in `tag_overlap`? | Keep 2. A match scores the tags shared over the consumed item's tag count plus 2, so one shared tag never gives full marks and a richer match reaches higher | A 5-star item tagged only `Magic`: 1/3. One tagged `Magic, Wizards, Sorcery`, all three shared: 3/5 | `tests/test_scorers.py::TestTagOverlapScorer::test_a_one_tag_item_never_gives_full_marks_and_a_richer_one_reaches_higher` |
-| Does a concept present as a tag and through a genre cluster count twice? | Once. A shared tag counts in full, a tag reached only through a shared genre cluster at half | A 5-star item tagged `Space Warfare, Science Fiction`, a candidate tagged `Space Warfare`: 1.5/4 | `tests/test_scorers.py::TestTagOverlapScorer::test_a_term_counts_once_however_many_clusters_it_shares` |
-| Is the score plateau gone? | Yes. A candidate is scored against its best-matching consumed item, never the pooled tags of the whole library, so a larger library cannot flatten scores into one band. To check a live library, run `recommend --type tv_show`: the scores should spread out rather than share one value | A candidate sharing 1, 2 and 3 of a 4-tag item's tags: 1.5/6, 2/6 and 3/6, unchanged once 20 unrelated rated items join the library | `tests/test_scorers.py::TestTagOverlapScorer::test_a_larger_library_leaves_each_candidates_score_where_it_was` |
-| Where does an item with no metadata rank? | Wherever its score puts it, never pinned last | No genres, tags or creator: a mean of 0.39 | `tests/test_scoring_pipeline.py::TestScoringPipeline::test_an_item_with_no_metadata_scores_the_documented_bare_score` |
-
-The code gives every agreed answer above, so none needs a scoring change.
+| A 1 drags matching candidates down, as one row among several, never a veto | Book 1 rated 1: book 2's `continuation` row is 0, so it scores 4.5/5.5 of an identical standalone | Met | `test_scoring_pipeline.py::test_a_sequel_sits_a_continuation_row_from_an_identical_standalone` |
+| A creator rated only 1 drags their next work | Scores below a creator never read | Met | `test_scorers.py::test_a_creator_rated_only_one_star_scores_below_a_stranger` |
+| A creator rated 1, 1, 5, 5, 5 is middling | 0.5, between a 1-star-only and a 5-star-only creator | Met | `test_scorers.py::test_a_mixed_record_scores_between_a_hated_and_a_loved_creator` |
+| A tag rated the same way more often counts more | Rated 5 five times outscores rated 5 once | Met | `test_scorers.py::test_a_genre_rated_once_claims_less_than_one_rated_five_times` |
+| A 3 neither promotes nor demotes | In a library averaging 4 stars, a tag rated 3 every time scores below 0.5 in `genre_match`, which measures against that average | Not met | none |
+| Tag matching: a 1-star item still connects, a 5-star one lifts most | A `War` candidate after a 1-star item tagged only `War`: `tag_overlap` 1/6, half the 5-star 1/3 | Met | `test_scorers.py::test_a_one_star_match_scores_half_a_five_star_one` |
+| `continuation` reads series ratings: enjoying earlier entries boosts the next | Entries rated 5, 3 and unrated give the next entry 0.75 | Met | `test_scorers.py::test_the_rating_averages_only_the_rated_entries_of_that_series` |
+| Every completion enters the variety ladder, a 1-star one too | A 1-star fantasy completion takes the top rung | Met | `test_variety.py::test_a_one_star_completion_claims_its_rung_like_a_five_star_one` |
+| Variety keys on tags as well as genre clusters | After a cyberpunk completion, a cyberpunk candidate and a space opera one take the same full penalty: only the science fiction genre cluster counts | Not met | none |
+| Each completion pushes the ladder down a rung | Fantasy, fantasy, science fiction, horror, romance, western, newest first: western stays on the fifth rung, as a repeat spends none | Not met | none |
+| One direct tag match never dominates. No size was given for the `+2`, so it stays | 5-star item tagged only `Magic`: 1/3. Tagged `Magic, Wizards, Sorcery`, all shared: 3/5 | Met | `test_scorers.py::test_a_one_tag_item_never_gives_full_marks_and_a_richer_one_reaches_higher` |
+| A concept present as a tag and through a genre cluster counts once | 5-star item tagged `Space Warfare, Science Fiction`, candidate tagged `Space Warfare`: 1.5/4 | Met | `test_scorers.py::test_a_term_counts_once_however_many_clusters_it_shares` |
+| Should one shared tag beat three genre cluster matches? | 5-star item tagged `War, Science Fiction, Space Opera`: a `Space Warfare` candidate scores 1.5/5, a `War` one 1/5 | Not answered | none |
+| `genre_match` scores tags and genre clusters merged | After cyberpunk rated 5, a space opera candidate gets a neutral `genre_match`. Only `tag_overlap` sees the shared genre cluster | Not met | `test_scorers.py::test_a_shared_genre_cluster_without_a_shared_tag_scores_neutral` |
+| A candidate matches its best consumed item, so scores never plateau | On the live library on 2026-11-18, the top 25 TV recommendations all scored differently, 0.54 to 0.76 | Met | `test_scorers.py::test_a_larger_library_leaves_each_candidates_score_where_it_was` |
+| An item with no metadata keeps its score rather than ranking last | No genres, tags or creator: 0.39 | Met | `test_scoring_pipeline.py::test_an_item_with_no_metadata_scores_the_documented_bare_score` |
 
 ## Setting the global weights
 
