@@ -111,7 +111,7 @@ class TestScoringPipeline:
     def test_an_item_with_no_metadata_scores_the_documented_bare_score(self) -> None:
         """Catches the bare-item score drifting from the 0.39 SCORING.md states."""
         context = _build_context(
-            consumed=[make_item(rating=5, author="Ursula K. Le Guin", genres="Fantasy")]
+            consumed=[make_item(rating=5, author="Mara Quill", genres="Fantasy")]
         )
         bare = make_item(title="Bare ROM", status=ConsumptionStatus.UNREAD)
 
