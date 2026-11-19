@@ -1,6 +1,33 @@
 # CHANGELOG
 
 
+## v0.82.1 (2026-11-19)
+
+### Bug Fixes
+
+- **recommendations**: Flag profile anti-preferences by the genre_match taste sign
+  ([`9022200`](https://github.com/therealahall/recommendinator/commit/90222006c5eef6df3ba8f7f59e492da18a517fd8))
+
+- **recommendations**: Keep dismissed-only genres on the profile beside a full disliked list
+  ([`bd24b8b`](https://github.com/therealahall/recommendinator/commit/bd24b8bfd39d48510987055ef5e5976544055c86))
+
+- **recommendations**: Score a genre at the user's own mean as exactly neutral
+  ([`46d4399`](https://github.com/therealahall/recommendinator/commit/46d43998ad3732e5173a93758a45472a240f0886))
+
+### Documentation
+
+- Document TV metadata keys that affect recommendations
+  ([`aa5af8d`](https://github.com/therealahall/recommendinator/commit/aa5af8d448b0659aff64007f2180a2128c4b5cf9))
+
+### Testing
+
+- **enrichment**: Pin RAWG 404 enrichment as not found
+  ([`f2e6719`](https://github.com/therealahall/recommendinator/commit/f2e67192e17148703166ad08bb14e46f1cffe333))
+
+- **recommendations**: Pin that identically tagged items keep the higher rating's lift
+  ([`f59b3ba`](https://github.com/therealahall/recommendinator/commit/f59b3ba05ba9780b5576e052ccc3ca1674349a16))
+
+
 ## v0.82.0 (2026-11-19)
 
 ### Bug Fixes
