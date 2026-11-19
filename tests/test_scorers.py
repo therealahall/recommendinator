@@ -198,6 +198,17 @@ class TestCreatorMatchScorer:
         candidate = make_item(author="Ben Nedivi", status=ConsumptionStatus.UNREAD)
         assert CreatorMatchScorer().score(candidate, context) == 0.5
 
+    def test_a_creator_rated_only_one_star_scores_below_a_stranger(self) -> None:
+        """Catches a one-star creator reading as merely consumed: tag_overlap
+        only lifts, so creator_match is one of the two rows a 1 can drag down."""
+        context = _build_context(consumed=[make_item(author="Terry Brooks", rating=1)])
+        scorer = CreatorMatchScorer()
+        disliked, stranger = (
+            make_item(author=author, status=ConsumptionStatus.UNREAD)
+            for author in ("Terry Brooks", "Robin Hobb")
+        )
+        assert scorer.score(disliked, context) < scorer.score(stranger, context) == 0.5
+
 
 class TestTagOverlapScorer:
     def test_no_overlap(self) -> None:
