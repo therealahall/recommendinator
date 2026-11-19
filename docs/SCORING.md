@@ -120,13 +120,13 @@ average sits under the old key until enrichment runs again.
 
 Set **"Variety After Completion"** above `0.0` (web UI slider, or
 `preferences set-variety <0.0-5.0>`) to stop the recommender marching through
-the genre you just finished. `0.0` turns it off, and `5.0` zeroes a
-just-finished genre's same-type candidates outright. There is **no score floor**.
+the genre you just finished. `0.0` turns it off, and `5.0` zeroes that genre's
+same-type candidates outright. There is **no score floor**.
 
-Your five most recent completions each own a rung on a ladder that decays by
-completion date, and every genre cluster that completion reaches sits on its
-rung. A completion whose clusters are all on the ladder already spends no rung —
-an older completion takes it instead.
+Your five latest completions each own a rung on a ladder decaying by completion
+date, and every genre cluster that completion reaches sits on its rung. A
+completion whose clusters are all on the ladder already spends no rung, leaving
+it to an older one.
 
 At `5.0` the rungs are 100%, 80%, 60%, 40%, 20%, then nothing, and a lower
 setting scales the whole ladder down: `2.0` gives 40%, 32%, 24%, 16%, 8%. A
@@ -136,26 +136,19 @@ in that series takes the full rung, another litrpg most of it, an epic fantasy a
 fraction, a thriller nothing.
 
 The penalty is **per content type**: a fantasy *book* leaves fantasy *movies*
-and *games* alone. Every recommendation reports the penalty it took, in the CLI
-and in the web **Score Details** panel.
+and *games* alone. A series gets no exemption.
 
-A series gets no exemption from its genre's penalty.
-
-A **game's** clusters come from its genres and its IGDB themes, never its tags.
-Game genres name mechanics (RPG, shooter, strategy), so without themes a fantasy
-RPG and a sci-fi RPG land on the same rung; store tags are too noisy to fill the
-gap ('War' on a racing game). A game enriched before IGDB stated themes
+A **game's** clusters come from its genres and IGDB themes, never its tags, so a
+fantasy RPG and a sci-fi RPG differ. A game enriched before IGDB stated themes
 separately has none until `enrichment reset --provider igdb` re-enriches it.
-Books, movies and shows still cluster from genres and tags.
 
-A finished **TV season** counts as a completion even while the show is still in
-progress, dated by that season's watched date.
+A finished **TV season** counts as a completion on its watched date, even with
+the show unfinished.
 
-The date is the calendar day in the host's timezone, not UTC. See
-[DOCKER.md](DOCKER.md#environment-variables) for setting `TZ` on a container.
-A re-sync repairs a stored date only when the new zone is east of the old one,
-never when it is west: a sync keeps the later of two dates, and setting `TZ` on
-its own rewrites nothing. Set the zone before the import that matters.
+The date is the calendar day in the host's timezone, not UTC (see
+[DOCKER.md](DOCKER.md#environment-variables) for `TZ`). A sync keeps the later
+of two dates, so re-syncing repairs a date only after a move east. Setting `TZ`
+alone rewrites nothing, so set it before the import that matters.
 
 ## Items you are part-way through
 
