@@ -147,7 +147,7 @@ describe('RecommendationsPage', () => {
     expect((wrapper.get('#edit-status').element as HTMLSelectElement).value).toBe('completed')
   })
 
-  it('removes the card after the modal saves', async () => {
+  it('saves a historical completion date from the dialog before removing the card', async () => {
     const { wrapper, store } = await mountWithItems()
 
     mockGet.mockResolvedValue(makeFullItem())
@@ -155,9 +155,13 @@ describe('RecommendationsPage', () => {
     await flushPromises()
 
     mockPatch.mockResolvedValue({})
-    await wrapper.findComponent({ name: 'EditModal' }).vm.$emit('save', 1, { status: 'completed', rating: null, review: null })
+    await wrapper.get('#edit-date-completed').setValue('1999-06-15')
+    await wrapper.findAll('.btn-primary').find(b => b.text() === 'Save')!.trigger('click')
     await flushPromises()
 
+    expect(mockPatch).toHaveBeenCalledWith('/items/1', expect.objectContaining({
+      status: 'completed', date_completed: '1999-06-15',
+    }))
     expect(store.items.length).toBe(1)
     expect(store.items[0].db_id).toBe(2)
     expect(wrapper.findComponent({ name: 'EditModal' }).exists()).toBe(false)

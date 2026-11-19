@@ -98,10 +98,14 @@ Marks something finished, adding it to the library if it is not there yet.
 
 ```bash
 uv run python -m src.cli complete --type book --title "Project Hail Mary" --rating 5
+uv run python -m src.cli complete --type video_game --title "Final Fantasy IV" --date-completed 1999-06-15
 ```
 
-It takes no date. An item with no date is stamped today, and an existing date is
-kept, so completing something an import already dated does not re-date it.
+`--date-completed YYYY-MM-DD` records when you finished it, replacing any saved
+date even when the supplied date is earlier. Omit it to keep the saved date, or
+use today in the host's timezone for an undated item. No prompt is required.
+Malformed calendar dates and dates more than one day ahead of the host's today
+are refused without saving any part of the completion.
 
 A blank or whitespace-only `--title` is refused. `--review` replaces the stored
 review, so a blank one is refused rather than written. To erase a review, use
@@ -162,6 +166,7 @@ uv run python -m src.cli library edit --id 42 --genre Action --tag co-op --descr
 uv run python -m src.cli library edit --id 42 --clear-genres --clear-tags --description ""
 uv run python -m src.cli library edit --id 42 --release-year 1993 --creator "id Software"
 uv run python -m src.cli library edit --id 42 --title "The Hobbit"
+uv run python -m src.cli library edit --id 42 --date-completed 1999-06-15
 ```
 
 **Only the flags you pass are written.** Passing one replaces the stored value.
@@ -202,6 +207,15 @@ are refused on it: rate its seasons instead. A sync never overwrites that
 rating. A show with no season rated keeps a rating of its own.
 
 `--creator` corrects the field a title match is vetoed on, so a row with a wrong creator takes the next source stating the true one instead of growing the library another row. `--release-year` corrects the year shown. A year runs 1800-2200 and a creator 500 characters; a book takes no `--release-year`, because `year_published` dates the edition rather than the work.
+
+`--date-completed YYYY-MM-DD` corrects the saved completion date without requiring
+a status change, under the same date rules as `complete`. Unrelated edits keep
+the date. Marking an undated item completed (or did not finish) without this
+option uses local today; a saved date is preserved.
+
+The web's **Mark complete** and library editor offer the same optional completion
+date. Both `POST /api/complete` and `PATCH /api/items/<id>` accept it as
+`date_completed`; omitting it or passing null retains the default behavior.
 
 `--title` renames the item, up to 500 characters and never blank. The source
 that named the old title still syncs onto the same row rather than adding a

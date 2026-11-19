@@ -49,6 +49,59 @@ describe('EditModal', () => {
     vi.useFakeTimers()
   })
 
+  it('shows the saved completion date and sends an earlier correction without changing status', async () => {
+    const wrapper = mount(EditModal, {
+      props: { item: { ...defaultItem, status: 'completed', date_completed: '2024-01-01' }, saving: false, saveError: '' },
+      attachTo: document.body,
+    })
+    expect((wrapper.get('#edit-date-completed').element as HTMLInputElement).value).toBe('2024-01-01')
+    expect(wrapper.get('label[for="edit-date-completed"]').text()).toContain('Completion date')
+
+    await wrapper.get('#edit-date-completed').setValue('1999-06-15')
+    await wrapper.findAll('.btn-primary').find(b => b.text().includes('Save'))!.trigger('click')
+
+    expect(wrapper.emitted('save')![0][1]).toEqual({ date_completed: '1999-06-15' })
+    wrapper.unmount()
+  })
+
+  it.each([null, '2024-01-01'])('an untouched date %s is omitted from unrelated edits', async (dateCompleted) => {
+    const wrapper = mount(EditModal, {
+      props: { item: { ...defaultItem, date_completed: dateCompleted }, saving: false, saveError: '' },
+      attachTo: document.body,
+    })
+    await wrapper.get('#edit-review').setValue('A review')
+    await wrapper.findAll('.btn-primary').find(b => b.text().includes('Save'))!.trigger('click')
+
+    expect(wrapper.emitted('save')![0][1]).toEqual({ review: 'A review' })
+    wrapper.unmount()
+  })
+
+  it('a refreshed item updates the displayed date while keeping a date correction in progress', async () => {
+    const wrapper = mount(EditModal, {
+      props: { item: defaultItem, saving: false, saveError: '' },
+      attachTo: document.body,
+    })
+    await wrapper.setProps({ item: { ...defaultItem, date_completed: '2024-01-01' } })
+    expect((wrapper.get('#edit-date-completed').element as HTMLInputElement).value).toBe('2024-01-01')
+    await wrapper.get('#edit-date-completed').setValue('1999-06-15')
+    await wrapper.setProps({ item: { ...defaultItem, date_completed: '2025-01-01' } })
+    expect((wrapper.get('#edit-date-completed').element as HTMLInputElement).value).toBe('1999-06-15')
+    wrapper.unmount()
+  })
+
+  it('canceling and discarding a completion date sends no save', async () => {
+    const wrapper = mount(EditModal, {
+      props: { item: defaultItem, saving: false, saveError: '', initialStatus: 'completed' },
+      attachTo: document.body,
+    })
+    await wrapper.get('#edit-date-completed').setValue('1999-06-15')
+    await wrapper.findAll('button').find(b => b.text() === 'Cancel')!.trigger('click')
+    await wrapper.get('.confirm-panel').findAll('button').find(b => b.text() === 'Discard')!.trigger('click')
+    expect(wrapper.emitted('close')).toBeTruthy()
+    expect(wrapper.emitted('save')).toBeFalsy()
+    wrapper.unmount()
+  })
+
   it('Escape closes a dialog nobody has edited', async () => {
     const wrapper = mount(EditModal, {
       props: { item: defaultItem, saving: false, saveError: '' },
@@ -765,6 +818,8 @@ describe('EditModal', () => {
     ['Review must be at most 10000 characters.', '#edit-review'],
     ['Creator cannot be empty.', '#edit-creator'],
     ['Release year must be a number between 1800 and 2100.', '#edit-release-year'],
+    ['Completion date must be a calendar date in YYYY-MM-DD format.', '#edit-date-completed'],
+    ['A completion date cannot be in the future.', '#edit-date-completed'],
   ])('the refusal "%s" is attached to the box it is about', async (saveError, selector) => {
     const wrapper = mount(EditModal, {
       props: {

@@ -16,7 +16,8 @@ from src.models.content import (
     ContentItem,
     ContentType,
 )
-from src.storage.manager import UncorrectableFieldError
+from src.storage.manager import FutureCompletionDateError, UncorrectableFieldError
+from src.utils.dates import parse_completion_date_input
 from src.utils.item_serialization import completion_to_dict
 from src.utils.text import is_blank
 
@@ -42,6 +43,11 @@ COMPLETE_FAILED = "Failed to mark content as completed"
 )
 @click.option("--review", help="Review text")
 @click.option(
+    "--date-completed",
+    metavar="YYYY-MM-DD",
+    help="Completion date; omitted keeps the saved date or uses local today",
+)
+@click.option(
     "--format",
     "output_format",
     type=click.Choice(["table", "json"], case_sensitive=False),
@@ -56,6 +62,7 @@ def complete(
     author: str | None,
     rating: int | None,
     review: str | None,
+    date_completed: str | None,
     output_format: str,
 ) -> None:
     """Mark content as completed.
@@ -101,6 +108,11 @@ def complete(
         )
         raise click.Abort()
 
+    try:
+        completed_on = parse_completion_date_input(date_completed)
+    except ValueError as error:
+        abort_with(str(error))
+
     item = ContentItem(
         id=None,
         title=title,
@@ -109,11 +121,12 @@ def complete(
         status=ConsumptionStatus.COMPLETED,
         rating=rating,
         review=review,
+        date_completed=completed_on,
     )
 
     try:
         db_id = storage.complete_content_item(item)
-    except UncorrectableFieldError as error:
+    except (UncorrectableFieldError, FutureCompletionDateError) as error:
         abort_with(str(error))
     except Exception as error:
         abort_after_failure(ctx, COMPLETE_FAILED, error)

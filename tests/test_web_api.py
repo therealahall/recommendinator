@@ -415,6 +415,98 @@ def _client_on(app, storage: StorageManager) -> TestClient:
     return authenticated_client(app)
 
 
+@pytest.mark.parametrize("operation", ["complete", "edit"])
+def test_completion_date_can_be_corrected_earlier_and_round_trips_without_status_edit(
+    mock_components, tmp_path, operation
+):
+    storage = StorageManager(sqlite_path=tmp_path / "dated.db")
+    db_id = storage.save_content_item(
+        ContentItem(
+            title="Dune",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            date_completed=date(2024, 1, 1),
+        )
+    )
+    client = _client_on(mock_components["app"], storage)
+    method = "POST" if operation == "complete" else "PATCH"
+    url = "/api/complete" if operation == "complete" else f"/api/items/{db_id}"
+    fields = (
+        {"title": "Dune", "content_type": "book"} if operation == "complete" else {}
+    )
+
+    response = client.request(
+        method, url, json={**fields, "date_completed": "1999-06-15"}
+    )
+
+    assert response.status_code == 200, response.text
+    assert client.get(f"/api/items/{db_id}").json()["date_completed"] == "1999-06-15"
+    if operation == "edit":
+        assert response.json()["date_completed"] == "1999-06-15"
+        assert response.json()["status"] == "completed"
+    for omitted in ({}, {"date_completed": None}):
+        response = client.request(method, url, json={**fields, **omitted, "rating": 4})
+        assert response.status_code == 200, response.text
+        assert (
+            client.get(f"/api/items/{db_id}").json()["date_completed"] == "1999-06-15"
+        )
+
+
+@pytest.mark.parametrize("operation", ["complete", "edit"])
+@pytest.mark.parametrize(
+    "supplied",
+    [
+        "not-a-date",
+        "2024-02-30",
+        "20240101",
+        "2024-W01-1",
+        "2024-01-01T12:00:00Z",
+        "",
+        "9999-12-31",
+    ],
+)
+def test_invalid_completion_dates_return_readable_errors_without_partial_writes(
+    mock_components, tmp_path, operation, supplied
+):
+    storage = StorageManager(sqlite_path=tmp_path / "dated.db")
+    db_id = storage.save_content_item(
+        ContentItem(
+            title="Dune",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            rating=2,
+        )
+    )
+    client = _client_on(mock_components["app"], storage)
+    method = "POST" if operation == "complete" else "PATCH"
+    url = "/api/complete" if operation == "complete" else f"/api/items/{db_id}"
+    fields = (
+        {"title": "Dune", "content_type": "book"}
+        if operation == "complete"
+        else {"status": "completed"}
+    )
+
+    response = client.request(
+        method,
+        url,
+        json={**fields, "date_completed": supplied, "rating": 5, "review": "Changed"},
+    )
+
+    assert response.status_code == 400, response.text
+    assert "completion date" in response.json()["detail"].lower()
+    assert ("future" if supplied == "9999-12-31" else "YYYY-MM-DD") in response.json()[
+        "detail"
+    ]
+    stored = storage.get_content_item(db_id)
+    assert stored is not None
+    assert (stored.status, stored.rating, stored.review, stored.date_completed) == (
+        ConsumptionStatus.UNREAD,
+        2,
+        None,
+        None,
+    )
+
+
 def test_complete_endpoint_dates_by_the_host_calendar_day_regression(
     mock_components, tmp_path, host_timezone
 ):
@@ -1617,6 +1709,7 @@ def test_edit_item_status(client, mock_components):
         release_year=None,
         creator=None,
         user_id=1,
+        date_completed=UNSET,
     )
 
 
@@ -1664,6 +1757,7 @@ def test_edit_tv_show_seasons(client, mock_components):
         release_year=None,
         creator=None,
         user_id=1,
+        date_completed=UNSET,
     )
 
 
@@ -1927,6 +2021,7 @@ def test_edit_item_manual_metadata(client, mock_components):
         release_year=None,
         creator=None,
         user_id=1,
+        date_completed=UNSET,
     )
 
 

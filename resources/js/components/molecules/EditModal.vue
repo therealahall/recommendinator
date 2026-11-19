@@ -77,6 +77,7 @@ const seasonRatings = ref<Record<number, number | null>>({ ...props.item.season_
 const genres = ref<string[]>([...(props.item.genres ?? [])])
 const tags = ref<string[]>([...(props.item.tags ?? [])])
 const description = ref(props.item.description ?? '')
+const dateCompleted = ref(props.item.date_completed ?? '')
 
 function baseline(item: ContentItemResponse) {
   return {
@@ -91,6 +92,7 @@ function baseline(item: ContentItemResponse) {
     genres: [...(item.genres ?? [])],
     tags: [...(item.tags ?? [])],
     description: (item.description ?? '').trim(),
+    dateCompleted: item.date_completed ?? '',
   }
 }
 
@@ -141,6 +143,8 @@ const REFUSED_FIELDS: [string, string][] = [
   ['Review', 'edit-review'],
   ['Creator', 'edit-creator'],
   ['Release year', 'edit-release-year'],
+  ['Completion date', 'edit-date-completed'],
+  ['A completion date', 'edit-date-completed'],
 ]
 
 // The server words each refusal with the field's own label first, so the
@@ -236,6 +240,9 @@ const edits = computed<ItemEditRequest>(() => {
   const was = loaded.value
   if (title.value.trim() !== was.title) data.title = title.value.trim()
   if (status.value !== was.status) data.status = status.value
+  if (dateCompleted.value && dateCompleted.value !== was.dateCompleted) {
+    data.date_completed = dateCompleted.value
+  }
   // A show with rated seasons takes its rating from them, so it sends none.
   if (derivedRating.value === null && rating.value !== was.rating) data.rating = rating.value
   if (review.value.trim() !== was.review) data.review = review.value.trim() || null
@@ -272,6 +279,7 @@ watch(
     const now = baseline(item)
     if (!('title' in edited)) title.value = item.title
     if (!('status' in edited)) status.value = now.status
+    if (!('date_completed' in edited)) dateCompleted.value = now.dateCompleted
     if (!('rating' in edited)) rating.value = now.rating
     if (!('review' in edited)) review.value = item.review || ''
     if (!('creator' in edited)) creator.value = item.author ?? ''
@@ -419,6 +427,21 @@ function searchRecords() {
         <option value="completed">Completed</option>
         <option value="dnf">Did not finish</option>
       </select>
+    </div>
+
+    <div class="edit-field">
+      <label for="edit-date-completed">Completion date (optional)</label>
+      <input
+        id="edit-date-completed"
+        v-model="dateCompleted"
+        type="date"
+        class="field"
+        aria-describedby="edit-date-completed-note"
+        v-bind="refusalFor('edit-date-completed')"
+      >
+      <p id="edit-date-completed-note" class="edit-modal-note">
+        Leave blank to keep the saved date, or use today when first marked completed.
+      </p>
     </div>
 
     <div class="edit-field">
