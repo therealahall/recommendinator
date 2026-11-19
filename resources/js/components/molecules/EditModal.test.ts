@@ -596,6 +596,43 @@ describe('EditModal', () => {
     wrapper.unmount()
   })
 
+  // Regression: the checklist hid for a show with no count and nothing watched,
+  // so the web had no way to mark or rate its first season.
+  it('a show with no season count and none watched adds, ticks and rates a season', async () => {
+    const wrapper = mount(EditModal, {
+      props: {
+        item: { ...tvItem, total_seasons: null, seasons_watched: [], status: 'unread' },
+        saving: false,
+        saveError: '',
+      },
+      attachTo: document.body,
+    })
+
+    expect(wrapper.get('.season-counter').text()).toBe('No seasons watched')
+    await wrapper.findAll('button').find((b) => b.text() === 'Add season 1')!.trigger('click')
+    await wrapper.findAll('.season-checkbox')[0].trigger('click')
+    await wrapper.findAll('.season-rating-row')[0].get('[aria-label="4 stars"]').trigger('click')
+    await wrapper.findAll('.btn-primary').find(b => b.text().includes('Save'))!.trigger('click')
+
+    expect(wrapper.emitted('save')![0][1]).toEqual({
+      seasons_watched: [1],
+      season_ratings: { 1: 4 },
+    })
+    wrapper.unmount()
+  })
+
+  // Regression: making isTvShow ignore the count must not leak the checklist
+  // onto books, films or games.
+  it('an item that is not a show offers no season checklist', () => {
+    const wrapper = mount(EditModal, {
+      props: { item: defaultItem, saving: false, saveError: '' },
+      attachTo: document.body,
+    })
+
+    expect(wrapper.find('.season-grid').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('opened from the library it keeps the item\'s own status', async () => {
     const wrapper = mount(EditModal, {
       props: { item: tvItem, saving: false, saveError: '' },

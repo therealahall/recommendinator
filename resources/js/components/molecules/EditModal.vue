@@ -58,10 +58,13 @@ const dialog = ref<InstanceType<typeof ModalDialog> | null>(null)
 const modalContent = computed(() => dialog.value?.surface ?? null)
 
 // Up to the highest watched season too: a show whose source states no count,
-// or too few, still lists every season it can be rated on.
-const seasonCount = Math.max(props.item.total_seasons ?? 0, ...(props.item.seasons_watched ?? []))
+// or too few, still lists every season it can be rated on. A ref, so a show
+// with no stated count can grow the checklist a season at a time.
+const seasonCount = ref(
+  Math.max(props.item.total_seasons ?? 0, ...(props.item.seasons_watched ?? [])),
+)
 
-const isTvShow = computed(() => props.item.content_type === 'tv_show' && seasonCount > 0)
+const isTvShow = computed(() => props.item.content_type === 'tv_show')
 
 const title = ref(props.item.title)
 const status = ref(props.initialStatus || props.item.status)
@@ -278,6 +281,8 @@ watch(
     if (!('genres' in edited)) genres.value = [...now.genres]
     if (!('tags' in edited)) tags.value = [...now.tags]
     if (!('description' in edited)) description.value = item.description ?? ''
+    // Never shrinks: a season added here and not yet ticked stays on the grid.
+    seasonCount.value = Math.max(seasonCount.value, item.total_seasons ?? 0, ...seasonsWatched.value)
     loaded.value = now
   },
 )
@@ -439,7 +444,9 @@ function searchRecords() {
         :model-value="seasonsWatched"
         :total-seasons="seasonCount"
         :ratings="seasonRatings"
+        :extendable="!item.total_seasons"
         @update:model-value="onSeasonsChange"
+        @add-season="seasonCount++"
         @rate="onSeasonRate"
       />
     </div>
