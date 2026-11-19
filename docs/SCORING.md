@@ -138,9 +138,13 @@ fraction, a thriller nothing.
 The penalty is **per content type**: a fantasy *book* leaves fantasy *movies*
 and *games* alone. A series gets no exemption.
 
+### How games cluster
+
 A **game's** clusters come from its genres and IGDB themes, never its tags, so a
 fantasy RPG and a sci-fi RPG differ. A game enriched before IGDB stated themes
 separately has none until `enrichment reset --provider igdb` re-enriches it.
+
+### TV seasons and completion dates
 
 A finished **TV season** counts as a completion on its watched date, even with
 the show unfinished.
