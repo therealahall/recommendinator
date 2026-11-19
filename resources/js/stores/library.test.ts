@@ -532,6 +532,71 @@ describe('useLibraryStore', () => {
     expect(store.editError).toBe('')
   })
 
+  it('a reset landing after the dialog moved to another item leaves that item in the dialog', async () => {
+    const bookA = { db_id: 7, title: 'Book A', content_type: 'book', status: 'unread', genres: ['Wrong'] }
+    const bookB = { db_id: 8, title: 'Book B', content_type: 'book', status: 'unread', genres: [] }
+    const writersB = [{ field: 'genres', chosen: null, note: '', writers: [] }]
+    mockGet.mockResolvedValueOnce([bookA, bookB])
+    const store = useLibraryStore()
+    await store.resetAndLoad()
+    mockGet.mockResolvedValueOnce(bookA).mockResolvedValueOnce({ item_id: 7, fields: [] })
+    await store.openEdit(7)
+
+    let answer!: (value: unknown) => void
+    mockPost.mockReturnValueOnce(new Promise((resolve) => { answer = resolve }))
+    const resetting = store.resetItemEnrichment(7, false)
+    store.closeEdit()
+    mockGet.mockResolvedValueOnce(bookB).mockResolvedValueOnce({ item_id: 8, fields: writersB })
+    await store.openEdit(8)
+
+    mockGet.mockResolvedValueOnce({ ...bookA, genres: [] })
+    answer({ message: 'Reset 1 item(s) for re-enrichment.', count: 1, run: 'started' })
+    await resetting
+
+    expect(store.editingItem!.db_id).toBe(8)
+    expect(store.fieldWriters).toEqual(writersB)
+    expect(store.pinMessage).toBe('')
+    expect(store.items.find((one) => one.db_id === 7)!.genres).toEqual([])
+  })
+
+  it('a reset landing after the dialog closed does not open it again', async () => {
+    const store = useLibraryStore()
+    mockGet
+      .mockResolvedValueOnce({ db_id: 7, title: 'Book', content_type: 'book', status: 'unread' })
+      .mockResolvedValueOnce({ item_id: 7, fields: [] })
+    await store.openEdit(7)
+
+    let refuse!: (reason: Error) => void
+    mockPost.mockReturnValueOnce(new Promise((_, reject) => { refuse = reject }))
+    const resetting = store.resetItemEnrichment(7, true)
+    store.closeEdit()
+    refuse(new Error('Item not found'))
+    await resetting
+
+    expect(store.editingItem).toBeNull()
+    expect(store.editError).toBe('')
+  })
+
+  it('a reset landing after the dialog closed refreshes the row but leaves the dialog shut', async () => {
+    const store = useLibraryStore()
+    mockGet
+      .mockResolvedValueOnce({ db_id: 7, title: 'Book', content_type: 'book', status: 'unread' })
+      .mockResolvedValueOnce({ item_id: 7, fields: [] })
+    await store.openEdit(7)
+
+    let answer!: (value: unknown) => void
+    mockPost.mockReturnValueOnce(new Promise((resolve) => { answer = resolve }))
+    const resetting = store.resetItemEnrichment(7, false)
+    store.closeEdit()
+    mockGet.mockResolvedValueOnce({ db_id: 7, title: 'Book', content_type: 'book', status: 'unread' })
+    answer({ message: 'Reset 1 item(s) for re-enrichment.', count: 1, run: 'started' })
+    await resetting
+
+    expect(store.editingItem).toBeNull()
+    expect(store.pinMessage).toBe('')
+    expect(mockGet.mock.lastCall![0]).toBe('/items/7')
+  })
+
   it('resetItemEnrichment says a refused reset in the dialog, not as a stale note', async () => {
     const store = useLibraryStore()
     mockPost.mockResolvedValueOnce(QUEUED)

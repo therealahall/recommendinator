@@ -224,25 +224,35 @@ export const useLibraryStore = defineStore('library', () => {
     if (index >= 0) items.value[index] = { ...items.value[index], ...fields }
   }
 
-  async function readEditing(dbId: number) {
+  // Bumped on every open and close. A read that lands after the operator closed
+  // the dialog or moved to another item must not put its item back in the
+  // dialog, or the open dialog's save would target the wrong item.
+  let editSession = 0
+
+  async function readEditing(dbId: number, session: number) {
     const item = await api.get<ContentItemResponse>(`/items/${dbId}`, {
       user_id: useAppStore().currentUserId,
     })
+    syncRow(dbId, item)
+    if (session !== editSession) return
     editingItem.value = item
     pinned.value = item.pinned ?? {}
-    syncRow(dbId, item)
-    await loadFieldWriters(dbId)
+    await loadFieldWriters(dbId, session)
   }
 
   async function openEdit(dbId: number) {
+    const session = ++editSession
     try {
-      await readEditing(dbId)
+      await readEditing(dbId, session)
     } catch (err) {
-      error.value = err instanceof Error ? err.message : 'Failed to load item'
+      if (session === editSession) {
+        error.value = err instanceof Error ? err.message : 'Failed to load item'
+      }
     }
   }
 
   function closeEdit() {
+    editSession += 1
     editingItem.value = null
     editSaving.value = false
     editError.value = ''
@@ -252,13 +262,15 @@ export const useLibraryStore = defineStore('library', () => {
     fieldWriters.value = []
   }
 
-  async function loadFieldWriters(dbId: number) {
+  async function loadFieldWriters(dbId: number, session = editSession) {
     try {
       const found = await api.get<ItemFieldWritersResponse>(`/items/${dbId}/field-writers`, {
         user_id: useAppStore().currentUserId,
       })
+      if (session !== editSession) return
       fieldWriters.value = found.fields
     } catch (err) {
+      if (session !== editSession) return
       editError.value = err instanceof Error ? err.message : 'Failed to read the writers'
       fieldWriters.value = []
     }
@@ -334,7 +346,9 @@ export const useLibraryStore = defineStore('library', () => {
   // The destructive door retry deliberately is not: the providers' values go
   // and the item is rebuilt, as the CLI's `enrichment reset --id` does. Re-read
   // after, or a save from the open dialog writes the deleted values back as holds.
+  // Once the dialog has closed or moved on, only the library row is refreshed.
   async function resetItemEnrichment(dbId: number, hard: boolean) {
+    const session = editSession
     editError.value = ''
     pinMessage.value = ''
     try {
@@ -343,10 +357,12 @@ export const useLibraryStore = defineStore('library', () => {
         hard,
         user_id: useAppStore().currentUserId,
       })
-      pinMessage.value = result.message
-      await readEditing(dbId)
+      if (session === editSession) pinMessage.value = result.message
+      await readEditing(dbId, session)
     } catch (err) {
-      editError.value = err instanceof Error ? err.message : 'Failed to reset enrichment'
+      if (session === editSession) {
+        editError.value = err instanceof Error ? err.message : 'Failed to reset enrichment'
+      }
     }
   }
 
