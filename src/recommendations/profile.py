@@ -7,7 +7,12 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypedDict
 
 from src.models.content import ContentItem, ContentType
-from src.recommendations.preferences import creator_names, ratings_by_genre
+from src.recommendations.preferences import (
+    GenreTaste,
+    creator_names,
+    genre_tastes,
+    ratings_by_genre,
+)
 from src.recommendations.scorers import extract_genres
 from src.storage.schema import PreferenceProfileRow, get_default_user_id
 
@@ -158,10 +163,6 @@ _THEME_KEYWORD_PATTERN = re.compile(
 #: about it.
 MIN_ITEMS = 2
 
-#: The floor for liking something: the operator reads 3 as "liked it but do not
-#: love it", so only 1 and 2 are complaints.
-LIKED_RATING = 3
-
 #: How many items one profile reads, per set.
 SAMPLE_LIMIT = 1000
 
@@ -190,27 +191,21 @@ def _mean_ratings(ratings: dict[str, list[int]]) -> dict[str, float]:
 
 
 def _disliked_genres(
-    genre_ratings: dict[str, list[int]], genre_affinities: dict[str, float]
+    tastes: dict[str, GenreTaste], genre_affinities: dict[str, float]
 ) -> list[str]:
-    """The genres most of whose items fell short of the liked floor, best mean
-    first. A tie is liked: an even split is not a complaint."""
-    disliked: list[str] = []
-    for genre in genre_affinities:
-        ratings = genre_ratings[genre]
-        likes = sum(1 for rating in ratings if rating >= LIKED_RATING)
-        if likes * 2 < len(ratings):
-            disliked.append(genre)
-    return disliked
+    """The genres genre_match scores below neutral, best mean first."""
+    return [genre for genre in genre_affinities if tastes[genre].score < 0]
 
 
 def _anti_preferences(
     disliked_genres: list[str],
     genre_ratings: dict[str, list[int]],
+    tastes: dict[str, GenreTaste],
     ignored_items: list[ContentItem],
 ) -> list[str]:
-    """The disliked bucket worst mean first, then genres dismissed unrated. One
-    rating at the liked floor keeps a genre out; the liked bucket cannot say
-    that, holding only genres past ``MIN_ITEMS``.
+    """The disliked bucket worst mean first, then genres dismissed unrated. A
+    rated taste at or above neutral keeps a genre out; the disliked bucket
+    cannot say that, holding only genres past ``MIN_ITEMS``.
     """
     ignored_counts = Counter(
         genre for item in ignored_items for genre in extract_genres(item)
@@ -223,7 +218,7 @@ def _anti_preferences(
         if genre not in disliked_genres
         and count >= MIN_ITEMS
         and count > len(genre_ratings.get(genre, ()))
-        and not any(rating >= LIKED_RATING for rating in genre_ratings.get(genre, ()))
+        and not (genre in tastes and tastes[genre].score >= 0)
     ]
 
     return list(reversed(disliked_genres)) + mostly_ignored
@@ -252,7 +247,11 @@ class ProfileGenerator:
 
         genre_ratings = ratings_by_genre(rated_items)
         genre_affinities = _mean_ratings(genre_ratings)
-        disliked_genres = _disliked_genres(genre_ratings, genre_affinities)
+        tastes = genre_tastes(
+            genre_ratings,
+            [item.rating for item in rated_items if item.rating is not None],
+        )
+        disliked_genres = _disliked_genres(tastes, genre_affinities)
 
         return PreferenceProfile(
             user_id=user_id,
@@ -262,6 +261,7 @@ class ProfileGenerator:
             anti_preferences=_anti_preferences(
                 disliked_genres,
                 genre_ratings,
+                tastes,
                 ignored_items,
             ),
             cross_media_patterns=self._identify_cross_media_patterns(rated_items),

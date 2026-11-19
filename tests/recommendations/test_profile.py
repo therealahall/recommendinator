@@ -8,6 +8,7 @@ import pytest
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.recommendations.content_length import LengthPreference
+from src.recommendations.preferences import PreferenceAnalyzer
 from src.recommendations.profile import (
     AFFINITY_LIMIT,
     PreferenceProfile,
@@ -283,32 +284,65 @@ class TestThemePreferences:
 
 
 class TestAntiPreferences:
-    def test_a_genre_rated_below_the_operators_own_average_is_not_an_anti_preference(
+    def test_a_harsh_raters_above_average_genre_is_not_an_anti_preference(
         self, profile_generator: ProfileGenerator, storage_manager: StorageManager
     ) -> None:
-        """The panel heads this list "Not your style", and a below-average bar
-        puts half of any high-rating library under it."""
-        _save_rated(storage_manager, "fantasy", [5, 5, 5, 5])
-        _save_rated(storage_manager, "horror", [3, 3])
+        """An absolute floor of 3 listed this romance under "Not your style"
+        while genre_match scored romance above neutral."""
+        _save_rated(storage_manager, "horror", [2, 2, 2, 2, 2, 2, 3, 3])
+        _save_rated(storage_manager, "romance", [4, 4, 2, 2, 2])
 
         profile = profile_generator.generate_profile(user_id=1)
 
-        assert profile.anti_preferences == []
+        assert profile.genre_affinities["romance"] == 2.8
+        assert "romance" not in profile.anti_preferences
 
-    def test_a_genre_most_of_whose_ratings_reach_the_liked_floor_is_not_anti(
+    def test_a_generous_raters_below_average_genre_is_an_anti_preference(
         self, profile_generator: ProfileGenerator, storage_manager: StorageManager
     ) -> None:
-        _save_rated(storage_manager, "mystery", [3, 3, 3, 2])
-        _save_rated(storage_manager, "horror", [2, 2, 1, 4])
+        """A 3 cleared the absolute floor, so this genre stayed off the list
+        while genre_match scored it well below neutral."""
+        _save_rated(storage_manager, "fantasy", [5] * 6)
+        _save_rated(storage_manager, "horror", [3, 3])
 
         profile = profile_generator.generate_profile(user_id=1)
 
         assert profile.anti_preferences == ["horror"]
 
-    def test_an_even_split_is_not_an_anti_preference(
+    def test_anti_preferences_agree_with_the_genre_match_sign(
         self, profile_generator: ProfileGenerator, storage_manager: StorageManager
     ) -> None:
-        _save_rated(storage_manager, "western", [4, 4, 1, 1])
+        """The profile once ran its own genre model, and the two disagreed on
+        which genres the operator dislikes."""
+        _save_rated(storage_manager, "fantasy", [5, 4, 4, 3])
+        _save_rated(storage_manager, "horror", [1, 2, 3])
+        _save_rated(storage_manager, "mystery", [3, 3, 4, 2])
+        _save_rated(storage_manager, "western", [4, 2])
+        _save_rated(storage_manager, "romance", [3, 3, 3])
+
+        profile = profile_generator.generate_profile(user_id=1)
+        preferences = PreferenceAnalyzer().analyze(
+            storage_manager.get_signal_items(user_id=1)
+        )
+
+        assert set(profile.genre_affinities) == {
+            "fantasy",
+            "horror",
+            "mystery",
+            "western",
+            "romance",
+        }
+        for genre in profile.genre_affinities:
+            assert (genre in profile.anti_preferences) == (
+                preferences.get_genre_score(genre) < 0
+            ), genre
+
+    def test_a_genre_at_the_operators_own_mean_is_not_an_anti_preference(
+        self, profile_generator: ProfileGenerator, storage_manager: StorageManager
+    ) -> None:
+        """Most of these ratings miss the old floor of 3, which flagged a genre
+        rated exactly at the operator's own mean."""
+        _save_rated(storage_manager, "western", [5, 1, 1])
 
         profile = profile_generator.generate_profile(user_id=1)
 
@@ -317,6 +351,7 @@ class TestAntiPreferences:
     def test_anti_preferences_run_worst_mean_first(
         self, profile_generator: ProfileGenerator, storage_manager: StorageManager
     ) -> None:
+        _save_rated(storage_manager, "fantasy", [5, 5, 5, 5])
         _save_rated(storage_manager, "horror", [1, 1, 2])
         _save_rated(storage_manager, "western", [1, 2, 2, 4])
         _save_rated(storage_manager, "romance", [2, 2, 4])
@@ -661,10 +696,25 @@ class TestProfileIgnoredSignalRegression:
 
         assert profile.anti_preferences == []
 
-    def test_a_genre_rated_at_the_liked_floor_and_dismissed_twice_is_not_anti(
-        self, profile_generator: ProfileGenerator, storage_manager: StorageManager
+    @pytest.mark.parametrize(
+        ("library", "romance", "anti"),
+        [
+            # A 3 cleared the old absolute floor and kept romance off the list.
+            ([5, 5, 5], 3, True),
+            # A 2 missed the old floor and listed a genre rated above the mean.
+            ([1, 1, 1], 2, False),
+        ],
+    )
+    def test_a_genre_rated_once_and_dismissed_twice_follows_the_operators_mean(
+        self,
+        profile_generator: ProfileGenerator,
+        storage_manager: StorageManager,
+        library: list[int],
+        romance: int,
+        anti: bool,
     ) -> None:
-        _save_rated(storage_manager, "romance", [3])
+        _save_rated(storage_manager, "fantasy", library)
+        _save_rated(storage_manager, "romance", [romance])
         for index in range(2):
             db_id = storage_manager.save_content_item(
                 ContentItem(
@@ -680,7 +730,7 @@ class TestProfileIgnoredSignalRegression:
 
         profile = profile_generator.generate_profile(user_id=1)
 
-        assert profile.anti_preferences == []
+        assert ("romance" in profile.anti_preferences) is anti
 
     def test_the_dismissal_sample_is_the_latest_not_an_alphabetical_prefix(
         self,
@@ -718,6 +768,7 @@ class TestProfileIgnoredSignalRegression:
     def test_a_disliked_genre_the_operator_also_ignores_is_listed_once(
         self, profile_generator: ProfileGenerator, storage_manager: StorageManager
     ) -> None:
+        _save_rated(storage_manager, "fantasy", [5, 5])
         _save_rated(storage_manager, "horror", [1, 2])
         for index in range(3):
             db_id = storage_manager.save_content_item(
