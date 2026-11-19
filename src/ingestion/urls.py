@@ -127,14 +127,19 @@ def request_within_origin(
     """
     current = url
     for _ in range(MAX_SAME_ORIGIN_REDIRECTS):
-        # A monotonic reading, since the hop cap alone leaves a caller holding
-        # five times REQUEST_TIMEOUT.
-        if deadline is not None and time.monotonic() > deadline:
-            raise RedirectRefused(
-                f"{service} was still redirecting {_loggable(url)} when the "
-                "request ran out of time."
-            )
-        response = send(current, timeout=REQUEST_TIMEOUT, allow_redirects=False, **sent)
+        timeout: float = REQUEST_TIMEOUT
+        if deadline is not None:
+            # The hop cap alone leaves a caller holding five times
+            # REQUEST_TIMEOUT, and a hop sent with the full timeout at 29s
+            # holds it to nearly twice the deadline.
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RedirectRefused(
+                    f"{service} was still redirecting {_loggable(url)} when the "
+                    "request ran out of time."
+                )
+            timeout = min(timeout, remaining)
+        response = send(current, timeout=timeout, allow_redirects=False, **sent)
         if response.status_code not in REDIRECT_STATUSES:
             return response
         location = response.headers.get("Location")
