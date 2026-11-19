@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed, nextTick } from 'vue'
+import { ref, computed } from 'vue'
 import { useApi } from '@/composables/useApi'
 import { useAppStore } from '@/stores/app'
 import { DEFAULT_SORT, MAX_SEARCH_LENGTH, MERGE_CANDIDATE_LIMIT } from '@/constants/library'
@@ -82,6 +82,12 @@ export const useLibraryStore = defineStore('library', () => {
   const announcement = ref('')
 
   const totalLoaded = computed(() => items.value.length)
+
+  // Loaded, not a library total: pages arrive 50 at a time and the rest is unknown here.
+  const loadedCount = computed(() => {
+    const counted = items.value.length === 1 ? '1 item' : `${items.value.length} items`
+    return hasMore.value ? `${counted} loaded` : `All ${counted} loaded`
+  })
 
   function resetAndLoad() {
     offset.value = 0
@@ -492,10 +498,8 @@ export const useLibraryStore = defineStore('library', () => {
         // The next page counts from the server's list, which this row has left.
         offset.value -= 1
       }
-      // The same title deleted twice leaves the string unchanged, which no live region re-reads.
-      announcement.value = ''
-      await nextTick()
-      announcement.value = `Deleted “${gone.title}”.`
+      // The count drops on every delete, so a same-title repeat is still a change the live region reads.
+      announcement.value = `Deleted “${gone.title}”. ${loadedCount.value}.`
     } catch (err) {
       error.value = err instanceof Error ? err.message : 'Failed to delete'
     } finally {
@@ -552,6 +556,7 @@ export const useLibraryStore = defineStore('library', () => {
     deletion,
     announcement,
     totalLoaded,
+    loadedCount,
     resetAndLoad,
     load,
     loadMore,
