@@ -1,6 +1,30 @@
 # CHANGELOG
 
 
+## v0.82.4 (2026-11-19)
+
+### Bug Fixes
+
+- **cli**: Require --id for library delete
+  ([`3bcc9a2`](https://github.com/therealahall/recommendinator/commit/3bcc9a2af393bdaf61056bd38161b8201bb379d0))
+
+- **cli**: Update library delete examples to use --id
+  ([`cde04d1`](https://github.com/therealahall/recommendinator/commit/cde04d1c7a9afa18f900b0256569e985697e1ba9))
+
+### Documentation
+
+- List season_air_dates among the keys first-party code reads
+  ([`e43574d`](https://github.com/therealahall/recommendinator/commit/e43574d059adafd42faae281327977c6e99a127f))
+
+- Point the season release gating row at SCORING.md for its behaviour
+  ([`0d9573b`](https://github.com/therealahall/recommendinator/commit/0d9573b937c84fe9e82cb0f3de5a71e08fbfa9ab))
+
+### Testing
+
+- **recommendations**: Pair each unreleased type with a released control
+  ([`ea34e03`](https://github.com/therealahall/recommendinator/commit/ea34e031e880174e9c1b027c272909d6a5cb96b9))
+
+
 ## v0.82.3 (2026-11-19)
 
 ### Bug Fixes
