@@ -286,6 +286,28 @@ class TestTagOverlapScorer:
         consumed = [make_item(genres="War", rating=rating) for rating in ratings]
         assert self._score(consumed, "War") == 1 / 3
 
+    def test_a_larger_library_leaves_each_candidates_score_where_it_was(self) -> None:
+        """Catches a return to scoring against the whole library's tags, which
+        saturated and flattened a large library's candidates into one band."""
+        own_terms = {"battle", "war", "drama", "survival"}
+        closest = make_item(genres="Battle, War, Drama, Survival", rating=5)
+        reached = get_clusters_for_terms(sorted(own_terms))
+        unrelated = sorted(
+            term
+            for term in ALLOWED_TERMS - own_terms
+            if not get_clusters_for_terms([term]) & reached
+        )[:60]
+        library = [closest] + [
+            make_item(genres=", ".join(unrelated[index : index + 3]), rating=5)
+            for index in range(0, 60, 3)
+        ]
+        overlaps = [("Battle",), ("Battle", "War"), ("Battle", "War", "Drama")]
+
+        alone = [self._score([closest], *genres) for genres in overlaps]
+        among_many = [self._score(library, *genres) for genres in overlaps]
+
+        assert among_many == alone == [1.5 / 6, 2 / 6, 3 / 6]
+
 
 class TestBuildScorersWithOverrides:
     def test_partial_override(self) -> None:

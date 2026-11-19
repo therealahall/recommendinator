@@ -130,6 +130,47 @@ class TestScoringPipeline:
         )
         assert round(result[0].aggregate_score, 2) == 0.39
 
+    def test_a_sequel_sits_a_continuation_row_from_an_identical_standalone(
+        self,
+    ) -> None:
+        """Catches continuation dropping its read of the series rating: after a
+        1-star first book the sequel scores 4.5/5.5 of a standalone otherwise the
+        same, and after a 5-star one it gains a full-marks row instead."""
+
+        def sequel_and_standalone(first_book_rating: int) -> tuple[float, float]:
+            shared = {"author": "Ilse Varden", "genres": "Fantasy"}
+            candidates = [
+                make_item(title=title, status=ConsumptionStatus.UNREAD, **shared)
+                for title in ("Ashen Gate (Hollowmere, #2)", "The Quiet Tower")
+            ]
+            context = _build_context(
+                consumed=[
+                    make_item(
+                        title="Hollowmere (Hollowmere, #1)",
+                        rating=first_book_rating,
+                        **shared,
+                    )
+                ],
+                unconsumed=candidates,
+            )
+            scored = {
+                result.item.title: result
+                for result in ScoringPipeline(
+                    DEFAULT_SCORERS
+                ).score_candidates_with_breakdown(candidates, context)
+            }
+            sequel = scored["Ashen Gate (Hollowmere, #2)"]
+            standalone = scored["The Quiet Tower"]
+            assert sequel.score_breakdown["continuation"] == (first_book_rating - 1) / 4
+            assert "continuation" not in standalone.score_breakdown
+            return sequel.aggregate_score, standalone.aggregate_score
+
+        sequel, standalone = sequel_and_standalone(1)
+        assert sequel == pytest.approx(standalone * 4.5 / 5.5)
+
+        sequel, standalone = sequel_and_standalone(5)
+        assert sequel == pytest.approx((standalone * 4.5 + 1.0) / 5.5)
+
 
 class TestAdaptationCannotDemoteRegression:
     def test_an_adaptation_of_a_well_rated_work_never_ranks_below_no_adaptation(
