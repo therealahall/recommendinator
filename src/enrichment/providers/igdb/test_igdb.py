@@ -5,7 +5,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-from src.enrichment.provider_base import ProviderError, SeriesOrdinal
+from src.enrichment.provider_base import (
+    ProviderError,
+    ProviderUnreadableError,
+    SeriesOrdinal,
+)
 from src.enrichment.providers.igdb.igdb import (
     GAMES_URL,
     TWITCH_TOKEN_URL,
@@ -560,6 +564,21 @@ class TestIGDBFailures:
                 provider.enrich(_item(), _CONFIG)
 
         assert "ConnectionError" in str(raised.value)
+
+    def test_a_games_body_that_is_not_a_list_is_unreadable_regression(
+        self, provider: IGDBProvider
+    ) -> None:
+        with pytest.raises(ProviderUnreadableError):
+            _run(_Transport(_response({"message": "not a list"})), provider.enrich)
+
+    def test_a_token_body_stating_no_token_is_unreadable_regression(
+        self, provider: IGDBProvider
+    ) -> None:
+        transport = _served(_game())
+        transport.token = _response(["not a token"])
+
+        with pytest.raises(ProviderUnreadableError):
+            _run(transport, provider.enrich)
 
 
 def _from_url(

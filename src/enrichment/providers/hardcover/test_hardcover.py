@@ -5,7 +5,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-from src.enrichment.provider_base import ProviderError, ProviderRefusedError
+from src.enrichment.provider_base import (
+    ProviderError,
+    ProviderRefusedError,
+    ProviderUnreadableError,
+)
 from src.enrichment.providers.hardcover.hardcover import HardcoverProvider
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.utils.series import (
@@ -507,7 +511,23 @@ class TestHardcoverFailures:
                 provider.enrich(_book(), _CONFIG)
 
         assert not isinstance(raised.value, ProviderRefusedError)
+        assert not isinstance(raised.value, ProviderUnreadableError)
         assert "unexpected" in str(raised.value)
+
+    @pytest.mark.parametrize(
+        "answered",
+        [["not a record"], {"data": None}, {"data": {"books": "none"}}],
+        ids=["a-list", "no-data", "books-not-a-list"],
+    )
+    def test_a_wrong_shape_200_is_unreadable_rather_than_a_permanent_fault_regression(
+        self, provider: HardcoverProvider, answered: Any
+    ) -> None:
+        with patch(
+            "src.enrichment.providers.hardcover.hardcover.requests.post",
+            return_value=_response(answered),
+        ):
+            with pytest.raises(ProviderUnreadableError):
+                provider.enrich(_book(), _CONFIG)
 
     def test_a_redirect_off_the_api_origin_is_refused_before_it_is_followed(
         self, provider: HardcoverProvider

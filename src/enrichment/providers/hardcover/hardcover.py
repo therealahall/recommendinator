@@ -10,6 +10,7 @@ from src.enrichment.provider_base import (
     EnrichmentResult,
     ProviderError,
     ProviderRefusedError,
+    ProviderUnreadableError,
     SeriesOrdinal,
     is_numeric_record_id,
     link_record,
@@ -390,7 +391,9 @@ class HardcoverProvider(EnrichmentProvider):
         data = stated.get("data")
         books = data.get("books") if isinstance(data, dict) else None
         if not isinstance(books, list):
-            raise ProviderError(self.name, "Hardcover answered a query with no records")
+            raise ProviderUnreadableError(
+                self.name, "Hardcover answered a query with no records"
+            )
         return books
 
     def _post(self, payload: dict[str, Any], api_key: str) -> requests.Response:

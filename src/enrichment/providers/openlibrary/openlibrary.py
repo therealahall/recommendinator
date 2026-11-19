@@ -9,6 +9,7 @@ from src.enrichment.provider_base import (
     EnrichmentProvider,
     EnrichmentResult,
     ProviderError,
+    ProviderUnreadableError,
     link_record,
     log_search_title,
     pinned_record,
@@ -286,7 +287,9 @@ class OpenLibraryProvider(EnrichmentProvider):
         error page — is a failure, not a record Open Library does not hold."""
         payload = response.json()
         if not isinstance(payload, dict):
-            raise ProviderError(self.name, "Open Library answered with no record")
+            raise ProviderUnreadableError(
+                self.name, "Open Library answered with no record"
+            )
         return payload
 
     def _get(self, url: str, params: dict[str, Any] | None = None) -> requests.Response:
