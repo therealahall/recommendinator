@@ -62,9 +62,9 @@ AFFINITY_LIMIT = 12
 
 
 def _genre_affinities(profile: dict[str, Any]) -> list[GenreAffinity]:
-    """Anti-preferences are a filtered view of the same genres, so a second list
-    of them printed a disliked genre twice. One the operator only ignores has no
-    mean, hence the null score."""
+    """Anti-preferences flag the same genres, as a second list printed a disliked
+    genre twice. An ignored-only genre has no mean, hence the null score, and
+    its own limit so below-mean rated genres cannot fill every slot."""
     means: dict[str, float] = profile.get("genre_affinities") or {}
     anti: list[str] = profile.get("anti_preferences") or []
     ranked = sorted(means.items(), key=lambda pair: pair[1], reverse=True)
@@ -75,10 +75,16 @@ def _genre_affinities(profile: dict[str, Any]) -> list[GenreAffinity]:
         if genre not in flagged
     ]
     disliked: list[GenreAffinity] = [
-        {"genre": genre, "score": means.get(genre), "anti": True}
-        for genre in anti[:AFFINITY_LIMIT]
+        {"genre": genre, "score": means[genre], "anti": True}
+        for genre in anti
+        if genre in means
     ]
-    return liked[:AFFINITY_LIMIT] + disliked
+    ignored: list[GenreAffinity] = [
+        {"genre": genre, "score": None, "anti": True}
+        for genre in anti
+        if genre not in means
+    ]
+    return liked[:AFFINITY_LIMIT] + disliked[:AFFINITY_LIMIT] + ignored[:AFFINITY_LIMIT]
 
 
 def _author_affinities(profile: dict[str, Any]) -> list[AuthorAffinity]:
