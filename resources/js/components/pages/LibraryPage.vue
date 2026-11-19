@@ -24,17 +24,13 @@ const filtered = computed(() =>
   Boolean(lib.typeFilter || lib.statusFilter || lib.enrichmentFilter),
 )
 
-const counted = computed(() =>
-  lib.items.length === 1 ? '1 item' : `${lib.items.length} items`,
-)
-
 // The skeleton is aria-hidden and the empty states carry their own words, so without this a load and every filter change are silent.
 const loadAnnouncement = computed(() => {
   if (lib.loading) return 'Loading library…'
   if (lib.announcement) return lib.announcement
   if (lib.items.length === 0) return ''
   if (lib.searchAnnouncement) return lib.searchAnnouncement
-  return lib.hasMore ? `${counted.value} loaded` : `All ${counted.value} loaded`
+  return lib.loadedCount
 })
 
 const emptyTitle = computed(() => {

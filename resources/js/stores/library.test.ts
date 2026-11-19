@@ -403,7 +403,8 @@ describe('useLibraryStore', () => {
     expect(store.error).toBe('')
   })
 
-  it('deleteItem re-announces a delete whose title matches the one before', async () => {
+  // A cleared-then-reset region repaints in one task, so screen readers heard the second delete as no change.
+  it('deleteItem announces two same-title deletes as two different sentences, never blanking between', async () => {
     mockGet.mockResolvedValue([
       { db_id: 3, title: 'Doom', content_type: 'video_game', status: 'unread' },
       { db_id: 4, title: 'Doom', content_type: 'video_game', status: 'unread' },
@@ -418,7 +419,37 @@ describe('useLibraryStore', () => {
     mockDelete.mockResolvedValue({ db_id: 4, title: 'Doom', merged_count: 0 })
     await store.deleteItem(4)
 
-    expect(announced.filter((said) => said === 'Deleted “Doom”.')).toHaveLength(2)
+    expect(announced).toEqual(['Deleted “Doom”. All 1 item loaded.', 'Deleted “Doom”. All 0 items loaded.'])
+  })
+
+  // Catches a count that claims the whole library while later pages are still unloaded.
+  it('deleteItem counts only the loaded rows while more pages remain', async () => {
+    const page = Array.from({ length: 50 }, (_, i) => ({
+      db_id: i, title: `Item ${i}`, content_type: 'video_game', status: 'unread', ignored: false,
+    }))
+    mockGet.mockResolvedValue(page)
+    const store = useLibraryStore()
+    await store.resetAndLoad()
+
+    mockDelete.mockResolvedValue({ db_id: 3, title: 'Item 3', merged_count: 0 })
+    await store.deleteItem(3)
+
+    expect(store.announcement).toBe('Deleted “Item 3”. 49 items loaded.')
+  })
+
+  // Catches a refused delete announcing a removal that never happened.
+  it('deleteItem leaves the announcement alone and reports a refused delete', async () => {
+    mockGet.mockResolvedValue([{ db_id: 3, title: 'Doom', content_type: 'video_game', status: 'unread' }])
+    const store = useLibraryStore()
+    await store.resetAndLoad()
+    store.announcement = 'Merged “A” into “B”.'
+
+    mockDelete.mockRejectedValue(new Error('Item 3 not found'))
+    await store.deleteItem(3)
+
+    expect(store.announcement).toBe('Merged “A” into “B”.')
+    expect(store.error).toBe('Item 3 not found')
+    expect(store.items).toHaveLength(1)
   })
 
   it('mergeInto keeps a refused merge on the picker, leaving it open to correct', async () => {
