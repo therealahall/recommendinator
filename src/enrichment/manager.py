@@ -19,6 +19,7 @@ from src.enrichment.provider_base import (
     ProviderUnreadableError,
     accepts_a_pin,
     offers_candidates,
+    pinned_record,
     states_a_match,
     states_a_series_ordinal,
     stored_config_schema,
@@ -302,14 +303,18 @@ class EnrichmentManager:
         user_id: int,
     ) -> tuple[dict[str, str], EnrichmentStart | None]:
         """Binds *item* to one provider record, *record_id* ``None`` clearing it,
-        and re-queues it. A bound record asks for a run of its own; a cleared one
-        waits for the next. Raises ``PinRefused`` for a pin no run could read back.
+        and re-queues it. A new record drops what this provider stated from its
+        last, which the pin would rank. Raises ``PinRefused`` if no run reads it.
         """
         provider = self._pinnable_provider(provider_name)
         if record_id is not None and not provider.accepts_record_id(record_id):
             raise PinRefused(
                 f"{provider.name} cannot look up record '{record_id}'; "
                 "pin a record id it offered as a candidate."
+            )
+        if record_id is not None and record_id != pinned_record(item, provider.name):
+            self.storage_manager.enrichment.reset(
+                provider=provider.name, content_item_id=db_id
             )
         pins = with_pin(item.metadata, provider.name, record_id)
         self.storage_manager.set_enrichment_pins(db_id, pins)
