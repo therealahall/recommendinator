@@ -37,7 +37,7 @@ jobs:
       # re-resolving, so a pull request cannot have a dependency the lockfile
       # does not name installed into the runner.
       - name: Install Python dependencies
-        run: uv sync --locked --extra dev
+        run: uv sync --locked --extra dev --python 3.11
 
       # The gate lives in the Makefile so this workflow and the command
       # contributors run cannot drift apart. PYTHON points make at the
