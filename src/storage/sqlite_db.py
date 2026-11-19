@@ -104,6 +104,8 @@ from src.utils.dates import local_today, merge_seasons_watched_dates, utc_now
 from src.utils.series import (
     MAX_SEASONS,
     SEASON_RATINGS_KEY,
+    SERIES_AUTHORITY_KEY,
+    SERIES_POSITION_KEY,
     all_seasons_watched,
     reconcile_seasons,
     season_ratings_of,
@@ -1031,6 +1033,15 @@ class SQLiteDB:
         rebuilt = rebuild_item_fields(
             cursor, db_id, item_writer_ranks(cursor, frozenset(pins_of(stored_blob)))
         )
+        for detail_field in spec.fields:
+            if (
+                detail_field.column is None
+                and detail_field.owner is FieldOwner.WRITER
+                and detail_field.metadata_key in clear_fields
+            ):
+                stored_blob.pop(detail_field.metadata_key, None)
+        if SERIES_POSITION_KEY in clear_fields:
+            stored_blob.pop(SERIES_AUTHORITY_KEY, None)
         clearing = clear_fields | rebuilt.cleared
         self._local.rebuilding = True
         try:
