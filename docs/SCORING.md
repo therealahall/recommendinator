@@ -8,7 +8,7 @@ settings < per-user preferences**.
 |------------|----------------------|---------|
 | `genre_match` | How you rate the item's genres against your own average rating. A genre rated a star above your average climbs toward 100% the more often you have rated it, 75% at two ratings, and one a star below falls toward 0% the same way. Its genres are averaged, so one you dislike pulls down one you love, and a genre on most of your library, or one you have not rated, counts for little or nothing | 2.0 |
 | `creator_match` | Prefers authors, directors and developers you have enjoyed, and demotes ones you have not | 1.5 |
-| `tag_overlap` | How many of a consumed item's tags the item shares, scaled by how you rated it. Each tag counts once: in full when the item has the same tag, half when it has a related tag from the same genre cluster. A consumed item with more tags can lift a match higher. A match on a 1-star item still lifts, at half a 5-star match's strength, so only `genre_match` and `creator_match` pull down what resembles something you rated low | 1.0 |
+| `tag_overlap` | How many of a consumed item's tags the item shares, scaled by how you rated it. Each tag counts once: in full when the item has the same tag, half when it has a related tag from the same genre cluster. A consumed item with more tags can lift a match higher. A match on a 1-star item still lifts, at half a 5-star match's strength | 1.0 |
 | `content_length` | Soft penalty for a length mismatch. Counts only for a content type with a length preference other than `any` | 1.0 |
 | `continuation` | Scores the later entries and seasons of a series you have begun by how you rated its entries of the same content type: 5 stars is 100%, 3 is 50%, 1 is 0%, and none rated is 50%. A show's next season is scored by the latest season you rated, or by the show's rating when no season is rated. Counts only where an earlier entry is finished or begun, and not while any entry of that series is in progress | 1.0 |
 | `adaptation` | Boosts a film, show or game adapting something you rated well, and the source behind an adaptation you loved. An item adapts one of another type when either's title or series name matches the other's, a trailing "Collection" aside, or when they share an author and a similar title. Counts only for an item that adapts something | 1.5 |
@@ -42,6 +42,23 @@ whatever the rest of the rows earn it. It is never removed from the ranking.
 
 The one thing applied after the weighted mean is the variety penalty below,
 which has its own row in the same panel.
+
+## Worked examples
+
+Each row is an expected outcome its test fails without. Scores are row values unless marked as the mean.
+
+| Question | Example | Expected | Test |
+|---|---|---|---|
+| What pulls down a 1-star item's kin | Book 1 rated 1; its book 2 against a standalone by the same author with the same genres | `continuation` 0, so book 2's mean is 4.5/5.5 of the standalone's. Rated 5, book 2 gains a full-marks row | `test_scoring_pipeline.py::…sits_a_continuation_row_from_an_identical_standalone` |
+| | An author rated only 1, against one never read | `creator_match` below the stranger's 0.5 | `test_scorers.py::…rated_only_one_star_scores_below_a_stranger` |
+| | A `War` candidate after a 1-star, then a 5-star, item tagged only `War` | `tag_overlap` 1/6, then 1/3: it lifts at half strength and never lowers | `test_scorers.py::…one_star_match_scores_half_a_five_star_one` |
+| Does `continuation` read series ratings | Entries 1 to 3 rated 5, 3 and unrated, scoring entry 4 | 0.75, the mean of that type's rated entries | `test_scorers.py::…averages_only_the_rated_entries_of_that_series` |
+| Why `tag_overlap` adds 2 | A 5-star item tagged only `Magic`, then one tagged `Magic, Wizards, Sorcery` | One shared tag scores 1/3, all three 3/5: one tag never decides a match | `test_scorers.py::…one_tag_item_never_gives_full_marks…` |
+| Does a concept count once | A 5-star item tagged `Space Warfare, Science Fiction`; a candidate tagged `Space Warfare` | 1.5/4: the exact tag in full, `Science Fiction` at half through a shared genre cluster | `test_scorers.py::…term_counts_once_however_many_clusters_it_shares` |
+| Is the plateau gone | A candidate sharing 1, 2 and 3 of a 4-tag item's tags, then 20 unrelated rated items added | 1.5/6, 2/6 and 3/6 either way | `test_scorers.py::…larger_library_leaves_each_candidates_score_where_it_was` |
+| Does variety key on tags or genre clusters | A space opera right after a cyberpunk novel, no tag shared | The full top rung: both sit in the science fiction genre cluster | `test_variety.py::…sharing_no_tag_takes_the_rung_of_its_genre_cluster` |
+| | A 1-star completion after a 5-star one | The 1-star one takes the top rung | `test_variety.py::…one_star_completion_claims_its_rung…` |
+| What a bare item scores | No genres, tags or creator | Mean 0.39 | `test_scoring_pipeline.py::…no_metadata_scores_the_documented_bare_score` |
 
 ## Setting the global weights
 
