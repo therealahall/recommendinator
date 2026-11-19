@@ -199,8 +199,6 @@ class TestCreatorMatchScorer:
         assert CreatorMatchScorer().score(candidate, context) == 0.5
 
     def test_a_creator_rated_only_one_star_scores_below_a_stranger(self) -> None:
-        """Catches a one-star creator reading as merely consumed: tag_overlap
-        only lifts, so creator_match is one of the two rows a 1 can drag down."""
         context = _build_context(consumed=[make_item(author="Terry Brooks", rating=1)])
         scorer = CreatorMatchScorer()
         disliked, stranger = (
@@ -279,8 +277,7 @@ class TestTagOverlapScorer:
         assert score(1) == score(5) / 2 == 1 / 6
 
     def test_a_larger_library_leaves_each_candidates_score_where_it_was(self) -> None:
-        """Catches a return to scoring against the whole library's tags, which
-        saturated and flattened a large library's candidates into one band."""
+        """Catches a return to scoring against the union of the library's tags."""
         own_terms = {"battle", "war", "drama", "survival"}
         closest = make_item(genres="Battle, War, Drama, Survival", rating=5)
         reached = get_clusters_for_terms(sorted(own_terms))
