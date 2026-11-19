@@ -80,13 +80,20 @@ def ratings_by_genre(items: list[ContentItem]) -> dict[str, list[int]]:
     return ratings
 
 
-def _genre_tastes(
-    genre_ratings: dict[str, list[int]], mean: float, rated_items: int
+def genre_tastes(
+    genre_ratings: dict[str, list[int]], ratings: list[int]
 ) -> dict[str, GenreTaste]:
+    """Shared by genre_match and the profile's anti-preferences, which must agree
+    on a genre's sign. Integer cross-multiplication rather than a float mean, so
+    a genre rated exactly at the mean scores exactly 0."""
+    rated_items = len(ratings)
+    total = sum(ratings)
     tastes: dict[str, GenreTaste] = {}
-    for genre, ratings in genre_ratings.items():
-        count = len(ratings)
-        deviation = (sum(ratings) - count * mean) / (count + _GENRE_PRIOR_RATINGS)
+    for genre, scores in genre_ratings.items():
+        count = len(scores)
+        deviation = (sum(scores) * rated_items - count * total) / (
+            rated_items * (count + _GENRE_PRIOR_RATINGS)
+        )
         tastes[genre] = GenreTaste(
             score=max(-1.0, min(1.0, deviation / _GENRE_FULL_SCALE_STARS)),
             weight=count / (count + _GENRE_PRIOR_RATINGS) * (1 - count / rated_items),
@@ -150,9 +157,7 @@ class PreferenceAnalyzer:
             average_rating=avg_rating,
             total_items=len(consumed_items),
             disliked_authors=disliked_authors,
-            genre_tastes=_genre_tastes(
-                ratings_by_genre(consumed_items), avg_rating, len(ratings)
-            ),
+            genre_tastes=genre_tastes(ratings_by_genre(consumed_items), ratings),
         )
 
     def _score_attributes(

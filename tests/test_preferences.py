@@ -281,6 +281,25 @@ class TestPreferredWeightAccumulation:
         assert preferences.get_author_score("") == 0.0
 
 
+class TestGenreTasteSign:
+    def test_a_genre_on_every_rated_item_scores_exactly_neutral(self):
+        """The profile flags a genre on a negative score, and float noise around
+        a mean like 15/11 read a whole-library genre as below the user's own mean."""
+        noisy = []
+        for size in range(2, 60):
+            for top in RATINGS:
+                preferences = PreferenceAnalyzer().analyze(
+                    [
+                        _rated_book(str(index), None, rating, "Fantasy")
+                        for index, rating in enumerate([top] + [1] * (size - 1))
+                    ]
+                )
+                if preferences.get_genre_score("fantasy") != 0.0:
+                    noisy.append((size, top))
+
+        assert noisy == []
+
+
 class TestCreatorNamespaceIsFlatAcrossTypes:
     """Storage populates ``ContentItem.author`` for every content type: a book's
     author, a film's director, a show's creator, a game's developer."""
