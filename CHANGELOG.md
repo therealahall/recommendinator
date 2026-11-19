@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v0.81.4 (2026-11-19)
+
+### Bug Fixes
+
+- **enrichment**: Give every provider request an overall deadline
+  ([`ff1bd76`](https://github.com/therealahall/recommendinator/commit/ff1bd761a95fdc326c586efead67158ce210ef81))
+
+- **ingestion**: Cap each redirect hop at the time a deadline leaves
+  ([`f81d565`](https://github.com/therealahall/recommendinator/commit/f81d5654e42f20c51eb1eabe35854bf7058ab7ab))
+
+
 ## v0.81.3 (2026-11-18)
 
 ### Bug Fixes
