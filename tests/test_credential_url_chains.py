@@ -2,6 +2,7 @@
 string on ``__cause__``, which callers print with ``exc_info=True``."""
 
 import ast
+import itertools
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -10,7 +11,10 @@ from unittest.mock import Mock, patch
 import pytest
 import requests
 
-from src.enrichment.provider_base import ProviderError
+from src.enrichment.provider_base import REQUEST_DEADLINE_SECONDS, ProviderError
+from src.enrichment.providers.hardcover.hardcover import HardcoverProvider
+from src.enrichment.providers.igdb.igdb import IGDBProvider
+from src.enrichment.providers.openlibrary.openlibrary import OpenLibraryProvider
 from src.enrichment.providers.rawg.rawg import RAWGProvider
 from src.enrichment.providers.tmdb.tmdb import TMDBProvider
 from src.ingestion.plugin_base import OAuthError, SourceError
@@ -37,6 +41,8 @@ from src.ingestion.sources.trakt.trakt import (
     refresh_access_token as trakt_refresh_access_token,
 )
 from src.ingestion.urls import (
+    MAX_SAME_ORIGIN_REDIRECTS,
+    REQUEST_TIMEOUT,
     RedirectRefused,
     fixed_endpoint_refusal,
     request_within_origin,
@@ -523,3 +529,136 @@ class TestNoCredentialFollowsARedirectOffItsOrigin:
             invoke()
 
         assert _CREDENTIAL not in str(refused.value)
+
+
+_OPEN_LIBRARY_SEARCH = "https://openlibrary.org/search.json"
+
+#: The request helper of each enrichment provider sending through the walk.
+_PROVIDER_REQUESTS = [
+    pytest.param(
+        lambda: OpenLibraryProvider()._get(_OPEN_LIBRARY_SEARCH),
+        id="openlibrary",
+    ),
+    pytest.param(
+        lambda: RAWGProvider()._get("https://api.rawg.io/api/games", {}),
+        id="rawg",
+    ),
+    pytest.param(
+        lambda: TMDBProvider()._get("https://api.themoviedb.org/3/search/movie", {}),
+        id="tmdb",
+    ),
+    pytest.param(
+        lambda: HardcoverProvider()._post({"query": "{ books { id } }"}, _CREDENTIAL),
+        id="hardcover",
+    ),
+    pytest.param(
+        lambda: IGDBProvider()._post(
+            "https://api.igdb.com/v4/games", "fields name;", {}, "IGDB"
+        ),
+        id="igdb",
+    ),
+]
+
+
+def _sender(*responses: int) -> Mock:
+    """Answers each hop with the next status, redirecting on the same origin."""
+    return Mock(
+        side_effect=[
+            Mock(spec=requests.Response, status_code=status, headers={"Location": "/a"})
+            for status in responses
+        ]
+    )
+
+
+def _timeouts(send: Mock) -> list[float]:
+    return [hop.kwargs["timeout"] for hop in send.call_args_list]
+
+
+class TestARedirectChainHasAnOverallDeadline:
+    def test_a_hop_is_sent_no_more_time_than_the_deadline_leaves(self) -> None:
+        """A hop sent with the full timeout just short of the deadline held the
+        caller to nearly twice it."""
+        send = _sender(200)
+
+        with patch("src.ingestion.urls.time.monotonic", return_value=100.0):
+            request_within_origin(
+                send,
+                _OPEN_LIBRARY_SEARCH,
+                "Open Library",
+                fixed_endpoint_refusal,
+                deadline=107.0,
+            )
+
+        assert _timeouts(send) == [7.0]
+
+    def test_a_distant_deadline_never_lengthens_a_hop_past_the_request_timeout(
+        self,
+    ) -> None:
+        """Clamping to the time left alone would hand a hop the whole budget."""
+        send = _sender(200)
+
+        with patch("src.ingestion.urls.time.monotonic", return_value=0.0):
+            request_within_origin(
+                send,
+                _OPEN_LIBRARY_SEARCH,
+                "Open Library",
+                fixed_endpoint_refusal,
+                deadline=10 * REQUEST_TIMEOUT,
+            )
+
+        assert _timeouts(send) == [REQUEST_TIMEOUT]
+
+    def test_a_caller_without_a_deadline_sends_every_hop_the_request_timeout(
+        self,
+    ) -> None:
+        """Ingestion sources pass no deadline, and their requests stay as they were."""
+        send = _sender(302, 302, 200)
+
+        request_within_origin(
+            send, _OPEN_LIBRARY_SEARCH, "Open Library", fixed_endpoint_refusal
+        )
+
+        assert _timeouts(send) == [REQUEST_TIMEOUT] * 3
+
+    def test_a_chain_outliving_the_deadline_is_refused_naming_the_service(
+        self,
+    ) -> None:
+        """Only the hop cap stopped a slow chain, five full timeouts in."""
+        send = _sender(*[302] * MAX_SAME_ORIGIN_REDIRECTS)
+
+        with (
+            patch(
+                "src.ingestion.urls.time.monotonic", side_effect=itertools.count(0, 10)
+            ),
+            pytest.raises(RedirectRefused, match="Open Library .*ran out of time"),
+        ):
+            request_within_origin(
+                send,
+                _OPEN_LIBRARY_SEARCH,
+                "Open Library",
+                fixed_endpoint_refusal,
+                deadline=25.0,
+            )
+
+        assert send.call_count < MAX_SAME_ORIGIN_REDIRECTS
+
+    @pytest.mark.parametrize("invoke", _PROVIDER_REQUESTS)
+    def test_every_provider_request_gives_up_when_its_deadline_passes(
+        self, invoke: Callable[[], Any]
+    ) -> None:
+        """Every provider called the walk with no deadline, so a slow redirect
+        chain held an enrichment worker for five request timeouts."""
+        crawling = _sender(*[302] * MAX_SAME_ORIGIN_REDIRECTS)
+
+        with (
+            patch.object(requests, "get", crawling),
+            patch.object(requests, "post", crawling),
+            patch(
+                "src.ingestion.urls.time.monotonic", side_effect=itertools.count(0, 10)
+            ),
+            pytest.raises(ProviderError, match="ran out of time"),
+        ):
+            invoke()
+
+        # The clock starts at 0 and the first hop reads 10.
+        assert _timeouts(crawling)[0] == REQUEST_DEADLINE_SECONDS - 10

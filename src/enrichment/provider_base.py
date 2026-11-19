@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, replace
 from typing import Any
@@ -24,6 +25,15 @@ from src.utils.series import (
     valid_series_position,
 )
 from src.utils.text import sanitize_for_log
+
+#: One budget for a provider request's whole redirect chain, since the per-hop
+#: timeout alone lets a chain hold an enrichment worker for minutes.
+REQUEST_DEADLINE_SECONDS = 30
+
+
+def request_deadline() -> float:
+    """The ``deadline`` every provider passes to ``request_within_origin``."""
+    return time.monotonic() + REQUEST_DEADLINE_SECONDS
 
 
 def log_search_title(

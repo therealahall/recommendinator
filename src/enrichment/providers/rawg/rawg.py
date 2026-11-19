@@ -14,6 +14,7 @@ from src.enrichment.provider_base import (
     log_search_title,
     no_credential,
     pinned_record,
+    request_deadline,
 )
 from src.ingestion.urls import (
     RedirectRefused,
@@ -153,6 +154,7 @@ class RAWGProvider(EnrichmentProvider):
                 url,
                 self.display_name,
                 fixed_endpoint_refusal,
+                deadline=request_deadline(),
                 params=params,
             )
         except RedirectRefused as refused:
