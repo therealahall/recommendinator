@@ -3631,3 +3631,38 @@ class TestAShowAwaitingASeasonIsEnrichedAgain:
         monkeypatch.setattr("src.storage.enrichment_status.utc_now", lambda: week_later)
         assert offered_seasons() == [4]
         assert [item.title for item in provider.enrich_calls] == ["Awaiting"]
+
+    def test_a_run_with_no_tv_matcher_leaves_the_show_on_its_record(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A books-only run re-queued the show anyway, and with no provider to
+        ask it settled as not_found, dropping its tmdb record every week."""
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        db_id = storage_manager.save_content_item(
+            ContentItem(
+                id="awaiting",
+                title="Awaiting",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.UNREAD,
+                metadata={"total_seasons": 4, "seasons_watched": [1, 2, 3]},
+            )
+        )
+        tmdb = SeasonDatingProvider({"Awaiting": {**self.AIRED, "4": None}})
+        manager = manager_over(storage_manager, tmdb)
+        manager.start_enrichment()
+        assert manager._wait_for_completion()
+
+        week_later = datetime.now(UTC) + timedelta(days=8)
+        monkeypatch.setattr("src.storage.enrichment_status.utc_now", lambda: week_later)
+        manager = manager_over(
+            storage_manager,
+            MockProvider(name="books", content_types=[ContentType.BOOK]),
+        )
+        assert manager.start_enrichment() is EnrichmentStart.STARTED
+        assert manager._wait_for_completion()
+
+        status = storage_manager.enrichment.status(db_id)
+        assert status is not None
+        assert status["enrichment_provider"] == "tmdb"
+        assert status["enrichment_quality"] == "high"
+        assert manager.get_status().items_not_found == 0
