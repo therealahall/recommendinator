@@ -152,6 +152,11 @@ class FutureCompletionDateError(ValueError):
         super().__init__("A completion date cannot be in the future.")
 
 
+def _validate_completion_date(value: date | Unset) -> None:
+    if value is not UNSET and value > local_today() + MAX_COMPLETION_DATE_SKEW:
+        raise FutureCompletionDateError
+
+
 class UncorrectableFieldError(ValueError):
     """A correction naming a field the content type does not state — its own
     type so a broken ``DETAIL_FIELDS`` is not answered as a bad request too."""
@@ -776,11 +781,7 @@ class SQLiteDB:
         """Runs on the caller's cursor so that creating the row and recording
         what the user said about it are one transaction.
         """
-        if (
-            date_completed is not UNSET
-            and date_completed > local_today() + MAX_COMPLETION_DATE_SKEW
-        ):
-            raise FutureCompletionDateError
+        _validate_completion_date(date_completed)
         if rating is not None and show_season_ratings(cursor, db_id):
             raise UncorrectableFieldError(_RATED_BY_SEASONS)
 
@@ -1612,11 +1613,13 @@ class SQLiteDB:
         release_year: int | None = None,
         creator: str | None = None,
         user_id: int | None = None,
+        date_completed: date | Unset = UNSET,
     ) -> bool:
         """No status empties the list, and only against a known total does the
         list complete a show or reopen one. Every field supplied but the status
         is held from here on. A ``None`` season rating clears that season's.
         """
+        _validate_completion_date(date_completed)
         if description is not None:
             # Whitespace is not a description: a blank normalises to the clear,
             # in the column and in the row holding it alike.
@@ -1726,7 +1729,10 @@ class SQLiteDB:
             if review is not UNSET:
                 set_parts.append("review = ?")
                 params.append(corrected["review"])
-            if (
+            if date_completed is not UNSET:
+                set_parts.append("date_completed = ?")
+                params.append(date_completed.isoformat())
+            elif (
                 resolved_status in ("completed", "dnf")
                 and existing_status != resolved_status
             ):
