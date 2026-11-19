@@ -1037,7 +1037,7 @@ def library_unignore(
     "delete",
     help="Delete an item and the items merged into it (DELETE /api/items/{id}).",
 )
-@click.argument("item_id", type=int)
+@click.option("--id", "item_id", type=int, required=True, help="Item database ID")
 @click.option("--yes", is_flag=True, help="Skip the confirmation prompt")
 @click.option(
     "--format",
