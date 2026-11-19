@@ -188,6 +188,7 @@ class TestBuildVarietyLadder:
         assert shared > older_only
 
     def test_a_one_star_completion_claims_its_rung_like_a_five_star_one(self) -> None:
+        """Catches the ladder skipping completions by rating."""
         hated = _completed("Hated", ["Fantasy"], completed_on=date(2026, 1, 2))
         hated.rating = 1
         loved = _completed("Loved", ["Science Fiction"], completed_on=date(2026, 1, 1))

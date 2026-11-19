@@ -199,6 +199,7 @@ class TestCreatorMatchScorer:
         assert CreatorMatchScorer().score(candidate, context) == 0.5
 
     def test_a_creator_rated_only_one_star_scores_below_a_stranger(self) -> None:
+        """Catches a 1-star creator no longer dragging their next work down."""
         context = _build_context(consumed=[make_item(author="Terry Brooks", rating=1)])
         scorer = CreatorMatchScorer()
         disliked, stranger = (
