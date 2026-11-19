@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.82.2 (2026-11-19)
+
+### Bug Fixes
+
+- **library**: Let the web edit dialog mark seasons on a show with no season count
+  ([`7ab370d`](https://github.com/therealahall/recommendinator/commit/7ab370d8319dc0c6468b1986b5c538ed33c5354b))
+
+
 ## v0.82.1 (2026-11-19)
 
 ### Bug Fixes
