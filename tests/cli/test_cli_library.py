@@ -1351,6 +1351,54 @@ class TestLibraryIgnore:
 
 
 class TestLibraryDelete:
+    @pytest.mark.parametrize(
+        ("args", "error"),
+        [
+            pytest.param([], "Missing option '--id'", id="missing-id"),
+            pytest.param(
+                ["--id", "not-an-integer"],
+                "Invalid value for '--id'",
+                id="noninteger-id",
+            ),
+            pytest.param(["42"], "Missing option '--id'", id="former-positional-id"),
+            pytest.param(
+                ["--id", "42", "43"],
+                "Got unexpected extra argument (43)",
+                id="positional-id-with-option",
+            ),
+        ],
+    )
+    def test_invalid_id_syntax_is_rejected_before_deletion(
+        self, cli_runner: CliRunner, args: list[str], error: str
+    ) -> None:
+        """Prevent missing, noninteger or positional IDs from reaching deletion."""
+        mock_storage = make_storage_mock()
+
+        result = _invoke_with_mocks(
+            cli_runner, ["library", "delete", *args, "--yes"], mock_storage
+        )
+
+        assert result.exit_code == 2
+        assert error in result.output
+        mock_storage.get_content_item.assert_not_called()
+        mock_storage.delete_content_item.assert_not_called()
+
+    def test_help_requires_id_option_instead_of_advertising_positional_id(
+        self, cli_runner: CliRunner
+    ) -> None:
+        """Keep delete help aligned with the required --id library convention."""
+        result = _invoke_with_mocks(
+            cli_runner, ["library", "delete", "--help"], make_storage_mock()
+        )
+
+        assert result.exit_code == 0
+        assert "delete [OPTIONS]" in result.output
+        assert "ITEM_ID" not in result.output
+        id_option = next(
+            line for line in result.output.splitlines() if "--id INTEGER" in line
+        )
+        assert "[required]" in id_option
+
     def test_the_prompt_counts_the_merged_items_and_yes_deletes_them_and_covers(
         self, cli_runner: CliRunner, tmp_path: Path
     ) -> None:
@@ -1366,14 +1414,14 @@ class TestLibraryDelete:
 
         declined = _invoke_with_mocks(
             cli_runner,
-            ["library", "delete", str(survivor)],
+            ["library", "delete", "--id", str(survivor)],
             storage,
             config=config,
             input_text="n\n",
         )
         deleted = _invoke_with_mocks(
             cli_runner,
-            ["library", "delete", str(survivor), "--yes", "--format", "json"],
+            ["library", "delete", "--id", str(survivor), "--yes", "--format", "json"],
             storage,
             config=config,
         )
@@ -1395,7 +1443,7 @@ class TestLibraryDelete:
         mock_storage.get_content_item.return_value = None
 
         result = _invoke_with_mocks(
-            cli_runner, ["library", "delete", "999", "--yes"], mock_storage
+            cli_runner, ["library", "delete", "--id", "999", "--yes"], mock_storage
         )
 
         assert result.exit_code != 0
@@ -1419,7 +1467,7 @@ class TestLibraryDelete:
 
         deleted = _invoke_with_mocks(
             cli_runner,
-            ["library", "delete", str(first["db_id"]), "--yes"],
+            ["library", "delete", "--id", str(first["db_id"]), "--yes"],
             storage,
             config,
         )
