@@ -16,6 +16,7 @@ from src.enrichment.provider_base import (
     log_search_title,
     no_credential,
     pinned_record,
+    request_deadline,
 )
 from src.ingestion.urls import (
     RedirectRefused,
@@ -399,6 +400,7 @@ class HardcoverProvider(EnrichmentProvider):
                 HARDCOVER_API_URL,
                 self.display_name,
                 fixed_endpoint_refusal,
+                deadline=request_deadline(),
                 json=payload,
                 headers={"Authorization": f"Bearer {api_key}"},
             )

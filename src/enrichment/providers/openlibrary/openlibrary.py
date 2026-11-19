@@ -12,6 +12,7 @@ from src.enrichment.provider_base import (
     link_record,
     log_search_title,
     pinned_record,
+    request_deadline,
 )
 from src.ingestion.urls import (
     RedirectRefused,
@@ -295,6 +296,7 @@ class OpenLibraryProvider(EnrichmentProvider):
                 url,
                 self.display_name,
                 fixed_endpoint_refusal,
+                deadline=request_deadline(),
                 params=params,
             )
         except RedirectRefused as refused:

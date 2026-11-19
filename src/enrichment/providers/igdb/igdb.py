@@ -17,6 +17,7 @@ from src.enrichment.provider_base import (
     log_search_title,
     no_credential,
     pinned_record,
+    request_deadline,
 )
 from src.ingestion.urls import (
     RedirectRefused,
@@ -409,6 +410,7 @@ class IGDBProvider(EnrichmentProvider):
                 url,
                 service,
                 fixed_endpoint_refusal,
+                deadline=request_deadline(),
                 data=data,
                 headers=headers,
             )
