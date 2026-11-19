@@ -289,6 +289,12 @@ class TestTagOverlapScorer:
             consumed, "Cyberpunk"
         )
 
+    def test_three_genre_cluster_matches_outrank_one_shared_tag(self) -> None:
+        """Catches one shared tag outranking three genre cluster matches."""
+        consumed = [make_item(genres="War, Science Fiction, Space Opera", rating=5)]
+        assert self._score(consumed, "Space Warfare") == 1.5 / 5
+        assert self._score(consumed, "War") == 1 / 5
+
     def test_a_related_term_scores_above_nothing_and_below_the_exact_term(
         self,
     ) -> None:
