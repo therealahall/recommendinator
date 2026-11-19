@@ -3153,6 +3153,70 @@ class TestCompletionDoorFutureDate:
         assert retrieved.status == ConsumptionStatus.CURRENTLY_CONSUMING
 
 
+class TestEditedCompletionDate:
+    @pytest.mark.parametrize("status", ["completed", "dnf", "unread"])
+    def test_explicit_historical_date_replaces_later_date_without_status_edit(
+        self, temp_db: SQLiteDB, status: str
+    ) -> None:
+        db_id = temp_db.save_content_item(
+            ContentItem(
+                title="Dune",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus(status),
+                date_completed=date(2024, 1, 1),
+            )
+        )
+
+        assert temp_db.update_item_from_ui(db_id, date_completed=date(1999, 6, 15))
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.date_completed == date(1999, 6, 15)
+        assert retrieved.status == status
+        temp_db.update_item_from_ui(db_id, review="A later review")
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.date_completed == date(1999, 6, 15)
+
+    @pytest.mark.parametrize("days_ahead", [1, 2])
+    def test_future_date_limit_applies_before_any_item_or_season_edit(
+        self, temp_db: SQLiteDB, days_ahead: int
+    ) -> None:
+        db_id = temp_db.save_content_item(
+            ContentItem(
+                title="The Bear",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.UNREAD,
+                metadata={"seasons": 2},
+            )
+        )
+        supplied = FROZEN_TODAY + timedelta(days=days_ahead)
+        with patch("src.utils.dates.utc_now", return_value=FROZEN_NOW):
+            if days_ahead == 2:
+                with pytest.raises(sqlite_db.FutureCompletionDateError):
+                    temp_db.update_item_from_ui(
+                        db_id,
+                        status="completed",
+                        seasons_watched=[1, 2],
+                        review="Changed",
+                        date_completed=supplied,
+                    )
+            else:
+                temp_db.update_item_from_ui(
+                    db_id,
+                    status="completed",
+                    date_completed=supplied,
+                )
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.date_completed == (supplied if days_ahead == 1 else None)
+        assert retrieved.status == ("completed" if days_ahead == 1 else "unread")
+        assert retrieved.review is None
+        if days_ahead == 2:
+            assert not retrieved.metadata.get("seasons_watched")
+
+
 class TestIgnoredSyncDoor:
     def _ignored_item(self, temp_db: SQLiteDB) -> int:
         db_id = temp_db.save_content_item(

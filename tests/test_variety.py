@@ -429,8 +429,9 @@ class TestVarietyLadderUsesInAppCompletions:
     ranked a years-old imported completion above it and demoted the wrong genre."""
 
     @pytest.mark.parametrize("finished_as", ["completed", "dnf"])
-    def test_in_app_completion_outranks_older_import_regression(
-        self, tmp_path: Path, finished_as: str
+    @pytest.mark.parametrize("backdated", [False, True])
+    def test_in_app_completion_uses_supplied_date_for_variety_position_regression(
+        self, tmp_path: Path, finished_as: str, backdated: bool
     ) -> None:
         storage = SQLiteDB(tmp_path / "variety.db")
         storage.save_content_item(
@@ -454,12 +455,21 @@ class TestVarietyLadderUsesInAppCompletions:
         )
 
         storage.update_item_from_ui(db_id=scifi_id, status=finished_as)
+        if backdated:
+            storage.update_item_from_ui(
+                db_id=scifi_id, date_completed=date(1990, 6, 15)
+            )
 
         ladder = build_variety_ladder(storage.get_content_items())
 
         scifi = variety_penalty_for(_candidate("S", ["Science Fiction"]), ladder)
-        assert scifi == pytest.approx(VARIETY_TOP_PENALTY)
-        assert variety_penalty_for(_candidate("F", ["Fantasy"]), ladder) < scifi
+        fantasy = variety_penalty_for(_candidate("F", ["Fantasy"]), ladder)
+        if backdated:
+            assert fantasy == pytest.approx(VARIETY_TOP_PENALTY)
+            assert scifi < fantasy
+        else:
+            assert scifi == pytest.approx(VARIETY_TOP_PENALTY)
+            assert fantasy < scifi
 
 
 class TestUndatedCompletionsStillClaimRungs:

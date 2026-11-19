@@ -5,6 +5,7 @@ import sqlite3
 import threading
 from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -384,6 +385,7 @@ class StorageManager:
         release_year: int | None = None,
         creator: str | None = None,
         user_id: int | None = None,
+        date_completed: date | Unset = UNSET,
     ) -> bool:
         """The explicit-user-action door: it writes only the fields supplied,
         overwrites them freely, and holds each but the status against its source.
@@ -402,6 +404,7 @@ class StorageManager:
             release_year=release_year,
             creator=creator,
             user_id=user_id,
+            date_completed=date_completed,
         )
         if updated:
             refresh_profile(self, user_id)

@@ -1,5 +1,6 @@
 import threading
 from dataclasses import asdict
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -229,6 +230,23 @@ class TestEveryUserOwnedWriteLeavesTheProfileCurrent:
         assert self._stored(temp_storage_manager)["genre_affinities"] == {
             "science fiction": 5.0
         }
+
+    def test_correcting_only_completion_date_regenerates_the_stored_profile(
+        self, temp_storage_manager: StorageManager
+    ) -> None:
+        db_id = temp_storage_manager.complete_content_item(
+            _book("done", "Finished Book", ConsumptionStatus.COMPLETED, 5)
+        )
+        generated_at = self._stored(temp_storage_manager)["generated_at"]
+
+        assert temp_storage_manager.update_item_from_ui(
+            db_id, date_completed=date(1999, 6, 15)
+        )
+
+        stored = temp_storage_manager.get_content_item(db_id)
+        assert stored is not None
+        assert stored.date_completed == date(1999, 6, 15)
+        assert self._stored(temp_storage_manager)["generated_at"] > generated_at
 
     def test_completing_merging_ignoring_and_deleting_each_regenerate_it(
         self, temp_storage_manager: StorageManager
