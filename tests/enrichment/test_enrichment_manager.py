@@ -25,6 +25,7 @@ from src.enrichment.provider_base import (
     EnrichmentResult,
     ProviderError,
     ProviderRefusedError,
+    ProviderUnreadableError,
     SeriesOrdinal,
 )
 from src.enrichment.providers.tmdb.tmdb import TMDBProvider
@@ -1355,6 +1356,18 @@ class RefusingProvider(MockProvider):
         )
 
 
+class UnreadableProvider(MockProvider):
+    """Answers a 200 whose body is the wrong shape, as an edge cache's
+    interstitial does: no transport error anywhere in the chain.
+    """
+
+    def enrich(
+        self, item: ContentItem, config: dict[str, Any]
+    ) -> EnrichmentResult | None:
+        self.enrich_calls.append(item)
+        raise ProviderUnreadableError(self.name, "body said cdn-interstitial")
+
+
 class TestPermanentProviderFailureStopsRetrying:
     @pytest.fixture
     def storage_manager(self, tmp_path: Path) -> StorageManager:
@@ -1512,6 +1525,34 @@ class TestPermanentProviderFailureStopsRetrying:
         assert job_status.items_not_found == 0
         assert job_status.items_failed == asked
         assert all("invalid-jwt" in error for error in job_status.errors)
+
+    def test_a_wrong_shape_answer_is_retried_and_never_abandons_the_provider_regression(
+        self,
+        storage_manager: StorageManager,
+        registry: EnrichmentRegistry,
+        config: dict[str, Any],
+    ) -> None:
+        """A wrong-shape 200 once counted as a rejection, so a CDN interstitial
+        abandoned the provider for the run and settled every item it touched."""
+        count = _MAX_CONSECUTIVE_REJECTIONS * 2
+        db_ids = [
+            save_movie(storage_manager, f"Movie {index}") for index in range(count)
+        ]
+        provider = UnreadableProvider()
+        registry.register(provider)
+
+        manager = EnrichmentManager(storage_manager, config, registry)
+        manager.start_enrichment(content_type=ContentType.MOVIE)
+        assert manager._wait_for_completion()
+
+        assert len(provider.enrich_calls) == count
+        assert queued_ids(storage_manager) == set(db_ids)
+        status = storage_manager.enrichment.status(db_ids[0])
+        assert status is not None
+        assert status["enrichment_error"] == f"{provider.name}: ProviderUnreadableError"
+        job_status = manager.get_status()
+        assert not any("abandoned" in error for error in job_status.errors)
+        assert not any("cdn-interstitial" in error for error in job_status.errors)
 
     def test_abandoning_one_types_providers_ends_a_run_scoped_to_that_type(
         self,
