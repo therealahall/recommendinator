@@ -267,6 +267,14 @@ class TestTagOverlapScorer:
 
         assert score(1) == score(5) / 2 == 1 / 6
 
+    @pytest.mark.parametrize("ratings", [(5, 1), (1, 5)])
+    def test_identically_tagged_items_keep_the_higher_ratings_lift(
+        self, ratings: tuple[int, int]
+    ) -> None:
+        # Both orders: last-wins fails (5, 1), first-wins fails (1, 5).
+        consumed = [make_item(genres="War", rating=rating) for rating in ratings]
+        assert self._score(consumed, "War") == 1 / 3
+
 
 class TestBuildScorersWithOverrides:
     def test_partial_override(self) -> None:
