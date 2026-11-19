@@ -55,6 +55,9 @@ export const useLibraryStore = defineStore('library', () => {
   const pinned = ref<Record<string, string>>({})
   const pinSearching = ref(false)
   const pinMessage = ref('')
+  // The search's own failure, apart from editError: that ref is also written by
+  // saves, pins and retries, none of which say anything about what was offered.
+  const pinSearchError = ref('')
 
   // What every writer says about the fields of the item being edited, which is
   // what the switcher offers. Read with the item: a choice is made from it.
@@ -245,6 +248,7 @@ export const useLibraryStore = defineStore('library', () => {
     pinCandidates.value = []
     pinned.value = {}
     pinMessage.value = ''
+    pinSearchError.value = ''
     fieldWriters.value = []
   }
 
@@ -276,6 +280,7 @@ export const useLibraryStore = defineStore('library', () => {
     pinSearching.value = true
     editError.value = ''
     pinMessage.value = ''
+    pinSearchError.value = ''
     try {
       const found = await api.get<EnrichmentCandidatesResponse>('/enrichment/candidates', {
         item_id: dbId,
@@ -285,7 +290,8 @@ export const useLibraryStore = defineStore('library', () => {
       pinCandidates.value = found.candidates
       pinned.value = found.pinned
     } catch (err) {
-      editError.value = err instanceof Error ? err.message : 'Failed to search'
+      pinSearchError.value = err instanceof Error ? err.message : 'Failed to search'
+      editError.value = pinSearchError.value
       pinCandidates.value = []
     } finally {
       pinSearching.value = false
@@ -512,6 +518,7 @@ export const useLibraryStore = defineStore('library', () => {
     pinned,
     pinSearching,
     pinMessage,
+    pinSearchError,
     fieldWriters,
     mergeAnchor,
     mergeQuery,
