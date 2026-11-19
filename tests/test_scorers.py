@@ -155,6 +155,17 @@ class TestGenreMatchScorer:
         assert score("Drama", "Crime") == score("Crime") > 0.5
         assert score("Drama", "Crime", "Western") == 0.5
 
+    def test_a_shared_genre_cluster_without_a_shared_tag_scores_neutral(self) -> None:
+        """Catches genre_match starting to read genre clusters, which only
+        tag_overlap does."""
+        library = {"Cyberpunk": [5] * 3, "Romance": [1] * 3}
+        consumed = [make_item(genres="Cyberpunk", rating=5)]
+        space_opera = make_item(status=ConsumptionStatus.UNREAD, genres="Space Opera")
+
+        assert _genre_score(library, "Cyberpunk") > 0.5
+        assert _genre_score(library, "Space Opera") == 0.5
+        assert TagOverlapScorer().score(space_opera, _build_context(consumed)) > 0
+
 
 class TestCreatorMatchScorer:
     def test_preferred_author_scores_high(self) -> None:
@@ -200,13 +211,30 @@ class TestCreatorMatchScorer:
 
     def test_a_creator_rated_only_one_star_scores_below_a_stranger(self) -> None:
         """Catches a 1-star creator no longer dragging their next work down."""
-        context = _build_context(consumed=[make_item(author="Terry Brooks", rating=1)])
+        context = _build_context(consumed=[make_item(author="Ilse Varden", rating=1)])
         scorer = CreatorMatchScorer()
         disliked, stranger = (
             make_item(author=author, status=ConsumptionStatus.UNREAD)
-            for author in ("Terry Brooks", "Robin Hobb")
+            for author in ("Ilse Varden", "Oren Pell")
         )
         assert scorer.score(disliked, context) < scorer.score(stranger, context) == 0.5
+
+    def test_a_mixed_record_scores_between_a_hated_and_a_loved_creator(self) -> None:
+        """Catches a 1, 1, 5, 5, 5 record no longer reading as middling."""
+        consumed = [
+            *(make_item(author="Ilse Varden", rating=r) for r in (1, 1, 5, 5, 5)),
+            make_item(author="Oren Pell", rating=1),
+            make_item(author="Mara Quill", rating=5),
+        ]
+        context = _build_context(consumed=consumed)
+        hated, mixed, loved = (
+            CreatorMatchScorer().score(
+                make_item(author=author, status=ConsumptionStatus.UNREAD), context
+            )
+            for author in ("Oren Pell", "Ilse Varden", "Mara Quill")
+        )
+        assert hated < mixed < loved
+        assert mixed == 0.5
 
 
 class TestTagOverlapScorer:
