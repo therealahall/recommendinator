@@ -3217,6 +3217,85 @@ class TestEditedCompletionDate:
             assert not retrieved.metadata.get("seasons_watched")
 
 
+class TestCompletionDateOwnership:
+    @pytest.mark.parametrize("door", ["edit", "complete"])
+    def test_sync_cannot_undo_a_backdated_completion_until_its_hold_is_released(
+        self, temp_db: SQLiteDB, door: str
+    ) -> None:
+        imported = ContentItem(
+            id="movie-1",
+            title="The Matrix",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.COMPLETED,
+            source="trakt",
+            date_completed=date(2024, 3, 1),
+        )
+        db_id = temp_db.save_content_item(imported)
+        corrected_date = date(1999, 6, 15)
+        if door == "edit":
+            temp_db.update_item_from_ui(db_id, date_completed=corrected_date)
+        else:
+            temp_db.complete_content_item(
+                imported.model_copy(update={"date_completed": corrected_date})
+            )
+
+        assert temp_db.save_content_item(imported) == db_id
+        temp_db.rebuild_item(db_id)
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.date_completed == corrected_date
+        assert retrieved.manual_fields == ["date_completed"]
+        with temp_db.connection() as conn:
+            held_dates = [
+                write.value
+                for write in read_field_writes(conn.cursor(), db_id)
+                if write.field == "date_completed"
+                and write.writer_kind is WriterBand.MANUAL
+            ]
+        assert held_dates == ["1999-06-15"]
+
+        assert temp_db.clear_manual_field(db_id, "date_completed")
+        temp_db.save_content_item(imported)
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.date_completed == imported.date_completed
+        assert retrieved.manual_fields == []
+
+    @pytest.mark.parametrize("door", ["edit", "complete"])
+    @pytest.mark.parametrize("stored", [None, date(2024, 3, 1)])
+    def test_omitting_completion_date_does_not_hold_the_preserved_or_default_date(
+        self, temp_db: SQLiteDB, door: str, stored: date | None
+    ) -> None:
+        imported = ContentItem(
+            id="movie-1",
+            title="The Matrix",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+            source="trakt",
+            date_completed=stored,
+        )
+        db_id = temp_db.save_content_item(imported)
+        with patch("src.utils.dates.utc_now", return_value=FROZEN_NOW):
+            if door == "edit":
+                temp_db.update_item_from_ui(db_id, status="completed")
+            else:
+                temp_db.complete_content_item(
+                    imported.model_copy(update={"date_completed": None})
+                )
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.date_completed == (stored or FROZEN_TODAY)
+        assert retrieved.manual_fields == []
+
+        incoming_date = FROZEN_TODAY + timedelta(days=1)
+        temp_db.save_content_item(
+            imported.model_copy(update={"date_completed": incoming_date})
+        )
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.date_completed == incoming_date
+
+
 class TestIgnoredSyncDoor:
     def _ignored_item(self, temp_db: SQLiteDB) -> int:
         db_id = temp_db.save_content_item(
