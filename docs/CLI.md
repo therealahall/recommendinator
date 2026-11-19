@@ -497,7 +497,7 @@ uv run python -m src.cli enrichment start --retry-not-found   # providers drift 
 uv run python -m src.cli enrichment status                    # library counts by provider
 uv run python -m src.cli enrichment job                       # the live run, if there is one
 uv run python -m src.cli enrichment stop
-uv run python -m src.cli enrichment reset                     # drop every provider's values, then re-enrich
+uv run python -m src.cli enrichment reset                     # drop every provider's values and queue the items; run enrichment start afterward
 uv run python -m src.cli enrichment reset --id 42             # drop one item's provider values, then re-enrich
 uv run python -m src.cli enrichment reset --hard              # also drop the values no writer claimed
 uv run python -m src.cli enrichment requeue --id 42           # enrich one item again, keeping what it holds
@@ -518,11 +518,11 @@ for the run; a clear rebuilds it at once and leaves it queued.
 Only a provider that reads a pin can be pinned, and only to an id it can look
 up; the refusal names the ones that can.
 
-`reset` deletes what the providers in scope stated from the ledger — across a merge group, so a survivor and the rows merged into it go together — and rebuilds each item on what is left standing: what its sources said, your own edits and its pins. A field only a provider ever filled is emptied, and the item is queued for the run that refills it.
+`reset` deletes what the providers in scope stated from the ledger — across a merge group, so a survivor and the rows merged into it go together — and rebuilds each item on what is left standing: what its sources said, your own edits and its pins. A field only a provider ever filled is emptied, and the item is queued for the run that refills it. A reset with `--id` starts that run and waits for it; any other reset starts none, so `enrichment start` follows it.
 
 `--provider` reaches every item that provider wrote a ledger row for, not only the ones credited to it for the match, so resetting one provider takes back its word everywhere it spoke.
 
-`--hard` takes the unclaimed band with it: what the library held before the ledger existed, which nothing else deletes. Only the writer that supplied a value stating it again brings it back, so a re-sync or a re-enrich restores most of it. It is the recourse for a value a provider stated once and has gone quiet about. In bulk it starts no run.
+`--hard` takes the unclaimed band with it: what the library held before the ledger existed, which nothing else deletes. Only the writer that supplied a value stating it again brings it back, so a re-sync or a re-enrich restores most of it. It is the recourse for a value a provider stated once and has gone quiet about.
 
 Your edits, pins, ratings and reviews stand, since a hard reset never drops the manual band, and the title is never cleared. Cover art is not spared: a cover the library held before the ledger goes with the rest, and the next enrichment run refetches it. A creator typed at the completion door before this release is unclaimed too, and goes the same way: nothing recorded which values those were.
 
