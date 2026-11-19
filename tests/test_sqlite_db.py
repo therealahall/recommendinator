@@ -26,7 +26,7 @@ from src.storage.merge import (
 from src.storage.schema import write_enrichment_complete
 from src.storage.sqlite_db import SaveOutcome, SQLiteDB, UncorrectableFieldError
 from src.utils.item_serialization import item_to_dict
-from src.utils.series import latest_season_rating
+from src.utils.series import latest_season_rating, unrated_watched_seasons
 from src.utils.sorting import build_search_text, get_sort_title
 from tests.factories import drop_the_ledger_write_guard
 
@@ -3810,6 +3810,33 @@ class TestSeasonRatings:
 
         temp_db.unmerge_content_items(record.id)
         assert self._rating(temp_db, survivor) == 1
+
+    def test_a_merge_keeps_the_season_only_the_absorbed_row_rated(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """The survivor's season_ratings map used to replace the absorbed one
+        whole, leaving season 2 watched but unrated."""
+        absorbed = self._show(temp_db)
+        temp_db.update_item_from_ui(absorbed, season_ratings={1: 1, 2: 5})
+        survivor = temp_db.save_content_item(
+            ContentItem(
+                id="sonarr:rated",
+                title="The Same Show, Renamed",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.CURRENTLY_CONSUMING,
+                source="sonarr",
+                metadata={"seasons": 4, "seasons_watched": [1, 2]},
+            )
+        )
+        temp_db.update_item_from_ui(survivor, season_ratings={1: 3})
+
+        temp_db.merge_content_items(survivor, absorbed, MergeEvidence.MANUAL)
+
+        retrieved = temp_db.get_content_item(survivor)
+        assert retrieved is not None
+        assert retrieved.metadata["season_ratings"] == {"1": 3, "2": 5}
+        assert unrated_watched_seasons(retrieved.metadata) == []
+        assert retrieved.rating == 4
 
     def test_a_show_with_no_rated_seasons_keeps_an_editable_rating(
         self, temp_db: SQLiteDB
