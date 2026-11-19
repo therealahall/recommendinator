@@ -266,6 +266,7 @@ onUnmounted(() => {
       :pinned="lib.pinned"
       :pin-searching="lib.pinSearching"
       :pin-message="lib.pinMessage"
+      :pin-search-error="lib.pinSearchError"
       :field-writers="lib.fieldWriters"
       @save="lib.saveEdit"
       @clear-manual="onClearManual"

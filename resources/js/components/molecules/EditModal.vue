@@ -37,6 +37,8 @@ const props = defineProps<{
   pinSearching?: boolean
   /** What the server said about the last pin, retry or reset, '' before any. */
   pinMessage?: string
+  /** Why the last provider search failed, '' while it has not. */
+  pinSearchError?: string
   /** Left out where the host has not wired the switcher, which hides it. */
   fieldWriters?: FieldWriters[]
 }>()
@@ -316,8 +318,9 @@ const pinNote = computed(() => {
   if (props.pinMessage) return props.pinMessage
   if (!searched.value) return ''
   // A failed search empties the list and says why in the refusal below, so
-  // claiming nothing was offered would announce a second, contradictory story.
-  if (pinRows.value.length === 0) return props.saveError ? '' : 'No provider offered a record'
+  // "nothing offered" would contradict it. A refused save says nothing about
+  // the offer, so only the search's own failure counts.
+  if (pinRows.value.length === 0) return props.pinSearchError ? '' : 'No provider offered a record'
   return pinRows.value.length === 1 ? '1 record offered' : `${pinRows.value.length} records offered`
 })
 

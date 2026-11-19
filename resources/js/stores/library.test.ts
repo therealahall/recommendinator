@@ -564,4 +564,31 @@ describe('useLibraryStore', () => {
     expect(store.pinMessage).toBe('')
     expect(store.editError).toBe('Provider is down')
   })
+
+  // Regression: the dialog read the search's failure off the shared editError,
+  // so a refused save or pin passed for a failed search.
+  it('only a failed provider search sets pinSearchError, and the next search or closing clears it', async () => {
+    const store = useLibraryStore()
+
+    mockGet.mockRejectedValueOnce(new Error('openlibrary: HTTP 500'))
+    await store.findPinCandidates(1, '')
+    expect(store.pinSearchError).toBe('openlibrary: HTTP 500')
+    expect(store.editError).toBe('openlibrary: HTTP 500')
+
+    mockGet.mockResolvedValueOnce({ item_id: 1, candidates: [], pinned: {} })
+    await store.findPinCandidates(1, '')
+    expect(store.pinSearchError).toBe('')
+
+    mockPatch.mockRejectedValueOnce(new Error('Item 1 not found'))
+    await expect(store.saveEdit(1, { title: 'B' })).rejects.toThrow('Item 1 not found')
+    mockPost.mockRejectedValueOnce(new Error('Provider is down'))
+    await store.pinEnrichment(1, 'rawg', '41494')
+    expect(store.editError).toBe('Provider is down')
+    expect(store.pinSearchError).toBe('')
+
+    mockGet.mockRejectedValueOnce(new Error('openlibrary: HTTP 500'))
+    await store.findPinCandidates(1, '')
+    store.closeEdit()
+    expect(store.pinSearchError).toBe('')
+  })
 })

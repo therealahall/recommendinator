@@ -203,11 +203,36 @@ describe('EditModal', () => {
     await wrapper.findAll('button').find(b => b.text() === 'Search providers')!.trigger('click')
 
     const refused = 'openlibrary: Failed to read an Open Library link: HTTP 500'
-    await wrapper.setProps({ saveError: refused })
+    await wrapper.setProps({ saveError: refused, pinSearchError: refused })
     await vi.runAllTimersAsync()
 
     expect(wrapper.get('[role="alert"]').text()).toBe(refused)
     expect(wrapper.get('#edit-pin-note').text()).toBe('')
+    wrapper.unmount()
+  })
+
+  // Regression: the note gated on the shared saveError, so any refusal in the
+  // dialog erased a true "nothing offered" from an earlier search.
+  it('a refused save after an empty search still says no provider offered a record', async () => {
+    const wrapper = mount(EditModal, {
+      props: {
+        item: defaultItem,
+        saving: false,
+        saveError: '',
+        pinned: {},
+        pinCandidates: [],
+        pinSearching: false,
+      },
+      attachTo: document.body,
+    })
+    await wrapper.findAll('button').find(b => b.text() === 'Search providers')!.trigger('click')
+    expect(wrapper.get('#edit-pin-note').text()).toBe('No provider offered a record')
+
+    await wrapper.setProps({ saveError: 'Item 1 not found' })
+    await vi.runAllTimersAsync()
+
+    expect(wrapper.get('[role="alert"]').text()).toBe('Item 1 not found')
+    expect(wrapper.get('#edit-pin-note').text()).toBe('No provider offered a record')
     wrapper.unmount()
   })
 
