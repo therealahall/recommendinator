@@ -198,6 +198,8 @@ An object is refused rather than stored as its Python repr, and the refusal
 fails the whole item's save: sync reports only `Failed to process '<title>'`
 while the log line names the key.
 
+### Keys first-party code reads
+
 First-party code also reads metadata directly, including keys kept in the blob:
 
 | Read by | Keys |
@@ -216,6 +218,8 @@ That list grows, so check those files. The rest of the blob is yours.
 **Taking one of those keys for your own bookkeeping changes behaviour, with no
 warning or error.** Your own `number_of_seasons` re-classifies the show's
 length.
+
+### Series name and position
 
 RAWG writes `average_playtime_hours`, TMDB writes `series_name` and
 `tmdb_collection_id`. Neither writes a position. Each writer's statement is
@@ -355,7 +359,7 @@ configured `url` field takes `redirect_refusal` instead, which tells the operato
 to repoint that setting.
 
 That example sends its key in a header, so `from error` is right here. A key in
-the query string wants `from None` — see [best practices](#best-practices).
+the query string wants `from None` — see [secrets in request errors](#secrets-in-request-errors).
 
 ## Registration
 
@@ -466,6 +470,8 @@ the flag, read it with `parse_ignored_field()` from `importers.rows`, not
 Use `parse_seasons_watched()` from `importers.rows` to convert a string. A bare
 integer is read as a count, so `5` becomes `[1, 2, 3, 4, 5]`. `seasons_watched_dates` maps those season numbers, as
 strings, to ISO timestamps; anything else is discarded.
+
+### Secrets in request errors
 
 **Scrub `requests` errors that may carry secrets.** A `requests` exception's
 `str()` embeds the full request URL, so a secret in the URL or query string
@@ -596,6 +602,8 @@ Every request carrying the api key goes through `request_within_origin`, since
 `requests` replays the key onto whatever host a `Location` names.
 `tests/test_credential_url_chains.py` fails a provider calling `requests`
 directly.
+
+### Example provider
 
 Everything above `rate_limit_requests_per_second` works as it does on a source
 plugin; the rest differs:
