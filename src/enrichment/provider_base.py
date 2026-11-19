@@ -178,6 +178,12 @@ class ProviderRefusedError(ProviderError):
         self.codes = sanitize_for_log(codes)
 
 
+class ProviderUnreadableError(ProviderError):
+    """The service answered, but with a body of the wrong shape: an edge cache's
+    interstitial on a 200 clears on its own, so it is retried, never abandoned.
+    """
+
+
 #: Where a provider that states no precedence sits: behind every provider that
 #: states one, so installing one cannot displace the order the rest agreed on.
 TRAILING_PRECEDENCE = 100

@@ -16,6 +16,7 @@ from src.enrichment.provider_base import (
     EnrichmentResult,
     ProviderError,
     ProviderRefusedError,
+    ProviderUnreadableError,
     accepts_a_pin,
     offers_candidates,
     states_a_match,
@@ -106,6 +107,8 @@ def _classify_failure(provider_name: str, error: Exception) -> _ProviderFailure:
         return _ProviderFailure(
             provider_name, f"refused the credential ({error.codes})", retryable=False
         )
+    if isinstance(error, ProviderUnreadableError):
+        return _ProviderFailure(provider_name, type(error).__name__, retryable=True)
     request_error = _chained(error, requests.RequestException)
     if request_error is None:
         refused = _chained(error, RedirectRefused)
