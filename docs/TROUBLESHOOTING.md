@@ -56,7 +56,7 @@ Recommendations come from items you have **not** consumed, so:
 
 - Everything is completed. Add items you have not finished.
 - Nothing is rated. The engine learns only from rated, non-ignored items,
-  completed or in progress.
+  completed, in progress or did not finish.
 - No unconsumed items of the requested `--type`.
 - Everything left is in progress. Something you are part-way through is never recommended back.
 - Series ordering excluded the rest. Check `series_in_order`.
