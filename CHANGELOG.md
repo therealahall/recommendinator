@@ -1,6 +1,67 @@
 # CHANGELOG
 
 
+## v0.82.0 (2026-11-19)
+
+### Bug Fixes
+
+- **enrichment**: Drop what a provider stated from its old record when pinned to a new one
+  ([`b1e23b7`](https://github.com/therealahall/recommendinator/commit/b1e23b763f8d1cfd201cb2695e1a6e6bb11ccb81))
+
+- **enrichment**: Raise the unreadable error at every provider shape guard
+  ([`9234d6e`](https://github.com/therealahall/recommendinator/commit/9234d6e6e5609a021e50642defcb884b2a0f868b))
+
+- **enrichment**: Retry a provider answer whose body is the wrong shape
+  ([`949feea`](https://github.com/therealahall/recommendinator/commit/949feeacf01320df412b7102cd6e63928a5135e7))
+
+- **storage**: Empty a blob-only field when its last writer's rows are dropped
+  ([`931d7e0`](https://github.com/therealahall/recommendinator/commit/931d7e016c8833577d3cd422e5883b35d47528d4))
+
+- **web**: Keep the empty pin search note when an unrelated action fails
+  ([`5d6e4ef`](https://github.com/therealahall/recommendinator/commit/5d6e4ef92e286034f3a3f82a6135cf6a5a61a408))
+
+### Documentation
+
+- **enrichment**: Describe the requeue endpoint in OpenAPI
+  ([`d6a1155`](https://github.com/therealahall/recommendinator/commit/d6a11554725a1d6d8670da395494d5becf904c8e))
+
+- **enrichment**: Describe Wikidata candidates and pins
+  ([`1797073`](https://github.com/therealahall/recommendinator/commit/179707372d7640ec12ae87e720d92c82acb35f34))
+
+- **enrichment**: Name the dialog's reset button beside reset --id
+  ([`e679544`](https://github.com/therealahall/recommendinator/commit/e67954468d4e9430e1a8fa0a1ce11859ebe61d83))
+
+- **enrichment**: Say IGDB fills themes, not tags
+  ([`3f510e6`](https://github.com/therealahall/recommendinator/commit/3f510e6eb63ee076940c41dc0f9787f271d75877))
+
+### Features
+
+- **enrichment**: Offer Wikidata candidates and honour a QID pin
+  ([`564712a`](https://github.com/therealahall/recommendinator/commit/564712a58224dd45f2b4e86f81f4602e01c4dc7e))
+
+- **enrichment**: Reset one item's enrichment from the edit dialog
+  ([`10be317`](https://github.com/therealahall/recommendinator/commit/10be3170c83cdb66543c3141221261edb17e98af))
+
+- **enrichment**: Store IGDB themes apart from tags
+  ([`3041206`](https://github.com/therealahall/recommendinator/commit/304120605e4475c576bc20f87901621e80c65439))
+
+- **recommendations**: Cluster games from genres and themes, not tags
+  ([`2000eb0`](https://github.com/therealahall/recommendinator/commit/2000eb0c3fe388cef051d1232c9d0b72fbf76b10))
+
+### Performance Improvements
+
+- **storage**: Commit an enrichment reset in batches, not per item
+  ([`3043266`](https://github.com/therealahall/recommendinator/commit/3043266644f28df922e1058bf75970eccdf377c8))
+
+- **storage**: Count every provider's reset scope in one grouped pass
+  ([`557bec3`](https://github.com/therealahall/recommendinator/commit/557bec3ae7f7abba06a93ad3d15d95e01676373f))
+
+### Refactoring
+
+- **enrichment**: Share the reset confirmation wording
+  ([`85e9090`](https://github.com/therealahall/recommendinator/commit/85e9090b86df70241cedfd5f36b6207bf911d1d2))
+
+
 ## v0.81.4 (2026-11-19)
 
 ### Bug Fixes
