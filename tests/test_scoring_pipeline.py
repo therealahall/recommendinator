@@ -108,6 +108,28 @@ class TestScoringPipeline:
         result = pipeline.score_candidates_with_breakdown([candidate], context)
         assert result[0].aggregate_score == 0.0
 
+    def test_an_item_with_no_metadata_scores_the_documented_bare_score(self) -> None:
+        """Catches drift from the bare-item score SCORING.md states: neutral
+        genre and creator rows, and tag_overlap's 0 keeping its weight."""
+        context = _build_context(
+            consumed=[make_item(rating=5, author="Ursula K. Le Guin", genres="Fantasy")]
+        )
+        bare = make_item(title="Bare ROM", status=ConsumptionStatus.UNREAD)
+
+        result = ScoringPipeline(DEFAULT_SCORERS).score_candidates_with_breakdown(
+            [bare], context
+        )
+
+        assert result[0].score_breakdown == {
+            "genre_match": 0.5,
+            "creator_match": 0.5,
+            "tag_overlap": 0.0,
+        }
+        assert result[0].aggregate_score == pytest.approx(
+            (0.5 * 2 + 0.5 * 1.5 + 0 * 1) / 4.5
+        )
+        assert round(result[0].aggregate_score, 2) == 0.39
+
 
 class TestAdaptationCannotDemoteRegression:
     def test_an_adaptation_of_a_well_rated_work_never_ranks_below_no_adaptation(

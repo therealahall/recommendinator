@@ -187,6 +187,24 @@ class TestBuildVarietyLadder:
         assert older_only == pytest.approx(older_rung / 2)
         assert shared > older_only
 
+    def test_a_one_star_completion_claims_its_rung_like_a_five_star_one(self) -> None:
+        """Catches the ladder being narrowed to liked completions: a genre just
+        finished and hated still needs a rest from the next recommendations."""
+        hated = _completed("Hated", ["Fantasy"], completed_on=date(2026, 1, 2))
+        hated.rating = 1
+        loved = _completed("Loved", ["Science Fiction"], completed_on=date(2026, 1, 1))
+        loved.rating = 5
+        ladder = build_variety_ladder([hated, loved])
+
+        assert variety_penalty_for(
+            _candidate("F", ["Fantasy"]), ladder
+        ) == pytest.approx(VARIETY_TOP_PENALTY)
+        assert variety_penalty_for(
+            _candidate("S", ["Science Fiction"]), ladder
+        ) == pytest.approx(
+            VARIETY_TOP_PENALTY * (VARIETY_LADDER_STEPS - 1) / VARIETY_LADDER_STEPS
+        )
+
     def test_undated_items_sort_after_dated_items(self) -> None:
         items = [
             _completed("Undated", ["Fantasy"], completed_on=None, db_id=1),
