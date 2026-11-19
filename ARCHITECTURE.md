@@ -71,7 +71,7 @@ One pass runs at a time: it claims the job, heartbeats the item it is on, and en
 |-------|------|
 | `rating`, `review` | Fill-only, so a re-import cannot erase either |
 | `status` | Forward-only, through `resolve_status_forward` (`src/storage/merge.py`). `dnf` ranks above every source status, so no sync leaves it |
-| `date_completed` | Later date wins |
+| `date_completed` | Later date wins unless an explicit completion date or edit holds it |
 | `ignored` | Only a stated `True` or `False` wins, in either direction. `None` leaves the stored flag alone |
 
 `seasons_watched` is the one metadata key the sync door unions.
@@ -112,6 +112,10 @@ These four act on the caller's word alone, and touch only what it named:
 fills an empty column with today and keeps an existing date. A named date is
 written as given, but no further ahead than `MAX_COMPLETION_DATE_SKEW` — one
 day, for a caller in a zone ahead of the server — and the check is at the door.
+Both user-action doors record an explicitly supplied date as a manual field
+write. The sync door leaves it alone until `clear_manual_field` releases the
+hold; an omitted date creates no hold. The ledger records ownership here,
+while the user-action doors write the column directly.
 
 #### Source configuration
 

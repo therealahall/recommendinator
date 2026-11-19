@@ -107,6 +107,11 @@ use today in the host's timezone for an undated item. No prompt is required.
 Malformed calendar dates and dates more than one day ahead of the host's today
 are refused without saving any part of the completion.
 
+An explicitly supplied date is held against future syncs and listed in
+`library show` under manual fields. To accept source dates again, use
+`library clear-manual --id 42 --field date_completed`. Omitting the date creates
+no new hold; a later date from a source may still replace an unheld date.
+
 A blank or whitespace-only `--title` is refused. `--review` replaces the stored
 review, so a blank one is refused rather than written. To erase a review, use
 `library edit --clear-review`.
@@ -208,8 +213,9 @@ rating. A show with no season rated keeps a rating of its own.
 
 `--creator` corrects the field a title match is vetoed on, so a row with a wrong creator takes the next source stating the true one instead of growing the library another row. `--release-year` corrects the year shown. A year runs 1800-2200 and a creator 500 characters; a book takes no `--release-year`, because `year_published` dates the edition rather than the work.
 
-`--date-completed YYYY-MM-DD` corrects the saved completion date without requiring
-a status change, under the same date rules as `complete`. Unrelated edits keep
+`--date-completed YYYY-MM-DD` corrects and holds the saved completion date without
+requiring a status change, under the same date rules as `complete`, including
+protection from later source dates until the hold is released. Unrelated edits keep
 the date. Marking an undated item completed (or did not finish) without this
 option uses local today; a saved date is preserved.
 
