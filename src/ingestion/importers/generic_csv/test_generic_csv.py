@@ -94,6 +94,15 @@ class TestBooks:
 
         assert parsed[0].status == ConsumptionStatus.UNREAD.value
 
+    def test_both_did_not_finish_spellings_import_as_dnf(self) -> None:
+        """Losing either spelling would import abandoned items as unread."""
+        parsed = items("title,status\nOne,dnf\nTwo,did_not_finish\n")
+
+        assert [item.status for item in parsed] == [
+            ConsumptionStatus.DNF.value,
+            ConsumptionStatus.DNF.value,
+        ]
+
     def test_a_zero_rating_is_unrated(self) -> None:
         assert items("title,rating\nTest,0\n")[0].rating is None
 

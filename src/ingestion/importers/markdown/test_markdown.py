@@ -113,6 +113,20 @@ class TestSections:
             ConsumptionStatus.UNREAD.value,
         ]
 
+    def test_a_did_not_finish_heading_marks_its_items_dnf(self) -> None:
+        """Losing the keyword would import abandoned items as completed."""
+        parsed = items(
+            "## Completed\n"
+            "- **Dune** by Frank Herbert\n\n"
+            "## Did Not Finish\n"
+            "- **Ulysses** by James Joyce\n"
+        )
+
+        assert [item.status for item in parsed] == [
+            ConsumptionStatus.COMPLETED.value,
+            ConsumptionStatus.DNF.value,
+        ]
+
     def test_an_unrecognised_heading_leaves_the_status_alone(self) -> None:
         parsed = items(
             "## Completed\n"
