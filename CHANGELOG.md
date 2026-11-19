@@ -1,6 +1,25 @@
 # CHANGELOG
 
 
+## v0.82.5 (2026-11-19)
+
+### Bug Fixes
+
+- **storage**: Cover absorbed-only TV season ratings
+  ([`d1836fc`](https://github.com/therealahall/recommendinator/commit/d1836fc03ca8cd54f8b2d7a131656361fc38d7b0))
+
+- **storage**: Preserve per-season ratings when merging TV shows
+  ([`0242c00`](https://github.com/therealahall/recommendinator/commit/0242c007b9e7fe8a8e41be8da55124f23eec7cad))
+
+### Documentation
+
+- Clarify imported season ratings override show ratings
+  ([`858a7f6`](https://github.com/therealahall/recommendinator/commit/858a7f6c0708aaf0ea8636cfb05139a45c991dfb))
+
+- Clarify next-season continuation rating fallback
+  ([`dbc4c93`](https://github.com/therealahall/recommendinator/commit/dbc4c935f9b1d085f58acec5f379d6a773c9f22e))
+
+
 ## v0.82.4 (2026-11-19)
 
 ### Bug Fixes
