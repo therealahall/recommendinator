@@ -418,10 +418,17 @@ class TestUnreleasedItemsAreNeverOffered:
             (ContentType.MOVIE, {}, True),
             (
                 ContentType.VIDEO_GAME,
+                {"release_date": "2026-11-08T00:00:00.000Z"},
+                True,
+            ),
+            (
+                ContentType.VIDEO_GAME,
                 {"release_date": "2027-01-15T00:00:00.000Z"},
                 False,
             ),
+            (ContentType.BOOK, {"year_published": 2026}, True),
             (ContentType.BOOK, {"year_published": 2027}, False),
+            (ContentType.TV_SHOW, {"first_air_date": "2026-11-08"}, True),
             (ContentType.TV_SHOW, {"first_air_date": "2026-11-09"}, False),
             (
                 ContentType.TV_SHOW,
