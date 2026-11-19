@@ -541,12 +541,14 @@ class EnrichmentManager:
                 )
 
             # Every run, CLI, web or after a sync, so a show's unaired season is
-            # re-dated by whichever one comes next.
-            self.storage_manager.enrichment.requeue_pending_seasons(
-                content_type=content_type,
-                user_id=user_id,
-                content_item_id=content_item_id,
-            )
+            # re-dated by whichever one comes next. Only with a TV matcher to
+            # ask: without one the show settles as not_found, losing its record.
+            if self._any_enabled(ContentType.TV_SHOW, states_a_match):
+                self.storage_manager.enrichment.requeue_pending_seasons(
+                    content_type=content_type,
+                    user_id=user_id,
+                    content_item_id=content_item_id,
+                )
 
             # Status polling reads total_items mid-run, so it must be set
             # before the first batch starts. Querying upfront avoids the
