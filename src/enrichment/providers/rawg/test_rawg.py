@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-from src.enrichment.provider_base import ProviderError
+from src.enrichment.provider_base import ProviderError, ProviderUnreadableError
 from src.enrichment.providers.rawg.rawg import RAWGProvider
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.utils.series import SERIES_NAME_KEY
@@ -437,6 +437,43 @@ def _response(payload: Any, status: int = 200) -> MagicMock:
 _HTML_INTERSTITIAL = requests.exceptions.JSONDecodeError(
     "Expecting value", "<html>upstream is down</html>", 0
 )
+
+
+class TestRAWGWrongShapeAnswerIsUnreadableRegression:
+    _CONFIG = {"api_key": "test-api-key"}
+
+    @staticmethod
+    def _item(**metadata: Any) -> ContentItem:
+        return ContentItem(
+            id="game1",
+            title="Portal 2",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+            metadata=metadata,
+        )
+
+    @pytest.mark.parametrize(
+        "answered",
+        [["not a record"], {"results": "none"}, {"detail": "not a search"}],
+        ids=["a-list", "results-not-a-list", "no-results"],
+    )
+    def test_a_search(self, answered: Any) -> None:
+        with patch(
+            "src.enrichment.providers.rawg.rawg.requests.get",
+            return_value=_response(answered),
+        ):
+            with pytest.raises(ProviderUnreadableError):
+                RAWGProvider().enrich(self._item(), self._CONFIG)
+
+    def test_a_game_read(self) -> None:
+        with patch(
+            "src.enrichment.providers.rawg.rawg.requests.get",
+            return_value=_response(["not a record"]),
+        ):
+            with pytest.raises(ProviderUnreadableError):
+                RAWGProvider().enrich(
+                    self._item(enrichment_ids={"rawg": "4200"}), self._CONFIG
+                )
 
 
 class TestRAWGCandidateFromUrl:

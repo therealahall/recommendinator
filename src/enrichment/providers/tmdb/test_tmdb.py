@@ -5,7 +5,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-from src.enrichment.provider_base import EnrichmentResult, ProviderError
+from src.enrichment.provider_base import (
+    EnrichmentResult,
+    ProviderError,
+    ProviderUnreadableError,
+)
 from src.enrichment.providers.tmdb.tmdb import (
     TMDBProvider,
     clean_media_title_for_search,
@@ -980,6 +984,73 @@ class TestTMDBCandidateFromUrl:
             )
 
         assert offered is None
+
+
+class TestTMDBWrongShapeAnswerIsUnreadableRegression:
+    _CONFIG = {"api_key": "test-key", "include_keywords": False}
+
+    @staticmethod
+    def _item(content_type: ContentType, **metadata: Any) -> ContentItem:
+        return ContentItem(
+            id="item1",
+            title="Inception",
+            content_type=content_type,
+            status=ConsumptionStatus.UNREAD,
+            metadata=metadata,
+        )
+
+    def test_a_link_read(self) -> None:
+        with patch(
+            "src.enrichment.providers.tmdb.tmdb.requests.get",
+            return_value=_response(["not a record"]),
+        ):
+            with pytest.raises(ProviderUnreadableError):
+                TMDBProvider().candidate_from_url(
+                    self._item(ContentType.MOVIE),
+                    "https://www.themoviedb.org/movie/27205-inception",
+                    self._CONFIG,
+                )
+
+    @pytest.mark.parametrize(
+        "answered",
+        [["not a record"], {"results": "none"}],
+        ids=["a-list", "results-not-a-list"],
+    )
+    def test_a_search(self, answered: Any) -> None:
+        with patch(
+            "src.enrichment.providers.tmdb.tmdb.requests.get",
+            return_value=_response(answered),
+        ):
+            with pytest.raises(ProviderUnreadableError):
+                TMDBProvider().enrich(self._item(ContentType.MOVIE), self._CONFIG)
+
+    @pytest.mark.parametrize("content_type", [ContentType.MOVIE, ContentType.TV_SHOW])
+    def test_a_detail_read(self, content_type: ContentType) -> None:
+        with patch(
+            "src.enrichment.providers.tmdb.tmdb.requests.get",
+            return_value=_response(["not a record"]),
+        ):
+            with pytest.raises(ProviderUnreadableError):
+                TMDBProvider().enrich(
+                    self._item(content_type, tmdb_id=27205), self._CONFIG
+                )
+
+    def test_a_keywords_read_costs_only_the_keywords(self) -> None:
+        with patch(
+            "src.enrichment.providers.tmdb.tmdb.requests.get",
+            side_effect=[
+                _response({"id": 27205, "genres": [{"name": "Action"}]}),
+                _response(["not keywords"]),
+            ],
+        ):
+            result = TMDBProvider().enrich(
+                self._item(ContentType.MOVIE, tmdb_id=27205),
+                {**self._CONFIG, "include_keywords": True},
+            )
+
+        assert result is not None
+        assert result.genres == ["Action"]
+        assert result.tags is None
 
 
 class TestTMDBApiKeyScrubbingRegression:

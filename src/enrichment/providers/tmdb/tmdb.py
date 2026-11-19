@@ -9,6 +9,7 @@ from src.enrichment.provider_base import (
     EnrichmentProvider,
     EnrichmentResult,
     ProviderError,
+    ProviderUnreadableError,
     is_numeric_record_id,
     link_record,
     log_search_title,
@@ -277,9 +278,14 @@ class TMDBProvider(EnrichmentProvider):
                 self.name,
                 f"Failed to read a TMDB link: {scrub_request_error(error)}",
             ) from None
+        return _candidate({**self._record(payload, "a link"), "id": record_id})
+
+    def _record(self, payload: Any, asked: str) -> dict[str, Any]:
         if not isinstance(payload, dict):
-            raise ProviderError(self.name, "TMDB answered a link with no record")
-        return _candidate({**payload, "id": record_id})
+            raise ProviderUnreadableError(
+                self.name, f"TMDB answered {asked} with no record"
+            )
+        return payload
 
     def _get(self, url: str, params: dict[str, Any]) -> requests.Response:
         try:
@@ -347,13 +353,18 @@ class TMDBProvider(EnrichmentProvider):
                 params={"api_key": api_key, **params},
             )
             response.raise_for_status()
-            results = response.json().get("results", [])
+            payload = response.json()
         except requests.RequestException as error:
             # ``from None``: the api_key is a query parameter, so the URL on
             # ``__cause__`` is a credential a caller's traceback would print.
             raise ProviderError(
                 self.name, f"Failed to search TMDB: {scrub_request_error(error)}"
             ) from None
+        results = self._record(payload, "a search").get("results")
+        if not isinstance(results, list):
+            raise ProviderUnreadableError(
+                self.name, "TMDB answered a search with no results"
+            )
         return [_candidate(result) for result in results]
 
     def _matched_id(
@@ -389,7 +400,7 @@ class TMDBProvider(EnrichmentProvider):
                 },
             )
             response.raise_for_status()
-            movie = response.json()
+            movie = self._record(response.json(), "a movie")
 
             genres = [genre["name"] for genre in movie.get("genres", [])]
 
@@ -461,7 +472,7 @@ class TMDBProvider(EnrichmentProvider):
                 params={"api_key": api_key, "language": language},
             )
             response.raise_for_status()
-            show = response.json()
+            show = self._record(response.json(), "a show")
 
             genres = [genre["name"] for genre in show.get("genres", [])]
 
@@ -545,7 +556,7 @@ class TMDBProvider(EnrichmentProvider):
                 params={"api_key": api_key},
             )
             response.raise_for_status()
-            data = response.json()
+            data = self._record(response.json(), "keywords")
 
             keywords = [keyword["name"] for keyword in data.get(result_key, [])[:20]]
             return keywords if keywords else None

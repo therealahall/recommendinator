@@ -335,8 +335,9 @@ Rules:
   `_is_retryable`). Transport errors, 5xx, 408 and 429 are retryable, so
   `mark_enrichment_failed` records the error and leaves `needs_enrichment=1`. Any
   other 4xx is not, being rejected identically every run. Neither is an exception
-  with no request error under it, a refused redirect excepted: the provider's own
-  code raised, and the next run raises it again on the same item.
+  with no request error under it, a refused redirect and a wrong-shape body
+  (`ProviderUnreadableError`) excepted: the provider's own code raised, and the
+  next run raises it again on the same item.
 - **A provider that keeps rejecting is abandoned for the run.** Five consecutive non-retryable rejections (`_MAX_CONSECUTIVE_REJECTIONS`) drop it, ending the run once none is left for its content type.
 - **A settled failure is not a miss.** A failed save, and a non-retryable provider failure with nothing matched, both retire the item through `mark_enrichment_settled_failure`: dequeued, error on the row, counted under Failed rather than not found.
 - An item counts as enriched only with a real provider, no error, not

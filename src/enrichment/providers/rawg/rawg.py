@@ -9,6 +9,7 @@ from src.enrichment.provider_base import (
     EnrichmentProvider,
     EnrichmentResult,
     ProviderError,
+    ProviderUnreadableError,
     is_numeric_record_id,
     link_record,
     log_search_title,
@@ -187,23 +188,28 @@ class RAWGProvider(EnrichmentProvider):
         try:
             response = self._get(f"{RAWG_API_BASE}/games", params=params)
             response.raise_for_status()
-
-            return [
-                Candidate(
-                    record_id=str(result["id"]),
-                    title=str(result.get("name") or ""),
-                    year=year_of(result.get("released")),
-                    cover_url=result.get("background_image"),
-                )
-                for result in response.json().get("results", [])
-            ]
-
+            payload = response.json()
         except requests.RequestException as error:
             # ``from None``: the key is a query parameter, so the URL on
             # ``__cause__`` is a credential a caller's traceback would print.
             raise ProviderError(
                 self.name, f"Failed to search RAWG: {scrub_request_error(error)}"
             ) from None
+
+        results = payload.get("results") if isinstance(payload, dict) else None
+        if not isinstance(results, list):
+            raise ProviderUnreadableError(
+                self.name, "RAWG answered a search with no results"
+            )
+        return [
+            Candidate(
+                record_id=str(result["id"]),
+                title=str(result.get("name") or ""),
+                year=year_of(result.get("released")),
+                cover_url=result.get("background_image"),
+            )
+            for result in results
+        ]
 
     def _game_payload(self, game_id: int | str, api_key: str) -> dict[str, Any] | None:
         """None only where RAWG has no such game: an unreadable body once wrote
@@ -223,7 +229,9 @@ class RAWGProvider(EnrichmentProvider):
             ) from None
 
         if not isinstance(payload, dict):
-            raise ProviderError(self.name, "RAWG answered a game with no record")
+            raise ProviderUnreadableError(
+                self.name, "RAWG answered a game with no record"
+            )
         return payload
 
     def _fetch_game_details(self, game_id: int | str, api_key: str) -> EnrichmentResult:

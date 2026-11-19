@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-from src.enrichment.provider_base import ProviderError
+from src.enrichment.provider_base import ProviderError, ProviderUnreadableError
 from src.enrichment.providers.openlibrary.openlibrary import (
     OpenLibraryProvider,
     clean_title_for_search,
@@ -476,6 +476,18 @@ class TestOpenLibraryCandidateFromUrl:
         ):
             with pytest.raises(ProviderError):
                 provider.candidate_from_url(self._BOOK, url, {})
+
+    def test_a_search_body_that_is_not_a_record_is_unreadable_regression(
+        self, provider: OpenLibraryProvider
+    ) -> None:
+        with patch(
+            "src.enrichment.providers.openlibrary.openlibrary.requests.get",
+            return_value=MagicMock(
+                spec=requests.Response, status_code=200, json=lambda: ["not a record"]
+            ),
+        ):
+            with pytest.raises(ProviderUnreadableError):
+                provider.enrich(self._BOOK, {})
 
     def test_a_failed_lookup_is_raised_rather_than_read_as_a_record_that_is_absent(
         self, provider: OpenLibraryProvider

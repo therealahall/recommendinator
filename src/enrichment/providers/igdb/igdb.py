@@ -11,6 +11,7 @@ from src.enrichment.provider_base import (
     EnrichmentProvider,
     EnrichmentResult,
     ProviderError,
+    ProviderUnreadableError,
     SeriesOrdinal,
     is_numeric_record_id,
     link_record,
@@ -335,7 +336,9 @@ class IGDBProvider(EnrichmentProvider):
             response = self._query(body, credentials, fresh_token=True)
         payload = self._payload(response, "IGDB request failed")
         if not isinstance(payload, list):
-            raise ProviderError(self.name, "IGDB answered a query with no records")
+            raise ProviderUnreadableError(
+                self.name, "IGDB answered a query with no records"
+            )
         return [game for game in payload if isinstance(game, dict)]
 
     def _query(
@@ -377,7 +380,9 @@ class IGDBProvider(EnrichmentProvider):
         stated = payload if isinstance(payload, dict) else {}
         token = str(stated.get("access_token") or "")
         if not token:
-            raise ProviderError(self.name, "Twitch stated no app access token")
+            raise ProviderUnreadableError(
+                self.name, "Twitch stated no app access token"
+            )
 
         self._token = token
         self._token_expires_at = time.monotonic() + _lifetime_seconds(
