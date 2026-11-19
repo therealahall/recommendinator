@@ -850,6 +850,22 @@ class TestProfilePayload:
         assert sum(1 for entry in genres if not entry["anti"]) == AFFINITY_LIMIT
         assert sum(1 for entry in genres if entry["anti"]) == AFFINITY_LIMIT
 
+    def test_a_dismissed_only_genre_survives_a_full_disliked_bucket(self) -> None:
+        """Below-mean rated genres filled every anti slot, so a genre the
+        operator only dismisses fell off both surfaces."""
+        rated = {f"genre{index}": 2.0 for index in range(AFFINITY_LIMIT + 1)}
+        payload = profile_payload(
+            1,
+            _stored(
+                genre_affinities=rated,
+                anti_preferences=[*rated, "western"],
+            ),
+        )
+
+        assert {"genre": "western", "score": None, "anti": True} in payload[
+            "genre_affinities"
+        ]
+
     def test_a_library_rated_by_author_with_no_genres_is_not_empty(
         self, storage_manager: StorageManager
     ) -> None:
