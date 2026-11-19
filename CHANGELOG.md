@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.82.3 (2026-11-19)
+
+### Bug Fixes
+
+- **enrichment**: Requeue shows awaiting a season only when a TV matcher is enabled
+  ([`8727056`](https://github.com/therealahall/recommendinator/commit/87270563e90705394d79e244ad9275fdecd032dc))
+
+
 ## v0.82.2 (2026-11-19)
 
 ### Bug Fixes
