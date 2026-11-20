@@ -1,6 +1,24 @@
 # CHANGELOG
 
 
+## v0.83.1 (2026-11-20)
+
+### Bug Fixes
+
+- **deps**: Document withdrawn picomatch audit advisory
+  ([`a75f96b`](https://github.com/therealahall/recommendinator/commit/a75f96bc38dd20f582ab3460e4a4eb52f56daaca))
+
+### Documentation
+
+- Count did-not-finish items in the taste signal
+  ([`5dfe90f`](https://github.com/therealahall/recommendinator/commit/5dfe90fff63a3df26f82cafe78b14b6a0b9b40d4))
+
+### Testing
+
+- **importers**: Cover the did-not-finish mappings in markdown and generic CSV
+  ([`85c4db2`](https://github.com/therealahall/recommendinator/commit/85c4db21fc17d513f50ccb5b3bf663ebe4c86c7f))
+
+
 ## v0.83.0 (2026-11-20)
 
 ### Bug Fixes
