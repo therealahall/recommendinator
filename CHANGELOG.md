@@ -1,6 +1,33 @@
 # CHANGELOG
 
 
+## v0.83.0 (2026-11-20)
+
+### Bug Fixes
+
+- **library**: Document completion date ownership and release
+  ([`f1fe278`](https://github.com/therealahall/recommendinator/commit/f1fe278af7cc2d086c656a560f3dc22d7418bcc7))
+
+- **library**: Make every delete announcement differ so a same-title repeat is read
+  ([`64acb97`](https://github.com/therealahall/recommendinator/commit/64acb97691d2ad86756a18fcac11d0f4c733496d))
+
+- **library**: Preserve explicit completion dates across syncs
+  ([`44f2099`](https://github.com/therealahall/recommendinator/commit/44f20992f419937edc9450d13cbbc26c8d9eb230))
+
+### Documentation
+
+- **scoring**: Trim 'Variety after completion' under the section word budget
+  ([`ac66da1`](https://github.com/therealahall/recommendinator/commit/ac66da156d684830df9a61e49e5b27dc66a72553))
+
+### Features
+
+- **library**: Allow correcting completion dates in storage
+  ([`faac984`](https://github.com/therealahall/recommendinator/commit/faac9847a8fbe6150285738cb468cedb2ca0eb84))
+
+- **library**: Expose completion dates in CLI and web editing
+  ([`b5e953a`](https://github.com/therealahall/recommendinator/commit/b5e953a78e7b0b7c4d56c52d552a581fa8e4bbcf))
+
+
 ## v0.82.5 (2026-11-19)
 
 ### Bug Fixes
