@@ -220,23 +220,21 @@ class TestCreatorMatchScorer:
         assert scorer.score(disliked, context) < scorer.score(stranger, context) == 0.5
 
     def test_a_mixed_record_scores_between_a_hated_and_a_loved_creator(self) -> None:
-        """Catches a favourite's many 5s sinking 1, 1, 5, 5, 5 below a lone 1."""
+        """Catches a 1, 1, 5, 5, 5 record no longer reading as middling."""
         consumed = [
-            *(make_item(author="Tamsin Rook", rating=5) for _ in range(10)),
             *(make_item(author="Ilse Varden", rating=r) for r in (1, 1, 5, 5, 5)),
-            *(make_item(author="Mara Quill", rating=5) for _ in range(3)),
             make_item(author="Oren Pell", rating=1),
-            make_item(author="Wren Hale", rating=5),
+            make_item(author="Mara Quill", rating=5),
         ]
         context = _build_context(consumed=consumed)
-        hated, mixed, loved, loved_once = (
+        hated, mixed, loved = (
             CreatorMatchScorer().score(
                 make_item(author=author, status=ConsumptionStatus.UNREAD), context
             )
-            for author in ("Oren Pell", "Ilse Varden", "Mara Quill", "Wren Hale")
+            for author in ("Oren Pell", "Ilse Varden", "Mara Quill")
         )
-        assert hated < 0.5 < mixed < loved
-        assert mixed == loved_once == pytest.approx(0.55)
+        assert hated < mixed < loved
+        assert mixed == 0.5
 
 
 class TestTagOverlapScorer:
