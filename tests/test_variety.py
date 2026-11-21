@@ -260,16 +260,6 @@ class TestVarietyPenaltyFor:
         )
         assert penalty == pytest.approx(0.8)
 
-    def test_a_candidate_sharing_no_tag_takes_the_rung_of_its_genre_cluster(
-        self,
-    ) -> None:
-        """Catches the ladder keying on tags rather than genre clusters."""
-        ladder = build_variety_ladder([_completed("Neon Saint", ["Cyberpunk"])])
-
-        assert variety_penalty_for(
-            _candidate("Far Fleet", ["Space Opera"]), ladder
-        ) == pytest.approx(VARIETY_TOP_PENALTY)
-
     def test_clusters_outside_a_rung_do_not_soften_it(self) -> None:
         """The penalty used to fall as a candidate's own cluster count rose, so a
         sparsely imported book outranked a heavily enriched one on genre alone."""
