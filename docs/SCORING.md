@@ -7,7 +7,7 @@ settings < per-user preferences**.
 | Weight key | What the scorer does | Default |
 |------------|----------------------|---------|
 | `genre_match` | How you rate the item's genres against your own average rating. A genre rated a star above your average climbs toward 100% the more often you have rated it, 75% at two ratings, and one a star below falls toward 0% the same way. Its genres are averaged, so one you dislike pulls down one you love, and a genre on most of your library, or one you have not rated, counts for little or nothing | 2.0 |
-| `creator_match` | Prefers authors, directors and developers you have enjoyed, and demotes ones you have not. Likes and dislikes are each scaled against the library's strongest, then subtracted | 1.5 |
+| `creator_match` | Prefers authors, directors and developers you have enjoyed, and demotes ones you have not. Each creator's likes and dislikes net out first, and that net is scaled against the library's strongest | 1.5 |
 | `tag_overlap` | How many of a consumed item's tags the item shares, scaled by how you rated it. Each tag counts once: in full when the item has the same tag, half when it has a related tag from the same genre cluster. A consumed item with more tags can lift a match higher. A match on a 1-star item still lifts, at half a 5-star match's strength | 1.0 |
 | `content_length` | Soft penalty for a length mismatch. Counts only for a content type with a length preference other than `any` | 1.0 |
 | `continuation` | Scores the later entries and seasons of a series you have begun by how you rated its entries of the same content type: 5 stars is 100%, 3 is 50%, 1 is 0%, and none rated is 50%. A show's next season is scored by the latest season you rated, not the show's rating. Counts only where an earlier entry is finished or begun, and not while any entry of that series is in progress | 1.0 |
@@ -64,7 +64,7 @@ Each row's test fails if scoring stops behaving as the row says.
 | Behaviour | Example | Test |
 |---|---|---|
 | A 1 drags related candidates down as one row among several, never a veto | Book 1 rated 1: book 2's `continuation` row is 0, so it scores 4.5/5.5 of an identical standalone | `test_scoring_pipeline.py::test_a_sequel_sits_a_continuation_row_from_an_identical_standalone` |
-| A mixed creator record reads as middling | Beside one creator rated 1 and one rated 5, a creator rated 1, 1, 5, 5, 5 scores a neutral 0.5 in `creator_match`, between the two | `test_scorers.py::test_a_mixed_record_scores_between_a_hated_and_a_loved_creator` |
+| A mixed creator record stays above a creator only disliked, whatever else the library holds | Beside a favourite rated 5 ten times, a creator rated 1, 1, 5, 5, 5 scores 0.55 in `creator_match`: level with one rated 5 once, above one rated 1 once, below one rated 5, 5, 5 | `test_scorers.py::test_a_mixed_record_scores_between_a_hated_and_a_loved_creator` |
 | `genre_match` measures a tag against the library's own average, so a 3 is neutral only where that average is 3 | In a library averaging 4 stars, a tag rated 3 every time scores at most 0.25 | `test_scorers.py::test_loved_average_and_disliked_genres_separate_even_under_a_shared_term` |
 | `genre_match` reads tags, never genre clusters | After cyberpunk rated 5, a space opera candidate gets a neutral `genre_match`. Only `tag_overlap` sees the science fiction genre cluster they share | `test_scorers.py::test_a_shared_genre_cluster_without_a_shared_tag_scores_neutral` |
 | In `tag_overlap` a 1-star item still connects, at half a 5-star one's lift | A `War` candidate after an item tagged only `War`: 1/6 when it was rated 1, 1/3 when rated 5 | `test_scorers.py::test_a_one_star_match_scores_half_a_five_star_one` |
@@ -76,10 +76,6 @@ Each row's test fails if scoring stops behaving as the row says.
 | Every completion claims a variety rung, a 1-star one too | A 1-star fantasy completion takes the top rung | `test_variety.py::test_a_one_star_completion_claims_its_rung_like_a_five_star_one` |
 | Variety keys on genre clusters, never tags | After a completion tagged `LitRPG, Adventure, Comedy`, an `Epic Fantasy` candidate shares no tag but takes a quarter of the top penalty through the fantasy genre cluster | `test_variety.py::test_penalty_scales_with_how_much_of_a_rung_a_candidate_shares` |
 | An item with no metadata keeps its score rather than ranking last | No genres, tags or creator: 0.39 | `test_scoring_pipeline.py::test_an_item_with_no_metadata_scores_the_documented_bare_score` |
-
-### Not met yet
-
-A mixed creator record should stay above a creator only disliked, whatever else the library holds. It does not: beside a favourite rated 5 ten times, a creator rated 1, 1, 5, 5, 5 scores below one rated 1 once, because the favourite shrinks their likes while their two 1s set the dislike scale. Netting each creator's ratings before scaling would meet it, and ships as its own change because it moves `creator_match` for every mixed record.
 
 ## Setting the global weights
 
