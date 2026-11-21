@@ -45,24 +45,37 @@ whatever the rest of the rows earn it. It is never removed from the ranking.
 The one thing applied after the weighted mean is the variety penalty below,
 which has its own row in the same panel.
 
+## Settled scoring questions
+
+The answers the operator gave in November 2026, each checked against the code and worked through in the table below.
+
+| Question | Answer |
+|---|---|
+| How far does a 1-star item pull related candidates down, and which scorer owns it? | No one scorer owns demotion, and nothing vetoes. `genre_match`, `creator_match` and `continuation` each fall toward 0 on their own row, so a 1 drags a related candidate by one row's weight among several. `tag_overlap` never demotes: a match on a 1-star item still lifts, at half a 5-star match's strength |
+| Does `continuation` read series ratings? | Yes: the mean of that series' rated entries of the same content type, 5 stars 1.0, 3 stars 0.5, 1 star 0. Unrated entries are left out, and a series with none rated scores 0.5 |
+| Does variety after completion key on tags or genre clusters? | Genre clusters only. The first answer was tags as well. Checked against the code, the operator kept genre clusters alone |
+| How big should the `+2` in `tag_overlap` be? | It stays 2. The operator named no other size, only that one shared tag must never give full marks, which 2 meets |
+| Is the score plateau gone on the live library? | Yes. On the live library on 2026-11-18 the top 25 TV recommendations all scored differently, 0.54 to 0.76. A candidate scores against its best-matching consumed item, so a larger library cannot flatten scores into one band |
+
 ## Worked examples
 
-Each example is pinned by a test, so scoring that stops matching one fails the suite.
+Each row's test fails if scoring stops behaving as the row says.
 
-| Behaviour | Example |
-|---|---|
-| A 1 drags related candidates down as one row among several, never a veto | Book 1 rated 1: book 2's `continuation` row is 0, so it scores 4.5/5.5 of an identical standalone |
-| A mixed creator record stays above a creator only disliked, whatever else the library holds | Beside a favourite rated 5 ten times, a creator rated 1, 1, 5, 5, 5 scores 0.55 in `creator_match`: level with one rated 5 once, above one rated 1 once, below one rated 5, 5, 5 |
-| `genre_match` measures a tag against the library's own average, so a 3 is neutral only where that average is 3 | In a library averaging 4 stars, a tag rated 3 every time scores at most 0.25 |
-| `genre_match` reads tags, never genre clusters | After cyberpunk rated 5, a space opera candidate gets a neutral `genre_match`. Only `tag_overlap` sees the science fiction genre cluster they share |
-| In `tag_overlap` a 1-star item still connects, at half a 5-star one's lift | A `War` candidate after an item tagged only `War`: 1/6 when it was rated 1, 1/3 when rated 5 |
-| The `+2` in `tag_overlap`'s denominator stops one shared tag dominating | 5-star item tagged only `Magic`: 1/3. Tagged `Magic, Wizards, Sorcery`, all shared: 3/5 |
-| How much of an item a match reaches matters more than whether it comes through a tag or a genre cluster | 5-star item tagged `War, Science Fiction, Space Opera`: a `Space Warfare` candidate scores 1.5/5 through three genre clusters, a `War` one 1/5 through one tag |
-| A term shared as a tag and through a genre cluster counts once | 5-star item tagged `Space Warfare, Science Fiction`, candidate tagged `Space Warfare`: 1.5/4 |
-| A candidate matches its best consumed item, so a larger library never dilutes it | 5-star item tagged `Battle, War, Drama, Survival`: candidates tagged `Battle` 1.5/6, `Battle, War` 2/6, `Battle, War, Drama` 3/6, alone or beside 20 unrelated 5-star items |
-| `continuation` averages the rated entries of that series | Entries rated 5, 3 and unrated give the next entry 0.75 |
-| Every completion claims a variety rung, a 1-star one too | A 1-star fantasy completion takes the top rung |
-| Variety keys on genre clusters, never tags | After a completion tagged `LitRPG, Adventure, Comedy`, an `Epic Fantasy` candidate shares no tag but takes a quarter of the top penalty through the fantasy genre cluster |
+| Behaviour | Example | Test |
+|---|---|---|
+| A 1 drags related candidates down as one row among several, never a veto | Book 1 rated 1: book 2's `continuation` row is 0, so it scores 4.5/5.5 of an identical standalone | `test_scoring_pipeline.py::test_a_sequel_sits_a_continuation_row_from_an_identical_standalone` |
+| A mixed creator record stays above a creator only disliked, whatever else the library holds | Beside a favourite rated 5 ten times, a creator rated 1, 1, 5, 5, 5 scores 0.55 in `creator_match`: level with one rated 5 once, above one rated 1 once, below one rated 5, 5, 5 | `test_scorers.py::test_a_mixed_record_scores_between_a_hated_and_a_loved_creator` |
+| `genre_match` measures a tag against the library's own average, so a 3 is neutral only where that average is 3 | In a library averaging 4 stars, a tag rated 3 every time scores at most 0.25 | `test_scorers.py::test_loved_average_and_disliked_genres_separate_even_under_a_shared_term` |
+| `genre_match` reads tags, never genre clusters | After cyberpunk rated 5, a space opera candidate gets a neutral `genre_match`. Only `tag_overlap` sees the science fiction genre cluster they share | `test_scorers.py::test_a_shared_genre_cluster_without_a_shared_tag_scores_neutral` |
+| In `tag_overlap` a 1-star item still connects, at half a 5-star one's lift | A `War` candidate after an item tagged only `War`: 1/6 when it was rated 1, 1/3 when rated 5 | `test_scorers.py::test_a_one_star_match_scores_half_a_five_star_one` |
+| The `+2` in `tag_overlap`'s denominator stops one shared tag dominating | 5-star item tagged only `Magic`: 1/3. Tagged `Magic, Wizards, Sorcery`, all shared: 3/5 | `test_scorers.py::test_a_one_tag_item_never_gives_full_marks_and_a_richer_one_reaches_higher` |
+| How much of an item a match reaches matters more than whether it comes through a tag or a genre cluster | 5-star item tagged `War, Science Fiction, Space Opera`: a `Space Warfare` candidate scores 1.5/5 through three genre clusters, a `War` one 1/5 through one tag | `test_scorers.py::test_three_genre_cluster_matches_outrank_one_shared_tag` |
+| A term shared as a tag and through a genre cluster counts once | 5-star item tagged `Space Warfare, Science Fiction`, candidate tagged `Space Warfare`: 1.5/4 | `test_scorers.py::test_a_term_counts_once_however_many_clusters_it_shares` |
+| A candidate matches its best consumed item, so a larger library never dilutes it | 5-star item tagged `Battle, War, Drama, Survival`: candidates tagged `Battle` 1.5/6, `Battle, War` 2/6, `Battle, War, Drama` 3/6, alone or beside 20 unrelated 5-star items | `test_scorers.py::test_a_larger_library_leaves_each_candidates_score_where_it_was` |
+| `continuation` averages the rated entries of that series | Entries rated 5, 3 and unrated give the next entry 0.75 | `test_scorers.py::test_the_rating_averages_only_the_rated_entries_of_that_series` |
+| Every completion claims a variety rung, a 1-star one too | A 1-star fantasy completion takes the top rung | `test_variety.py::test_a_one_star_completion_claims_its_rung_like_a_five_star_one` |
+| Variety keys on genre clusters, never tags | After a completion tagged `LitRPG, Adventure, Comedy`, an `Epic Fantasy` candidate shares no tag but takes a quarter of the top penalty through the fantasy genre cluster | `test_variety.py::test_penalty_scales_with_how_much_of_a_rung_a_candidate_shares` |
+| An item with no metadata keeps its score rather than ranking last | No genres, tags or creator: 0.39 | `test_scoring_pipeline.py::test_an_item_with_no_metadata_scores_the_documented_bare_score` |
 
 ## Setting the global weights
 
