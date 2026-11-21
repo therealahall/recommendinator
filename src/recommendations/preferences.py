@@ -163,26 +163,17 @@ class PreferenceAnalyzer:
     def _score_attributes(
         self, attribute_ratings: Sequence[tuple[str, int | float]]
     ) -> tuple[dict[str, float], dict[str, float]]:
-        preferred: dict[str, float] = {}
-        disliked: dict[str, float] = {}
-
+        net: dict[str, float] = {}
         for value, rating in attribute_ratings:
             if rating >= self.min_rating:
                 weight = rating - self.min_rating + 1
-                preferred[value] = preferred.get(value, 0.0) + weight
             else:
-                weight = abs(rating - 3) / 2.0
-                disliked[value] = disliked.get(value, 0.0) + weight
+                weight = -abs(rating - 3)
+            net[value] = net.get(value, 0.0) + weight
 
-        # Every preferred weight is at least 1, so this maximum is never zero
-        if preferred:
-            max_score = max(preferred.values())
-            preferred = {k: v / max_score for k, v in preferred.items()}
-
-        # A rating of 3 weighs nothing, so this maximum can be zero
-        if disliked:
-            max_score = max(disliked.values())
-            if max_score > 0:
-                disliked = {k: v / max_score for k, v in disliked.items()}
-
+        # Netted first: scaled apart, a favourite sank 1, 1, 5, 5, 5 below a lone 1
+        top_liked = max((w for w in net.values() if w > 0), default=1.0)
+        top_disliked = max((-w for w in net.values() if w < 0), default=1.0)
+        preferred = {k: w / top_liked for k, w in net.items() if w >= 0}
+        disliked = {k: -w / top_disliked for k, w in net.items() if w < 0}
         return preferred, disliked
