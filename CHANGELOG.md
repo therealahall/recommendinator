@@ -1,6 +1,25 @@
 # CHANGELOG
 
 
+## v0.83.2 (2026-11-21)
+
+### Bug Fixes
+
+- **ci**: Select Python 3.11 for the full quality check
+  ([`cebe260`](https://github.com/therealahall/recommendinator/commit/cebe260aa754160e7d36501d5aa70146652992ae))
+
+### Documentation
+
+- **cli**: Split the enrichment section under subheadings
+  ([`77adc46`](https://github.com/therealahall/recommendinator/commit/77adc463785a92259d8d620ca13e1f412072b258))
+
+- **plugins**: Split long plugin guide sections under subheadings
+  ([`9152ef4`](https://github.com/therealahall/recommendinator/commit/9152ef423055a2ffafbba5eb775221f551b4c53e))
+
+- **scoring**: Split variety after completion under subheadings
+  ([`63e0af1`](https://github.com/therealahall/recommendinator/commit/63e0af1b18392942989da813ea94be6faf8dfc54))
+
+
 ## v0.83.1 (2026-11-20)
 
 ### Bug Fixes
