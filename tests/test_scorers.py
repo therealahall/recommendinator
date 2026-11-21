@@ -209,6 +209,23 @@ class TestCreatorMatchScorer:
         candidate = make_item(author="Ben Nedivi", status=ConsumptionStatus.UNREAD)
         assert CreatorMatchScorer().score(candidate, context) == 0.5
 
+    def test_a_creator_rated_only_1_scores_below_one_never_read(self) -> None:
+        """Catches a lone 1 no longer dragging that creator's next work."""
+        context = _build_context(
+            consumed=[
+                make_item(author="Oren Pell", rating=1),
+                make_item(author="Mara Quill", rating=5),
+            ]
+        )
+        hated, unread = (
+            CreatorMatchScorer().score(
+                make_item(author=author, status=ConsumptionStatus.UNREAD), context
+            )
+            for author in ("Oren Pell", "Sela Brandt")
+        )
+        assert hated == 0.0
+        assert unread == 0.5
+
     def test_a_mixed_record_scores_between_a_hated_and_a_loved_creator(self) -> None:
         """Catches a 1, 1, 5, 5, 5 record no longer reading as middling."""
         consumed = [
