@@ -64,8 +64,10 @@ Each row's test fails if scoring stops behaving as the row says.
 | Behaviour | Example | Test |
 |---|---|---|
 | A 1 drags related candidates down as one row among several, never a veto | Book 1 rated 1: book 2's `continuation` row is 0, so it scores 4.5/5.5 of an identical standalone | `test_scoring_pipeline.py::test_a_sequel_sits_a_continuation_row_from_an_identical_standalone` |
+| A creator rated only 1 drags their next work | Rated 1 once: below the neutral 0.5 of a creator never read | `test_scorers.py::test_a_mixed_record_scores_between_a_hated_and_a_loved_creator` |
 | A mixed creator record reads as middling | Beside one creator rated 1 and one rated 5, a creator rated 1, 1, 5, 5, 5 scores a neutral 0.5 in `creator_match`, between the two | `test_scorers.py::test_a_mixed_record_scores_between_a_hated_and_a_loved_creator` |
 | `genre_match` measures a tag against the library's own average, so a 3 is neutral only where that average is 3 | In a library averaging 4 stars, a tag rated 3 five times scores at most 0.25 | `test_scorers.py::test_loved_average_and_disliked_genres_separate_even_under_a_shared_term` |
+| In `genre_match` a tag rated the same way more often counts more | Rated 5 five times outscores rated 5 once | `test_scorers.py::test_a_genre_rated_once_claims_less_than_one_rated_five_times` |
 | `genre_match` reads tags, never genre clusters | After cyberpunk rated 5, a space opera candidate gets a neutral `genre_match`. Only `tag_overlap` sees the science fiction genre cluster they share | `test_scorers.py::test_a_shared_genre_cluster_without_a_shared_tag_scores_neutral` |
 | In `tag_overlap` a 1-star item still connects, at half a 5-star one's lift | A `War` candidate after an item tagged only `War`: 1/6 when it was rated 1, 1/3 when rated 5 | `test_scorers.py::test_a_one_star_match_scores_half_a_five_star_one` |
 | The `+2` in `tag_overlap`'s denominator stops one shared tag dominating | 5-star item tagged only `Magic`: 1/3. Tagged `Magic, Wizards, Sorcery`, all shared: 3/5 | `test_scorers.py::test_a_one_tag_item_never_gives_full_marks_and_a_richer_one_reaches_higher` |
@@ -75,6 +77,7 @@ Each row's test fails if scoring stops behaving as the row says.
 | `continuation` averages the rated entries of that series | Entries rated 5, 3 and unrated give the next entry 0.75 | `test_scorers.py::test_the_rating_averages_only_the_rated_entries_of_that_series` |
 | Every completion claims a variety rung, a 1-star one too | A 1-star fantasy completion takes the top rung | `test_variety.py::test_a_one_star_completion_claims_its_rung_like_a_five_star_one` |
 | Variety keys on genre clusters, never tags | After a completion tagged `LitRPG, Adventure, Comedy`, an `Epic Fantasy` candidate shares no tag but takes a quarter of the top penalty through the fantasy genre cluster | `test_variety.py::test_penalty_scales_with_how_much_of_a_rung_a_candidate_shares` |
+| A completion bringing no new genre cluster spends no rung. The operator first expected every completion to push the ladder down a rung, then kept the code | Fantasy, fantasy, science fiction, newest first: science fiction takes the second rung, as the repeat spends none | `test_variety.py::test_duplicate_clusters_collapse_to_one_rung` |
 | An item with no metadata keeps its score rather than ranking last | No genres, tags or creator: 0.39 | `test_scoring_pipeline.py::test_an_item_with_no_metadata_scores_the_documented_bare_score` |
 
 ### Not met yet
