@@ -47,15 +47,15 @@ which has its own row in the same panel.
 
 ## Settled scoring questions
 
-The answers the operator gave in November 2026, each checked against the code and worked through in the table below.
+Each open question, the operator's answer, and what the code does about it. The worked examples below pin each one.
 
-| Question | Answer |
-|---|---|
-| How far does a 1-star item pull related candidates down, and which scorer owns it? | No one scorer owns demotion, and nothing vetoes. `genre_match`, `creator_match` and `continuation` each fall toward 0 on their own row, so a 1 drags a related candidate by one row's weight among several. `tag_overlap` never demotes: a match on a 1-star item still lifts, at half a 5-star match's strength |
-| Does `continuation` read series ratings? | Yes: the mean of that series' rated entries of the same content type, 5 stars 1.0, 3 stars 0.5, 1 star 0. Unrated entries are left out, and a series with none rated scores 0.5 |
-| Does variety after completion key on tags or genre clusters? | Genre clusters only. Variety exists to stop the next pick repeating the theme just finished, and tags are too fine to see a theme: after a completion tagged `LitRPG`, an `Epic Fantasy` candidate shares no tag, yet it is the same fantasy run |
-| How big should the `+2` in `tag_overlap` be? | It stays 2. The operator named no other size, only that one shared tag must never give full marks, which 2 meets |
-| Is the score plateau gone on the live library? | Yes: checked by hand on the live library once the continuation fix was deployed, the top TV recommendations no longer share one score. The mechanism behind it is pinned below: a candidate scores against its best-matching consumed item, so a larger library cannot flatten scores into one band |
+| Question | Operator's answer | What the code does |
+|---|---|---|
+| How far does a 1-star item pull related candidates down, and which scorer owns it? | No one scorer owns demotion, and nothing vetoes: a 1 drags a related candidate down without removing it | Meets it. `genre_match`, `creator_match` and `continuation` each fall toward 0 on their own row, so a 1 drags a related candidate by one row's weight among several. `tag_overlap` never demotes: a match on a 1-star item still lifts, at half a 5-star match's strength |
+| Does `continuation` read series ratings? | Yes, the ratings of that series' entries | Meets it: the mean of that series' rated entries of the same content type, 5 stars 1.0, 3 stars 0.5, 1 star 0. Unrated entries are left out, and a series with none rated scores 0.5 |
+| Does variety after completion key on tags or genre clusters? | Genre clusters: after finishing a `LitRPG` book, an `Epic Fantasy` one is the same fantasy run though they share no tag | Meets it. Variety reads genre clusters only, as tags are too fine to see a theme |
+| How big should the `+2` in `tag_overlap` be? | Keep 2. One shared tag must never give full marks | Meets it: one shared tag on a 5-star item scores 1/3 |
+| Is the score plateau gone on the live library? | Yes, checked by hand once the continuation fix was deployed: the top TV recommendations no longer share one score | The live library is not in the suite. What is pinned is the mechanism: a candidate scores against its best-matching consumed item, so a larger library cannot flatten scores into one band |
 
 ## Worked examples
 
@@ -64,7 +64,7 @@ Each row's test fails if scoring stops behaving as the row says.
 | Behaviour | Example | Test |
 |---|---|---|
 | A 1 drags related candidates down as one row among several, never a veto | Book 1 rated 1: book 2's `continuation` row is 0, so it scores 4.5/5.5 of an identical standalone | `test_scoring_pipeline.py::test_a_sequel_sits_a_continuation_row_from_an_identical_standalone` |
-| A creator rated only 1 drags their next work | Rated 1 once: below the neutral 0.5 of a creator never read | `test_scorers.py::test_a_mixed_record_scores_between_a_hated_and_a_loved_creator` |
+| A creator rated only 1 drags their next work | Rated 1 once: 0, below the neutral 0.5 of a creator never read | `test_scorers.py::test_a_creator_rated_only_1_scores_below_one_never_read` |
 | A mixed creator record reads as middling | Beside one creator rated 1 and one rated 5, a creator rated 1, 1, 5, 5, 5 scores a neutral 0.5 in `creator_match`, between the two | `test_scorers.py::test_a_mixed_record_scores_between_a_hated_and_a_loved_creator` |
 | `genre_match` measures a tag against the library's own average, so a 3 is neutral only where that average is 3 | In a library averaging 4 stars, a tag rated 3 five times scores at most 0.25 | `test_scorers.py::test_loved_average_and_disliked_genres_separate_even_under_a_shared_term` |
 | In `genre_match` a tag rated the same way more often counts more | Rated 5 five times outscores rated 5 once | `test_scorers.py::test_a_genre_rated_once_claims_less_than_one_rated_five_times` |
@@ -82,7 +82,9 @@ Each row's test fails if scoring stops behaving as the row says.
 
 ### Not met yet
 
-A mixed creator record should stay above a creator only disliked, whatever else the library holds. It does not: beside a favourite rated 5 ten times, a creator rated 1, 1, 5, 5, 5 scores below one rated 1 once, because the favourite shrinks their likes while their two 1s set the dislike scale. Netting each creator's ratings before scaling meets it only once likes and dislikes share one star scale: likes count up from the Minimum liked rating and dislikes down from 3, so at a Minimum liked rating of 5 a 5 would net +1 against a 1's -2. It ships as its own change because it moves `creator_match` for every mixed record.
+A mixed creator record should stay above a creator only disliked, whatever else the library holds. It does not: beside a favourite rated 5 ten times, a creator rated 1, 1, 5, 5, 5 scores below one rated 1 once, because the favourite shrinks their likes while their two 1s set the dislike scale.
+
+Netting each creator's ratings first needs likes and dislikes on one star scale. Today likes count up from the Minimum liked rating and dislikes down from 3, so at the default of 4 a 5 nets +2 against a 1's -1, and a creator loved once and hated once stops reading as a wash. One scale means deciding what the Minimum liked rating, which feeds only `creator_match`, still does: the operator's call, so a change of its own.
 
 ## Setting the global weights
 
