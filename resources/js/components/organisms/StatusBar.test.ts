@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
+import { nextTick } from 'vue'
 import StatusBar from './StatusBar.vue'
 import { useAppStore } from '@/stores/app'
 
@@ -24,12 +25,29 @@ describe('StatusBar', () => {
     setActivePinia(createPinia())
   })
 
-  it('is hidden when statusMessage is empty', () => {
-    // A detached element has no computed style, so v-show's display: none only
-    // shows up once the bar is in the document.
+  it('is hidden when statusMessage is empty, including after a message is cleared', async () => {
+    const app = useAppStore()
+    expect(app.statusMessage).toBe('')
+
+    // jsdom 31 gives detached elements no computed style, so isVisible needs
+    // the bar in the document to observe v-show's display: none.
     const wrapper = mount(StatusBar, { attachTo: document.body })
-    expect(wrapper.find('.status-bar').isVisible()).toBe(false)
-    wrapper.unmount()
+    try {
+      const bar = wrapper.find('.status-bar')
+      expect(bar.isVisible()).toBe(false)
+
+      app.statusMessage = 'System initializing...'
+      await nextTick()
+      expect(bar.isVisible()).toBe(true)
+      expect(bar.text()).toBe('System initializing...')
+
+      app.statusMessage = ''
+      await nextTick()
+      expect(bar.isVisible()).toBe(false)
+      expect(bar.text()).toBe('')
+    } finally {
+      wrapper.unmount()
+    }
   })
 
   it('is visible with correct content and aria-atomic when statusMessage is set', () => {
