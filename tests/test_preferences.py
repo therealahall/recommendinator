@@ -372,8 +372,8 @@ class TestCreatorNamespaceIsFlatAcrossTypes:
             ]
         )
 
-        assert preferences.preferred_authors == {"alex garland": 0.0}
-        assert preferences.disliked_authors == {}
+        assert preferences.preferred_authors == {"alex garland": 1.0}
+        assert preferences.disliked_authors == {"alex garland": 1.0}
         assert preferences.get_author_score("Alex Garland") == 0.0
 
     def test_each_cowriter_is_keyed_on_their_own(self):
