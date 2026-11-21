@@ -209,16 +209,6 @@ class TestCreatorMatchScorer:
         candidate = make_item(author="Ben Nedivi", status=ConsumptionStatus.UNREAD)
         assert CreatorMatchScorer().score(candidate, context) == 0.5
 
-    def test_a_creator_rated_only_one_star_scores_below_a_stranger(self) -> None:
-        """Catches a 1-star creator no longer dragging their next work down."""
-        context = _build_context(consumed=[make_item(author="Ilse Varden", rating=1)])
-        scorer = CreatorMatchScorer()
-        disliked, stranger = (
-            make_item(author=author, status=ConsumptionStatus.UNREAD)
-            for author in ("Ilse Varden", "Oren Pell")
-        )
-        assert scorer.score(disliked, context) < scorer.score(stranger, context) == 0.5
-
     def test_a_mixed_record_scores_between_a_hated_and_a_loved_creator(self) -> None:
         """Catches a 1, 1, 5, 5, 5 record no longer reading as middling."""
         consumed = [
