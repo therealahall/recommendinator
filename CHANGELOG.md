@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.83.3 (2026-11-24)
+
+### Bug Fixes
+
+- **web**: Strengthen status bar visibility regression
+  ([`4a5538a`](https://github.com/therealahall/recommendinator/commit/4a5538ab03faf2fb309f72ba555ffebbb93cd77a))
+
+
 ## v0.83.2 (2026-11-21)
 
 ### Bug Fixes
