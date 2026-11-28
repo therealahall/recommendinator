@@ -1868,6 +1868,11 @@ button.rec-score {
   width: 100%;
 }
 
+/* iOS date theming forces content-box sizing even after the border-box reset. */
+.edit-field input[type='date'] {
+  appearance: none;
+}
+
 .edit-save-error:not(:empty) {
   margin-bottom: var(--space-3);
 }
