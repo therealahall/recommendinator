@@ -111,6 +111,15 @@ describe('inactive button styling', () => {
 })
 
 describe('the one text-entry field', () => {
+  it('prevents native date theming from widening the completion field beyond its neighbors', () => {
+    const source = readBase()
+    const date = source.match(/\.edit-field input\[type='date'\]\s*\{([^}]*)\}/)
+    if (!date) throw new Error('edit-dialog date sizing rule not found in base.css')
+
+    expect(declaration(date[1], 'appearance')).toBe('none')
+    expect(declaration(ruleBlock(source, '.edit-field .field'), 'width')).toBe('100%')
+  })
+
   it('keeps a refused edge while the field is focused', () => {
     const source = readBase()
 

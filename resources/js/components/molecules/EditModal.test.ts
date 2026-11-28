@@ -55,6 +55,7 @@ describe('EditModal', () => {
       attachTo: document.body,
     })
     expect((wrapper.get('#edit-date-completed').element as HTMLInputElement).value).toBe('2024-01-01')
+    expect(wrapper.get('#edit-date-completed').attributes('type')).toBe('date')
     expect(wrapper.get('label[for="edit-date-completed"]').text()).toContain('Completion date')
 
     await wrapper.get('#edit-date-completed').setValue('1999-06-15')
