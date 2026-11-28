@@ -1,6 +1,23 @@
 # CHANGELOG
 
 
+## v0.83.4 (2026-11-28)
+
+### Bug Fixes
+
+- **web**: Constrain completion date field to dialog width
+  ([`9ea5244`](https://github.com/therealahall/recommendinator/commit/9ea5244fa72f645fbb4125c7f4b2aaf0b156a56e))
+
+- **web**: Cover completion date sizing and native input regression
+  ([`eeb32b3`](https://github.com/therealahall/recommendinator/commit/eeb32b3a1bada51b1e8c188794af9ad170cab5ee))
+
+- **web**: Guard completion date sizing regressions
+  ([`b17f1a2`](https://github.com/therealahall/recommendinator/commit/b17f1a26f2cf47729e4b7050319baa1f2dc03984))
+
+- **web**: Preserve completion date height and alignment
+  ([`dba4e7b`](https://github.com/therealahall/recommendinator/commit/dba4e7b5469f09d67926029a659df860e4954546))
+
+
 ## v0.83.3 (2026-11-24)
 
 ### Bug Fixes
