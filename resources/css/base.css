@@ -1868,9 +1868,16 @@ button.rec-score {
   width: 100%;
 }
 
-/* iOS date theming forces content-box sizing even after the border-box reset. */
+/* Use the shared field sizing and reserve a text line even with no date. */
 .edit-field input[type='date'] {
   appearance: none;
+  min-width: 0;
+  min-height: calc(1lh + 2 * var(--space-2) + 2px);
+}
+
+.edit-field input[type='date']::-webkit-date-and-time-value {
+  min-height: 1lh;
+  text-align: left;
 }
 
 .edit-save-error:not(:empty) {
