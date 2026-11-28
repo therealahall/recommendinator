@@ -111,13 +111,35 @@ describe('inactive button styling', () => {
 })
 
 describe('the one text-entry field', () => {
-  it('prevents native date theming from widening the completion field beyond its neighbors', () => {
+  it('prevents native date theming and intrinsic width from widening the completion field', () => {
     const source = readBase()
     const date = source.match(/\.edit-field input\[type='date'\]\s*\{([^}]*)\}/)
     if (!date) throw new Error('edit-dialog date sizing rule not found in base.css')
 
     expect(declaration(date[1], 'appearance')).toBe('none')
+    expect(declaration(date[1], 'min-width')).toBe('0')
     expect(declaration(ruleBlock(source, '.edit-field .field'), 'width')).toBe('100%')
+  })
+
+  it('keeps an empty completion date as tall as a line of text plus the shared padding and borders', () => {
+    const source = readBase()
+    const date = source.match(/\.edit-field input\[type='date'\]\s*\{([^}]*)\}/)
+    if (!date) throw new Error('edit-dialog date sizing rule not found in base.css')
+    const field = ruleBlock(source, '.field')
+
+    expect(declaration(field, 'padding')).toBe('var(--space-2) var(--space-3)')
+    expect(declaration(field, 'border')).toBe('1px solid var(--border-interactive)')
+    expect(declaration(date[1], 'min-height')).toBe('calc(1lh + 2 * var(--space-2) + 2px)')
+  })
+
+  it('keeps the WebKit date value left aligned and reserves its line even when empty', () => {
+    const value = readBase().match(
+      /\.edit-field input\[type='date'\]::-webkit-date-and-time-value\s*\{([^}]*)\}/,
+    )
+    if (!value) throw new Error('edit-dialog date value rule not found in base.css')
+
+    expect(declaration(value[1], 'text-align')).toBe('left')
+    expect(declaration(value[1], 'min-height')).toBe('1lh')
   })
 
   it('keeps a refused edge while the field is focused', () => {
